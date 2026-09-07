@@ -3,7 +3,10 @@ use super::super::component_dispatch::{dispatch_action, dispatch_session_action}
 use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
-use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
+use super::super::component_runtime::{
+    component_action_from_date_button, component_action_from_date_input, ComponentAction,
+    ComponentOrchestrator,
+};
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
@@ -13,6 +16,7 @@ use super::{
     initial_load_phase, BufferPanel, InitialLoadPhase, InitialLoadView, InteractiveShell,
     LoadingOverlay, NavigationTabs, SessionChrome,
 };
+use crate::client::date_input::DateInputState;
 use crate::client::state::ActiveTab;
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
@@ -22,6 +26,7 @@ const TICK_MILLIS: u32 = 1_000;
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let mut date_input = use_signal(DateInputState::default);
     let mut task_name_filter = use_signal(String::new);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
@@ -89,6 +94,7 @@ pub(super) fn BrowserApp() -> Element {
         rows,
         active_task_ids,
         dates,
+        current_logical_date,
         history,
         warnings,
         safety_warning,
@@ -100,6 +106,9 @@ pub(super) fn BrowserApp() -> Element {
         carry_lock,
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
+    let server_effect_in_flight = client.read().server_effect_in_flight();
+    let date_input_text = date_input.read().text().to_owned();
+    let date_input_error = date_input.read().error().map(|error| error.to_string());
     let filter_text = task_name_filter.read().clone();
     let buffer = buffer.expect("ready phase requires a server snapshot");
 
@@ -154,9 +163,26 @@ pub(super) fn BrowserApp() -> Element {
                     dates,
                     rows,
                     active_task_ids,
+                    date_input_text,
+                    date_input_error,
                     filter_text,
                     mutations_locked,
-                    on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
+                    on_select_date: move |date| {
+                        let action = component_action_from_date_button(&mut date_input.write(), date);
+                        dispatch_action(client, action);
+                    },
+                    on_date_input_change: move |text| date_input.write().edit(text),
+                    on_submit_date_input: move |_| {
+                        let Some(current_logical_date) = current_logical_date.as_deref() else {
+                            return;
+                        };
+                        if let Some(action) = component_action_from_date_input(
+                            &mut date_input.write(),
+                            current_logical_date,
+                        ) {
+                            dispatch_action(client, action);
+                        }
+                    },
                     on_start_session: move |(task, is_leaf)| dispatch_action(
                         client,
                         ComponentAction::AddSession { task, is_leaf },

@@ -325,6 +325,7 @@ date_buttons: Vec<LogicalDateButton>
 selected_logical_date: Option<YYYY-MM-DD>
 scheduled_rows: Vec<ScheduledTaskRow>
 task_name_filter: String
+date_input: DateInputState { text, error }
 in_flight_session_ids: Set<UUID>
 pending_session_ended_at: Map<UUID, epoch_ms>
 completion_conflicts: Map<UUID, (original CompleteSessionRequest, original ended_at, latest actual)>
@@ -451,6 +452,8 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。4種類のセッション終了成功後は選択中のlogical dateを維持し、未選択なら最新snapshotのlogical dateを選んで`list_tasks`を自動実行する。
 
+日付文字列入力はpage内だけの`DateInputState`に保持し、`M/D`または`YYYY/M/D`のASCII数字とslashだけを受け付ける。前後空白は除去する。年省略時は`ServerSnapshot.logical_date`の年から候補日を探し、現在logical date以上となる最初の有効なcalendar日付を採用する。同じ月日は当日として扱い、`2/29`は必要なら次の閏年まで進める。妥当な入力は表示用`YYYY/M/D`とwire用`YYYY-MM-DD`へ正規化し、不正な形式・calendar日付・範囲overflowは型付きerrorとする。
+
 ### 6.6 持ち歩きロックstate
 
 `CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。
@@ -474,7 +477,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 初回SSR、browser初期化前、`bootstrap`応答待ちは`schronu-web-loading` IDの専用rootだけを描画し、BUFFER要素を含めない。snapshot取得前に`bootstrap`が失敗した場合はoverlayを外し、errorを持つ`schronu-web-load-error` rootへ切り替えるが、BUFFER要素は追加しない。snapshot取得成功後は`schronu-web-ready` root内に、確定値だけを受け取る`schronu-buffer-ready` IDのBUFFER要素を描画する。以後のserver通信中はready rootと最後の確定BUFFERを維持したままoverlayを重ねる。
 
-34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。
+34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
 全buttonの`:hover`装飾は`@media (hover: hover) and (pointer: fine)`内だけに定義し、タッチ主体の端末ではタップ後にhover配色を残さない。`:active`と`:focus-visible`はmedia query外に置き、pointer種別にかかわらず操作feedbackを維持する。hover可能なfine pointerではtab、primary action、session startを含む既存hover表現を維持し、選択済み日付buttonのhover中は緑背景と白文字を上書き規則で維持する。
 
@@ -493,7 +496,9 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.3 一覧画面
 
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
-- 日付button直下、task table直上へtask名検索欄を置く。検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。localStorageへ保存しない。
+- 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。desktopでは固定幅の日付入力を検索の左、46rem以下では検索の上に配置する。
+- 日付入力は`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化してtab切替後も保持し、日付buttonを選択した場合は入力とerrorを消去する。入力編集・不正送信・clearはserver通信、localStorage更新、発火履歴追加を行わず、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡す。
+- task名検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。localStorageへ保存しない。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。46rem以下では検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、localStorage更新、発火履歴追加を行わない。持ち歩きロック中も利用できるが、通信中overlayの`inert`はほかの背面操作と同様に適用する。
@@ -679,10 +684,11 @@ OperationHistoryEntry {
 - 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
+- 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 検索文字列が日付・tab切替で保持され、reloadで破棄されることと、検索入力・clearでserver通信、localStorage更新、発火履歴追加がないことをbrowserで確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、32px以上の1行row、左端の幅44px・高さ32pxの「＋」・disabledの「✓」・rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
-- 320px以上で高さ36pxの検索欄と36px四方のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
+- 320px以上で高さ36pxの日付入力・表示button、検索欄、36px四方のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
 - 46rem以下で日付button、検索欄、clear button、各section間隔が圧縮され、日付buttonの横スクロールが維持されることを確認する。34rem以下ではbufferも圧縮されることを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 4操作buttonのlabel、ARIA名、意味別class、通常幅の2列配置、狭幅の1列配置を確認する。

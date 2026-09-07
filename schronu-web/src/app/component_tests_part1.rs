@@ -5,12 +5,14 @@ use super::component::{
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
 use super::component_runtime::{
+    component_action_from_date_button, component_action_from_date_input,
     component_action_from_session_action, component_actions_from_session_action, initialize_client,
     reduce_component_action_at, ComponentAction, ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
+use crate::client::date_input::DateInputState;
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
@@ -71,6 +73,29 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
         *events.lock().unwrap(),
         [ActiveTab::History, ActiveTab::List, ActiveTab::Session]
     );
+}
+
+#[test]
+fn 日付入力actionは正規化して選択し日付buttonは入力をclearする() {
+    let mut date_input = DateInputState::default();
+    date_input.edit("9/16".to_owned());
+
+    let action = component_action_from_date_input(&mut date_input, "2026-09-16")
+        .expect("valid date input must create one action");
+    assert!(matches!(
+        action,
+        ComponentAction::SelectDate(ref date) if date == "2026-09-16"
+    ));
+    assert_eq!(date_input.text(), "2026/9/16");
+
+    let action =
+        component_action_from_date_button(&mut date_input, "2026-09-17".to_owned());
+    assert!(matches!(
+        action,
+        ComponentAction::SelectDate(ref date) if date == "2026-09-17"
+    ));
+    assert_eq!(date_input.text(), "");
+    assert_eq!(date_input.error(), None);
 }
 
 #[test]
@@ -705,6 +730,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
+        current_logical_date,
         history,
         warnings,
         safety_warning,
@@ -722,6 +748,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
+        current_logical_date,
         history,
         warnings,
         safety_warning,

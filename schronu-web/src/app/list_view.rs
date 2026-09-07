@@ -16,9 +16,13 @@ pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     active_task_ids: Vec<String>,
+    date_input_text: String,
+    date_input_error: Option<String>,
     filter_text: String,
     #[props(default)] mutations_locked: bool,
     on_select_date: EventHandler<String>,
+    on_date_input_change: EventHandler<String>,
+    on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
@@ -40,28 +44,62 @@ pub fn ListView(
                     DateButton { date, on_select_date }
                 }
             }
-            div { class: "task-name-filter", role: "search",
-                input {
-                    class: "task-name-filter-input",
-                    r#type: "text",
-                    value: filter_text.clone(),
-                    aria_label: "タスク名を検索",
-                    placeholder: "タスク名を検索",
-                    onmounted: move |element| filter_input.set(Some(element.data())),
-                    oninput: move |event| on_filter_change.call(event.value()),
+            div { class: "list-controls",
+                form {
+                    class: "date-jump-form",
+                    aria_label: "日付へ移動",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        on_submit_date_input.call(());
+                    },
+                    div { class: "date-jump-controls",
+                        input {
+                            class: "date-jump-input",
+                            r#type: "text",
+                            value: date_input_text.clone(),
+                            aria_label: "表示する日付",
+                            aria_invalid: date_input_error.is_some(),
+                            aria_describedby: date_input_error
+                                .as_ref()
+                                .map(|_| "date-input-error"),
+                            placeholder: "例: 6/18",
+                            autocomplete: "off",
+                            oninput: move |event| on_date_input_change.call(event.value()),
+                        }
+                        button {
+                            class: "date-jump-submit",
+                            r#type: "submit",
+                            disabled: date_input_text.trim().is_empty(),
+                            "表示"
+                        }
+                    }
+                    if let Some(ref error) = date_input_error {
+                        p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
+                    }
                 }
-                if !filter_text.is_empty() {
-                    button {
-                        class: "task-name-filter-clear",
-                        r#type: "button",
-                        aria_label: "検索文字列をクリア",
-                        onclick: move |_| async move {
-                            on_filter_change.call(String::new());
-                            if let Some(input) = filter_input.cloned() {
-                                let _ = input.set_focus(true).await;
-                            }
-                        },
-                        "×"
+                div { class: "task-name-filter", role: "search",
+                    input {
+                        class: "task-name-filter-input",
+                        r#type: "text",
+                        value: filter_text.clone(),
+                        aria_label: "タスク名を検索",
+                        placeholder: "タスク名を検索",
+                        onmounted: move |element| filter_input.set(Some(element.data())),
+                        oninput: move |event| on_filter_change.call(event.value()),
+                    }
+                    if !filter_text.is_empty() {
+                        button {
+                            class: "task-name-filter-clear",
+                            r#type: "button",
+                            aria_label: "検索文字列をクリア",
+                            onclick: move |_| async move {
+                                on_filter_change.call(String::new());
+                                if let Some(input) = filter_input.cloned() {
+                                    let _ = input.set_focus(true).await;
+                                }
+                            },
+                            "×"
+                        }
                     }
                 }
             }

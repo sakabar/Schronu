@@ -6,11 +6,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::component_runtime::{
+    component_action_from_date_button, component_action_from_date_input, ComponentAction,
+};
 use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
 use super::view_test_support::{
     dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
+use crate::client::date_input::DateInputState;
 use crate::SessionTask;
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
@@ -26,15 +30,27 @@ struct RootProps {
 
 fn root(props: RootProps) -> Element {
     let date_events = Arc::clone(&props.events);
+    let date_input_events = Arc::clone(&props.events);
+    let date_submit_events = Arc::clone(&props.events);
     let task_events = Arc::clone(&props.events);
     rsx! {
         ListView {
             dates: props.dates,
             rows: props.rows,
             active_task_ids: props.active_task_ids,
+            date_input_text: String::new(),
+            date_input_error: None,
             filter_text: props.filter_text,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
+            on_date_input_change: move |date: String| date_input_events
+                .lock()
+                .unwrap()
+                .push(format!("date-input:{date}")),
+            on_submit_date_input: move |_| date_submit_events
+                .lock()
+                .unwrap()
+                .push("date-submit".to_owned()),
             on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                 .lock()
                 .unwrap()
@@ -76,9 +92,13 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                 dates: props.dates,
                 rows: props.rows,
                 active_task_ids: props.active_task_ids,
+                date_input_text: String::new(),
+                date_input_error: None,
                 filter_text: props.filter_text,
                 mutations_locked: true,
                 on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
                 on_start_session: move |(task, is_leaf): (SessionTask, bool)| task_events
                     .lock()
                     .unwrap()
@@ -382,7 +402,11 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(
+        html.matches("セッション追加済み\" disabled=true").count(),
+        2,
+        "{html}"
+    );
     assert_eq!(html.matches(">✓</span>").count(), 2, "{html}");
     assert_eq!(html.matches(">＋</span>").count(), 1, "{html}");
     assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
@@ -536,21 +560,104 @@ fn 検索欄は日付buttonの下かつtableの上にあり入力を通知する
     let input_listeners = rebuild_with_event_listeners(&mut dom, "input");
     let html = dioxus::ssr::render(&dom);
     let dates_position = html.find("class=\"date-pills\"").unwrap();
+    let controls_position = html.find("class=\"list-controls\"").unwrap();
+    let date_input_position = html.find("class=\"date-jump-form\"").unwrap();
     let filter_position = html.find("class=\"task-name-filter\"").unwrap();
     let table_position = html.find("class=\"task-table-scroll\"").unwrap();
 
-    assert!(dates_position < filter_position && filter_position < table_position);
+    assert!(
+        dates_position < controls_position
+            && controls_position < date_input_position
+            && date_input_position < filter_position
+            && filter_position < table_position
+    );
+    assert!(html.contains("aria-label=\"表示する日付\""), "{html}");
+    assert!(html.contains("placeholder=\"例: 6/18\""), "{html}");
+    assert!(html.contains(">表示</button>"), "{html}");
     assert!(html.contains("aria-label=\"タスク名を検索\""), "{html}");
     assert!(html.contains("placeholder=\"タスク名を検索\""), "{html}");
-    assert_eq!(input_listeners.len(), 1);
+    assert_eq!(input_listeners.len(), 2);
 
     dispatch_platform_event(
         &dom,
         "input",
-        input_listeners[0],
+        input_listeners[1],
         Box::new(SerializedFormData::new("設計".to_owned(), Vec::new())),
     );
     assert_eq!(*events.lock().unwrap(), ["filter:設計"]);
+}
+
+#[test]
+fn 日付入力とform_submitは別々のeventを通知する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        RootProps {
+            dates: Vec::new(),
+            rows: Vec::new(),
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let date_input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+    let submit_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "submit").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        date_input_id,
+        Box::new(SerializedFormData::new("9/16".to_owned(), Vec::new())),
+    );
+    dispatch_platform_event(
+        &dom,
+        "submit",
+        submit_id,
+        Box::new(SerializedFormData::new(String::new(), Vec::new())),
+    );
+
+    assert_eq!(*events.lock().unwrap(), ["date-input:9/16", "date-submit"]);
+}
+
+#[test]
+fn 日付入力errorはfieldと関連付けて表示する() {
+    let mut dom = VirtualDom::new(|| {
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: "bad".to_owned(),
+                date_input_error: Some("M/DまたはYYYY/M/D形式で入力してください。".to_owned()),
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("aria-invalid=true"), "{html}");
+    assert!(
+        html.contains("aria-describedby=\"date-input-error\""),
+        "{html}"
+    );
+    assert!(html.contains("id=\"date-input-error\""), "{html}");
+    assert!(
+        html.contains("class=\"date-input-error\" role=\"alert\""),
+        "{html}"
+    );
 }
 
 #[test]
@@ -618,6 +725,146 @@ fn task_name_filterはdesktop幅とclearの既定touch_targetを維持する() {
     }
 }
 
+#[test]
+fn 日付入力はdesktopで検索の左かつmobileで検索の上に並ぶ() {
+    let css = include_str!("../../assets/main.css");
+    let (desktop_layout, mobile_layout) = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("mobile list breakpoint must exist");
+
+    for required in [
+        ".list-controls {\n    display: grid;",
+        "grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);",
+        ".date-jump-controls {\n    display: grid;",
+        "grid-template-columns: minmax(0, 1fr) auto;",
+        ".date-jump-input {\n    width: 100%;",
+        ".date-jump-submit {\n    min-height: max(2.75rem, 44px);",
+    ] {
+        assert!(desktop_layout.contains(required), "missing: {required}");
+    }
+
+    for required in [
+        ".list-controls {\n        grid-template-columns: minmax(0, 1fr);",
+        ".date-jump-input,\n    .date-jump-submit {\n        height: 36px;",
+        "min-height: 36px;",
+    ] {
+        assert!(mobile_layout.contains(required), "missing: {required}");
+    }
+}
+
+#[component]
+fn StatefulDateInputHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_list = use_signal(|| true);
+    let mut date_input = use_signal(DateInputState::default);
+    let input_text = date_input.read().text().to_owned();
+    let input_error = date_input.read().error().map(|error| error.to_string());
+    let button_events = Rc::clone(&events);
+    let submit_events = Rc::clone(&events);
+
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "一覧tab切替",
+            onclick: move |_| {
+                let next = !*show_list.read();
+                show_list.set(next);
+            },
+            "一覧tab切替"
+        }
+        if *show_list.read() {
+            ListView {
+                dates: vec![DateButtonViewModel {
+                    logical_date: "2026-09-17".to_owned(),
+                    label: "木".to_owned(),
+                    selected: false,
+                }],
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: input_text,
+                date_input_error: input_error,
+                filter_text: String::new(),
+                on_select_date: move |date| {
+                    let action = component_action_from_date_button(&mut date_input.write(), date);
+                    if let ComponentAction::SelectDate(date) = action {
+                        button_events.borrow_mut().push(format!("server:{date}"));
+                    }
+                },
+                on_date_input_change: move |text| date_input.write().edit(text),
+                on_submit_date_input: move |_| {
+                    if let Some(ComponentAction::SelectDate(date)) =
+                        component_action_from_date_input(&mut date_input.write(), "2026-09-16")
+                    {
+                        submit_events.borrow_mut().push(format!("server:{date}"));
+                    }
+                },
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+}
+
+#[test]
+fn 日付入力は正規化後もtab往復で保持され日付buttonでclearされる() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        StatefulDateInputHarness,
+        StatefulDateInputHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let toggle_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "click").then_some(*id))
+        .unwrap();
+    let date_input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+    let submit_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "submit").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        date_input_id,
+        Box::new(SerializedFormData::new("9/16".to_owned(), Vec::new())),
+    );
+    dispatch_platform_event(
+        &dom,
+        "submit",
+        submit_id,
+        Box::new(SerializedFormData::new(String::new(), Vec::new())),
+    );
+    dom.render_immediate_to_vec();
+    let submitted_html = dioxus::ssr::render(&dom);
+    assert!(
+        submitted_html.contains("value=\"2026/9/16\""),
+        "{submitted_html}"
+    );
+    assert_eq!(*events.borrow(), ["server:2026-09-16"]);
+
+    dispatch_click(&dom, toggle_id);
+    dom.render_immediate_to_vec();
+    dispatch_click(&dom, toggle_id);
+    let restored_click_ids = render_with_click_listeners(&mut dom);
+    let restored_html = dioxus::ssr::render(&dom);
+    assert!(
+        restored_html.contains("value=\"2026/9/16\""),
+        "{restored_html}"
+    );
+
+    assert_eq!(restored_click_ids.len(), 1);
+    dispatch_click(&dom, restored_click_ids[0]);
+    dom.render_immediate_to_vec();
+    let cleared_html = dioxus::ssr::render(&dom);
+    assert!(cleared_html.contains("class=\"date-jump-input\" type=\"text\" value=\"\""));
+    assert_eq!(*events.borrow(), ["server:2026-09-16", "server:2026-09-17"]);
+}
+
 #[component]
 fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
     let mut show_list = use_signal(|| true);
@@ -643,8 +890,12 @@ fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                     named_row("implementation", "実装", false, false),
                 ],
                 active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
                 filter_text: filter_text.read().clone(),
                 on_select_date: move |_| date_events.borrow_mut().push("server:date".to_owned()),
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
                 on_start_session: move |_| session_events.borrow_mut().push("storage:session".to_owned()),
                 on_filter_change: move |filter| filter_text.set(filter),
             }
@@ -668,6 +919,7 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
         .unwrap();
     let input_id = listeners
         .iter()
+        .rev()
         .find_map(|(name, id)| (name == "input").then_some(*id))
         .unwrap();
 

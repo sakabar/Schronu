@@ -21,8 +21,12 @@ fn client_projectionの型をviewへ直接渡せる() {
                 dates: Vec::new(),
                 rows,
                 active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
                 filter_text: String::new(),
                 on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
                 on_start_session: move |_| {},
                 on_filter_change: move |_| {},
             }
