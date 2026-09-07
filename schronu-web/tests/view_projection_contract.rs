@@ -20,6 +20,7 @@ fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止�
     let active = project_session_cards(&state, JST_OFFSET_MINUTES);
     assert_eq!(active[0].started_at_hh_mm, "09:30");
     assert_eq!(active[0].completion_hh_mm.as_deref(), Some("09:40"));
+    assert_eq!(active[0].actual_work_seconds_at_start, 300);
     assert_eq!(active[0].progress_percent, Some(40));
     assert_eq!(active[0].remaining_seconds, 540);
     assert!(!active[0].server_committed);
