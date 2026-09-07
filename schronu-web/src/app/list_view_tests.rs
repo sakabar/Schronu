@@ -26,6 +26,8 @@ struct RootProps {
 
 fn root(props: RootProps) -> Element {
     let date_events = Arc::clone(&props.events);
+    let date_input_events = Arc::clone(&props.events);
+    let date_submit_events = Arc::clone(&props.events);
     let task_events = Arc::clone(&props.events);
     rsx! {
         ListView {
@@ -37,11 +39,11 @@ fn root(props: RootProps) -> Element {
             filter_text: props.filter_text,
             mutations_locked: false,
             on_select_date: move |date: String| date_events.lock().unwrap().push(format!("date:{date}")),
-            on_date_input_change: move |date: String| props.events
+            on_date_input_change: move |date: String| date_input_events
                 .lock()
                 .unwrap()
                 .push(format!("date-input:{date}")),
-            on_submit_date_input: move |_| props.events
+            on_submit_date_input: move |_| date_submit_events
                 .lock()
                 .unwrap()
                 .push("date-submit".to_owned()),
@@ -396,7 +398,11 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(
+        html.matches("セッション追加済み\" disabled=true").count(),
+        2,
+        "{html}"
+    );
     assert_eq!(html.matches(">✓</span>").count(), 2, "{html}");
     assert_eq!(html.matches(">＋</span>").count(), 1, "{html}");
     assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
@@ -640,7 +646,8 @@ fn 日付入力errorはfieldと関連付けて表示する() {
 
     assert!(html.contains("aria-invalid=true"), "{html}");
     assert!(html.contains("aria-describedby=\"date-input-error\""), "{html}");
-    assert!(html.contains("id=\"date-input-error\" role=\"alert\""), "{html}");
+    assert!(html.contains("id=\"date-input-error\""), "{html}");
+    assert!(html.contains("class=\"date-input-error\" role=\"alert\""), "{html}");
 }
 
 #[test]
@@ -708,6 +715,33 @@ fn task_name_filterはdesktop幅とclearの既定touch_targetを維持する() {
     }
 }
 
+#[test]
+fn 日付入力はdesktopで検索の左かつmobileで検索の上に並ぶ() {
+    let css = include_str!("../../assets/main.css");
+    let (desktop_layout, mobile_layout) = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("mobile list breakpoint must exist");
+
+    for required in [
+        ".list-controls {\n    display: grid;",
+        "grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);",
+        ".date-jump-controls {\n    display: grid;",
+        "grid-template-columns: minmax(0, 1fr) auto;",
+        ".date-jump-input {\n    width: 100%;",
+        ".date-jump-submit {\n    min-height: max(2.75rem, 44px);",
+    ] {
+        assert!(desktop_layout.contains(required), "missing: {required}");
+    }
+
+    for required in [
+        ".list-controls {\n        grid-template-columns: minmax(0, 1fr);",
+        ".date-jump-input,\n    .date-jump-submit {\n        height: 36px;",
+        "min-height: 36px;",
+    ] {
+        assert!(mobile_layout.contains(required), "missing: {required}");
+    }
+}
+
 #[component]
 fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
     let mut show_list = use_signal(|| true);
@@ -762,6 +796,7 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
         .unwrap();
     let input_id = listeners
         .iter()
+        .rev()
         .find_map(|(name, id)| (name == "input").then_some(*id))
         .unwrap();
 
