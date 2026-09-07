@@ -7,7 +7,8 @@ use super::component_models::BrowserPageModel;
 use super::component_runtime::{
     component_action_from_date_button, component_action_from_date_input,
     component_action_from_session_action, component_actions_from_session_action, initialize_client,
-    reduce_component_action_at, ComponentAction, ComponentOrchestrator,
+    reduce_component_action_at, reset_task_name_filter_after_session_add, ComponentAction,
+    ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
 use super::session_view::{SessionAction, SessionActionKind};
@@ -298,6 +299,9 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
 fn 一覧のセッション追加後はセッションtabへ切り替えられserver通信を発生させない() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
+    let mut task_name_filter = "  実装  ".to_owned();
+    let mut date_input = DateInputState::default();
+    date_input.edit("2026/9/16".to_owned());
 
     reduce_component_action_at(
         &mut state,
@@ -305,6 +309,7 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
         1_000,
         ComponentAction::SwitchTab(ActiveTab::List),
     );
+    let previous_session_count = state.sessions().len();
     let effect = reduce_component_action_at(
         &mut state,
         &storage,
@@ -314,10 +319,19 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
             is_leaf: true,
         },
     );
+    reset_task_name_filter_after_session_add(
+        &mut task_name_filter,
+        previous_session_count,
+        state.sessions().len(),
+    );
 
     assert_eq!(effect, ClientEffect::None);
     assert_eq!(state.sessions().len(), 1);
     assert_eq!(state.active_tab(), ActiveTab::Session);
+    assert!(state.history().is_empty());
+    assert!(task_name_filter.is_empty());
+    assert_eq!(date_input.text(), "2026/9/16");
+    assert_eq!(date_input.error(), None);
 }
 
 #[test]
@@ -342,16 +356,24 @@ fn 一覧のセッション追加が拒否された場合は一覧tabに留ま�
     );
 
     for (task, is_leaf) in [(task(RECORD_ID), true), (task(COMPLETE_ID), false)] {
+        let mut task_name_filter = "絞り込み中".to_owned();
+        let previous_session_count = state.sessions().len();
         let effect = reduce_component_action_at(
             &mut state,
             &storage,
             1_000,
             ComponentAction::AddSession { task, is_leaf },
         );
+        reset_task_name_filter_after_session_add(
+            &mut task_name_filter,
+            previous_session_count,
+            state.sessions().len(),
+        );
 
         assert_eq!(effect, ClientEffect::None);
         assert_eq!(state.sessions().len(), 1);
         assert_eq!(state.active_tab(), ActiveTab::List);
+        assert_eq!(task_name_filter, "絞り込み中");
     }
 
     reduce_component_action_at(
@@ -360,6 +382,8 @@ fn 一覧のセッション追加が拒否された場合は一覧tabに留ま�
         1_000,
         ComponentAction::EnableCarryLock,
     );
+    let mut task_name_filter = "ロック中".to_owned();
+    let previous_session_count = state.sessions().len();
     let effect = reduce_component_action_at(
         &mut state,
         &storage,
@@ -369,10 +393,16 @@ fn 一覧のセッション追加が拒否された場合は一覧tabに留ま�
             is_leaf: true,
         },
     );
+    reset_task_name_filter_after_session_add(
+        &mut task_name_filter,
+        previous_session_count,
+        state.sessions().len(),
+    );
 
     assert_eq!(effect, ClientEffect::None);
     assert_eq!(state.sessions().len(), 1);
     assert_eq!(state.active_tab(), ActiveTab::List);
+    assert_eq!(task_name_filter, "ロック中");
 }
 
 #[test]
@@ -386,6 +416,8 @@ fn 一覧のセッション保存失敗時は一覧tabに留まる() {
         ComponentAction::SwitchTab(ActiveTab::List),
     );
 
+    let mut task_name_filter = "保存失敗".to_owned();
+    let previous_session_count = state.sessions().len();
     let effect = reduce_component_action_at(
         &mut state,
         &storage,
@@ -395,10 +427,16 @@ fn 一覧のセッション保存失敗時は一覧tabに留まる() {
             is_leaf: true,
         },
     );
+    reset_task_name_filter_after_session_add(
+        &mut task_name_filter,
+        previous_session_count,
+        state.sessions().len(),
+    );
 
     assert_eq!(effect, ClientEffect::None);
     assert!(state.sessions().is_empty());
     assert_eq!(state.active_tab(), ActiveTab::List);
+    assert_eq!(task_name_filter, "保存失敗");
 }
 
 #[test]
