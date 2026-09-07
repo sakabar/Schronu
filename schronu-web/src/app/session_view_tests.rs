@@ -208,7 +208,7 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
         "11:28",
         "133%",
         "00:03",
-        "破棄して解除",
+        "計測を破棄して解除",
         "記録して解除",
         "計測を破棄して完了",
         "記録して完了",
@@ -228,7 +228,7 @@ fn session_card_renders_time_progress_overrun_and_four_typed_actions() {
     assert!(html.contains("width:calc(33% / 1.5)"));
     assert!(html.contains("session-remaining is-overrun"));
     for label in [
-        "破棄して解除",
+        "計測を破棄して解除",
         "記録して解除",
         "計測を破棄して完了",
         "記録して完了",
@@ -556,7 +556,7 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
         assert!(html.contains(message), "{html}");
         assert!(html.contains("計測を再開"), "{html}");
         assert!(html.contains(confirm_label), "{html}");
-        for normal_action in ["破棄して解除", "記録して解除", "計測を破棄して完了", "記録して完了"] {
+        for normal_action in ["計測を破棄して解除", "記録して解除", "計測を破棄して完了", "記録して完了"] {
             assert!(!html.contains(normal_action), "{html}");
         }
         assert_eq!(ids.len(), 2);
