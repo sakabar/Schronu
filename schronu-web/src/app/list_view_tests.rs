@@ -645,9 +645,15 @@ fn 日付入力errorはfieldと関連付けて表示する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("aria-invalid=true"), "{html}");
-    assert!(html.contains("aria-describedby=\"date-input-error\""), "{html}");
+    assert!(
+        html.contains("aria-describedby=\"date-input-error\""),
+        "{html}"
+    );
     assert!(html.contains("id=\"date-input-error\""), "{html}");
-    assert!(html.contains("class=\"date-input-error\" role=\"alert\""), "{html}");
+    assert!(
+        html.contains("class=\"date-input-error\" role=\"alert\""),
+        "{html}"
+    );
 }
 
 #[test]

@@ -510,6 +510,60 @@ button:disabled {
     gap: 1rem;
 }
 
+.list-controls {
+    display: grid;
+    grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);
+    align-items: start;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.date-jump-form {
+    display: grid;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.date-jump-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.date-jump-input {
+    width: 100%;
+    min-width: 0;
+    min-height: max(2.75rem, 44px);
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    padding: 0.65rem 0.85rem;
+}
+
+.date-jump-input:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: 3px;
+}
+
+.date-jump-input[aria-invalid="true"] {
+    border-color: var(--red);
+}
+
+.date-jump-submit {
+    min-height: max(2.75rem, 44px);
+    padding-inline: 1rem;
+}
+
+.date-input-error {
+    margin: 0;
+    color: var(--red);
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
 .task-name-filter {
     display: flex;
     width: 100%;
@@ -689,6 +743,11 @@ button:disabled {
         gap: 0.5rem;
     }
 
+    .list-controls {
+        grid-template-columns: minmax(0, 1fr);
+        gap: 0.5rem;
+    }
+
     .date-pills {
         padding: 0.125rem 0.1rem 0.25rem;
     }
@@ -701,6 +760,16 @@ button:disabled {
     .task-name-filter-input {
         height: 36px;
         min-height: 36px;
+        padding: 0.4rem 0.7rem;
+    }
+
+    .date-jump-input,
+    .date-jump-submit {
+        height: 36px;
+        min-height: 36px;
+    }
+
+    .date-jump-input {
         padding: 0.4rem 0.7rem;
     }
 

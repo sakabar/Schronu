@@ -10,6 +10,7 @@ use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
 use super::{InteractiveShell, LoadingOverlay, NavigationTabs, SessionChrome};
+use crate::client::date_input::DateInputState;
 use crate::client::state::ActiveTab;
 use crate::client::time_model::format_hh_mm_ss;
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -20,6 +21,7 @@ const TICK_MILLIS: u32 = 1_000;
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let mut date_input = use_signal(DateInputState::default);
     let mut task_name_filter = use_signal(String::new);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
@@ -57,6 +59,7 @@ pub(super) fn BrowserApp() -> Element {
         rows,
         active_task_ids,
         dates,
+        current_logical_date,
         history,
         warnings,
         safety_warning,
@@ -69,6 +72,8 @@ pub(super) fn BrowserApp() -> Element {
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
     let server_effect_in_flight = client.read().server_effect_in_flight();
+    let date_input_text = date_input.read().text().to_owned();
+    let date_input_error = date_input.read().error().map(|error| error.to_string());
     let filter_text = task_name_filter.read().clone();
 
     rsx! {
@@ -122,9 +127,23 @@ pub(super) fn BrowserApp() -> Element {
                     dates,
                     rows,
                     active_task_ids,
+                    date_input_text,
+                    date_input_error,
                     filter_text,
                     mutations_locked,
-                    on_select_date: move |date| dispatch_action(client, ComponentAction::SelectDate(date)),
+                    on_select_date: move |date| {
+                        date_input.write().clear();
+                        dispatch_action(client, ComponentAction::SelectDate(date));
+                    },
+                    on_date_input_change: move |text| date_input.write().edit(text),
+                    on_submit_date_input: move |_| {
+                        let Some(current_logical_date) = current_logical_date.as_deref() else {
+                            return;
+                        };
+                        if let Some(date) = date_input.write().submit(current_logical_date) {
+                            dispatch_action(client, ComponentAction::SelectDate(date));
+                        }
+                    },
                     on_start_session: move |(task, is_leaf)| dispatch_action(
                         client,
                         ComponentAction::AddSession { task, is_leaf },
