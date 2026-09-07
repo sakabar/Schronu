@@ -6,11 +6,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use super::component_runtime::{
+    component_action_from_date_button, component_action_from_date_input, ComponentAction,
+};
 use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
 use super::view_test_support::{
     dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
+use crate::client::date_input::DateInputState;
 use crate::SessionTask;
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
@@ -746,6 +750,119 @@ fn 日付入力はdesktopで検索の左かつmobileで検索の上に並ぶ() {
     ] {
         assert!(mobile_layout.contains(required), "missing: {required}");
     }
+}
+
+#[component]
+fn StatefulDateInputHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_list = use_signal(|| true);
+    let mut date_input = use_signal(DateInputState::default);
+    let input_text = date_input.read().text().to_owned();
+    let input_error = date_input.read().error().map(|error| error.to_string());
+    let button_events = Rc::clone(&events);
+    let submit_events = Rc::clone(&events);
+
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "一覧tab切替",
+            onclick: move |_| {
+                let next = !*show_list.read();
+                show_list.set(next);
+            },
+            "一覧tab切替"
+        }
+        if *show_list.read() {
+            ListView {
+                dates: vec![DateButtonViewModel {
+                    logical_date: "2026-09-17".to_owned(),
+                    label: "木".to_owned(),
+                    selected: false,
+                }],
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: input_text,
+                date_input_error: input_error,
+                filter_text: String::new(),
+                on_select_date: move |date| {
+                    let action = component_action_from_date_button(&mut date_input.write(), date);
+                    if let ComponentAction::SelectDate(date) = action {
+                        button_events.borrow_mut().push(format!("server:{date}"));
+                    }
+                },
+                on_date_input_change: move |text| date_input.write().edit(text),
+                on_submit_date_input: move |_| {
+                    if let Some(ComponentAction::SelectDate(date)) =
+                        component_action_from_date_input(&mut date_input.write(), "2026-09-16")
+                    {
+                        submit_events.borrow_mut().push(format!("server:{date}"));
+                    }
+                },
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+}
+
+#[test]
+fn 日付入力は正規化後もtab往復で保持され日付buttonでclearされる() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        StatefulDateInputHarness,
+        StatefulDateInputHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let toggle_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "click").then_some(*id))
+        .unwrap();
+    let date_input_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "input").then_some(*id))
+        .unwrap();
+    let submit_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "submit").then_some(*id))
+        .unwrap();
+
+    dispatch_platform_event(
+        &dom,
+        "input",
+        date_input_id,
+        Box::new(SerializedFormData::new("9/16".to_owned(), Vec::new())),
+    );
+    dispatch_platform_event(
+        &dom,
+        "submit",
+        submit_id,
+        Box::new(SerializedFormData::new(String::new(), Vec::new())),
+    );
+    dom.render_immediate_to_vec();
+    let submitted_html = dioxus::ssr::render(&dom);
+    assert!(
+        submitted_html.contains("value=\"2026/9/16\""),
+        "{submitted_html}"
+    );
+    assert_eq!(*events.borrow(), ["server:2026-09-16"]);
+
+    dispatch_click(&dom, toggle_id);
+    dom.render_immediate_to_vec();
+    dispatch_click(&dom, toggle_id);
+    let restored_click_ids = render_with_click_listeners(&mut dom);
+    let restored_html = dioxus::ssr::render(&dom);
+    assert!(
+        restored_html.contains("value=\"2026/9/16\""),
+        "{restored_html}"
+    );
+
+    assert_eq!(restored_click_ids.len(), 1);
+    dispatch_click(&dom, restored_click_ids[0]);
+    dom.render_immediate_to_vec();
+    let cleared_html = dioxus::ssr::render(&dom);
+    assert!(cleared_html.contains("class=\"date-jump-input\" type=\"text\" value=\"\""));
+    assert_eq!(*events.borrow(), ["server:2026-09-16", "server:2026-09-17"]);
 }
 
 #[component]

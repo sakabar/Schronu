@@ -3,7 +3,10 @@ use super::super::component_dispatch::{dispatch_action, dispatch_session_action}
 use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
-use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
+use super::super::component_runtime::{
+    component_action_from_date_button, component_action_from_date_input, ComponentAction,
+    ComponentOrchestrator,
+};
 use super::super::history_view::HistoryView;
 use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
@@ -132,16 +135,19 @@ pub(super) fn BrowserApp() -> Element {
                     filter_text,
                     mutations_locked,
                     on_select_date: move |date| {
-                        date_input.write().clear();
-                        dispatch_action(client, ComponentAction::SelectDate(date));
+                        let action = component_action_from_date_button(&mut date_input.write(), date);
+                        dispatch_action(client, action);
                     },
                     on_date_input_change: move |text| date_input.write().edit(text),
                     on_submit_date_input: move |_| {
                         let Some(current_logical_date) = current_logical_date.as_deref() else {
                             return;
                         };
-                        if let Some(date) = date_input.write().submit(current_logical_date) {
-                            dispatch_action(client, ComponentAction::SelectDate(date));
+                        if let Some(action) = component_action_from_date_input(
+                            &mut date_input.write(),
+                            current_logical_date,
+                        ) {
+                            dispatch_action(client, action);
                         }
                     },
                     on_start_session: move |(task, is_leaf)| dispatch_action(

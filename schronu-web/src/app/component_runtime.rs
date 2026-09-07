@@ -1,3 +1,4 @@
+use crate::client::date_input::DateInputState;
 use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
 use crate::client::work_sessions::KeyValueStorage;
 use crate::SessionTask;
@@ -21,6 +22,23 @@ pub(crate) enum ComponentAction {
     EnableCarryLock,
     ArmCarryLock,
     DisableCarryLock,
+}
+
+pub(crate) fn component_action_from_date_input(
+    date_input: &mut DateInputState,
+    current_logical_date: &str,
+) -> Option<ComponentAction> {
+    date_input
+        .submit(current_logical_date)
+        .map(ComponentAction::SelectDate)
+}
+
+pub(crate) fn component_action_from_date_button(
+    date_input: &mut DateInputState,
+    logical_date: String,
+) -> ComponentAction {
+    date_input.clear();
+    ComponentAction::SelectDate(logical_date)
 }
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
