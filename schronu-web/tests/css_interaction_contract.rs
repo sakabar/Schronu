@@ -72,6 +72,13 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     let tab_button = block_body(MAIN_CSS, ".tab-button");
     assert!(tab_button.contains("min-height: max(2.75rem, 44px);"));
 
+    let mobile = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    let mobile_root = block_body(mobile, ":root");
+    assert!(mobile_root.contains("--bottom-navigation-height: 40px;"));
+    let mobile_tab_button = block_body(mobile, ".tab-button");
+    assert!(mobile_tab_button.contains("min-height: 40px;"));
+    assert!(mobile_tab_button.contains("padding: 0.4rem 0.35rem;"));
+
     let shell = block_body(MAIN_CSS, ".shell");
     assert!(shell.contains("var(--bottom-navigation-height)"));
     assert!(shell.contains("env(safe-area-inset-bottom)"));
