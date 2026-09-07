@@ -117,7 +117,12 @@ fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
 
     let metadata = block_body(MAIN_CSS, ".session-timing-meta");
     assert!(metadata.contains("display: flex;"));
+    assert!(metadata.contains("min-width: 0;"));
     assert!(metadata.contains("flex-wrap: wrap;"));
+
+    let actual_at_start = block_body(MAIN_CSS, ".session-start-actual");
+    assert!(actual_at_start.contains("flex: 0 0 auto;"));
+    assert!(actual_at_start.contains("white-space: nowrap;"));
 
     let mobile = block_body(MAIN_CSS, "@media (max-width: 52rem)");
     let card = block_body(mobile, ".session-card");
@@ -128,7 +133,8 @@ fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     assert!(!card.contains("\"remaining\""), "{card}");
 
     let narrow = block_body(MAIN_CSS, "@media (max-width: 34rem)");
-    assert!(narrow.contains(".session-remaining"));
+    let narrow_remaining = block_body(narrow, ".session-remaining");
+    assert!(narrow_remaining.contains("font-size: clamp(1.75rem, 9vw, 2.25rem);"));
 }
 
 #[test]
