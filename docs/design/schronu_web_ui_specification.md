@@ -503,8 +503,8 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - 「計測を破棄して完了」または「記録して完了」のserver処理成功後は、追加の`list_tasks`を送らず、表示中のrowから対象task UUIDを持つ全schedule segmentを除去する。別taskのrowと選択logical dateは、responseでlogical dateが変わった場合も維持する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response受理後に利用者が日付buttonをclickして開始した新しい`list_tasks` requestは通常どおり適用する。
 - 完了によって生成された反復taskは成功responseから一覧へ追加せず、次の明示的な`list_tasks`で取得する。
-- 全幅でheaderとrowをセッション追加、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。46rem以下ではtable全体の横スクロールを解除し、`44px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。
-- mobile rowは44px以上の1行とし、row間を罫線だけで区切る。card用の行間、角丸、影、内側余白は使用しない。セッション追加cellは未追加のrank 0で「＋」、追加済みでdisabledの「✓」、rank非0で空cellとする。
+- 全幅でheaderとrowをセッション追加、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。46rem以下ではtable全体の横スクロールを解除し、`44px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
+- mobile rowは32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。セッション追加cellは未追加のrank 0で幅44px・高さ32pxの「＋」、追加済みで同寸法かつdisabledの「✓」、rank非0で空cellとする。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、既存formatを省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`としてcell内で横スクロール可能にし、全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
 ### 7.4 操作結果
@@ -676,7 +676,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 検索文字列が日付・tab切替で保持され、reloadで破棄されることと、検索入力・clearでserver通信、localStorage更新、発火履歴追加がないことをbrowserで確認する。
-- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、44px以上の1行row、左端の「＋」・disabledの「✓」・rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもviewport全体の横スクロールが発生しないことを確認する。
+- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、32px以上の1行row、左端の幅44px・高さ32pxの「＋」・disabledの「✓」・rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもviewport全体の横スクロールが発生しないことを確認する。
 - 320px以上で検索欄と44px以上のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
 - 34rem以下でbufferと日付buttonが圧縮され、日付buttonの操作高44px以上と横スクロールが維持されることを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。

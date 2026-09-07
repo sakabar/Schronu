@@ -719,7 +719,7 @@ button:disabled {
     }
 
     .task-row {
-        min-height: 44px;
+        min-height: 32px;
         align-items: stretch;
     }
 
@@ -751,20 +751,20 @@ button:disabled {
         display: flex;
         min-width: 0;
         align-items: center;
-        padding: 0.25rem 0.35rem;
+        padding: 0.125rem 0.35rem;
         border-bottom: 0;
     }
 
     .deadline,
     .schedule-time {
-        font-size: 0.72rem;
+        font-size: 0.68rem;
         line-height: 1;
     }
 
     .task-name {
         overflow: hidden;
-        font-size: 0.88rem;
-        line-height: 1.25;
+        font-size: 0.75rem;
+        line-height: 1.15;
     }
 
     .task-name-scroll {
@@ -782,13 +782,13 @@ button:disabled {
         outline-offset: -3px;
     }
 
-    .session-cell {
+    .task-table .session-cell {
         padding: 0;
     }
 
     .session-cell .session-start {
         width: 44px;
-        min-height: 44px;
+        min-height: 32px;
         border-width: 0 1px 0 0;
         border-radius: 0;
         padding: 0;

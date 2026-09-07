@@ -262,12 +262,22 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
 }
 
 #[test]
-fn listは46rem以下で可視header付きの一行tableになる() {
+fn listは46rem以下で可視header付きの高密度な一行tableになる() {
     let css = include_str!("../../assets/main.css");
+    let desktop_list_layout = css
+        .split_once("@media (max-width: 46rem)")
+        .expect("mobile list breakpoint must exist")
+        .0;
     let mobile_list_layout = css
         .split_once("@media (max-width: 46rem)")
         .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
         .1;
+
+    assert!(
+        desktop_list_layout
+            .contains(".task-table th,\n.task-table td {\n    padding: 0.9rem 1rem;"),
+        "desktop table spacing must remain unchanged"
+    );
 
     for required in [
         ".task-table-scroll {\n        overflow-x: visible;",
@@ -276,12 +286,15 @@ fn listは46rem以下で可視header付きの一行tableになる() {
         ".task-table thead tr,\n    .task-row {\n        display: grid;",
         "grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);",
         "grid-template-areas: \"action schedule deadline task\";",
-        ".task-row {\n        min-height: 44px;",
+        ".task-row {\n        min-height: 32px;",
         ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
-        ".deadline,\n    .schedule-time {\n        font-size: 0.72rem;",
+        ".task-table td {\n        display: flex;\n        min-width: 0;\n        align-items: center;\n        padding: 0.125rem 0.35rem;",
+        ".task-table .session-cell {\n        padding: 0;",
+        ".deadline,\n    .schedule-time {\n        font-size: 0.68rem;",
+        ".task-name {\n        overflow: hidden;\n        font-size: 0.75rem;",
         ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",
-        ".session-cell .session-start {\n        width: 44px;\n        min-height: 44px;",
+        ".session-cell .session-start {\n        width: 44px;\n        min-height: 32px;",
     ] {
         assert!(mobile_list_layout.contains(required), "missing: {required}");
     }
