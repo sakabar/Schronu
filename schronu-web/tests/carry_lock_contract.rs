@@ -79,6 +79,23 @@ fn enableはmemory優先でdisableはstorage優先にする() {
 }
 
 #[test]
+fn 一時許可の即時再lockは保存状態を変えず期限を破棄する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    state.enable_carry_lock(&storage);
+    state.arm_carry_lock(2_000);
+    let stored = storage.carry_lock_value.borrow().clone();
+
+    assert_eq!(state.relock_carry_lock(), schronu_web::client::state::ClientEffect::None);
+
+    assert_eq!(state.carry_lock_mode(), CarryLockMode::Locked);
+    assert_eq!(*storage.carry_lock_value.borrow(), stored);
+
+    assert_eq!(state.relock_carry_lock(), schronu_web::client::state::ClientEffect::None);
+    assert_eq!(state.carry_lock_mode(), CarryLockMode::Locked);
+}
+
+#[test]
 fn carry_lock_warningは既存storage_warningと併せて公開する() {
     let storage = FakeStorage::default();
     *storage.value.borrow_mut() = Some("not-json".to_owned());

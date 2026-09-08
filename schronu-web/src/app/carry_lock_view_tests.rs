@@ -30,6 +30,7 @@ fn deferred_scheduler() -> LongPressSchedulerHandle {
 fn root(props: RootProps) -> Element {
     let enable_events = Arc::clone(&props.events);
     let arm_events = Arc::clone(&props.events);
+    let relock_events = Arc::clone(&props.events);
     let disable_events = Arc::clone(&props.events);
     rsx! {
         CarryLockBar {
@@ -37,6 +38,7 @@ fn root(props: RootProps) -> Element {
             scheduler: props.scheduler,
             on_enable: move |_| enable_events.lock().unwrap().push("enable"),
             on_arm: move |_| arm_events.lock().unwrap().push("arm"),
+            on_relock: move |_| relock_events.lock().unwrap().push("relock"),
             on_disable: move |_| disable_events.lock().unwrap().push("disable"),
         }
     }
@@ -173,6 +175,27 @@ fn normalの1tapと解除確認の確定だけがcallbackを送る() {
 }
 
 #[test]
+fn armedは独立した今すぐlock_buttonでcallbackを1回送る() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut armed = VirtualDom::new_with_props(
+        root,
+        RootProps {
+            model: CarryLockViewModel::new(CarryLockMode::ArmedUntil(17_000), 2_000),
+            events: Arc::clone(&events),
+            scheduler: deferred_scheduler(),
+        },
+    );
+
+    let ids = rebuild_with_click_listeners(&mut armed);
+
+    assert_eq!(ids.len(), 2, "永続解除と即時再lockのみclick可能にする");
+    let html = dioxus::ssr::render(&armed);
+    assert!(html.contains("今すぐロック"), "{html}");
+    dispatch_click(&armed, ids[0]);
+    assert_eq!(*events.lock().unwrap(), ["relock"]);
+}
+
+#[test]
 fn pointer長押しは主pointerの許可されたcontactだけで開始する() {
     assert!(accepts_long_press_pointer(
         "mouse",
@@ -212,10 +235,24 @@ fn lock_bar_cssはstickyとsafe_areaと状態feedbackを持つ() {
         "env(safe-area-inset-top)",
         ".carry-lock-bar.is-armed",
         ".carry-lock-hold.is-pressing",
+        ".carry-lock-relock",
         "touch-action: pan-y;",
     ] {
         assert!(css.contains(fragment), "missing {fragment}");
     }
+}
+
+#[test]
+fn 即時再lock_buttonは44pxの操作高と横並びを維持する() {
+    let css = include_str!("../../assets/main.css");
+    let armed_rule = css_block(css, ".carry-lock-bar.is-armed");
+    assert!(armed_rule.contains("flex-wrap: nowrap;"), "{armed_rule}");
+
+    let relock_rule = css_block(css, ".carry-lock-relock");
+    assert!(
+        relock_rule.contains("min-height: max(2.75rem, 44px);"),
+        "{relock_rule}"
+    );
 }
 
 #[test]
