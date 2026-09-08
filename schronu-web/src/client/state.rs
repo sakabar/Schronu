@@ -96,6 +96,11 @@ impl ClientState {
         ClientEffect::None
     }
 
+    pub fn relock_carry_lock(&mut self) -> ClientEffect {
+        self.carry_lock.relock();
+        ClientEffect::None
+    }
+
     pub fn disable_carry_lock<S: KeyValueStorage>(&mut self, storage: &S) -> ClientEffect {
         self.carry_lock.disable(storage);
         ClientEffect::None

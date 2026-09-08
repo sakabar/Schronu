@@ -457,9 +457,11 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 ### 6.6 持ち歩きロックstate
 
-`CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。
+`CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。即時再ロックは`ArmedUntil`の期限と最後の単調時計観測値をmemoryから破棄して`Locked`へ戻し、保存済みの`enabled: true`とwarningは変更しない。
 
 すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`ではdispatch時点の単調時刻から15秒後へ期限を更新してから処理する。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用では期限を更新しない。
+
+`RelockCarryLock`は変更操作ではなく、期限観測後にmutation guardより前で処理する。`ArmedUntil`だけを`Locked`へ戻し、`Normal`と`Locked`ではno-opとする。
 
 ## 7. UI behavior
 
@@ -531,7 +533,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 ### 7.5 持ち歩きロックbar
 
 - page上部へstickyなbarを常時表示する。持ち歩きロックだけを理由に画面を覆うoverlayや内容の非表示は行わず、ロック中もbuffer・セッション・一覧の表示と更新、scroll、tab切替、日付選択、一覧取得を維持する。一覧取得を含むserver通信のdispatch後は、response受理まで通信中overlayによる全面操作遮断を優先する。
-- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで15秒間操作可能」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「操作可能」と残り秒数を表示する。
+- `Normal`では「持ち歩きロック」を1 clickすると即時に有効化する。`Locked`では独立した状態blockを生成せず、44px以上の長押しbutton内へ主文言「操作ロック中」と補足「1.2秒長押しで15秒間操作可能」を横並びで集約し、通常モードへ戻す`details`だけを次の行へ置く。barのpaddingとgapを抑え、34rem以下でもbar全体を汎用的な縦積みに切り替えない。`ArmedUntil`では「操作可能」と残り秒数の横へ44px以上の「今すぐロック」buttonを表示し、320px幅でもこの2要素を横並びに保つ。通常モードへ戻す`details`は次の行へ置く。
 - `Locked`の長押しbuttonはprimary pointer、Space、Enterを受け付ける。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.2秒未満のkeyupでtimerを破棄し、stale timerが発火しても許可しない。keyboard auto-repeatは新しい長押しを開始しない。
 - 状態名だけを`aria-live=polite`で通知する。`ArmedUntil`の残り秒数はlive regionの外へ置き、毎秒読み上げない。
 - 「計測を破棄して完了」の確認表示は変更操作に含めず、確定dispatchだけが無操作期限を更新する。キャンセルは`ArmedUntil`と期限を維持し、期限切れでは確認表示を閉じる。
@@ -559,6 +561,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
 | 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
 | 持ち歩きロック一時許可 | なし | なし | なし。15秒の期限はmemoryだけ | なし | なし |
+| 持ち歩きロック即時再ロック | なし | なし | なし。一時許可の期限だけをmemoryから破棄 | なし | なし |
 | 持ち歩きロック解除 | なし | なし | `enabled: false`の保存成功後だけ解除 | なし | なし |
 | 06:00境界 | なし | なし | なし | なし | なし |
 

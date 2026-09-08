@@ -150,6 +150,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LOCK-009**: 持ち歩きロックはrepository不確実性を扱うmutation safetyとは独立したclient stateとして、localStorageの`schronu_web.carry_lock.v1`へ`version: 1`と`enabled`を保存すること。keyなしは通常モード、正常値は保存状態を復元し、ロック状態のreloadでは一時許可を復元せずロック状態とすること。
 - **REQ-LOCK-010**: 持ち歩きロックのJSON不正、未知version、読込失敗は元のvalueを上書きせず、warning付きのロック状態とすること。ロック開始はmemory-firstで反映し、保存失敗時も現在のpageではロックを維持してreload後の危険を警告すること。通常モードへの復帰はstorage-firstとし、保存失敗時はロックを維持すること。
 - **REQ-LOCK-011**: 完了実績競合の確認表示は、元の完了dispatch後も保持すること。再完了と計測再開はそれぞれ独立した変更dispatchとして共通guardを通し、一時許可中なら成否にかかわらず無操作期限を各dispatch時点から15秒後へ更新すること。
+- **REQ-LOCK-012**: 一時許可中は残り秒数の横へ「今すぐロック」buttonを表示し、1 clickで即時にロック状態へ戻せること。この操作はserver通信、発火履歴追加、localStorage更新を行わず、実行後の変更操作を共通guardで直ちに遮断すること。
 
 ### 4.10 application操作と互換性
 
@@ -199,7 +200,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-016 | 4種類のセッション終了が成功すると選択中または最新snapshotのlogical dateで一覧を再取得し、実績変更後の再schedule、完了taskの除去、反復taskを含むresponse全体で置換する。終了失敗では再取得せず一覧とsessionを保持し、server commit成功後にlocalStorage削除だけが失敗した場合は安全状態を維持して一覧を再取得する。 |
 | AC-017 | 320pxから46remまでの画面幅で一覧が可視header付きの高さ32px以上の1行tableとなり、左端の幅44px・高さ32pxの「＋」またはdisabledの「✓」、固定された締切・予定、cell内だけを横スクロールできる長いtask名を表示する。task名cellに縦scrollbarを表示せず、viewport全体は横に超えず、rank非0の操作cellは空になる。曜日button、日付入力・表示button、検索欄は高さ36px、検索clear buttonは36px四方、曜日・入力・検索・table間は8pxとする。46remを超える画面では従来のdesktop tableを維持し、34rem以下ではbufferを圧縮する。 |
 | AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、9変更操作はdispatchされない。 |
-| AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.2秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。 |
+| AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.2秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。一時許可中は残り秒数の横に44px以上の「今すぐロック」を表示し、1 clickで通信・履歴・保存なしに即時再ロックする。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
 | AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
 | AC-022 | 初回取得、一覧取得、自動選定、記録、2種類の完了の各server通信中は全画面の「通信中…」とスピナーが表示され、背面を操作できない。初回取得前と失敗時はBUFFER要素が存在せず、成功後だけ`schronu-buffer-ready`に確定値が表示される。以後の通信中は最後の確定値を維持する。複数通信は最後のresponseまで表示を維持し、成功と各error応答の完了後に解除される。待機状態がassistive technologyへ通知され、reduced motionでは回転しない。 |

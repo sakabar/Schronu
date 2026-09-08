@@ -123,6 +123,7 @@ pub(super) fn BrowserApp() -> Element {
                     scheduler: long_press_scheduler,
                     on_enable: move |_| dispatch_action(client, ComponentAction::EnableCarryLock),
                     on_arm: move |_| dispatch_action(client, ComponentAction::ArmCarryLock),
+                    on_relock: move |_| dispatch_action(client, ComponentAction::RelockCarryLock),
                     on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
                 }
                 BufferPanel { value: buffer }

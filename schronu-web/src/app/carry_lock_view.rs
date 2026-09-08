@@ -45,6 +45,7 @@ pub(crate) fn CarryLockBar(
     scheduler: LongPressSchedulerHandle,
     on_enable: EventHandler<()>,
     on_arm: EventHandler<()>,
+    on_relock: EventHandler<()>,
     on_disable: EventHandler<()>,
 ) -> Element {
     let class = match model.mode {
@@ -143,6 +144,12 @@ pub(crate) fn CarryLockBar(
                     div { class: "carry-lock-status",
                         strong { "操作可能" }
                         span { "残り{model.remaining_seconds}秒" }
+                    }
+                    button {
+                        class: "carry-lock-relock",
+                        r#type: "button",
+                        onclick: move |_| on_relock.call(()),
+                        "今すぐロック"
                     }
                     DisableCarryLockDetails { on_disable }
                 },

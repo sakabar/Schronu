@@ -849,6 +849,34 @@ fn armedはmonotonic時計が後退した時点でlockedへ戻る() {
 }
 
 #[test]
+fn armedの即時再lock_actionは次の変更操作を遮断する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_001,
+            ComponentAction::RelockCarryLock,
+        ),
+        ClientEffect::None
+    );
+    assert!(state.carry_lock_locked());
+    assert_eq!(
+        reduce_component_action_at(&mut state, &storage, 2_002, ComponentAction::AutoSession),
+        ClientEffect::None
+    );
+}
+
+#[test]
 #[cfg(feature = "web")]
 fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
     let storage = MemoryStorage::failing_carry_lock_reads();

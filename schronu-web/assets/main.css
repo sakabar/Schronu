@@ -136,9 +136,14 @@ button:disabled {
 }
 
 .carry-lock-bar.is-armed {
+    flex-wrap: wrap;
     border-color: #b36b00;
     background: #fff3d6;
     color: #764600;
+}
+
+.carry-lock-bar.is-armed .carry-lock-details {
+    flex-basis: 100%;
 }
 
 .carry-lock-live-status {
@@ -155,7 +160,15 @@ button:disabled {
 
 .carry-lock-status {
     display: grid;
+    min-width: 0;
     gap: 0.1rem;
+}
+
+.carry-lock-relock {
+    flex: 0 0 auto;
+    min-height: max(2.75rem, 44px);
+    padding: 0.45rem 0.7rem;
+    white-space: nowrap;
 }
 
 .carry-lock-status span,

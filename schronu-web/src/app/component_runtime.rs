@@ -21,6 +21,7 @@ pub(crate) enum ComponentAction {
     ConfirmRepositoryChecked,
     EnableCarryLock,
     ArmCarryLock,
+    RelockCarryLock,
     DisableCarryLock,
 }
 
@@ -210,6 +211,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
     match action {
         ComponentAction::EnableCarryLock => return state.enable_carry_lock(storage),
         ComponentAction::ArmCarryLock => return state.arm_carry_lock(monotonic_now_ms),
+        ComponentAction::RelockCarryLock => return state.relock_carry_lock(),
         ComponentAction::DisableCarryLock => return state.disable_carry_lock(storage),
         _ => {}
     }
@@ -247,6 +249,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::ConfirmRepositoryChecked => state.confirm_repository_checked(storage),
         ComponentAction::EnableCarryLock
         | ComponentAction::ArmCarryLock
+        | ComponentAction::RelockCarryLock
         | ComponentAction::DisableCarryLock => ClientEffect::None,
     };
     switch_to_list_after_last_session_removed(state, previous_session_count);
