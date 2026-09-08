@@ -82,17 +82,41 @@ fn enableはmemory優先でdisableはstorage優先にする() {
 fn 一時許可の即時再lockは保存状態を変えず期限を破棄する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000).unwrap();
+
+    assert_eq!(
+        state.relock_carry_lock(),
+        schronu_web::client::state::ClientEffect::None
+    );
+    assert_eq!(state.carry_lock_mode(), CarryLockMode::Normal);
+
     state.enable_carry_lock(&storage);
     state.arm_carry_lock(2_000);
     let stored = storage.carry_lock_value.borrow().clone();
 
-    assert_eq!(state.relock_carry_lock(), schronu_web::client::state::ClientEffect::None);
+    assert_eq!(
+        state.relock_carry_lock(),
+        schronu_web::client::state::ClientEffect::None
+    );
 
     assert_eq!(state.carry_lock_mode(), CarryLockMode::Locked);
     assert_eq!(*storage.carry_lock_value.borrow(), stored);
 
-    assert_eq!(state.relock_carry_lock(), schronu_web::client::state::ClientEffect::None);
+    assert_eq!(
+        state.relock_carry_lock(),
+        schronu_web::client::state::ClientEffect::None
+    );
     assert_eq!(state.carry_lock_mode(), CarryLockMode::Locked);
+
+    let warning_storage = FakeStorage::default();
+    warning_storage.fail_carry_lock_writes.set(true);
+    let mut warning_state = load_client_state(&warning_storage, 1_000).unwrap();
+    warning_state.enable_carry_lock(&warning_storage);
+    warning_state.arm_carry_lock(2_000);
+    warning_state.relock_carry_lock();
+    assert!(warning_state
+        .all_storage_warnings()
+        .iter()
+        .any(|warning| warning.contains("持ち歩きロック")));
 }
 
 #[test]

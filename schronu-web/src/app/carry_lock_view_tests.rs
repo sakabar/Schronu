@@ -246,9 +246,13 @@ fn lock_bar_cssはstickyとsafe_areaと状態feedbackを持つ() {
 fn 即時再lock_buttonは44pxの操作高と横並びを維持する() {
     let css = include_str!("../../assets/main.css");
     let armed_rule = css_block(css, ".carry-lock-bar.is-armed");
-    assert!(armed_rule.contains("flex-wrap: nowrap;"), "{armed_rule}");
+    assert!(armed_rule.contains("flex-wrap: wrap;"), "{armed_rule}");
+
+    let details_rule = css_block(css, ".carry-lock-bar.is-armed .carry-lock-details");
+    assert!(details_rule.contains("flex-basis: 100%;"), "{details_rule}");
 
     let relock_rule = css_block(css, ".carry-lock-relock");
+    assert!(relock_rule.contains("flex: 0 0 auto;"), "{relock_rule}");
     assert!(
         relock_rule.contains("min-height: max(2.75rem, 44px);"),
         "{relock_rule}"

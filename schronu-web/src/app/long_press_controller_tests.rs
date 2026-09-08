@@ -155,6 +155,7 @@ fn component_root(props: ComponentRootProps) -> Element {
             scheduler: LongPressSchedulerHandle::new(props.scheduler),
             on_enable: move |_| {},
             on_arm: move |_| arm_count.set(arm_count.get().saturating_add(1)),
+            on_relock: move |_| {},
             on_disable: move |_| {},
         }
     }
