@@ -440,6 +440,7 @@ button:disabled {
 }
 
 .session-progress-track {
+    position: relative;
     display: flex;
     width: 100%;
     min-width: 100%;
@@ -447,6 +448,19 @@ button:disabled {
     overflow: visible;
     border-radius: 999px;
     background: var(--surface-muted);
+}
+
+.session-progress-estimate-marker {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: 0;
+    left: calc(100% / 1.5);
+    width: 2px;
+    transform: translateX(-1px);
+    background: var(--ink);
+    box-shadow: 0 0 0 1px var(--surface);
+    pointer-events: none;
 }
 
 .session-progress-normal,
@@ -462,9 +476,6 @@ button:disabled {
 
 .session-progress-overrun {
     background: var(--red);
-}
-
-.session-progress-overrun:last-child {
     border-radius: 0 999px 999px 0;
 }
 

@@ -364,6 +364,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 - `worked_seconds * 100`はoverflowしない計算方法を用いる。
 - 通常bar幅は`min(progress, 100) / 150 * 100%`とし、100%進捗をtrack全幅の3分の2に置く。
 - 超過bar幅は`max(progress - 100, 0) / 150 * 100%`で、100%位置の右側へ赤色で連結する。150%でtrack全幅へ到達し、それを超えた分はcard内で切り捨てず、横scroll可能な表示領域を確保する。
+- 100%位置には、通常bar、未塗り領域、超過barのいずれの上でも常時視認できる2pxの縦線を装飾要素として置き、assistive technologyからは隠す。
 
 ### 6.4 buffer
 
@@ -498,7 +499,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。desktopでは固定幅の日付入力を検索の左、46rem以下では検索の上に配置する。
 - 日付入力は`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化してtab切替後も保持し、日付buttonを選択した場合は入力とerrorを消去する。入力編集・不正送信・clearはserver通信、localStorage更新、発火履歴追加を行わず、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡す。
-- task名検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。localStorageへ保存しない。
+- task名検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。一覧からセッションをlocalStorageへ追加できた場合だけ空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。localStorageへは保存しない。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。46rem以下では検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、localStorage更新、発火履歴追加を行わない。持ち歩きロック中も利用できるが、通信中overlayの`inert`はほかの背面操作と同様に適用する。
@@ -506,7 +507,7 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
-- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はセッションtabへ切り替える。
+- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替える。追加前後のsession件数が増えた場合だけ成功とし、検索解除でserver通信、localStorage更新、発火履歴追加を発生させない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。46rem以下では追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。

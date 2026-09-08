@@ -1,5 +1,7 @@
 use super::super::carry_lock_view::CarryLockBar;
-use super::super::component_dispatch::{dispatch_action, dispatch_session_action};
+use super::super::component_dispatch::{
+    dispatch_action, dispatch_action_effect, dispatch_session_action,
+};
 use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
@@ -183,10 +185,16 @@ pub(super) fn BrowserApp() -> Element {
                             dispatch_action(client, action);
                         }
                     },
-                    on_start_session: move |(task, is_leaf)| dispatch_action(
-                        client,
-                        ComponentAction::AddSession { task, is_leaf },
-                    ),
+                    on_start_session: move |(task, is_leaf)| {
+                        let effect = client.write().start_session_from_list(
+                            &BrowserLocalStorage,
+                            browser_monotonic_now_ms(),
+                            task,
+                            is_leaf,
+                            &mut task_name_filter.write(),
+                        );
+                        dispatch_action_effect(client, effect);
+                    },
                     on_filter_change: move |filter| task_name_filter.set(filter),
                 }
             } else {

@@ -168,6 +168,7 @@ fn SessionCard(
                 div { class: "session-progress-track",
                     div { class: "session-progress-normal", style: normal_style }
                     div { class: "session-progress-overrun", style: overrun_style }
+                    span { class: "session-progress-estimate-marker", aria_hidden: "true" }
                 }
             }
             if session.completion_conflict.is_some() {
