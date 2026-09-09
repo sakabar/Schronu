@@ -7265,6 +7265,16 @@ fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
     assert_eq!(focused_task_id_opt, Some(next_id));
     assert_eq!(last_focused_task_id_opt, None);
     assert_eq!(focus_started_datetime, now);
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    assert_eq!(
+        repository.discarded_sessions[0].task_name_at_start(),
+        "finished focus"
+    );
+    assert_eq!(repository.discarded_sessions[0].elapsed_seconds(), 60 * 60);
+    assert_eq!(
+        repository.discarded_sessions[0].reason(),
+        DiscardedSessionReason::CliAutoSwitch
+    );
     assert!(snapshot.join("manifest.json").is_file());
 
     std::fs::remove_dir_all(snapshot).unwrap();
