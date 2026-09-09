@@ -80,6 +80,7 @@
 | TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 | TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
+| TD-042 | P2 | 未着手 | S | Schronu Webのcomponent testがpart1/part2という無意味な単位で分割されている |
 
 ## 詳細
 
@@ -1707,6 +1708,51 @@
 
 - 今回の`schronu-web` module分割には混ぜず、再帰処理ごとに独立したRed/Green cycleで進める。
 - 公開API、storage schema、lock metadataを変更する必要が生じた場合は、互換性設計を別commitで先に固定する。
+
+### TD-042: Schronu Webのcomponent testを責務別moduleへ再編する
+
+- 分類: `設計 / 検証容易性`
+- 優先度: `P2`
+- 概算規模: `S`
+
+#### 現状と根拠
+
+- `schronu-web/src/app/component_tests.rs`が`component_tests_part1.rs`と`component_tests_part2.rs`を`include!`している。
+- `part1`、`part2`という名前はfileの順序と大きさしか表さず、どの製品契約を検証するmoduleか判断できない。
+- action変換、reload復元、background refresh、session操作、shell描画、持ち歩きlock、および共通fixtureが2fileへ混在している。
+- `include!`によって同じ字句scopeへ展開されるため、importとtest helperのfile間依存が表面化しない。
+
+#### 影響
+
+- 変更した契約に対応するtestを探しにくく、追加先が責務ではなくfile sizeで決まりやすい。
+- 共通helperの所有場所が曖昧になり、重複または暗黙の依存を増やしやすい。
+- review時に、どの契約群へ影響した差分かをfile単位で判別できない。
+
+#### 推奨する改善方針
+
+- `part1`、`part2`を廃止し、少なくとも次の責務を名前で表すtest moduleへ分割する。
+  - action変換とbackground refresh中の操作guard
+  - reload時のview state復元とbackground refresh
+  - orchestratorのsession操作とserver effect
+  - shell、overlay、stale表示の描画model
+  - 持ち歩きlock
+- `MemoryStorage`、snapshot・task row builderなど複数moduleで必要なfixtureは、test専用の`component_test_support`へ1回だけ定義する。
+- test名、assertion、製品挙動、公開API、storage schemaを変えず、最初のcommitは機械的なmodule移動だけに限定する。
+- helperの重複整理やtest API改善が必要になった場合は、移動後の独立したGreen commitとして扱う。
+
+#### 完了条件
+
+- `component_tests_part1.rs`、`component_tests_part2.rs`およびそれらへの`include!`が残っていない。
+- 各test moduleの名前と内容が1つの契約境界に対応している。
+- 複数moduleで使うfixtureがtest support moduleへ集約され、隠れたfile間依存がない。
+- 再編前後でtest名、test数、assertionの意味、および製品コードの挙動が維持されている。
+- `cargo fmt --check`、`cargo test --locked -p schronu-web`、該当clippy、WASM check、root品質gate、`git diff --check`が成功する。
+
+#### 依存関係
+
+- 現在進行中のview state復元変更と同じtest fileを触るため、その変更をGreenで確定した後に独立着手する。
+- 完了済みの`TD-015`は再openせず、その後に導入されたSchronu Web固有の残存負債として扱う。
+- test moduleの機械的移動と、製品挙動・storage schema・UI契約の変更を同じcommitへ含めない。
 
 ## 推奨着手順
 
