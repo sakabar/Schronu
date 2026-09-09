@@ -18,6 +18,8 @@ pub struct FakeStorage {
     pub fail_writes: Cell<bool>,
     pub fail_work_session_writes: Cell<bool>,
     pub fail_safety_writes: Cell<bool>,
+    pub fail_safety_write_number: Cell<Option<usize>>,
+    safety_writes: Cell<usize>,
     pub fail_work_session_reads: Cell<bool>,
     pub fail_safety_reads: Cell<bool>,
     pub fail_carry_lock_reads: Cell<bool>,
@@ -52,6 +54,13 @@ impl KeyValueStorage for FakeStorage {
         }
         if key == "schronu_web.mutation_safety.v1" && self.fail_safety_writes.get() {
             return Err(StorageError::WriteFailed);
+        }
+        if key == "schronu_web.mutation_safety.v1" {
+            let write_number = self.safety_writes.get() + 1;
+            self.safety_writes.set(write_number);
+            if self.fail_safety_write_number.get() == Some(write_number) {
+                return Err(StorageError::WriteFailed);
+            }
         }
         if key == "schronu_web.carry_lock.v1" && self.fail_carry_lock_writes.get() {
             return Err(StorageError::WriteFailed);

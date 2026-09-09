@@ -574,6 +574,7 @@ impl ClientState {
             return ClientEffect::None;
         }
         if self.sessions.mutation_safety.disarm(storage).is_err() {
+            self.sessions.mutation_globally_blocked = true;
             self.record_local_result(Some(task_id), false);
             return ClientEffect::None;
         }
@@ -693,6 +694,7 @@ impl ClientState {
         if self.sessions.mutation_safety.disarm(storage).is_err()
             && self.sessions.committed_blocked_task_ids.is_empty()
         {
+            self.sessions.mutation_globally_blocked = true;
             self.record_local_result(None, false);
         }
     }

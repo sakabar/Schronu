@@ -559,6 +559,39 @@ fn safety_markerは全mutationの確定応答後だけ自動解除する() {
 }
 
 #[test]
+fn session削除後のsafety_marker解除失敗は同一pageとreloadをglobal_blockする() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    storage.fail_safety_write_number.set(Some(3));
+    let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: RecordSessionResult {
+                actual_work_seconds: 101,
+            },
+        }),
+    );
+
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(state.sessions()[0].task_id, OTHER_TASK_ID);
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.begin_record_session(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+    let mut restored = load_client_state(&storage, 2).unwrap();
+    assert!(restored.mutation_globally_blocked());
+    assert_eq!(
+        restored.begin_record_session(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+}
+
+#[test]
 fn transport不確実性は並行mutation完了後もglobal_blockを維持する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
