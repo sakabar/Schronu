@@ -15,7 +15,7 @@ use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
-use crate::client::view_state::{store_view_state, StoredListView, ViewState};
+use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
     web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,

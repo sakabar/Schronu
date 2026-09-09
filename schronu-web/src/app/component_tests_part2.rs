@@ -118,6 +118,127 @@ fn local画面変更はview_stateへ保存して次のmountで復元する() {
 }
 
 #[test]
+fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置換する() {
+    let storage = MemoryStorage::default();
+    let cached_row = ScheduledTaskRow {
+        task: task(RECORD_ID),
+        schedule_start_epoch_ms: 1_789_000_000_000,
+        schedule_end_epoch_ms: 1_789_000_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: snapshot(1_789_000_000_000),
+            list: Some(StoredListView {
+                logical_date: "2026-09-12".to_owned(),
+                rows: vec![cached_row.clone()],
+            }),
+            active_tab: ActiveTab::List,
+            task_name_filter: String::new(),
+            date_input_text: String::new(),
+        },
+    )
+    .unwrap();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_789_000_100_000);
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_100_000_000,
+                logical_date: "2026-09-10".to_owned(),
+                buffer_seconds: 30,
+            }),
+        },
+    );
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListTasks {
+            request_id: 2,
+            request: ref list_request,
+        } if list_request.logical_date == "2026-09-12"
+    ));
+    assert_eq!(orchestrator.state().unwrap().scheduled_rows(), [cached_row]);
+    assert!(orchestrator.background_refreshing());
+
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id: 2,
+            requested_date: "2026-09-12".to_owned(),
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+    assert_eq!(orchestrator.state().unwrap().scheduled_rows().len(), 1);
+    assert!(orchestrator.refresh_failed());
+
+    assert!(matches!(
+        orchestrator.action(&storage, 1_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 3 }
+    ));
+    let list_effect = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 3,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_200_000_000,
+                logical_date: "2026-09-11".to_owned(),
+                buffer_seconds: 20,
+            }),
+        },
+    );
+    assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id: 4,
+            requested_date: "2026-09-12".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: ServerSnapshot {
+                    observed_at_epoch_ms: 1_789_200_000_000,
+                    logical_date: "2026-09-11".to_owned(),
+                    buffer_seconds: 20,
+                },
+                data: Vec::new(),
+            }),
+        },
+    );
+    assert!(orchestrator.state().unwrap().scheduled_rows().is_empty());
+    assert!(orchestrator.state().unwrap().has_scheduled_list());
+    assert!(!orchestrator.background_refreshing());
+    assert!(!orchestrator.server_actions_blocked());
+    let stored = load_view_state(&storage).into_state().unwrap();
+    assert_eq!(stored.list.unwrap().rows, Vec::new());
+}
+
+#[test]
+fn bootstrap失敗でも前回一覧を維持し再試行を提供する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_000);
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+
+    assert!(orchestrator.refresh_failed());
+    assert!(matches!(
+        orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 2 }
+    ));
+    assert!(orchestrator.background_refreshing());
+}
+
+#[test]
 fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();
