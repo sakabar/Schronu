@@ -1,6 +1,6 @@
 use super::component::{
-    app, initial_load_phase, BufferPanel, InitialLoadPhase, InitialLoadView, InteractiveShell,
-    LoadingOverlay, NavigationTabs, SessionChrome,
+    app, BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
+    SessionChrome,
 };
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
@@ -15,10 +15,11 @@ use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
+use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, RecordSessionResult, RetryAdvice, ServerSnapshot, SessionTask, WebError,
-    WebSuccess,
+    web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
@@ -31,6 +32,39 @@ use std::sync::{Arc, Mutex};
 struct NavigationProps {
     active_tab: ActiveTab,
     events: Arc<Mutex<Vec<ActiveTab>>>,
+}
+
+#[test]
+fn background更新はshellを塞がずstale状態と再試行を表示する() {
+    fn refreshing() -> Element {
+        rsx! {
+            InteractiveShell { blocked: false,
+                BackgroundRefreshStatus { has_cached_list: true, failed: false }
+                button { "操作可能" }
+            }
+        }
+    }
+    let mut refreshing_dom = VirtualDom::new(refreshing);
+    refreshing_dom.rebuild_in_place();
+    let refreshing_html = dioxus::ssr::render(&refreshing_dom);
+    assert!(refreshing_html.contains("前回の表示です。最新状態を確認中…"));
+    assert!(!refreshing_html.contains(" inert"));
+    assert!(!refreshing_html.contains("loading-overlay"));
+
+    fn failed() -> Element {
+        rsx! {
+            BackgroundRefreshStatus {
+                has_cached_list: true,
+                failed: true,
+                on_retry: move |_| {},
+            }
+        }
+    }
+    let mut failed_dom = VirtualDom::new(failed);
+    failed_dom.rebuild_in_place();
+    let failed_html = dioxus::ssr::render(&failed_dom);
+    assert!(failed_html.contains("前回の表示です。最新状態を確認できませんでした。"));
+    assert!(failed_html.contains(">再試行<"));
 }
 
 fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
@@ -387,7 +421,7 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     date_input.edit("不正".to_owned());
     assert_eq!(date_input.submit("2026-09-05"), None);
     assert!(date_input.error().is_some());
-    let mut task_name_filter = "実装".to_owned();
+    orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
     let previous_history_len = orchestrator.state().unwrap().history().len();
 
     let effect = orchestrator.start_session_from_list(
@@ -395,7 +429,6 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
         1_000,
         task(RECORD_ID),
         true,
-        &mut task_name_filter,
     );
 
     let state = orchestrator.state().unwrap();
@@ -403,7 +436,7 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.selected_logical_date(), Some("2026-09-16"));
     assert_eq!(state.history().len(), previous_history_len);
-    assert!(task_name_filter.is_empty());
+    assert!(orchestrator.task_name_filter().is_empty());
     assert_eq!(date_input.text(), "不正");
     assert!(date_input.error().is_some());
 }
@@ -418,19 +451,18 @@ fn 製品orchestratorの一覧追加は保存失敗時に検索を保つ() {
         1_000,
         ComponentAction::SwitchTab(ActiveTab::List),
     );
-    let mut task_name_filter = "保存失敗".to_owned();
+    orchestrator.edit_task_name_filter(&storage, "保存失敗".to_owned());
 
     let effect = orchestrator.start_session_from_list(
         &storage,
         1_000,
         task(RECORD_ID),
         true,
-        &mut task_name_filter,
     );
 
     assert_eq!(effect, ClientEffect::None);
     assert!(orchestrator.state().unwrap().sessions().is_empty());
-    assert_eq!(task_name_filter, "保存失敗");
+    assert_eq!(orchestrator.task_name_filter(), "保存失敗");
 }
 
 #[test]
@@ -895,7 +927,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        current_logical_date,
         history,
         warnings,
         safety_warning,
@@ -913,7 +944,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        current_logical_date,
         history,
         warnings,
         safety_warning,

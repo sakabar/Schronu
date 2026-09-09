@@ -14,7 +14,7 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 | --- | --- |
 | Dioxus component | tab、button、card、一覧、error、履歴、持ち歩きロックbarの描画と利用者操作の受付。 |
 | client state | `work_sessions`、snapshot、選択日、一覧、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
-| localStorage adapter | `work_sessions`、mutation safety、持ち歩きロックの独立したversion付きstateを読込・検証・保存する。 |
+| localStorage adapter | `work_sessions`、view state、mutation safety、持ち歩きロックの独立したversion付きstateを読込・検証・保存する。 |
 | server function | wire DTOを検証し、専用workerへ型付きcommandを送る。 |
 | Web operation worker | 1 thread上でWeb操作を直列実行し、environment、repository、free-time資源を所有する。 |
 | Web controller service | application use caseを組み合わせ、snapshot、一覧、自動選定、記録、計測を記録する完了、計測を破棄する完了を提供する。 |
@@ -148,6 +148,8 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 7. storageがwrite blockedでない通常のstate変更では、採用済みの全`work_sessions`を1回で書き戻す。write blockedまたは保存失敗の場合はmemory上の直前stateを維持し、手動でkeyを確認してreloadするようwarningを表示する。
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
+
+画面復元状態は別key `schronu_web.view_state.v1`へversion 1として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと全`ScheduledTaskRow`、選択tab、検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せずwarningを表示するが、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationをwrite-blockしない。発火履歴、通信中state、error、確認dialogは保存しない。
 
 ```json
 {
@@ -467,18 +469,22 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 ### 7.1 初期化とtab
 
-1. localStorageを読み、`work_sessions`を復元する。
-2. `bootstrap`を1回送る。
-3. responseからbufferと8日buttonを表示する。bufferは復元した各セッションの未送信進捗秒をserver bufferへ個別に加算し、見積到達時刻またはそれより早い終了click時刻で加算を打ち切る。
-4. 初期tabは「セッション」とする。
+1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、最後に表示した1日分の一覧、選択tab、検索文字列、日付入力文字列を保持する。
+2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければBUFFERと一覧だけを未取得として表示する。
+3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
+4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
 7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
-client componentは非`None`の`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
+client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 
-初回SSR、browser初期化前、`bootstrap`応答待ちは`schronu-web-loading` IDの専用rootだけを描画し、BUFFER要素を含めない。snapshot取得前に`bootstrap`が失敗した場合はoverlayを外し、errorを持つ`schronu-web-load-error` rootへ切り替えるが、BUFFER要素は追加しない。snapshot取得成功後は`schronu-web-ready` root内に、確定値だけを受け取る`schronu-buffer-ready` IDのBUFFER要素を描画する。以後のserver通信中はready rootと最後の確定BUFFERを維持したままoverlayを重ねる。
+reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tasks`は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
+
+SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
+
+背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -500,16 +506,16 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。desktopでは固定幅の日付入力を検索の左、46rem以下では検索の上に配置する。
-- 日付入力は`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化してtab切替後も保持し、日付buttonを選択した場合は入力とerrorを消去する。入力編集・不正送信・clearはserver通信、localStorage更新、発火履歴追加を行わず、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡す。
-- task名検索文字列はpage内だけに保持し、日付・tab切替では維持、reloadでは空へ戻す。一覧からセッションをlocalStorageへ追加できた場合だけ空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。localStorageへは保存しない。
+- 日付入力は`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡す。
+- task名検索文字列はview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。46rem以下では検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
-- 検索入力とclearはclient component内だけで処理し、server通信、task更新、localStorage更新、発火履歴追加を行わない。持ち歩きロック中も利用できるが、通信中overlayの`inert`はほかの背面操作と同様に適用する。
+- 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わず、view stateだけをlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - rowは締切、予定`HH:MM-HH:MM`、task名を表示し、開始可能なrowにはセッション追加buttonも表示する。46remを超える画面では表示labelを「セッション」、46rem以下では「＋」とし、ARIA labelはtask名とセッション追加操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
-- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替える。追加前後のsession件数が増えた場合だけ成功とし、検索解除でserver通信、localStorage更新、発火履歴追加を発生させない。
+- 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信と発火履歴追加は行わない。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。46rem以下では追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
@@ -544,10 +550,11 @@ client componentは非`None`の`ClientEffect`をserverへdispatchする直前に
 
 | 操作 | server通信 | task保存 | localStorage変更 | 表示中一覧 | current task変更 |
 | --- | --- | --- | --- | --- | --- |
-| 初回表示 | `bootstrap` | なし | なし。復元時に元keyを書き換えない | なし | なし |
-| tab切替 | なし | なし | なし | なし | なし |
+| 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
+| reload背景更新 | `bootstrap`後、保存一覧があれば保存日付の`list_tasks` | なし | 成功snapshotと一覧をview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
+| tab切替 | なし | なし | view stateを保存 | なし | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
-| 一覧検索の入力・clear | なし | なし | なし | 取得済みrowをclient内で絞り込み | なし |
+| 一覧検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
@@ -622,7 +629,7 @@ OperationHistoryEntry {
 - MCPのtool名、tool数、JSON schema、required field、default、response、error
 - MCP `complete_task`の`task_id`、`finished_at`、`additional_actual_work_seconds`というwire入力
 - Schronu-webのserver operationと`ServerSnapshot`を含むclient/server wire形式
-- 既存の`work_sessions`とmutation safetyのlocalStorage schema。持ち歩きロックは独立keyとして追加する
+- 既存の`work_sessions`、mutation safety、持ち歩きロックのlocalStorage schema。view stateは独立keyとして追加する
 - YAMLを含むtask storage schema
 - repository lock、transaction、rollback、state uncertainの区別
 
@@ -663,6 +670,7 @@ OperationHistoryEntry {
 ### 12.4 Client state
 
 - localStorage round tripを検証する。
+- view stateのround trip、1日分のatomic置換、空一覧、不正JSON、未知version、不正row、read/write失敗を検証し、障害がwork sessionやserver mutationをblockしないことを確認する。
 - top-level JSON不正とversion不一致では空state、warning、元key維持、storage write blocked、`bootstrap`継続になることを検証する。
 - entry不正と同一UUID重複では不正entryだけを除外し、初期化時はkeyを維持し、次のlocal state変更時にvalid entryだけでversion 1を書き戻すことを検証する。
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
@@ -690,7 +698,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
-- 検索文字列が日付・tab切替で保持され、reloadで破棄されることと、検索入力・clearでserver通信、localStorage更新、発火履歴追加がないことをbrowserで確認する。
+- 一覧、選択tab、検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、32px以上の1行row、左端の幅44px・高さ32pxの「＋」・disabledの「✓」・rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 320px以上で高さ36pxの日付入力・表示button、検索欄、36px四方のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
 - 46rem以下で日付button、検索欄、clear button、各section間隔が圧縮され、日付buttonの横スクロールが維持されることを確認する。34rem以下ではbufferも圧縮されることを確認する。
@@ -702,7 +710,7 @@ OperationHistoryEntry {
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
 - 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
-- 全5server通信のdispatchで全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。成功、operation error、transport errorの各応答で解除され、`ClientEffect::None`では表示されないことを確認する。SSR初期表示のstatusとARIA属性、viewport全面のCSS、reduced motionを確認する。
+- 利用者起点のserver通信では全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。reload背景更新ではoverlayを出さず、stale表示、再試行、成功時だけの一覧置換、失敗時維持、local操作許可とserver依存操作の二重guardを確認する。
 - 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。`Locked`では状態文言が44px以上の長押しbutton内にあり、独立した状態blockがなく、解除`details`だけが次の行にあることと、34rem以下でも汎用縦積み規則を適用しないことをcomponent testとCSS contract testで固定する。
 - pointer・Space・Enterの1.2秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
 - ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、全変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず確定時に消費し、完了実績競合の再完了・計測再開は新たな許可を消費することを確認する。

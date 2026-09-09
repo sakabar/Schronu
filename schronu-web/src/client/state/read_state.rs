@@ -7,6 +7,7 @@ pub(super) struct ReadState {
     pub(super) date_buttons: Vec<LogicalDateButton>,
     pub(super) selected_logical_date: Option<String>,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
+    pub(super) has_list: bool,
     pub(super) auto_session_empty: bool,
     pub(super) auto_session_in_flight: bool,
     pub(super) next_request_id: u64,
@@ -22,6 +23,7 @@ impl ReadState {
             date_buttons: Vec::new(),
             selected_logical_date: None,
             scheduled_rows: Vec::new(),
+            has_list: false,
             auto_session_empty: false,
             auto_session_in_flight: false,
             next_request_id: 1,
@@ -77,7 +79,12 @@ impl ClientState {
         }
         match result {
             Ok(snapshot) => {
-                if self.apply_snapshot(snapshot).is_none() {
+                let cached_logical_date = self
+                    .read
+                    .has_list
+                    .then(|| self.read.selected_logical_date.clone())
+                    .flatten();
+                if self.apply_snapshot_metadata(snapshot).is_none() {
                     self.record_stale_response(ServerActionInvocation::Bootstrap, true);
                     return ClientEffect::None;
                 }
@@ -86,6 +93,9 @@ impl ClientState {
                     Outcome::Success,
                     "更新しました。",
                 );
+                if let Some(logical_date) = cached_logical_date {
+                    return self.request_list(&logical_date);
+                }
             }
             Err(error) => self.record_server_failure(ServerActionInvocation::Bootstrap, error),
         }
@@ -97,6 +107,26 @@ impl ClientState {
         request_id: u64,
         requested_date: &str,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
+    ) -> ClientEffect {
+        self.apply_list_result_with_policy(request_id, requested_date, result, false)
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn apply_background_list_result(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
+    ) -> ClientEffect {
+        self.apply_list_result_with_policy(request_id, requested_date, result, true)
+    }
+
+    fn apply_list_result_with_policy(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
+        preserve_across_logical_date_change: bool,
     ) -> ClientEffect {
         let invocation = ServerActionInvocation::ListTasks(ListTasksRequest {
             logical_date: requested_date.to_owned(),
@@ -111,12 +141,18 @@ impl ClientState {
                     self.read.snapshot.as_ref().is_some_and(|current| {
                         current.logical_date == success.snapshot.logical_date
                     });
-                let snapshot_result = self.apply_snapshot(success.snapshot);
-                if snapshot_result == Some(false)
+                let snapshot_result = if preserve_across_logical_date_change {
+                    self.apply_snapshot_metadata(success.snapshot)
+                } else {
+                    self.apply_snapshot(success.snapshot)
+                };
+                if (preserve_across_logical_date_change && snapshot_result.is_some())
+                    || snapshot_result == Some(false)
                     || (snapshot_result.is_none() && same_logical_date)
                 {
                     self.read.selected_logical_date = Some(requested_date.to_owned());
                     self.read.scheduled_rows = success.data;
+                    self.read.has_list = true;
                 }
                 if snapshot_result.is_none() {
                     self.record_stale_response(invocation, true);
@@ -163,6 +199,7 @@ impl ClientState {
         if changed {
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
+            self.read.has_list = false;
         }
         Some(changed)
     }

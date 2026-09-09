@@ -32,12 +32,15 @@ pub(crate) fn dispatch_action_effect(
     if effect == ClientEffect::None {
         return;
     }
+    let background = client.read().effect_is_background(&effect);
     spawn(async move {
         let response = execute_tracked_effect(&ServerFunctionGateway, effect, |pending| {
-            if pending {
-                client.write().begin_server_effect();
-            } else {
-                client.write().finish_server_effect();
+            if !background {
+                if pending {
+                    client.write().begin_server_effect();
+                } else {
+                    client.write().finish_server_effect();
+                }
             }
         })
         .await;

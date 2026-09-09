@@ -22,34 +22,307 @@ fn component_actionはrank非0の手動session追加を拒否する() {
 }
 
 #[test]
-fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
+fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加を許可する() {
+    let storage = MemoryStorage::default();
+    let cached_row = ScheduledTaskRow {
+        task: task(RECORD_ID),
+        schedule_start_epoch_ms: 1_789_000_000_000,
+        schedule_end_epoch_ms: 1_789_000_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 1_789_000_000_000,
+                logical_date: "2026-09-09".to_owned(),
+                buffer_seconds: 60,
+            },
+            list: Some(StoredListView {
+                logical_date: "2026-09-12".to_owned(),
+                rows: vec![cached_row.clone()],
+            }),
+            active_tab: ActiveTab::List,
+            task_name_filter: "設計".to_owned(),
+            date_input_text: "2026/9/12".to_owned(),
+        },
+    )
+    .unwrap();
+
+    let mut orchestrator = ComponentOrchestrator::new();
+    assert!(matches!(
+        orchestrator.mount(&storage, 1_789_000_100_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    ));
+    let state = orchestrator.state().unwrap();
+    assert_eq!(state.active_tab(), ActiveTab::List);
+    assert_eq!(state.selected_logical_date(), Some("2026-09-12"));
+    assert_eq!(state.scheduled_rows(), std::slice::from_ref(&cached_row));
+    assert_eq!(orchestrator.task_name_filter(), "設計");
+    assert_eq!(orchestrator.date_input().text(), "2026/9/12");
+    assert!(orchestrator.background_refreshing());
+    assert!(orchestrator.server_actions_blocked());
+    assert!(!orchestrator.server_effect_in_flight());
+
+    assert_eq!(
+        orchestrator.action(
+            &storage,
+            1_000,
+            ComponentAction::AddSession {
+                task: cached_row.task,
+                is_leaf: true,
+            },
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+
+    for blocked in [
+        ComponentAction::SelectDate("2026-09-13".to_owned()),
+        ComponentAction::AutoSession,
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmCompletionConflict(RECORD_ID.to_owned()),
+    ] {
+        assert_eq!(
+            orchestrator.action(&storage, 1_001, blocked),
+            ClientEffect::None
+        );
+    }
+    assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+}
+
+#[test]
+fn local画面変更はview_stateへ保存して次のmountで復元する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = mounted_orchestrator(&storage);
+
+    orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
+    orchestrator.edit_date_input(&storage, "9/20".to_owned());
+    assert!(matches!(
+        orchestrator.submit_date_input(&storage),
+        Some(ComponentAction::SelectDate(ref date)) if date == "2026-09-20"
+    ));
+    orchestrator.clear_date_input(&storage);
+    assert_eq!(orchestrator.date_input().text(), "");
+    orchestrator.edit_date_input(&storage, "9/20".to_owned());
+    orchestrator.action(
+        &storage,
+        2_000,
+        ComponentAction::SwitchTab(ActiveTab::History),
+    );
+
+    let mut restored = ComponentOrchestrator::new();
+    restored.mount(&storage, 3_000);
+    assert_eq!(restored.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(restored.task_name_filter(), "実装");
+    assert_eq!(restored.date_input().text(), "9/20");
+}
+
+#[test]
+fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置換する() {
+    let storage = MemoryStorage::default();
+    let cached_row = ScheduledTaskRow {
+        task: task(RECORD_ID),
+        schedule_start_epoch_ms: 1_789_000_000_000,
+        schedule_end_epoch_ms: 1_789_000_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: snapshot(1_789_000_000_000),
+            list: Some(StoredListView {
+                logical_date: "2026-09-12".to_owned(),
+                rows: vec![cached_row.clone()],
+            }),
+            active_tab: ActiveTab::List,
+            task_name_filter: String::new(),
+            date_input_text: String::new(),
+        },
+    )
+    .unwrap();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap_effect = orchestrator.mount(&storage, 1_789_000_100_000);
+    assert!(orchestrator.effect_is_background(&bootstrap_effect));
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_100_000_000,
+                logical_date: "2026-09-10".to_owned(),
+                buffer_seconds: 30,
+            }),
+        },
+    );
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListTasks {
+            request_id: 2,
+            request: ref list_request,
+        } if list_request.logical_date == "2026-09-12"
+    ));
+    assert!(orchestrator.effect_is_background(&follow_up));
+    assert_eq!(orchestrator.state().unwrap().scheduled_rows(), [cached_row]);
+    assert!(orchestrator.background_refreshing());
+
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id: 2,
+            requested_date: "2026-09-12".to_owned(),
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+    assert_eq!(orchestrator.state().unwrap().scheduled_rows().len(), 1);
+    assert!(orchestrator.refresh_failed());
+
+    assert!(matches!(
+        orchestrator.action(&storage, 1_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 3 }
+    ));
+    let list_effect = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 3,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_200_000_000,
+                logical_date: "2026-09-11".to_owned(),
+                buffer_seconds: 20,
+            }),
+        },
+    );
+    assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
+    let refreshed_row = ScheduledTaskRow {
+        task: task(COMPLETE_ID),
+        schedule_start_epoch_ms: 1_789_300_000_000,
+        schedule_end_epoch_ms: 1_789_300_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id: 4,
+            requested_date: "2026-09-12".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: ServerSnapshot {
+                    observed_at_epoch_ms: 1_789_300_000_000,
+                    logical_date: "2026-09-12".to_owned(),
+                    buffer_seconds: 20,
+                },
+                data: vec![refreshed_row.clone()],
+            }),
+        },
+    );
+    assert_eq!(
+        orchestrator.state().unwrap().scheduled_rows(),
+        std::slice::from_ref(&refreshed_row)
+    );
+    assert!(orchestrator.state().unwrap().has_scheduled_list());
+    assert!(!orchestrator.background_refreshing());
+    assert!(!orchestrator.server_actions_blocked());
+    let stored = load_view_state(&storage).into_state().unwrap();
+    assert_eq!(stored.list.unwrap().rows, [refreshed_row]);
+}
+
+#[test]
+fn bootstrap失敗でも前回一覧を維持し再試行を提供する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_000);
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+
+    assert!(orchestrator.refresh_failed());
+    assert!(matches!(
+        orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 2 }
+    ));
+    assert!(orchestrator.background_refreshing());
+}
+
+#[test]
+fn background再試行は一度だけ発行し古いresponseで完了しない() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_000);
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+
+    assert!(matches!(
+        orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 2 }
+    ));
+    assert_eq!(
+        orchestrator.action(&storage, 2_001, ComponentAction::RetryRefresh),
+        ClientEffect::None
+    );
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(snapshot(2_000)),
+        },
+    );
+    assert!(orchestrator.background_refreshing());
+    assert!(orchestrator.server_actions_blocked());
+
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 2,
+            result: Ok(snapshot(2_001)),
+        },
+    );
+    assert!(!orchestrator.background_refreshing());
+    assert!(!orchestrator.server_actions_blocked());
+}
+
+#[test]
+fn native_ssrはbrowser_storageへ触れず非blockingな復元shellを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
 
     assert!(!html.contains("Schronu"), "{html}");
-    assert!(html.contains("通信中…"), "{html}");
-    assert!(html.contains("loading-overlay"), "{html}");
-    assert!(html.contains("loading-spinner"), "{html}");
+    assert!(html.contains("画面を復元しています…"), "{html}");
     assert!(html.contains("role=\"status\""), "{html}");
-    assert!(html.contains("aria-live=\"polite\""), "{html}");
-    assert!(html.contains("aria-busy=\"true\""), "{html}");
-    assert!(html.contains("id=\"schronu-web-loading\""), "{html}");
-    assert!(!html.contains("schronu-web-ready"), "{html}");
+    assert!(html.contains("id=\"schronu-web-ready\""), "{html}");
+    assert!(!html.contains("通信中…"), "{html}");
+    assert!(!html.contains("loading-overlay"), "{html}");
+    assert!(!html.contains("loading-spinner"), "{html}");
+    assert!(!html.contains("aria-live=\"polite\""), "{html}");
+    assert!(!html.contains("aria-busy=\"true\""), "{html}");
+    assert!(!html.contains("id=\"schronu-web-loading\""), "{html}");
+    assert!(!html.contains("inert"), "{html}");
     assert!(!html.contains("schronu-buffer-ready"), "{html}");
     assert!(!html.contains("BUFFER"), "{html}");
     assert!(!html.contains("--:--:--"), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
-}
-
-fn failed_initial_load() -> Element {
-    rsx! {
-        InitialLoadView {
-            in_flight: false,
-            error: Some("初期データを取得できませんでした".to_owned()),
-        }
-    }
 }
 
 fn ready_buffer() -> Element {
@@ -61,15 +334,7 @@ fn ready_buffer() -> Element {
 }
 
 #[test]
-fn 初回取得失敗と成功後のbufferは別idと別domを持つ() {
-    let mut failed_dom = VirtualDom::new(failed_initial_load);
-    failed_dom.rebuild_in_place();
-    let failed_html = dioxus::ssr::render(&failed_dom);
-    assert!(failed_html.contains("id=\"schronu-web-load-error\""), "{failed_html}");
-    assert!(failed_html.contains("初期データを取得できませんでした"), "{failed_html}");
-    assert!(!failed_html.contains("schronu-buffer-ready"), "{failed_html}");
-    assert!(!failed_html.contains("BUFFER"), "{failed_html}");
-
+fn bufferは確定値だけをready_shellへ表示する() {
     let mut ready_dom = VirtualDom::new(ready_buffer);
     ready_dom.rebuild_in_place();
     let ready_html = dioxus::ssr::render(&ready_dom);
@@ -77,28 +342,6 @@ fn 初回取得失敗と成功後のbufferは別idと別domを持つ() {
     assert!(ready_html.contains("id=\"schronu-buffer-ready\""), "{ready_html}");
     assert!(ready_html.contains("01:01:01"), "{ready_html}");
     assert!(!ready_html.contains("--:--:--"), "{ready_html}");
-}
-
-#[test]
-fn 初回画面はsnapshotとerrorと通信状態からloading_error_readyを区別する() {
-    assert_eq!(
-        initial_load_phase(false, false, None),
-        InitialLoadPhase::Loading,
-        "mount直後の通信開始前もloadingを維持する"
-    );
-    assert_eq!(
-        initial_load_phase(false, true, None),
-        InitialLoadPhase::Loading
-    );
-    assert_eq!(
-        initial_load_phase(false, false, Some("失敗")),
-        InitialLoadPhase::Error
-    );
-    assert_eq!(
-        initial_load_phase(true, true, Some("古いerror")),
-        InitialLoadPhase::Ready,
-        "snapshot取得後の通常通信ではready DOMを維持する"
-    );
 }
 
 fn ready_buffer_during_follow_up_load() -> Element {
