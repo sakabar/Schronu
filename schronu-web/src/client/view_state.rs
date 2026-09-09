@@ -4,6 +4,7 @@ use super::work_sessions::{KeyValueStorage, StorageError};
 use crate::{ScheduledTaskRow, ServerSnapshot};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
 pub const VIEW_STATE_STORAGE_KEY: &str = "schronu_web.view_state.v1";
@@ -30,6 +31,13 @@ pub struct ViewState {
 pub struct LoadedViewState {
     state: Option<ViewState>,
     warning: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ViewStateStoreError {
+    InvalidState,
+    SerializationFailed,
+    Storage(StorageError),
 }
 
 impl LoadedViewState {
@@ -81,17 +89,33 @@ pub fn load_view_state<S: KeyValueStorage>(storage: &S) -> LoadedViewState {
 pub fn store_view_state<S: KeyValueStorage>(
     storage: &S,
     state: &ViewState,
-) -> Result<(), StorageError> {
+) -> Result<(), ViewStateStoreError> {
     if !valid_view_state(state) {
-        return Err(StorageError::WriteFailed);
+        return Err(ViewStateStoreError::InvalidState);
     }
     let serialized = serde_json::to_string(&StoredViewState {
         version: STORAGE_VERSION,
         state: state.clone(),
     })
-    .map_err(|_| StorageError::WriteFailed)?;
-    storage.set(VIEW_STATE_STORAGE_KEY, &serialized)
+    .map_err(|_| ViewStateStoreError::SerializationFailed)?;
+    storage
+        .set(VIEW_STATE_STORAGE_KEY, &serialized)
+        .map_err(ViewStateStoreError::Storage)
 }
+
+impl fmt::Display for ViewStateStoreError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidState => formatter.write_str("画面状態の内容が不正です。"),
+            Self::SerializationFailed => {
+                formatter.write_str("画面状態の保存形式を生成できません。")
+            }
+            Self::Storage(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl std::error::Error for ViewStateStoreError {}
 
 fn loaded(state: Option<ViewState>, warning: Option<String>) -> LoadedViewState {
     LoadedViewState { state, warning }

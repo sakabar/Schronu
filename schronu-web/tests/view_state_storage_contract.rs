@@ -1,6 +1,7 @@
 use schronu_web::client::state::ActiveTab;
 use schronu_web::client::view_state::{
-    load_view_state, store_view_state, StoredListView, ViewState, VIEW_STATE_STORAGE_KEY,
+    load_view_state, store_view_state, StoredListView, ViewState, ViewStateStoreError,
+    VIEW_STATE_STORAGE_KEY,
 };
 use schronu_web::client::work_sessions::{KeyValueStorage, StorageError};
 use schronu_web::{ScheduledTaskRow, ServerSnapshot, SessionTask};
@@ -96,8 +97,24 @@ fn view_stateのread_write失敗は既存storage契約のerrorを保持する() 
     storage.fail_write.set(true);
     assert_eq!(
         store_view_state(&storage, &view_state("2026-09-09", Vec::new())),
-        Err(StorageError::WriteFailed)
+        Err(ViewStateStoreError::Storage(StorageError::WriteFailed))
     );
+}
+
+#[test]
+fn view_stateの構築不正はstorage失敗と区別する() {
+    let storage = MemoryStorage::default();
+    let mut state = view_state(
+        "2026-09-09",
+        vec![row("00000000-0000-4000-8000-000000000001", "task")],
+    );
+    state.list.as_mut().unwrap().rows[0].task.task_name.clear();
+
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+    assert!(storage.value.borrow().is_none());
 }
 
 fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {
