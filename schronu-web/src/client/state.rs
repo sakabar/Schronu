@@ -318,6 +318,9 @@ impl ClientState {
                 })
                 .map(str::to_owned);
             if selected.as_deref() != self.read.listed_logical_date.as_deref() {
+                self.read.scheduled_rows.clear();
+                self.read.has_list = false;
+                self.read.listed_logical_date = None;
                 return selected.map_or(ClientEffect::None, |date| self.request_list(&date));
             }
         }

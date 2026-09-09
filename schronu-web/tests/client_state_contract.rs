@@ -234,6 +234,8 @@ fn 集計で共有日付を変えた後は一覧tabが同じ日を再取得す�
         panic!("shared logical date needs a fresh list");
     };
     assert_eq!(request.logical_date, "2026-09-06");
+    assert!(!state.has_scheduled_list());
+    assert!(state.scheduled_rows().is_empty());
 }
 
 mod client_state_support;
