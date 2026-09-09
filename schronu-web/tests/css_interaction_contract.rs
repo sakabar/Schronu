@@ -95,6 +95,24 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
 }
 
 #[test]
+fn background_refresh_status_floats_above_navigation_without_affecting_layout() {
+    let status = block_body(MAIN_CSS, ".background-refresh-status");
+    assert!(status.contains("position: fixed;"));
+    assert!(status.contains("left: 50%;"));
+    assert!(status.contains(
+        "bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 0.75rem);"
+    ));
+    assert!(status.contains("width: min(calc(100% - 2rem), 40rem);"));
+    assert!(status.contains("transform: translateX(-50%);"));
+
+    let status_z_index = numeric_property(status, "z-index");
+    let tabs_z_index = numeric_property(block_body(MAIN_CSS, ".tabs"), "z-index");
+    let overlay_z_index = numeric_property(block_body(MAIN_CSS, ".loading-overlay"), "z-index");
+    assert!(tabs_z_index < status_z_index);
+    assert!(status_z_index < overlay_z_index);
+}
+
+#[test]
 fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     let desktop_card = block_body(MAIN_CSS, ".session-card");
     assert!(desktop_card

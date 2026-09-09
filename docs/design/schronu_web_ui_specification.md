@@ -480,7 +480,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 
-reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tasks`は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。失敗時は直前の一覧を維持し、「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
+reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tasks`は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 

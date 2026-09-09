@@ -101,16 +101,23 @@ button:disabled {
 }
 
 .background-refresh-status {
+    position: fixed;
+    z-index: 110;
+    bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 0.75rem);
+    left: 50%;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    margin-block: 0.75rem;
+    width: min(calc(100% - 2rem), 40rem);
+    margin: 0;
     padding: 0.75rem 1rem;
     border: 1px solid var(--line);
     border-radius: 0.75rem;
     background: var(--surface);
+    box-shadow: var(--shadow);
     color: var(--muted);
+    transform: translateX(-50%);
 }
 
 @keyframes loading-spin {
