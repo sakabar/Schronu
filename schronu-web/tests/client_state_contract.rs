@@ -344,6 +344,7 @@ fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
 #[test]
 fn semanticに不正なfixed_request_markerは全体blockへ倒す() {
     let invalid_markers = [
+        format!(r#"{{"operation":"record","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0}}}}"#),
         r#"{"operation":"record","request":{"task_id":"not-a-uuid","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0}}"#.to_owned(),
         format!(r#"{{"operation":"record","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":-1}}}}"#),
         format!(r#"{{"operation":"complete","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":2000,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0,"record_elapsed_seconds":false,"discard_event_id":"not-a-uuid","task_name_at_start":"task"}}}}"#),

@@ -137,7 +137,8 @@ pub fn load_mutation_safety<S: KeyValueStorage>(
         .iter()
         .cloned()
         .collect::<HashSet<_>>();
-    let invalid_committed_task_ids = committed_task_ids.len() != stored.committed_task_ids.len()
+    let invalid_committed_task_ids = (!stored.mutation_blocked && !committed_task_ids.is_empty())
+        || committed_task_ids.len() != stored.committed_task_ids.len()
         || committed_task_ids
             .iter()
             .any(|task_id| !stored.fixed_requests.contains_key(task_id));
