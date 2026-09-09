@@ -1,5 +1,8 @@
 use super::super::web_session_write::WebSessionInputError;
 use crate::adapter::gateway::storage_lock::StorageLockError;
+use crate::application::discarded_session_journal::{
+    DiscardedSessionConflictError, DiscardedSessionSummaryError,
+};
 use crate::application::interface::{BusyTimeSlotLoadError, TaskRepositoryError};
 use crate::application::repository_transaction::RepositoryTransactionError;
 use crate::application::task_use_case::ApplicationError;
@@ -48,6 +51,8 @@ impl Error for WebReadOverflowError {}
 pub(in crate::adapter::controller) enum WebReadCoreError {
     Application(ApplicationError),
     Overflow(WebReadOverflowError),
+    DiscardedSessionConflict(DiscardedSessionConflictError),
+    DiscardedSessionSummary(DiscardedSessionSummaryError),
 }
 
 impl From<WebReadOverflowError> for WebReadCoreError {
@@ -74,6 +79,8 @@ pub enum WebReadError {
     InvalidInput(WebSessionInputError),
     PathEncoding(PathBuf),
     Overflow(WebReadOverflowError),
+    DiscardedSessionConflict(DiscardedSessionConflictError),
+    DiscardedSessionSummary(DiscardedSessionSummaryError),
 }
 
 impl WebReadError {
@@ -96,6 +103,12 @@ impl WebReadError {
             RepositoryTransactionError::Operation(WebReadOperationError::Core(
                 WebReadCoreError::Overflow(error),
             )) => Self::Overflow(error),
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::DiscardedSessionConflict(error),
+            )) => Self::DiscardedSessionConflict(error),
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::DiscardedSessionSummary(error),
+            )) => Self::DiscardedSessionSummary(error),
         }
     }
 }
@@ -125,6 +138,8 @@ impl fmt::Display for WebReadError {
                 write!(formatter, "path must be valid UTF-8: {}", path.display())
             }
             Self::Overflow(error) => error.fmt(formatter),
+            Self::DiscardedSessionConflict(error) => error.fmt(formatter),
+            Self::DiscardedSessionSummary(error) => error.fmt(formatter),
         }
     }
 }
@@ -140,6 +155,8 @@ impl Error for WebReadError {
             Self::Application(error) => Some(error),
             Self::InvalidInput(error) => Some(error),
             Self::Overflow(error) => Some(error),
+            Self::DiscardedSessionConflict(error) => Some(error),
+            Self::DiscardedSessionSummary(error) => Some(error),
             Self::PathEncoding(_) | Self::RepositoryPoisoned => None,
         }
     }

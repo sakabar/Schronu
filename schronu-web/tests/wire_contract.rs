@@ -112,6 +112,8 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
             ended_at_epoch_ms: mutation_request.ended_at_epoch_ms,
             expected_actual_work_seconds: mutation_request.expected_actual_work_seconds,
             record_elapsed_seconds: false,
+            discard_event_id: None,
+            task_name_at_start: None,
         },
         json!({
             "task_id": "00000000-0000-0000-0000-000000000001",

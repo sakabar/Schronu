@@ -77,7 +77,7 @@ fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
 }
 
 #[test]
-fn 固定navigationは3tabの選択状態とcallbackを提供する() {
+fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         navigation_root,
@@ -90,8 +90,8 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
-    assert_eq!(html.matches("class=\"tab-button").count(), 3, "{html}");
-    for label in ["セッション", "一覧", "発火履歴"] {
+    assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
+    for label in ["セッション", "一覧", "発火履歴", "集計"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
     assert!(
@@ -106,7 +106,7 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     }
     assert_eq!(
         *events.lock().unwrap(),
-        [ActiveTab::History, ActiveTab::List, ActiveTab::Session]
+        [ActiveTab::Summary, ActiveTab::History, ActiveTab::List, ActiveTab::Session]
     );
 }
 
@@ -176,7 +176,7 @@ fn session操作は対応するcomponent_actionへ変換する() {
 }
 
 #[test]
-fn 三終了操作はbrowser時刻のtick後にdispatchする() {
+fn 四終了操作はbrowser時刻のtick後にdispatchする() {
     for kind in [
         SessionActionKind::Record,
         SessionActionKind::Complete,
@@ -206,10 +206,7 @@ fn 三終了操作はbrowser時刻のtick後にdispatchする() {
         },
         60_000,
     );
-    assert!(matches!(
-        discard.as_slice(),
-        [ComponentAction::DiscardSession(task_id)] if task_id == "task"
-    ));
+    assert!(matches!(discard.as_slice(), [ComponentAction::Tick { wall_now_epoch_ms: 60_000 }, ComponentAction::DiscardSession(task_id)] if task_id == "task"));
 }
 
 #[test]
@@ -239,7 +236,6 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
             task: task(RECORD_ID),
             is_leaf: true,
         },
-        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
         assert_eq!(
@@ -256,6 +252,14 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
             ComponentAction::SelectDate("2026-09-05".to_owned())
         ),
         ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-05"
+    ));
+
+    let discard_storage = MemoryStorage::default();
+    let (mut discard_state, _) = initialize_client(&discard_storage, 1_000);
+    reduce_component_action_at(&mut discard_state, &discard_storage, 1_000, ComponentAction::AddSession { task: task(RECORD_ID), is_leaf: true });
+    assert!(matches!(
+        reduce_component_action_at(&mut discard_state, &discard_storage, 2_000, ComponentAction::DiscardSession(RECORD_ID.to_owned())),
+        ClientEffect::DiscardSession { .. }
     ));
     assert!(matches!(
         reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::AutoSession),
@@ -1056,6 +1060,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         auto_session_in_flight,
         auto_session_empty,
         carry_lock,
+        discarded_summary: _,
     } = model;
     let _ = (
         active_tab,

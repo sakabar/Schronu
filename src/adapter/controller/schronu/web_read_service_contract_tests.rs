@@ -514,6 +514,8 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
                 ended_at_epoch_ms: Some(ended_at_epoch_ms),
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: true,
+                discard_event_id: None,
+                task_name_at_start: None,
             },
         )
         .unwrap();
@@ -556,6 +558,10 @@ fn complete_sessionはbrowser時計がserverより進んでいても未来の完
                     ended_at_epoch_ms: Some(browser_ended_at.timestamp_millis()),
                     expected_actual_work_seconds: 300,
                     record_elapsed_seconds,
+                    discard_event_id: (!record_elapsed_seconds)
+                        .then(|| Uuid::from_u128(0x541).to_string()),
+                    task_name_at_start: (!record_elapsed_seconds)
+                        .then(|| "service task".to_owned()),
                 },
             )
             .unwrap();
@@ -590,10 +596,12 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: i64::MAX,
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
                 ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: false,
+                discard_event_id: Some(Uuid::from_u128(0x581).to_string()),
+                task_name_at_start: Some("service task".to_owned()),
             },
         )
         .unwrap();
@@ -625,10 +633,12 @@ fn complete_sessionは計測破棄指定でも期待実績競合時に状態を�
             operation_now,
             CompleteSessionRequest {
                 task_id: task_id.to_string(),
-                started_at_epoch_ms: i64::MAX,
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
                 ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 300_000),
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: false,
+                discard_event_id: Some(Uuid::from_u128(0x616).to_string()),
+                task_name_at_start: Some("service task".to_owned()),
             },
         )
         .unwrap_err();
@@ -659,6 +669,8 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
                 ended_at_epoch_ms: Some(operation_now.timestamp_millis() + 300_000),
                 expected_actual_work_seconds: 299,
                 record_elapsed_seconds: true,
+                discard_event_id: None,
+                task_name_at_start: None,
             },
         )
         .unwrap_err();
@@ -690,6 +702,9 @@ fn complete_sessionは記録方針にかかわらず反復task生成と元task�
                     ended_at_epoch_ms: None,
                     expected_actual_work_seconds: 300,
                     record_elapsed_seconds,
+                    discard_event_id: (!record_elapsed_seconds)
+                        .then(|| Uuid::from_u128(0x676).to_string()),
+                    task_name_at_start: (!record_elapsed_seconds).then(|| "occurrence".to_owned()),
                 },
             )
             .unwrap();
@@ -737,10 +752,12 @@ fn complete_sessionは計測破棄指定でも未完了childがあれば保存�
             operation_now,
             CompleteSessionRequest {
                 task_id: parent_id.to_string(),
-                started_at_epoch_ms: i64::MAX,
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
                 ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 300,
                 record_elapsed_seconds: false,
+                discard_event_id: Some(Uuid::from_u128(0x715).to_string()),
+                task_name_at_start: Some("service task".to_owned()),
             },
         )
         .unwrap_err();
@@ -761,10 +778,12 @@ fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requ
     let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
     let request = CompleteSessionRequest {
         task_id: task_id.to_string(),
-        started_at_epoch_ms: i64::MAX,
+        started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
         ended_at_epoch_ms: None,
         expected_actual_work_seconds: 300,
         record_elapsed_seconds: false,
+        discard_event_id: Some(Uuid::from_u128(0x758).to_string()),
+        task_name_at_start: Some("service task".to_owned()),
     };
     let io = Arc::new(RecordingIo::new(vec![FaultRule {
         operation: RecordingOperation::CreateDirectory,

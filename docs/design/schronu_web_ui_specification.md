@@ -155,11 +155,12 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 {
   "version": 1,
   "mutation_blocked": true,
-  "committed_task_ids": ["task UUID"]
+  "committed_task_ids": ["task UUID"],
+  "discard_event_ids": {"task UUID": "event UUID"}
 }
 ```
 
-このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUIDを保持し、省略された既存dataは空配列として読み込む。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
+このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUID、`discard_event_ids`は破棄系mutationの再送に使うevent UUIDを保持し、省略された既存dataは空として読み込む。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
 
 `record_session`または`complete_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功、session破棄、reloadでは解除しない。server commit後にlocal session削除だけが失敗している場合はtask UUIDを`committed_task_ids`へstorage-firstで追加し、reload後も再送とbuffer補正の対象外にする。明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerと`committed_task_ids`を解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残す。
 
@@ -179,7 +180,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ## 4. Server operations
 
-専用workerは次の5 commandを順番に処理する。workerへの送信順が実行順となる。
+専用workerは既存5 commandに`discard_session`と`list_discarded_sessions`を加えた7 commandを順番に処理する。workerへの送信順が実行順となる。
 
 各commandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
 
@@ -245,12 +246,22 @@ CompleteSessionRequest {
 
 1. `ended_at_epoch_ms`があればbrowserの終了操作click時刻、なければ旧client互換のため`operation_now`を計測終了時刻とする。保存用の`finished_at`は`min(ended_at, operation_now)`とし、browser時計が進んでいても未来時刻を保存しない。
 2. `record_elapsed_seconds`が`true`なら、`record_session`と同じ規則で追加実績秒を算出する。
-3. `record_elapsed_seconds`が`false`なら、`started_at_epoch_ms`を実績計算やvalidationに使用せず、追加実績秒を0とする。
+3. `record_elapsed_seconds`が`false`なら追加実績秒を0とし、`started_at_epoch_ms`と終了時刻から1秒以上の`WebDiscardComplete` eventを生成する。1秒未満ならeventを生成しない。
 4. 既存`CompleteTaskInput`へtask UUID、保存用の終了時刻、追加実績秒、`Some(expected_actual_work_seconds)`を渡す。
 5. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
 6. repository transactionは全変更を1回で保存する。repository同期とresponse snapshot生成は`operation_now`を維持し、click後の通信待ちを未作業時間として反映する。
 
 `record_elapsed_seconds`の値にかかわらず期待実績競合、未完了child、反復task生成、保存、安全停止は同じ完了経路で処理する。成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
+
+### 4.6 `discard_session`
+
+event UUID、task UUID、開始時task名、開始・終了epoch millisecondsを受ける。1秒以上なら`WebDiscardRelease` eventをrepository transactionへappendし、taskは変更しない。1秒未満は成功no-opとする。同一event UUID・同一payloadは成功、異なるpayloadは`discarded_session_conflict`とする。journal save後だけ`ServerSnapshot`を返す。
+
+`complete_session(record_elapsed_seconds: false)`は同じ入力情報から`WebDiscardComplete` eventを作り、task完了とjournal追記を1 transactionで保存する。1秒未満はeventなしでtaskだけを完了する。`true`ではjournalを変更しない。
+
+### 4.7 `list_discarded_sessions`
+
+`logical_date`を受け、`ServerSnapshot`と、日次合計秒、task別合計、開始時刻順event内訳を返す。event DTOはevent/task UUID、開始時task名、開始・終了epoch milliseconds、経過秒、source、reasonを保持する。共通集計のoverflowは`arithmetic_overflow`へ写像する。
 
 ## 5. Application contracts
 
@@ -475,9 +486,9 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければBUFFERと一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
-5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
+5. viewport下端へ「セッション」「一覧」「発火履歴」「集計」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
-7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+7. 集計tabへの切替だけは選択日の`list_discarded_sessions`を送り、それ以外のtab切替はserver操作を行わない。選択中の1画面だけをDOMへ描画し、持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
@@ -531,14 +542,14 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。
-- 「計測を破棄して解除」はlocalStorage削除成功後だけmemory stateを確定し、残存する計測中セッションからbufferを再計算する。task実績を更新するserver mutationは行わず、成功後の一覧再取得だけを行う。
+- 「計測を破棄して解除」はclick時刻で停止し、破棄event UUIDと開始時task名を含む`discard_session`をstorage-first safety marker設定後に送る。server成功後だけlocalStorageとmemoryから削除し、残存sessionからbufferを再計算して一覧を再取得する。
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
 - serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
 - 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
 - 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
-- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中はserver mutationの3buttonを無効化し、「計測を破棄して解除」は利用可能とする。
+- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中は破棄解除を含むserver mutationの4buttonを無効化する。
 
 ### 7.5 持ち歩きロックbar
 
@@ -562,7 +573,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して解除 | click時刻付き`discard_session`。成功後に`list_tasks` | 破棄journal追記1回。taskは不変 | marker設定とtimer停止。成功後session削除とbuffer再計算 | 一覧再取得responseで置換 | `discard_session` |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
 | 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後に`list_tasks` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
@@ -698,7 +709,7 @@ OperationHistoryEntry {
 
 ### 12.5 UI and integration
 
-- 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 固定された「セッション」「一覧」「発火履歴」「集計」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。

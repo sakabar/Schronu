@@ -84,11 +84,13 @@ pub fn run_cli() {
 
 pub use storage_directory::resolve_project_storage_directory;
 pub use web_service::{
+    DiscardedSessionDayDto, DiscardedSessionEventDto, DiscardedSessionTaskTotalDto,
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError, WebReadOverflowError,
     WebService, WebSuccess,
 };
 pub use web_session_write::{
-    CompleteSessionRequest, RecordSessionRequest, RecordSessionResult, WebSessionInputError,
+    CompleteSessionRequest, DiscardSessionRequest, RecordSessionRequest, RecordSessionResult,
+    WebSessionInputError,
 };
 
 #[cfg(test)]

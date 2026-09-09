@@ -37,6 +37,8 @@ mod projection_boundary_tests;
 pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod summary_view;
 #[cfg(test)]
 mod view_test_support;
 mod web_endpoint;
@@ -45,5 +47,6 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, list_tasks, record_session, WebOperationResult,
+    auto_session, bootstrap, complete_session, discard_session, list_discarded_sessions,
+    list_tasks, record_session, WebOperationResult,
 };

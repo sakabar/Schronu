@@ -10,10 +10,17 @@ use super::session_view::{SessionAction, SessionActionKind};
 pub(crate) enum ComponentAction {
     RetryRefresh,
     SwitchTab(ActiveTab),
-    Tick { wall_now_epoch_ms: i64 },
+    Tick {
+        wall_now_epoch_ms: i64,
+    },
     SelectDate(String),
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    SelectSummaryDate(String),
     AutoSession,
-    AddSession { task: SessionTask, is_leaf: bool },
+    AddSession {
+        task: SessionTask,
+        is_leaf: bool,
+    },
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -78,7 +85,8 @@ pub(crate) fn component_actions_from_session_action(
 ) -> Vec<ComponentAction> {
     let stops_session = matches!(
         action.kind,
-        SessionActionKind::Record
+        SessionActionKind::Discard
+            | SessionActionKind::Record
             | SessionActionKind::Complete
             | SessionActionKind::CompleteWithoutRecording
             | SessionActionKind::ResumeCompletionConflict
@@ -312,7 +320,7 @@ impl ComponentOrchestrator {
                 ClientResponse::ListTasks { request_id, .. }
             ) if expected == request_id
         );
-        let effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
+        let mut effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
             let previous_session_count = state.sessions().len();
             let effect = apply_response(state, storage, response, background_list);
             relock_after_first_session_added(state, previous_session_count);
@@ -329,6 +337,25 @@ impl ComponentOrchestrator {
             } else {
                 RefreshState::Failed
             };
+            if succeeded
+                && effect == ClientEffect::None
+                && self
+                    .state()
+                    .is_some_and(|state| state.active_tab() == ActiveTab::Summary)
+            {
+                let logical_date = self
+                    .state()
+                    .and_then(ClientState::selected_logical_date)
+                    .or_else(|| {
+                        self.state()
+                            .and_then(ClientState::snapshot)
+                            .map(|snapshot| snapshot.logical_date.as_str())
+                    })
+                    .map(str::to_owned);
+                if let (Some(state), Some(logical_date)) = (self.state.as_mut(), logical_date) {
+                    effect = state.request_discarded_sessions(&logical_date);
+                }
+            }
         }
         self.persist_view_state(storage);
         effect
@@ -392,6 +419,7 @@ fn action_requires_server(action: &ComponentAction) -> bool {
         action,
         ComponentAction::SelectDate(_)
             | ComponentAction::AutoSession
+            | ComponentAction::SelectSummaryDate(_)
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteSession(_)
@@ -423,6 +451,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
+        ComponentAction::SelectSummaryDate(logical_date) => {
+            state.request_discarded_sessions(&logical_date)
+        }
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::AddSession { task, is_leaf } => {
             let session_count = state.sessions().len();
@@ -432,7 +463,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
             }
             effect
         }
-        ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
+        ComponentAction::DiscardSession(task_id) => state.begin_discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
             state.begin_complete_session(storage, &task_id)

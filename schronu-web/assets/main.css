@@ -250,7 +250,7 @@ button:disabled {
     bottom: 0;
     left: 50%;
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     width: min(100%, 82rem);
     min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));
     padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom)
@@ -767,6 +767,44 @@ button:disabled {
 .history-summary {
     grid-column: 1 / -1;
     color: var(--muted);
+}
+
+.discard-summary {
+    display: grid;
+    gap: 1rem;
+}
+
+.discard-summary > h1,
+.discard-task-totals h2,
+.discard-events h2,
+.discard-events p {
+    margin: 0;
+}
+
+.discard-task-totals,
+.discard-events article {
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    background: var(--surface);
+    padding: 1rem;
+}
+
+.discard-task-totals ul,
+.discard-events {
+    display: grid;
+    gap: 0.65rem;
+    margin: 0.75rem 0 0;
+    padding-left: 1.5rem;
+}
+
+.discard-events article {
+    display: grid;
+    gap: 0.35rem;
+}
+
+.discard-events p {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
 }
 
 .error {

@@ -11,7 +11,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ## 2. 対象範囲
 
 - 現行`schronu-web`の画面、component構造、CSS、`today_text`表示、60秒更新は全面的に置換してよい。
-- Web UIは「セッション」「一覧」「発火履歴」の3画面を提供する。
+- Web UIは「セッション」「一覧」「発火履歴」「集計」の4画面を提供する。
 - taskの取得・更新にはSchronuのapplication層とrepository transactionを使用する。
 - CLIおよびMCPの外部契約は、REQ-COMPAT-002で明示するCLI`働`の変更を除いて維持する。
 - 認証、外部公開、端末間同期、別browser tab間の即時同期は対象外とする。
@@ -33,9 +33,9 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.1 共通画面
 
-- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「発火履歴」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。3buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
-- **REQ-COMMON-002**: tab切替はclient内だけで処理し、server通信を発生させないこと。tab barは通信中overlayより背面に配置すること。
-- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。タイトルやtoolbarは表示せず、持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは3画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
+- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「発火履歴」「集計」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
+- **REQ-COMMON-002**: tab切替は原則client内だけで処理するが、「集計」を選択した時だけ選択中logical dateの`list_discarded_sessions`を1回送ること。tab barは通信中overlayより背面に配置すること。
+- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。タイトルやtoolbarは表示せず、持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば確定値を`schronu-buffer-ready`へ表示し、なければBUFFERと一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存一覧があればそのlogical dateを`list_tasks`で再取得すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
@@ -79,7 +79,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.5 セッション操作
 
 - **REQ-ACTION-001**: 各cardに「計測を破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の4buttonを表示すること。
-- **REQ-ACTION-002**: 「計測を破棄して解除」は対象セッションをlocalStorageから削除し、taskの実績を加算するserver mutationを行わないこと。削除成功後は残存セッションの未送信進捗秒からbufferを再計算して削除したセッション分の加算を取り消し、表示一覧を更新するため`list_tasks`を送ること。
+- **REQ-ACTION-002**: 「計測を破棄して解除」は終了click時刻までの1秒以上を破棄journalへ保存する`discard_session`を送り、taskの実績と状態を変更しないこと。成功response後だけ対象セッションをlocalStorageから削除し、bufferを再計算して`list_tasks`を送ること。1秒未満はserver側で成功no-opとすること。
 - **REQ-ACTION-003**: 「記録して解除」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒を開始時実績へ加算すること。server処理中の通信待ち時間を加算せず、browser時計がserver時計より進んでいても開始・終了click時刻の差を維持すること。
 - **REQ-ACTION-004**: 「記録して解除」は開始時実績を期待値として検証し、現在実績と不一致の場合はtaskを保存せず、セッションを保持すること。
 - **REQ-ACTION-005**: 「記録して完了」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒加算、task完了、終了時刻更新を同じrepository transactionで処理すること。browser時計がserver時計より進んでいる場合、経過秒はclick時刻差を使い、保存する完了時刻はserver操作時刻を上限とすること。
@@ -93,6 +93,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-ACTION-013**: 2種類の完了が現在実績付きの実績競合になった場合、通常の手動確認blockとは分離し、元request、初回終了click時刻、最新実績をmemoryに保持すること。cardとbufferを初回click時刻で停止し、現在実績と保持した計測を`HH:MM:SS`で示す確認groupへ通常操作を置換すること。記録ありは「計測を再開」「加算して完了」、記録なしは「計測を再開」「実績を維持して完了」を提供すること。
 - **REQ-ACTION-014**: 競合確認後の完了は元requestのtask UUID、開始時刻、終了時刻、記録方針を維持し、期待実績だけを最新値へ差し替え、新しいrequest IDとsafety markerで1回送信すること。再競合では勝手に加算せず最新実績を更新して確認を続け、成功時は通常の完了cleanupを行うこと。現在実績がない旧errorまたは不正な現在実績は従来の手動確認blockへ移すこと。
 - **REQ-ACTION-015**: 競合確認の「計測を再開」は、確認待ちを除外しつつ初回clickまでの計測millisecondを保持するよう開始時刻を現在時刻から補正し、最新実績を開始時実績として`WorkSession`全体をstorage-firstで置換すること。保存成功時だけ競合とerrorを解除し、失敗時は保存済みsessionと停止中の競合確認を維持してlocalStorage errorを表示すること。
+- **REQ-ACTION-016**: 破棄系mutationは終了dispatchごとにUUID event IDをstorage-firstで固定し、transport切断、repository状態不確実、server commit後のlocal削除失敗でも保持すること。同じrequestの再送は二重計上せず、同じIDで異なるpayloadは競合errorにすること。
 
 ### 4.6 buffer
 
@@ -128,7 +129,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.8 通信制限と発火履歴
 
 - **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、`自動セッション`、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および4種類のセッション終了成功後の`list_tasks`に限定すること。
-- **REQ-NET-002**: tab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」と追加成功後の検索解除・tab切替、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
+- **REQ-NET-002**: 集計tabへの切替を除くtab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」と追加成功後の検索解除・tab切替、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
 - **REQ-NET-003**: 「発火履歴」tabを選択した場合だけ、発火履歴を独立したsectionとして表示できること。
 - **REQ-NET-004**: 発火履歴はserver通信結果の直近100件をmemory内だけに保持し、reload時に消去すること。localStorage操作は記録しないこと。
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
@@ -170,6 +171,12 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMPAT-004**: MCPおよびCLIから`complete_task`を呼ぶ場合は期待実績を指定せず、従来の完了契約を維持すること。
 - **REQ-COMPAT-005**: task storage schemaおよび既存repository transactionの安全性契約を変更しないこと。
 
+### 4.11 破棄時間集計
+
+- **REQ-SUMMARY-001**: 集計tabは一覧と同じ選択logical dateを使い、未選択時は最新snapshotのlogical dateを使うこと。
+- **REQ-SUMMARY-002**: 日次合計を`HH:MM:SS`、task別合計、開始・終了local時刻、開始時task名、経過時間、日本語の破棄理由を表示すること。eventは共通journal集計の開始時刻順とすること。
+- **REQ-SUMMARY-003**: empty、loading、errorを識別でき、日付buttonは一覧と選択状態を共有し、mobileでも横scroll可能であること。
+
 ## 5. 非機能要件
 
 - **REQ-NFR-001**: 時刻、秒数、UUID、logical dateを型付きデータとしてclient/server間で受け渡し、CLI出力文字列をparseしないこと。
@@ -189,11 +196,11 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。いずれの進捗でもtrack全幅の3分の2に100%境界線を表示する。 |
 | AC-004 | 残り・超過`MM:SS`がtiming領域の主表示となり、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`が補助情報として表示され、320px幅でもcardが横へ超過しない。各値をassistive technologyが識別でき、見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
 | AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足し、正負どちらのbufferも符号どおり表示する。 |
-| AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、破棄完了の確認とキャンセルではserver requestが増えない。 |
+| AC-006 | 06:00境界、集計以外の3画面へのtab切替、毎秒tick、一覧からのセッション追加、破棄完了の確認とキャンセルではserver requestが増えない。集計tabは選択日のreadを1回送る。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定、および4種類のセッション終了成功後の一覧再取得だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
 | AC-009 | 一覧は開始時刻順で、締切超過は赤、schedule rank 0のtask名は緑になる。rank非0ではセッションbuttonを表示せず、セッション中のrank 0 taskでは全segmentのbuttonが無効になる。 |
-| AC-010 | 計測を破棄して解除ではtaskが変わらず、記録では終了操作clickまでの完了済み整数秒だけが加算される。記録して完了では同じclick時刻をtask終了時刻として加算と完了が1 transactionで保存され、計測を破棄して完了では既存実績を変えずtaskだけが完了する。 |
+| AC-010 | 計測を破棄して解除ではtaskが変わらず破棄journalだけが保存され、記録では終了操作clickまでの完了済み整数秒だけが加算される。記録して完了では同じclick時刻をtask終了時刻として加算と完了が1 transactionで保存され、計測を破棄して完了では既存実績を変えずtask完了と破棄journalが同じtransactionで保存される。 |
 | AC-011 | 別processで実績が変化した後の記録・2種類の完了は競合となり、taskと反復taskを保存せず、Webセッションを保持する。2種類の完了は初回clickまでの計測を失わず、最新実績での明示的な再完了または確認待ちを除外した計測再開を選べる。 |
 | AC-012 | CLI`働`は秒端数を保持し、引数なしは整数秒、明示指定は分から秒へ換算して加算し、失敗時はfocusを保持する。 |
 | AC-013 | MCPのtool schemaと既存contract testの期待値が変更されず、CLI`働`以外のCLI contract testも変更なしで成功する。 |

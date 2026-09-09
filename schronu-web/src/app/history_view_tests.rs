@@ -99,6 +99,8 @@ fn invocation_formatterは実action名と全引数を関数呼出し形式にす
             ended_at_epoch_ms: Some(3_500),
             expected_actual_work_seconds: 4_000,
             record_elapsed_seconds,
+            discard_event_id: None,
+            task_name_at_start: None,
         })
         .to_string();
         assert!(formatted.starts_with("complete_session(task_id: \"task<\\\"&>\""));

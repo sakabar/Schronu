@@ -136,6 +136,11 @@ pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<Acti
                 selected: active_tab == ActiveTab::History,
                 onclick: move |_| on_switch.call(ActiveTab::History),
             }
+            TabButton {
+                label: "集計",
+                selected: active_tab == ActiveTab::Summary,
+                onclick: move |_| on_switch.call(ActiveTab::Summary),
+            }
         }
     }
 }

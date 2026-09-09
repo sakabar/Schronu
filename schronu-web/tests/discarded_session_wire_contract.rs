@@ -1,4 +1,7 @@
-use schronu_web::{DiscardSessionRequest, DiscardedSessionDay, DiscardedSessionEvent, DiscardedSessionTaskTotal, ListDiscardedSessionsRequest, WebSuccess, ServerSnapshot};
+use schronu_web::{
+    CompleteSessionRequest, DiscardSessionRequest, DiscardedSessionDay, DiscardedSessionEvent,
+    DiscardedSessionTaskTotal, ListDiscardedSessionsRequest, ServerSnapshot, WebSuccess,
+};
 
 #[test]
 fn discard_writeと日次readのwire_shapeを固定する() {
@@ -12,14 +15,50 @@ fn discard_writeと日次readのwire_shapeを固定する() {
     let json = serde_json::to_value(&request).unwrap();
     assert_eq!(json["event_id"], request.event_id);
     assert_eq!(json["task_name_at_start"], "task");
-    assert_eq!(serde_json::to_value(ListDiscardedSessionsRequest { logical_date: "2026-09-10".to_owned() }).unwrap()["logical_date"], "2026-09-10");
+    assert_eq!(
+        serde_json::to_value(ListDiscardedSessionsRequest {
+            logical_date: "2026-09-10".to_owned()
+        })
+        .unwrap()["logical_date"],
+        "2026-09-10"
+    );
+    let complete = CompleteSessionRequest {
+        task_id: request.task_id.clone(),
+        started_at_epoch_ms: 1_000,
+        ended_at_epoch_ms: Some(61_000),
+        expected_actual_work_seconds: 0,
+        record_elapsed_seconds: false,
+        discard_event_id: Some(request.event_id.clone()),
+        task_name_at_start: Some("task".to_owned()),
+    };
+    let complete_json = serde_json::to_value(complete).unwrap();
+    assert_eq!(complete_json["discard_event_id"], request.event_id);
+    assert_eq!(complete_json["task_name_at_start"], "task");
 
     let response = WebSuccess {
-        snapshot: ServerSnapshot { observed_at_epoch_ms: 61_000, logical_date: "2026-09-10".to_owned(), buffer_seconds: 0 },
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 61_000,
+            logical_date: "2026-09-10".to_owned(),
+            buffer_seconds: 0,
+        },
         data: DiscardedSessionDay {
-            logical_date: "2026-09-10".to_owned(), total_seconds: 60,
-            task_totals: vec![DiscardedSessionTaskTotal { task_id: request.task_id.clone(), task_name: "task".to_owned(), total_seconds: 60 }],
-            events: vec![DiscardedSessionEvent { event_id: request.event_id, task_id: request.task_id, task_name_at_start: "task".to_owned(), started_at_epoch_ms: 1_000, ended_at_epoch_ms: 61_000, elapsed_seconds: 60, source: "web".to_owned(), reason: "web_discard_release".to_owned() }],
+            logical_date: "2026-09-10".to_owned(),
+            total_seconds: 60,
+            task_totals: vec![DiscardedSessionTaskTotal {
+                task_id: request.task_id.clone(),
+                task_name: "task".to_owned(),
+                total_seconds: 60,
+            }],
+            events: vec![DiscardedSessionEvent {
+                event_id: request.event_id,
+                task_id: request.task_id,
+                task_name_at_start: "task".to_owned(),
+                started_at_epoch_ms: 1_000,
+                ended_at_epoch_ms: 61_000,
+                elapsed_seconds: 60,
+                source: "web".to_owned(),
+                reason: "web_discard_release".to_owned(),
+            }],
         },
     };
     let json = serde_json::to_value(response).unwrap();

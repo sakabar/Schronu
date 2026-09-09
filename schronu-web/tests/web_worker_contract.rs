@@ -1,7 +1,8 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest,
+    DiscardedSessionDay, ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -12,7 +13,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは5操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは7操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -37,6 +38,18 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
         ended_at_epoch_ms: request.ended_at_epoch_ms,
         expected_actual_work_seconds: request.expected_actual_work_seconds,
         record_elapsed_seconds: false,
+        discard_event_id: None,
+        task_name_at_start: None,
+    };
+    let discard_request = DiscardSessionRequest {
+        event_id: "event".to_owned(),
+        task_id: "task-1".to_owned(),
+        task_name_at_start: "task".to_owned(),
+        started_at_epoch_ms: 1,
+        ended_at_epoch_ms: 2,
+    };
+    let list_discarded_request = ListDiscardedSessionsRequest {
+        logical_date: "2026-09-05".to_owned(),
     };
 
     futures::executor::block_on(async {
@@ -72,6 +85,22 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             worker.complete_session(complete_request).await,
             Ok(snapshot(5))
         );
+        assert_eq!(
+            worker.discard_session(discard_request).await,
+            Ok(snapshot(6))
+        );
+        assert_eq!(
+            worker.list_discarded_sessions(list_discarded_request).await,
+            Ok(WebSuccess {
+                snapshot: snapshot(7),
+                data: DiscardedSessionDay {
+                    logical_date: "2026-09-05".to_owned(),
+                    total_seconds: 0,
+                    task_totals: vec![],
+                    events: vec![]
+                }
+            })
+        );
     });
 
     let events = events.lock().expect("event log must be readable");
@@ -84,6 +113,8 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             Event::Auto,
             Event::Record(123, 456),
             Event::Complete(123, 456, false),
+            Event::Discard("event".to_owned()),
+            Event::ListDiscarded("2026-09-05".to_owned()),
         ]
     );
 }
@@ -137,6 +168,8 @@ enum Event {
     Auto,
     Record(i64, i64),
     Complete(i64, i64, bool),
+    Discard(String),
+    ListDiscarded(String),
 }
 
 struct RecordingOperations {
@@ -265,6 +298,36 @@ impl WebOperations for RecordingOperations {
             request.record_elapsed_seconds,
         ));
         Ok(snapshot(5))
+    }
+
+    fn discard_session(
+        &mut self,
+        request: DiscardSessionRequest,
+    ) -> Result<ServerSnapshot, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::Discard(request.event_id));
+        Ok(snapshot(6))
+    }
+
+    fn list_discarded_sessions(
+        &mut self,
+        request: ListDiscardedSessionsRequest,
+    ) -> Result<WebSuccess<DiscardedSessionDay>, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::ListDiscarded(request.logical_date.clone()));
+        Ok(WebSuccess {
+            snapshot: snapshot(7),
+            data: DiscardedSessionDay {
+                logical_date: request.logical_date,
+                total_seconds: 0,
+                task_totals: vec![],
+                events: vec![],
+            },
+        })
     }
 }
 

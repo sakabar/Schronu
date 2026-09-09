@@ -1,11 +1,14 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest,
+    DiscardedSessionDay, DiscardedSessionEvent, DiscardedSessionTaskTotal,
+    ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+    WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
+    DiscardSessionRequest as CoreDiscardSessionRequest, DiscardedSessionDayDto,
     RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
     ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
 };
@@ -123,6 +126,30 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map(Into::into)
             .map_err(Into::into)
     }
+
+    fn discard_session(
+        &mut self,
+        request: DiscardSessionRequest,
+    ) -> Result<ServerSnapshot, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .discard_session_at(operation_now, request.into())
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    fn list_discarded_sessions(
+        &mut self,
+        request: ListDiscardedSessionsRequest,
+    ) -> Result<WebSuccess<DiscardedSessionDay>, WebError> {
+        let operation_now = self.clock.now();
+        let logical_date = NaiveDate::parse_from_str(&request.logical_date, "%Y-%m-%d")
+            .map_err(|_| invalid_input_error())?;
+        self.service()?
+            .list_discarded_sessions_at(operation_now, logical_date)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
 }
 
 impl From<CoreServerSnapshot> for ServerSnapshot {
@@ -179,6 +206,20 @@ impl From<CompleteSessionRequest> for CoreCompleteSessionRequest {
             ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
             record_elapsed_seconds: request.record_elapsed_seconds,
+            discard_event_id: request.discard_event_id,
+            task_name_at_start: request.task_name_at_start,
+        }
+    }
+}
+
+impl From<DiscardSessionRequest> for CoreDiscardSessionRequest {
+    fn from(request: DiscardSessionRequest) -> Self {
+        Self {
+            event_id: request.event_id,
+            task_id: request.task_id,
+            task_name_at_start: request.task_name_at_start,
+            started_at_epoch_ms: request.started_at_epoch_ms,
+            ended_at_epoch_ms: request.ended_at_epoch_ms,
         }
     }
 }
@@ -210,6 +251,40 @@ impl ConvertData for schronu::adapter::controller::RecordSessionResult {
     fn convert(self) -> Self::Output {
         RecordSessionResult {
             actual_work_seconds: self.actual_work_seconds,
+        }
+    }
+}
+
+impl ConvertData for DiscardedSessionDayDto {
+    type Output = DiscardedSessionDay;
+
+    fn convert(self) -> Self::Output {
+        DiscardedSessionDay {
+            logical_date: self.logical_date,
+            total_seconds: self.total_seconds,
+            task_totals: self
+                .task_totals
+                .into_iter()
+                .map(|total| DiscardedSessionTaskTotal {
+                    task_id: total.task_id,
+                    task_name: total.task_name,
+                    total_seconds: total.total_seconds,
+                })
+                .collect(),
+            events: self
+                .events
+                .into_iter()
+                .map(|event| DiscardedSessionEvent {
+                    event_id: event.event_id,
+                    task_id: event.task_id,
+                    task_name_at_start: event.task_name_at_start,
+                    started_at_epoch_ms: event.started_at_epoch_ms,
+                    ended_at_epoch_ms: event.ended_at_epoch_ms,
+                    elapsed_seconds: event.elapsed_seconds,
+                    source: event.source,
+                    reason: event.reason,
+                })
+                .collect(),
         }
     }
 }
@@ -292,6 +367,8 @@ mod tests {
             ended_at_epoch_ms: invalid_request.ended_at_epoch_ms,
             expected_actual_work_seconds: invalid_request.expected_actual_work_seconds,
             record_elapsed_seconds: true,
+            discard_event_id: None,
+            task_name_at_start: None,
         };
         assert_eq!(
             operations

@@ -11,6 +11,7 @@ use super::super::list_view::ListView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
+use super::super::summary_view::SummaryView;
 use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
     RestoringShell, SessionChrome,
@@ -71,6 +72,7 @@ pub(super) fn BrowserApp() -> Element {
         auto_session_in_flight,
         auto_session_empty,
         carry_lock,
+        discarded_summary,
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
     let (
@@ -194,8 +196,14 @@ pub(super) fn BrowserApp() -> Element {
                         client.write().edit_task_name_filter(&BrowserLocalStorage, filter);
                     },
                 }
-            } else {
+            } else if active_tab == ActiveTab::History {
                 HistoryView { entries: history }
+            } else {
+                SummaryView {
+                    dates,
+                    summary: discarded_summary,
+                    on_select_date: move |date| dispatch_action(client, ComponentAction::SelectSummaryDate(date)),
+                }
             }
         }
         if server_effect_in_flight {

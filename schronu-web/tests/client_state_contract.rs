@@ -4,7 +4,95 @@ use schronu_web::client::state::{
 };
 use schronu_web::client::view_projection::project_session_cards;
 use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
-use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
+use schronu_web::{
+    web_error_codes, DiscardedSessionDay, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess,
+};
+
+#[test]
+fn 破棄解除はserver成功後だけsessionを削除して一覧を再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    state.add_session_from_row(&storage, &row(TASK_ID, 300));
+    state.tick(61_000);
+
+    let ClientEffect::DiscardSession {
+        request_id,
+        request,
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!("discard mutation expected");
+    };
+    assert_eq!(request.task_name_at_start, "task");
+    assert_eq!(request.ended_at_epoch_ms, 61_000);
+    assert_eq!(state.sessions().len(), 1);
+
+    let follow_up =
+        state.apply_discard_result(&storage, request_id, Ok(snapshot("2026-09-05", 61_000)));
+    assert!(state.sessions().is_empty());
+    assert!(matches!(follow_up, ClientEffect::ListTasks { .. }));
+}
+
+#[test]
+fn 破棄解除のtransport不確実後は確認と再送で同じevent_idを使う() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    state.add_session_from_row(&storage, &row(TASK_ID, 300));
+    state.tick(61_000);
+    let ClientEffect::DiscardSession {
+        request_id,
+        request,
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    let event_id = request.event_id;
+    state.apply_discard_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.confirm_repository_checked(&storage),
+        ClientEffect::None
+    );
+    let ClientEffect::DiscardSession { request, .. } =
+        state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    assert_eq!(request.event_id, event_id);
+}
+
+#[test]
+fn 集計tabは選択日だけをreadして成功結果を保持する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000)));
+    let ClientEffect::ListDiscardedSessions {
+        request_id,
+        request,
+    } = state.switch_tab(ActiveTab::Summary)
+    else {
+        panic!()
+    };
+    assert_eq!(request.logical_date, "2026-09-05");
+    state.apply_discarded_sessions_result(
+        request_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2_000),
+            data: DiscardedSessionDay {
+                logical_date: "2026-09-05".to_owned(),
+                total_seconds: 60,
+                task_totals: vec![],
+                events: vec![],
+            },
+        }),
+    );
+    assert_eq!(state.discarded_sessions().unwrap().total_seconds, 60);
+}
 
 mod client_state_support;
 use client_state_support::*;

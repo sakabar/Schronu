@@ -31,3 +31,30 @@ pub struct WebSuccess<T> {
     pub snapshot: ServerSnapshot,
     pub data: T,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionTaskTotalDto {
+    pub task_id: String,
+    pub task_name: String,
+    pub total_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionEventDto {
+    pub event_id: String,
+    pub task_id: String,
+    pub task_name_at_start: String,
+    pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: i64,
+    pub elapsed_seconds: i64,
+    pub source: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionDayDto {
+    pub logical_date: String,
+    pub total_seconds: i64,
+    pub task_totals: Vec<DiscardedSessionTaskTotalDto>,
+    pub events: Vec<DiscardedSessionEventDto>,
+}

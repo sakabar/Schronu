@@ -30,7 +30,7 @@ schronu = { path = "..", optional = true }
 chrono = "0.4.24"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-uuid = "1.0"
+uuid = { version = "1.0", features = ["js", "v4"] }
 web-sys = { version = "0.3", features = ["Event", "EventTarget", "Performance", "Storage", "Window"], optional = true }
 
 [dev-dependencies]

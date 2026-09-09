@@ -1,6 +1,8 @@
 use super::*;
 use crate::client::date_buttons::logical_date_buttons;
-use crate::{ListTasksRequest, SessionTask, WebSuccess};
+use crate::{
+    DiscardedSessionDay, ListDiscardedSessionsRequest, ListTasksRequest, SessionTask, WebSuccess,
+};
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
@@ -14,6 +16,8 @@ pub(super) struct ReadState {
     pub(super) latest_bootstrap_request_id: Option<u64>,
     pub(super) latest_list_request_id: Option<u64>,
     pub(super) latest_auto_request_id: Option<u64>,
+    pub(super) discarded_sessions: Option<DiscardedSessionDay>,
+    pub(super) latest_discarded_request_id: Option<u64>,
 }
 
 impl ReadState {
@@ -30,6 +34,8 @@ impl ReadState {
             latest_bootstrap_request_id: None,
             latest_list_request_id: None,
             latest_auto_request_id: None,
+            discarded_sessions: None,
+            latest_discarded_request_id: None,
         }
     }
 }
@@ -66,6 +72,45 @@ impl ClientState {
         self.read.latest_auto_request_id = Some(request_id);
         self.read.auto_session_in_flight = true;
         ClientEffect::AutoSession { request_id }
+    }
+
+    pub fn request_discarded_sessions(&mut self, logical_date: &str) -> ClientEffect {
+        let Some(request_id) = self.allocate_read_request_id() else {
+            return ClientEffect::None;
+        };
+        self.read.latest_discarded_request_id = Some(request_id);
+        ClientEffect::ListDiscardedSessions {
+            request_id,
+            request: ListDiscardedSessionsRequest {
+                logical_date: logical_date.to_owned(),
+            },
+        }
+    }
+
+    pub fn apply_discarded_sessions_result(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<DiscardedSessionDay>, ServerFailure>,
+    ) -> ClientEffect {
+        let invocation =
+            ServerActionInvocation::ListDiscardedSessions(ListDiscardedSessionsRequest {
+                logical_date: requested_date.to_owned(),
+            });
+        if !consume_latest(&mut self.read.latest_discarded_request_id, request_id) {
+            self.record_stale_response(invocation, result.is_ok());
+            return ClientEffect::None;
+        }
+        match result {
+            Ok(success) => {
+                let _ = self.apply_snapshot_metadata(success.snapshot);
+                self.read.selected_logical_date = Some(requested_date.to_owned());
+                self.read.discarded_sessions = Some(success.data);
+                self.record_server(invocation, Outcome::Success, "破棄時間を更新しました。");
+            }
+            Err(error) => self.record_server_failure(invocation, error),
+        }
+        ClientEffect::None
     }
 
     pub fn apply_bootstrap_result(

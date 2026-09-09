@@ -1,6 +1,7 @@
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest, DiscardedSessionDay,
+    ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -63,6 +64,33 @@ pub async fn complete_session(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_complete_session(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_discard_session")]
+pub async fn discard_session(
+    request: DiscardSessionRequest,
+) -> Result<WebOperationResult<ServerSnapshot>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker().await?.discard_session(request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_discarded_sessions")]
+pub async fn list_discarded_sessions(
+    request: ListDiscardedSessionsRequest,
+) -> Result<WebOperationResult<WebSuccess<DiscardedSessionDay>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker()
+            .await?
+            .list_discarded_sessions(request)
+            .await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -149,6 +177,8 @@ mod tests {
             ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
             record_elapsed_seconds: true,
+            discard_event_id: None,
+            task_name_at_start: None,
         };
 
         futures::executor::block_on(async {

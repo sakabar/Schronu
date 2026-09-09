@@ -1,7 +1,8 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest,
+    DiscardedSessionDay, ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -24,6 +25,18 @@ pub trait WebOperations: 'static {
         &mut self,
         request: CompleteSessionRequest,
     ) -> Result<CompleteSessionResponse, WebError>;
+    fn discard_session(
+        &mut self,
+        _request: DiscardSessionRequest,
+    ) -> Result<ServerSnapshot, WebError> {
+        Err(unsupported_operation())
+    }
+    fn list_discarded_sessions(
+        &mut self,
+        _request: ListDiscardedSessionsRequest,
+    ) -> Result<WebSuccess<DiscardedSessionDay>, WebError> {
+        Err(unsupported_operation())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +62,14 @@ enum WebWorkerCommand {
     CompleteSession {
         request: CompleteSessionRequest,
         response: oneshot::Sender<Result<CompleteSessionResponse, WebError>>,
+    },
+    DiscardSession {
+        request: DiscardSessionRequest,
+        response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
+    },
+    ListDiscardedSessions {
+        request: ListDiscardedSessionsRequest,
+        response: oneshot::Sender<Result<WebSuccess<DiscardedSessionDay>, WebError>>,
     },
 }
 
@@ -115,6 +136,28 @@ impl WebWorkerHandle {
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
+
+    pub async fn discard_session(
+        &self,
+        request: DiscardSessionRequest,
+    ) -> Result<ServerSnapshot, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::DiscardSession { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
+    pub async fn list_discarded_sessions(
+        &self,
+        request: ListDiscardedSessionsRequest,
+    ) -> Result<WebSuccess<DiscardedSessionDay>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::ListDiscardedSessions { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
 }
 
 fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebWorkerCommand>) {
@@ -135,6 +178,12 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             WebWorkerCommand::CompleteSession { request, response } => {
                 let _ = response.send(operations.complete_session(request));
             }
+            WebWorkerCommand::DiscardSession { request, response } => {
+                let _ = response.send(operations.discard_session(request));
+            }
+            WebWorkerCommand::ListDiscardedSessions { request, response } => {
+                let _ = response.send(operations.list_discarded_sessions(request));
+            }
         }
     }
 }
@@ -144,6 +193,15 @@ fn unavailable_error() -> WebError {
         code: web_error_codes::WORKER_UNAVAILABLE.to_owned(),
         message: "Web操作を処理できません。時間をおいて再試行してください。".to_owned(),
         retry_advice: RetryAdvice::Retry,
+        current_actual_work_seconds: None,
+    }
+}
+
+fn unsupported_operation() -> WebError {
+    WebError {
+        code: web_error_codes::OPERATION_FAILED.to_owned(),
+        message: "Web操作が実装されていません。".to_owned(),
+        retry_advice: RetryAdvice::ManualCheck,
         current_actual_work_seconds: None,
     }
 }

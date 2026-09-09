@@ -83,28 +83,15 @@ impl DisplayError {
             }
         )
     }
-
-    pub(super) fn is_resolved_by_discard(&self, task_id: &str) -> bool {
-        matches!(
-            self,
-            Self::Operation {
-                error: WebError {
-                    code,
-                    retry_advice: crate::RetryAdvice::ManualCheck,
-                    ..
-                },
-                operation: _,
-                task_id: Some(error_task_id),
-            } if error_task_id == task_id
-                && code != crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
-        )
-    }
 }
 
 pub(super) fn is_read_operation(operation: Operation) -> bool {
     matches!(
         operation,
-        Operation::Bootstrap | Operation::ListTasks | Operation::AutoSession
+        Operation::Bootstrap
+            | Operation::ListTasks
+            | Operation::AutoSession
+            | Operation::ListDiscardedSessions
     )
 }
 

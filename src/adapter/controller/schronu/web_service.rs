@@ -6,20 +6,26 @@ mod model;
 mod read_model;
 
 pub use error::{WebReadError, WebReadOverflowError};
-pub use model::{ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebSuccess};
+pub use model::{
+    DiscardedSessionDayDto, DiscardedSessionEventDto, DiscardedSessionTaskTotalDto,
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebSuccess,
+};
 pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
 
 use super::web_session_write::{
-    prepare_add_actual_work_input, prepare_complete_task_input, CompleteSessionRequest,
-    RecordSessionRequest, RecordSessionResult,
+    prepare_add_actual_work_input, prepare_complete_task_input, prepare_discard_session_event,
+    CompleteSessionRequest, DiscardSessionRequest, RecordSessionRequest, RecordSessionResult,
 };
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
-use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use crate::application::discarded_session_journal::AppendDiscardedSessionOutcome;
+use crate::application::interface::{
+    DiscardedSessionJournalTrait, FreeTimeManagerTrait, TaskRepositoryTrait,
+};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
@@ -133,12 +139,26 @@ impl WebService {
         operation_now: DateTime<Local>,
         request: CompleteSessionRequest,
     ) -> Result<ServerSnapshot, WebReadError> {
-        let input = prepare_complete_task_input(request, operation_now)
+        let prepared = prepare_complete_task_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
+            if let Some(event) = prepared.discarded_event {
+                let outcome = repository
+                    .append_discarded_session(event)
+                    .map_err(WebReadCoreError::DiscardedSessionConflict)?;
+                if outcome == AppendDiscardedSessionOutcome::AlreadyPresent {
+                    let snapshot = build_server_snapshot_with_offset(
+                        repository,
+                        free_time_manager,
+                        operation_now,
+                        offset,
+                    )?;
+                    return Ok((snapshot, false));
+                }
+            }
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            complete_task(repository, input, &mut factory)
+            complete_task(repository, prepared.input, &mut factory)
                 .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
@@ -147,6 +167,78 @@ impl WebService {
                 offset,
             )?;
             Ok((snapshot, true))
+        })
+    }
+
+    pub fn discard_session_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        request: DiscardSessionRequest,
+    ) -> Result<ServerSnapshot, WebReadError> {
+        let event = prepare_discard_session_event(request).map_err(WebReadError::InvalidInput)?;
+        self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
+            let changed = match event {
+                Some(event) => {
+                    repository
+                        .append_discarded_session(event)
+                        .map_err(WebReadCoreError::DiscardedSessionConflict)?
+                        == AppendDiscardedSessionOutcome::Appended
+                }
+                None => false,
+            };
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok((snapshot, changed))
+        })
+    }
+
+    pub fn list_discarded_sessions_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        logical_date: NaiveDate,
+    ) -> Result<WebSuccess<DiscardedSessionDayDto>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let summary = repository
+                .discarded_sessions_on(logical_date)
+                .map_err(WebReadCoreError::DiscardedSessionSummary)?;
+            let data = DiscardedSessionDayDto {
+                logical_date: summary.logical_date().format("%Y-%m-%d").to_string(),
+                total_seconds: summary.total_seconds(),
+                task_totals: summary
+                    .task_totals()
+                    .iter()
+                    .map(|total| DiscardedSessionTaskTotalDto {
+                        task_id: total.task_id().to_string(),
+                        task_name: total.task_name_at_latest_start().to_owned(),
+                        total_seconds: total.total_seconds(),
+                    })
+                    .collect(),
+                events: summary
+                    .events()
+                    .iter()
+                    .map(|event| DiscardedSessionEventDto {
+                        event_id: event.event_id().to_string(),
+                        task_id: event.task_id().to_string(),
+                        task_name_at_start: event.task_name_at_start().to_owned(),
+                        started_at_epoch_ms: event.started_at_epoch_ms(),
+                        ended_at_epoch_ms: event.ended_at_epoch_ms(),
+                        elapsed_seconds: event.elapsed_seconds(),
+                        source: event.source().as_str().to_owned(),
+                        reason: event.reason().as_str().to_owned(),
+                    })
+                    .collect(),
+            };
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
         })
     }
 

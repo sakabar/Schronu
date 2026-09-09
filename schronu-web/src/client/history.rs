@@ -1,6 +1,9 @@
 use std::{collections::VecDeque, fmt};
 
-use crate::{CompleteSessionRequest, ListTasksRequest, RecordSessionRequest};
+use crate::{
+    CompleteSessionRequest, DiscardSessionRequest, ListDiscardedSessionsRequest, ListTasksRequest,
+    RecordSessionRequest,
+};
 
 const MAX_HISTORY_ENTRIES: usize = 100;
 
@@ -15,6 +18,7 @@ pub enum Operation {
     CompleteSession,
     CompleteSessionWithoutRecording,
     ConfirmRepositoryCheck,
+    ListDiscardedSessions,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,6 +34,8 @@ pub enum ServerActionInvocation {
     AutoSession,
     RecordSession(RecordSessionRequest),
     CompleteSession(CompleteSessionRequest),
+    DiscardSession(DiscardSessionRequest),
+    ListDiscardedSessions(ListDiscardedSessionsRequest),
 }
 
 impl ServerActionInvocation {
@@ -43,6 +49,8 @@ impl ServerActionInvocation {
                 Operation::CompleteSession
             }
             Self::CompleteSession(_) => Operation::CompleteSessionWithoutRecording,
+            Self::DiscardSession(_) => Operation::DiscardSession,
+            Self::ListDiscardedSessions(_) => Operation::ListDiscardedSessions,
         }
     }
 
@@ -50,7 +58,11 @@ impl ServerActionInvocation {
         match self {
             Self::RecordSession(request) => Some(&request.task_id),
             Self::CompleteSession(request) => Some(&request.task_id),
-            Self::Bootstrap | Self::ListTasks(_) | Self::AutoSession => None,
+            Self::DiscardSession(request) => Some(&request.task_id),
+            Self::Bootstrap
+            | Self::ListTasks(_)
+            | Self::ListDiscardedSessions(_)
+            | Self::AutoSession => None,
         }
     }
 }
@@ -73,13 +85,17 @@ impl fmt::Display for ServerActionInvocation {
             ),
             Self::CompleteSession(request) => write!(
                 formatter,
-                "complete_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {}, record_elapsed_seconds: {})",
+                "complete_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {}, record_elapsed_seconds: {}, discard_event_id: {:?}, task_name_at_start: {:?})",
                 request.task_id,
                 request.started_at_epoch_ms,
                 request.ended_at_epoch_ms,
                 request.expected_actual_work_seconds,
-                request.record_elapsed_seconds
+                request.record_elapsed_seconds,
+                request.discard_event_id,
+                request.task_name_at_start
             ),
+            Self::DiscardSession(request) => write!(formatter, "discard_session(event_id: {:?}, task_id: {:?}, task_name_at_start: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {})", request.event_id, request.task_id, request.task_name_at_start, request.started_at_epoch_ms, request.ended_at_epoch_ms),
+            Self::ListDiscardedSessions(request) => write!(formatter, "list_discarded_sessions(logical_date: {:?})", request.logical_date),
         }
     }
 }

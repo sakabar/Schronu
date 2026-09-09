@@ -56,6 +56,51 @@ pub struct CompleteSessionRequest {
     pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
     pub record_elapsed_seconds: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discard_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_name_at_start: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardSessionRequest {
+    pub event_id: String,
+    pub task_id: String,
+    pub task_name_at_start: String,
+    pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListDiscardedSessionsRequest {
+    pub logical_date: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionTaskTotal {
+    pub task_id: String,
+    pub task_name: String,
+    pub total_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionEvent {
+    pub event_id: String,
+    pub task_id: String,
+    pub task_name_at_start: String,
+    pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: i64,
+    pub elapsed_seconds: i64,
+    pub source: String,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardedSessionDay {
+    pub logical_date: String,
+    pub total_seconds: i64,
+    pub task_totals: Vec<DiscardedSessionTaskTotal>,
+    pub events: Vec<DiscardedSessionEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -76,6 +121,7 @@ pub mod web_error_codes {
     pub const WORKER_UNAVAILABLE: &str = "worker_unavailable";
     pub const REPOSITORY_SAVE_FAILED: &str = "repository_save_failed";
     pub const REPOSITORY_STATE_UNCERTAIN: &str = "repository_state_uncertain";
+    pub const DISCARDED_SESSION_CONFLICT: &str = "discarded_session_conflict";
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]

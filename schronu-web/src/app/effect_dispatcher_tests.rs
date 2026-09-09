@@ -27,6 +27,8 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         ended_at_epoch_ms: request.ended_at_epoch_ms,
         expected_actual_work_seconds: request.expected_actual_work_seconds,
         record_elapsed_seconds: true,
+        discard_event_id: None,
+        task_name_at_start: None,
     };
     let responses = futures::executor::block_on(async {
         vec![
@@ -112,6 +114,8 @@ fn 計測破棄完了effectは記録方針falseをgatewayへ保持する() {
                 ended_at_epoch_ms: None,
                 expected_actual_work_seconds: 2,
                 record_elapsed_seconds: false,
+                discard_event_id: None,
+                task_name_at_start: None,
             },
         },
     ));

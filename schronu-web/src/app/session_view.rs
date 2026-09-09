@@ -81,8 +81,12 @@ fn SessionCard(
             }
         },
     ));
-    let discard_disabled =
-        session.in_flight || session.server_committed || mutations_locked || server_actions_blocked;
+    let discard_disabled = session.in_flight
+        || session.server_committed
+        || mutations_locked
+        || server_actions_blocked
+        || global_blocked
+        || session.manual_check_blocked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
     let resume_disabled = session.in_flight
         || session.server_committed

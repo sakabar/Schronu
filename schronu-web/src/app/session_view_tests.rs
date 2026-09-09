@@ -534,10 +534,10 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         ..card("blocked")
     };
     let (html, _) = render(vec![manually_blocked, card("active")], false);
-    assert_eq!(html.matches("disabled").count(), 3, "{html}");
+    assert_eq!(html.matches("disabled").count(), 4, "{html}");
 
     let (globally_blocked, _) = render(vec![card("one"), card("two")], true);
-    assert_eq!(globally_blocked.matches("disabled").count(), 6);
+    assert_eq!(globally_blocked.matches("disabled").count(), 8);
 }
 
 #[test]
@@ -686,7 +686,7 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 }
 
 #[test]
-fn safety_blocks_keep_read_and_local_discard_available() {
+fn safety_blocks_keep_read_available_and_block_all_server_mutations() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (auto_dom, auto_ids) = build_dom(Vec::new(), true, Arc::clone(&events));
     for element_id in auto_ids {
@@ -703,7 +703,7 @@ fn safety_blocks_keep_read_and_local_discard_available() {
     for element_id in action_ids {
         dispatch_click(&action_dom, element_id);
     }
-    assert_eq!(*events.lock().unwrap(), ["blocked:Discard"]);
+    assert!(events.lock().unwrap().is_empty());
 }
 
 #[test]

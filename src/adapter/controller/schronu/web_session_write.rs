@@ -1,4 +1,8 @@
 use crate::application::task_use_case::{AddActualWorkInput, CompleteTaskInput};
+use crate::entity::discarded_session::{
+    DiscardedSessionEvent, DiscardedSessionEventError, DiscardedSessionReason,
+    DiscardedSessionSource,
+};
 use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
@@ -20,6 +24,22 @@ pub struct CompleteSessionRequest {
     pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
     pub record_elapsed_seconds: bool,
+    pub discard_event_id: Option<String>,
+    pub task_name_at_start: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiscardSessionRequest {
+    pub event_id: String,
+    pub task_id: String,
+    pub task_name_at_start: String,
+    pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: i64,
+}
+
+pub(super) struct PreparedCompleteSession {
+    pub(super) input: CompleteTaskInput,
+    pub(super) discarded_event: Option<DiscardedSessionEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -48,6 +68,14 @@ pub enum WebSessionInputError {
         started_at_epoch_ms: i64,
         observed_at_epoch_ms: i64,
     },
+    InvalidEventId {
+        event_id: String,
+        reason: String,
+    },
+    MissingDiscardEventId,
+    MissingTaskNameAtStart,
+    EmptyTaskNameAtStart,
+    DiscardedSession(DiscardedSessionEventError),
 }
 
 impl fmt::Display for WebSessionInputError {
@@ -87,6 +115,13 @@ impl fmt::Display for WebSessionInputError {
                 formatter,
                 "elapsed milliseconds overflow for observed_at_epoch_ms {observed_at_epoch_ms} and started_at_epoch_ms {started_at_epoch_ms}"
             ),
+            Self::InvalidEventId { event_id, reason } => {
+                write!(formatter, "invalid event_id {event_id:?}: {reason}")
+            }
+            Self::MissingDiscardEventId => formatter.write_str("discard_event_id is required"),
+            Self::MissingTaskNameAtStart => formatter.write_str("task_name_at_start is required"),
+            Self::EmptyTaskNameAtStart => formatter.write_str("task_name_at_start must not be empty"),
+            Self::DiscardedSession(error) => error.fmt(formatter),
         }
     }
 }
@@ -115,7 +150,7 @@ pub(super) fn prepare_add_actual_work_input(
 pub(super) fn prepare_complete_task_input(
     request: CompleteSessionRequest,
     operation_now: DateTime<Local>,
-) -> Result<CompleteTaskInput, WebSessionInputError> {
+) -> Result<PreparedCompleteSession, WebSessionInputError> {
     let task_id = validate_task_and_expected_actual_work(
         &request.task_id,
         request.expected_actual_work_seconds,
@@ -127,12 +162,88 @@ pub(super) fn prepare_complete_task_input(
         0
     };
 
-    Ok(CompleteTaskInput {
-        task_id,
-        finished_at,
-        additional_actual_work_seconds,
-        expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
+    let discarded_event = if request.record_elapsed_seconds {
+        None
+    } else {
+        prepare_discarded_event(
+            request
+                .discard_event_id
+                .as_deref()
+                .ok_or(WebSessionInputError::MissingDiscardEventId)?,
+            task_id,
+            request
+                .task_name_at_start
+                .as_deref()
+                .ok_or(WebSessionInputError::MissingTaskNameAtStart)?,
+            request.started_at_epoch_ms,
+            ended_at.timestamp_millis(),
+            DiscardedSessionReason::WebDiscardComplete,
+        )?
+    };
+
+    Ok(PreparedCompleteSession {
+        input: CompleteTaskInput {
+            task_id,
+            finished_at,
+            additional_actual_work_seconds,
+            expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
+        },
+        discarded_event,
     })
+}
+
+pub(super) fn prepare_discard_session_event(
+    request: DiscardSessionRequest,
+) -> Result<Option<DiscardedSessionEvent>, WebSessionInputError> {
+    let task_id =
+        Uuid::parse_str(&request.task_id).map_err(|error| WebSessionInputError::InvalidTaskId {
+            task_id: request.task_id.clone(),
+            reason: error.to_string(),
+        })?;
+    prepare_discarded_event(
+        &request.event_id,
+        task_id,
+        &request.task_name_at_start,
+        request.started_at_epoch_ms,
+        request.ended_at_epoch_ms,
+        DiscardedSessionReason::WebDiscardRelease,
+    )
+}
+
+fn prepare_discarded_event(
+    event_id: &str,
+    task_id: Uuid,
+    task_name_at_start: &str,
+    started_at_epoch_ms: i64,
+    ended_at_epoch_ms: i64,
+    reason: DiscardedSessionReason,
+) -> Result<Option<DiscardedSessionEvent>, WebSessionInputError> {
+    let event_id =
+        Uuid::parse_str(event_id).map_err(|error| WebSessionInputError::InvalidEventId {
+            event_id: event_id.to_owned(),
+            reason: error.to_string(),
+        })?;
+    if task_name_at_start.trim().is_empty() {
+        return Err(WebSessionInputError::EmptyTaskNameAtStart);
+    }
+    let started_at = DateTime::<Utc>::from_timestamp_millis(started_at_epoch_ms)
+        .ok_or(WebSessionInputError::StartedAtOutOfRange(
+            started_at_epoch_ms,
+        ))?
+        .with_timezone(&Local);
+    let ended_at = DateTime::<Utc>::from_timestamp_millis(ended_at_epoch_ms)
+        .ok_or(WebSessionInputError::EndedAtOutOfRange(ended_at_epoch_ms))?
+        .with_timezone(&Local);
+    DiscardedSessionEvent::new(
+        event_id,
+        task_id,
+        task_name_at_start.to_owned(),
+        started_at,
+        ended_at,
+        DiscardedSessionSource::Web,
+        reason,
+    )
+    .map_err(WebSessionInputError::DiscardedSession)
 }
 
 fn validate_task_and_expected_actual_work(

@@ -479,34 +479,34 @@ fn 製品orchestratorはmountを一度に制限しresponseとtickを同じstate�
 }
 
 #[test]
-fn 最後のsessionを即時削除した時だけsessionから一覧tabへ移る() {
+fn 破棄sessionはserver成功応答で削除した時だけ一覧tabへ移る() {
     let storage = MemoryStorage::default();
     let mut orchestrator = mounted_orchestrator(&storage);
     add_session(&mut orchestrator, &storage, RECORD_ID);
     add_session(&mut orchestrator, &storage, COMPLETE_ID);
 
-    assert!(matches!(
-        orchestrator.action(
+    let first_effect = orchestrator.action(
             &storage,
             2_000,
             ComponentAction::DiscardSession(RECORD_ID.to_owned()),
-        ),
-        ClientEffect::ListTasks { .. }
-    ));
+        );
+    let first_request_id = mutation_request_id(&first_effect);
+    assert!(matches!(first_effect, ClientEffect::DiscardSession { .. }));
+    assert!(matches!(orchestrator.apply_response(&storage, ClientResponse::DiscardSession { request_id: first_request_id, result: Ok(snapshot(2_000)) }), ClientEffect::ListTasks { .. }));
     assert_eq!(
         orchestrator.state().unwrap().active_tab(),
         ActiveTab::Session,
         "sessionが残る場合は遷移しない"
     );
 
-    assert!(matches!(
-        orchestrator.action(
+    let second_effect = orchestrator.action(
             &storage,
             2_001,
             ComponentAction::DiscardSession(COMPLETE_ID.to_owned()),
-        ),
-        ClientEffect::ListTasks { .. }
-    ));
+        );
+    let second_request_id = mutation_request_id(&second_effect);
+    assert!(matches!(second_effect, ClientEffect::DiscardSession { .. }));
+    assert!(matches!(orchestrator.apply_response(&storage, ClientResponse::DiscardSession { request_id: second_request_id, result: Ok(snapshot(2_001)) }), ClientEffect::ListTasks { .. }));
     assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::List);
 
     let other_storage = MemoryStorage::default();
@@ -517,11 +517,13 @@ fn 最後のsessionを即時削除した時だけsessionから一覧tabへ移る
         2_000,
         ComponentAction::SwitchTab(ActiveTab::History),
     );
-    other.action(
+    let effect = other.action(
         &other_storage,
         2_001,
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
     );
+    let request_id = mutation_request_id(&effect);
+    other.apply_response(&other_storage, ClientResponse::DiscardSession { request_id, result: Ok(snapshot(2_001)) });
     assert_eq!(other.state().unwrap().active_tab(), ActiveTab::History);
 }
 
@@ -892,7 +894,8 @@ fn add_session(orchestrator: &mut ComponentOrchestrator, storage: &MemoryStorage
 fn mutation_request_id(effect: &ClientEffect) -> u64 {
     match effect {
         ClientEffect::RecordSession { request_id, .. }
-        | ClientEffect::CompleteSession { request_id, .. } => *request_id,
+        | ClientEffect::CompleteSession { request_id, .. }
+        | ClientEffect::DiscardSession { request_id, .. } => *request_id,
         effect => panic!("mutation effectを期待しました: {effect:?}"),
     }
 }

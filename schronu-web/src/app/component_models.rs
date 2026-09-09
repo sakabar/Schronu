@@ -6,6 +6,7 @@ use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
     SessionCardViewModel,
 };
+use crate::DiscardedSessionDay;
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
@@ -23,6 +24,8 @@ pub(crate) struct BrowserPageModel {
     pub auto_session_in_flight: bool,
     pub auto_session_empty: bool,
     pub carry_lock: CarryLockViewModel,
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub discarded_summary: Option<DiscardedSessionDay>,
 }
 
 impl BrowserPageModel {
@@ -62,6 +65,7 @@ impl BrowserPageModel {
             auto_session_in_flight: state.auto_session_in_flight(),
             auto_session_empty: state.auto_session_empty(),
             carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
+            discarded_summary: state.discarded_sessions().cloned(),
         }
     }
 }

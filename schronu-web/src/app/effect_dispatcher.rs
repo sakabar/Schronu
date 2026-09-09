@@ -2,8 +2,9 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest, DiscardedSessionDay,
+    ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -28,6 +29,18 @@ pub(crate) trait WebGateway {
         &self,
         request: CompleteSessionRequest,
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError>;
+    async fn discard_session(
+        &self,
+        _request: DiscardSessionRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        unreachable!("discard_session is not implemented by this test gateway")
+    }
+    async fn list_discarded_sessions(
+        &self,
+        _request: ListDiscardedSessionsRequest,
+    ) -> Result<Result<WebSuccess<DiscardedSessionDay>, WebError>, ServerFnError> {
+        unreachable!("list_discarded_sessions is not implemented by this test gateway")
+    }
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
@@ -65,6 +78,18 @@ impl WebGateway for ServerFunctionGateway {
     ) -> Result<Result<CompleteSessionResponse, WebError>, ServerFnError> {
         super::complete_session(request).await
     }
+    async fn discard_session(
+        &self,
+        request: DiscardSessionRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        super::discard_session(request).await
+    }
+    async fn list_discarded_sessions(
+        &self,
+        request: ListDiscardedSessionsRequest,
+    ) -> Result<Result<WebSuccess<DiscardedSessionDay>, WebError>, ServerFnError> {
+        super::list_discarded_sessions(request).await
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -89,6 +114,15 @@ pub(crate) enum ClientResponse {
     CompleteSession {
         request_id: u64,
         result: Result<CompleteSessionResponse, ServerFailure>,
+    },
+    DiscardSession {
+        request_id: u64,
+        result: Result<ServerSnapshot, ServerFailure>,
+    },
+    ListDiscardedSessions {
+        request_id: u64,
+        requested_date: String,
+        result: Result<WebSuccess<DiscardedSessionDay>, ServerFailure>,
     },
 }
 
@@ -131,6 +165,24 @@ pub(crate) async fn execute_effect<G: WebGateway>(
             request_id,
             result: normalize_endpoint_result(gateway.complete_session(request).await),
         }),
+        ClientEffect::DiscardSession {
+            request_id,
+            request,
+        } => Some(ClientResponse::DiscardSession {
+            request_id,
+            result: normalize_endpoint_result(gateway.discard_session(request).await),
+        }),
+        ClientEffect::ListDiscardedSessions {
+            request_id,
+            request,
+        } => {
+            let requested_date = request.logical_date.clone();
+            Some(ClientResponse::ListDiscardedSessions {
+                request_id,
+                requested_date,
+                result: normalize_endpoint_result(gateway.list_discarded_sessions(request).await),
+            })
+        }
     }
 }
 
@@ -183,6 +235,14 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
         ClientResponse::CompleteSession { request_id, result } => {
             state.apply_complete_result(storage, request_id, result)
         }
+        ClientResponse::DiscardSession { request_id, result } => {
+            state.apply_discard_result(storage, request_id, result)
+        }
+        ClientResponse::ListDiscardedSessions {
+            request_id,
+            requested_date,
+            result,
+        } => state.apply_discarded_sessions_result(request_id, &requested_date, result),
     }
 }
 

@@ -14,6 +14,14 @@ impl From<WebReadError> for WebError {
                 web_error_codes::ARITHMETIC_OVERFLOW,
                 "時間の計算結果が範囲を超えました。",
             ),
+            WebReadError::DiscardedSessionConflict(_) => manual(
+                web_error_codes::DISCARDED_SESSION_CONFLICT,
+                "同じ破棄記録IDに異なる内容が保存されています。状態を確認してください。",
+            ),
+            WebReadError::DiscardedSessionSummary(_) => manual(
+                web_error_codes::ARITHMETIC_OVERFLOW,
+                "破棄時間の集計結果が範囲を超えました。",
+            ),
             WebReadError::BusyTimeSlots(_) | WebReadError::PathEncoding(_) => manual(
                 web_error_codes::CONFIGURATION_ERROR,
                 "Schronuの設定を確認してください。",
@@ -101,6 +109,9 @@ fn manual(code: &str, message: &str) -> WebError {
 mod tests {
     use crate::{web_error_codes, RetryAdvice};
     use schronu::adapter::controller::{WebReadError, WebSessionInputError};
+    use schronu::application::discarded_session_journal::{
+        DiscardedSessionConflictError, DiscardedSessionSummaryError,
+    };
     use schronu::application::interface::{TaskRepositoryError, TaskRepositoryOperation};
     use schronu::application::task_use_case::ApplicationError;
     use std::path::PathBuf;
@@ -236,6 +247,23 @@ mod tests {
                 reason: "private-detail",
             }),
             web_error_codes::INVALID_INPUT,
+            RetryAdvice::ManualCheck,
+        );
+    }
+
+    #[test]
+    fn 破棄event競合と集計overflowを情報を失わず分類する() {
+        let event_id = "00000000-0000-4000-8000-000000000009".parse().unwrap();
+        assert_mapping(
+            WebReadError::DiscardedSessionConflict(DiscardedSessionConflictError::new(event_id)),
+            web_error_codes::DISCARDED_SESSION_CONFLICT,
+            RetryAdvice::ManualCheck,
+        );
+        assert_mapping(
+            WebReadError::DiscardedSessionSummary(
+                DiscardedSessionSummaryError::ElapsedSecondsOverflow,
+            ),
+            web_error_codes::ARITHMETIC_OVERFLOW,
             RetryAdvice::ManualCheck,
         );
     }

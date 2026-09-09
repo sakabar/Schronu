@@ -13,7 +13,7 @@ use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
 };
-use crate::{ScheduledTaskRow, ServerSnapshot, WebError};
+use crate::{DiscardedSessionDay, ScheduledTaskRow, ServerSnapshot, WebError};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
 use read_state::ReadState;
@@ -27,6 +27,7 @@ pub enum ActiveTab {
     Session,
     List,
     History,
+    Summary,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +141,10 @@ impl ClientState {
 
     pub fn scheduled_rows(&self) -> &[ScheduledTaskRow] {
         &self.read.scheduled_rows
+    }
+
+    pub fn discarded_sessions(&self) -> Option<&DiscardedSessionDay> {
+        self.read.discarded_sessions.as_ref()
     }
 
     pub fn has_scheduled_list(&self) -> bool {
@@ -302,6 +307,18 @@ impl ClientState {
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
         self.active_tab = tab;
+        if tab == ActiveTab::Summary {
+            let logical_date = self
+                .selected_logical_date()
+                .or_else(|| {
+                    self.snapshot()
+                        .map(|snapshot| snapshot.logical_date.as_str())
+                })
+                .map(str::to_owned);
+            return logical_date.map_or(ClientEffect::None, |date| {
+                self.request_discarded_sessions(&date)
+            });
+        }
         ClientEffect::None
     }
 
