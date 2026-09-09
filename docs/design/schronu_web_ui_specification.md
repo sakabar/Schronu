@@ -256,6 +256,8 @@ CompleteSessionRequest {
 
 `record_elapsed_seconds`の値にかかわらず期待実績競合、未完了child、反復task生成、保存、安全停止は同じ完了経路で処理する。成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
 
+`record_elapsed_seconds: false`で`discard_event_id`と`task_name_at_start`をともに省略した旧client payloadは、従来互換としてtask完了だけを実行し、破棄journalへは追記しない。両fieldを含む更新済みclient payloadだけを`WebDiscardComplete`として同じtransactionへ追記する。片方だけを指定したpayloadは入力errorとする。`record_elapsed_seconds: true`では両fieldの有無にかかわらず従来どおり実績加算と完了だけを行う。
+
 ### 4.6 `discard_session`
 
 event UUID、task UUID、開始時task名、開始・終了epoch millisecondsを受ける。1秒以上なら`WebDiscardRelease` eventをrepository transactionへappendし、taskは変更しない。1秒未満は成功no-opとする。同一event UUID・同一payloadは成功、異なるpayloadは`discarded_session_conflict`とする。journal save後だけ`ServerSnapshot`を返す。

@@ -162,23 +162,22 @@ pub(super) fn prepare_complete_task_input(
         0
     };
 
-    let discarded_event = if request.record_elapsed_seconds {
-        None
-    } else {
-        prepare_discarded_event(
-            request
-                .discard_event_id
-                .as_deref()
-                .ok_or(WebSessionInputError::MissingDiscardEventId)?,
+    let discarded_event = match (
+        request.record_elapsed_seconds,
+        request.discard_event_id.as_deref(),
+        request.task_name_at_start.as_deref(),
+    ) {
+        (true, _, _) | (false, None, None) => None,
+        (false, Some(event_id), Some(task_name_at_start)) => prepare_discarded_event(
+            event_id,
             task_id,
-            request
-                .task_name_at_start
-                .as_deref()
-                .ok_or(WebSessionInputError::MissingTaskNameAtStart)?,
+            task_name_at_start,
             request.started_at_epoch_ms,
             ended_at.timestamp_millis(),
             DiscardedSessionReason::WebDiscardComplete,
-        )?
+        )?,
+        (false, None, Some(_)) => return Err(WebSessionInputError::MissingDiscardEventId),
+        (false, Some(_), None) => return Err(WebSessionInputError::MissingTaskNameAtStart),
     };
 
     Ok(PreparedCompleteSession {

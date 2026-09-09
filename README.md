@@ -56,6 +56,8 @@ rm -rf target/dx/schronu-web
 
 作業中のセッションは`schronu_web.work_sessions.v1`、表示状態は`schronu_web.view_state.v1`、変更系requestの送信中を示す安全状態は`schronu_web.mutation_safety.v1`としてlocalStorageへ分離保存します。安全状態には破棄event UUIDも保持し、不確実な応答後の再送で同じIDを使って二重計上を防ぎます。reload後は保存した開始時刻を基準にtimerを復元します。記録、破棄または完了のresponseを確定できないままreloadした場合、変更系操作を停止します。repositoryの状態を別の手段で確認してから、画面の確認操作で停止を解除してください。
 
+旧Web clientとの互換のため、`complete_session(record_elapsed_seconds: false)`で破棄event IDと開始時task名をともに省略したrequestはtask完了だけを行います。更新済みclientが両fieldを送った場合だけ、task完了と`WebDiscardComplete` eventを同じtransactionへ保存します。`record_elapsed_seconds: true`の動作は従来どおりです。
+
 セッションの操作は次のとおりです。
 
 - `計測を破棄して解除`: 実績へ加算せず、1秒以上の計測を月別の破棄journalへ保存してからWeb UIのセッションを削除する。

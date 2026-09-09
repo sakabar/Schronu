@@ -167,6 +167,37 @@ fn complete_sessionの破棄はtask完了とjournalを同じtransactionへ保存
 }
 
 #[test]
+fn legacy_complete_session_false_payloadは完了だけを成功させjournalへ追加しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
+    let fixture = Fixture::new(now);
+    let request: CompleteSessionRequest = serde_json::from_str(&format!(
+        r#"{{"task_id":"{}","started_at_epoch_ms":{},"ended_at_epoch_ms":{},"expected_actual_work_seconds":120,"record_elapsed_seconds":false}}"#,
+        fixture.task_id,
+        now.timestamp_millis() - 60_000,
+        now.timestamp_millis()
+    ))
+    .unwrap();
+
+    fixture.service().complete_session_at(now, request).unwrap();
+
+    let repository = fixture.repository(now);
+    assert_eq!(
+        repository
+            .get_by_id(fixture.task_id)
+            .unwrap()
+            .unwrap()
+            .get_status()
+            .unwrap(),
+        Status::Done
+    );
+    assert!(repository
+        .discarded_sessions_on(NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+        .unwrap()
+        .events()
+        .is_empty());
+}
+
+#[test]
 fn complete_sessionの破棄は同一event再送を二重計上せず成功扱いする() {
     let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
     let fixture = Fixture::new(now);
