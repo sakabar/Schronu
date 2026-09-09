@@ -48,6 +48,15 @@ impl DisplayError {
         }
     }
 
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn is_for_operation(&self, expected: Operation) -> bool {
+        matches!(
+            self,
+            Self::Operation { operation, .. } | Self::Transport { operation, .. }
+                if *operation == expected
+        )
+    }
+
     pub(super) fn is_resolved_by_server_success(
         &self,
         operation: Operation,

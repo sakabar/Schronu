@@ -64,10 +64,7 @@ impl BrowserPageModel {
                         state.discarded_sessions_view_state(),
                         DiscardedSessionsViewState::Error { .. }
                     )
-                    && state.history().back().is_some_and(|entry| {
-                        entry.invocation.operation() == Operation::ListDiscardedSessions
-                            && entry.outcome == Outcome::Failure
-                    });
+                    && error.is_for_operation(Operation::ListDiscardedSessions);
                 (!rendered_in_summary).then(|| error.message().to_owned())
             }),
             global_blocked: state.mutation_globally_blocked(),

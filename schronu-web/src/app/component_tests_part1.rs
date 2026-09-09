@@ -1119,4 +1119,15 @@ fn 集計read_errorはsummary内だけに表示してglobal_bannerと重複し�
         crate::client::state::DiscardedSessionsViewState::Error { .. }
     ));
     assert_eq!(model.display_error, None);
+
+    state.add_session_from_list_task(
+        &MemoryStorage::failing_writes(),
+        &task(RECORD_ID),
+        true,
+    );
+    let model = BrowserPageModel::from_state(&state);
+    assert_eq!(
+        model.display_error.as_deref(),
+        Some("localStorageを更新できませんでした。")
+    );
 }
