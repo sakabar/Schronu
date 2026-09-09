@@ -196,6 +196,7 @@ impl CommittedTransaction {
                         self.state.io.as_ref(),
                         &self.state.paths.storage_dir_path,
                         &target_path,
+                        self.state.manifest.replace_target_directories,
                     )?;
                     let staged_file_path = TransactionLayout::staged_file_path(
                         &self.state.paths.transaction_dir_path,
@@ -408,6 +409,7 @@ impl CommittedTransaction {
             self.state.io.as_ref(),
             &self.state.paths.storage_dir_path,
             target_path,
+            self.state.manifest.replace_target_directories,
         )?;
         let parent_path = target_path.parent().ok_or_else(|| {
             StorageTransactionError::new(
@@ -503,6 +505,7 @@ impl CommittedTransaction {
             self.state.io.as_ref(),
             &self.state.paths.storage_dir_path,
             target_path,
+            self.state.manifest.replace_target_directories,
         )?;
         if self.state.manifest.replace_target_directories {
             self.state

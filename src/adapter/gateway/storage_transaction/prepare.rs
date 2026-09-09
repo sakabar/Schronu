@@ -224,6 +224,7 @@ fn prepare_contents(
             context.io,
             &context.paths.storage_dir_path,
             write.target_path,
+            !preserve_existing_permissions,
         )?;
         ensure_unique_target(&mut targets, target.clone(), write.target_path)?;
         let staged_file = TransactionLayout::staged_file_relative_path(index);

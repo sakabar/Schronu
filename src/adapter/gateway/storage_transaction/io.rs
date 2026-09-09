@@ -353,15 +353,56 @@ pub(super) fn validate_write_target(
     io: &dyn StorageTransactionIo,
     storage_dir_path: &Path,
     target_path: &Path,
+    allow_non_directory_ancestor: bool,
 ) -> Result<PathBuf, StorageTransactionError> {
     let target = validate_storage_relative_path(storage_dir_path, target_path)?;
-    validate_target_ancestors(
-        io,
-        storage_dir_path,
-        &target,
-        "write target ancestors must be directories and must not be symbolic links",
-    )?;
+    validate_write_target_ancestors(io, storage_dir_path, &target, allow_non_directory_ancestor)?;
     Ok(target)
+}
+
+fn validate_write_target_ancestors(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    target: &Path,
+    allow_non_directory_ancestor: bool,
+) -> Result<(), StorageTransactionError> {
+    let mut ancestor_path = storage_dir_path.to_path_buf();
+    let Some(parent) = target.parent() else {
+        return Ok(());
+    };
+    for component in parent.components() {
+        let Component::Normal(name) = component else {
+            unreachable!("validated transaction target must contain only normal components");
+        };
+        ancestor_path.push(name);
+        match io.symlink_metadata(&ancestor_path) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {}
+            Ok(metadata) if allow_non_directory_ancestor && !metadata.file_type().is_symlink() => {
+                break;
+            }
+            Ok(_) => {
+                return Err(layout::invalid_target_path_error(
+                    &ancestor_path,
+                    "write target ancestors must be directories and must not be symbolic links",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
+            Err(error)
+                if allow_non_directory_ancestor
+                    && error.kind() == std::io::ErrorKind::NotADirectory =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(StorageTransactionError::new(
+                    StorageTransactionOperation::ValidateTargetPath,
+                    &ancestor_path,
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_target_ancestors(
