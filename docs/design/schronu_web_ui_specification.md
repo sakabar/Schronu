@@ -500,7 +500,7 @@ reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tas
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
-背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびserver成功後にlocal sessionを削除して一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
+背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。集計tabへ切り替えた場合のreadは背景更新完了後に1回だけ送る。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびserver成功後にlocal sessionを削除して一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。集計の日付buttonと再試行buttonは、背景更新中と通常通信中のどちらでも同じguardにより無効化する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -572,13 +572,13 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | --- | --- | --- | --- | --- | --- |
 | 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
 | reload背景更新 | `bootstrap`後、保存一覧があれば保存日付の`list_tasks` | なし | 成功snapshotと一覧をview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
-| tab切替 | 集計は`list_discarded_sessions`。集計で日付変更後の一覧はcache不一致時だけ`list_tasks` | なし | view stateを保存 | read responseで対象表示を置換 | `list_discarded_sessions`または`list_tasks` |
+| tab切替 | 集計は`list_discarded_sessions`。集計で日付変更後の一覧はcache不一致時だけ`list_tasks` | なし | view stateを保存 | read responseで対象表示を置換 | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
 | 一覧検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
-| 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
+| 日付button | 一覧は`list_tasks`、集計は`list_discarded_sessions` | なし | なし | responseで一覧または集計を置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 計測を破棄して解除 | click時刻付き`discard_session`。成功後に`list_tasks` | 破棄journal追記1回。taskは不変 | marker設定とtimer停止。成功後session削除とbuffer再計算 | 一覧再取得responseで置換 | `discard_session` |
+| 計測を破棄して解除 | click時刻付き`discard_session`。成功後に`list_tasks` | 破棄journal追記1回。taskは不変 | marker設定とtimer停止。成功後session削除とbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
 | 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後に`list_tasks` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
@@ -715,7 +715,7 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 固定された「セッション」「一覧」「発火履歴」「集計」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
-- 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
+- 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴・集計でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
