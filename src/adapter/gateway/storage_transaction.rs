@@ -15,6 +15,8 @@ mod manifest;
 mod prepare;
 mod recovery;
 
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(in crate::adapter::gateway) use io::write_storage_file_anchored_after_parent_open;
 pub(super) use io::FileSystemStorageTransactionIo;
 pub(crate) use io::StorageTransactionIo;
 use io::TransactionLock;
@@ -39,7 +41,7 @@ use recovery::prepared_from_manifest;
 pub(super) use recovery::recover;
 
 #[derive(Debug)]
-pub(super) struct StorageTransactionError {
+pub(crate) struct StorageTransactionError {
     operation: StorageTransactionOperation,
     path: PathBuf,
     commit_state: StorageTransactionCommitState,

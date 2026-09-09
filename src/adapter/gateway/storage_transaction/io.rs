@@ -4,11 +4,23 @@ use fs2::FileExt;
 use std::fs::{self, File, Metadata};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use uuid::Uuid;
 
 #[cfg(test)]
 pub(super) use super::layout::TRANSACTION_LOCK_FILE_NAME;
 
 pub(crate) trait StorageTransactionIo: Send + Sync {
+    fn write_storage_file_anchored(
+        &self,
+        _storage_dir_path: &Path,
+        _relative_path: &Path,
+        _transaction_id: Uuid,
+        _bytes: &[u8],
+        _permissions: Option<&fs::Permissions>,
+    ) -> Result<bool, StorageTransactionError> {
+        Ok(false)
+    }
+
     fn create_dir_all(&self, path: &Path) -> std::io::Result<()> {
         fs::create_dir_all(path)
     }
@@ -137,6 +149,25 @@ pub(crate) enum DirectoryPermissionError {
 #[derive(Default)]
 pub(in crate::adapter::gateway) struct FileSystemStorageTransactionIo;
 impl StorageTransactionIo for FileSystemStorageTransactionIo {
+    fn write_storage_file_anchored(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+        transaction_id: Uuid,
+        bytes: &[u8],
+        permissions: Option<&fs::Permissions>,
+    ) -> Result<bool, StorageTransactionError> {
+        write_storage_file_anchored_secure(
+            storage_dir_path,
+            relative_path,
+            transaction_id,
+            bytes,
+            permissions,
+            || {},
+        )?;
+        Ok(true)
+    }
+
     fn set_and_sync_directory_permissions(
         &self,
         path: &Path,
@@ -164,6 +195,207 @@ impl StorageTransactionIo for FileSystemStorageTransactionIo {
     ) -> std::io::Result<()> {
         remove_storage_directory_if_present_secure(storage_dir_path, relative_path)
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn write_storage_file_anchored_secure(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+    transaction_id: Uuid,
+    bytes: &[u8],
+    permissions: Option<&fs::Permissions>,
+    after_parent_open: impl FnOnce(),
+) -> Result<(), StorageTransactionError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::PermissionsExt;
+
+    let target_path = storage_dir_path.join(relative_path);
+    validate_storage_relative_path(storage_dir_path, &target_path)?;
+    let (parent, target_name) = open_storage_entry_parent(storage_dir_path, relative_path)
+        .map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ValidateTargetPath,
+                &target_path,
+                error,
+            )
+        })?;
+    after_parent_open();
+    let (current_parent, current_target_name) =
+        open_storage_entry_parent(storage_dir_path, relative_path).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::ValidateTargetPath,
+                &target_path,
+                error,
+            )
+        })?;
+    let opened_metadata = parent.metadata().map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ValidateTargetPath,
+            &target_path,
+            error,
+        )
+    })?;
+    let current_metadata = current_parent.metadata().map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::ValidateTargetPath,
+            &target_path,
+            error,
+        )
+    })?;
+    if opened_metadata.dev() != current_metadata.dev()
+        || opened_metadata.ino() != current_metadata.ino()
+        || target_name != current_target_name
+    {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::ValidateTargetPath,
+            &target_path,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "write target parent changed after it was opened",
+            ),
+        ));
+    }
+
+    let temporary_name =
+        anchored_temporary_name(&target_name, transaction_id).map_err(|error| {
+            StorageTransactionError::new(
+                StorageTransactionOperation::CreateLiveTemporary,
+                &target_path,
+                error,
+            )
+        })?;
+    let open_temporary = || unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            temporary_name.as_ptr(),
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            0o600,
+        )
+    };
+    let mut descriptor = open_temporary();
+    if descriptor < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::AlreadyExists
+    {
+        if unsafe { libc::unlinkat(parent.as_raw_fd(), temporary_name.as_ptr(), 0) } != 0 {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::RemoveLiveTemporary,
+                &target_path,
+                std::io::Error::last_os_error(),
+            ));
+        }
+        descriptor = open_temporary();
+    }
+    if descriptor < 0 {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::CreateLiveTemporary,
+            &target_path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    // SAFETY: openat returned a new descriptor whose ownership is transferred once.
+    let mut temporary = unsafe { File::from_raw_fd(descriptor) };
+    if let Some(permissions) = permissions {
+        if unsafe { libc::fchmod(temporary.as_raw_fd(), permissions.mode() as libc::mode_t) } != 0 {
+            return Err(StorageTransactionError::new(
+                StorageTransactionOperation::SetLivePermissions,
+                &target_path,
+                std::io::Error::last_os_error(),
+            ));
+        }
+    }
+    temporary.write_all(bytes).map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::WriteLiveTemporary,
+            &target_path,
+            error,
+        )
+    })?;
+    temporary.sync_all().map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::SyncLiveTemporary,
+            &target_path,
+            error,
+        )
+    })?;
+    if unsafe {
+        libc::renameat(
+            parent.as_raw_fd(),
+            temporary_name.as_ptr(),
+            parent.as_raw_fd(),
+            target_name.as_ptr(),
+        )
+    } != 0
+    {
+        return Err(StorageTransactionError::new(
+            StorageTransactionOperation::RenameLiveTarget,
+            &target_path,
+            std::io::Error::last_os_error(),
+        ));
+    }
+    parent.sync_all().map_err(|error| {
+        StorageTransactionError::new(
+            StorageTransactionOperation::SyncDirectory,
+            target_path.parent().unwrap_or(storage_dir_path),
+            error,
+        )
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn write_storage_file_anchored_secure(
+    storage_dir_path: &Path,
+    _relative_path: &Path,
+    _transaction_id: Uuid,
+    _bytes: &[u8],
+    _permissions: Option<&fs::Permissions>,
+    _after_parent_open: impl FnOnce(),
+) -> Result<(), StorageTransactionError> {
+    Err(StorageTransactionError::new(
+        StorageTransactionOperation::ValidateTargetPath,
+        storage_dir_path,
+        std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "anchored storage writes are supported only on macOS and Linux",
+        ),
+    ))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn anchored_temporary_name(
+    target_name: &std::ffi::CStr,
+    transaction_id: Uuid,
+) -> std::io::Result<std::ffi::CString> {
+    let mut bytes = Vec::with_capacity(target_name.to_bytes().len() + 40);
+    bytes.push(b'.');
+    bytes.extend_from_slice(target_name.to_bytes());
+    bytes.push(b'.');
+    bytes.extend_from_slice(transaction_id.hyphenated().to_string().as_bytes());
+    bytes.extend_from_slice(b".tmp");
+    std::ffi::CString::new(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "write target contains a NUL byte",
+        )
+    })
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(in crate::adapter::gateway) fn write_storage_file_anchored_after_parent_open(
+    storage_dir_path: &Path,
+    relative_path: &Path,
+    transaction_id: Uuid,
+    bytes: &[u8],
+    permissions: Option<&fs::Permissions>,
+    after_parent_open: impl FnOnce(),
+) -> Result<(), StorageTransactionError> {
+    write_storage_file_anchored_secure(
+        storage_dir_path,
+        relative_path,
+        transaction_id,
+        bytes,
+        permissions,
+        after_parent_open,
+    )
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]

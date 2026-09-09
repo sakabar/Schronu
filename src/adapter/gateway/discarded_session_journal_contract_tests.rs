@@ -321,6 +321,72 @@ fn saveはdiscarded_sessions_parent_symlinkの外部へ書かない() {
     assert!(!outside.join("2026-09.yaml").exists());
 }
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct SwapJournalParentIo {
+    storage: PathBuf,
+    outside: PathBuf,
+    swapped: std::sync::atomic::AtomicBool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl super::storage_transaction::StorageTransactionIo for SwapJournalParentIo {
+    fn write_storage_file_anchored(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+        transaction_id: Uuid,
+        bytes: &[u8],
+        permissions: Option<&fs::Permissions>,
+    ) -> Result<bool, super::storage_transaction::StorageTransactionError> {
+        let should_swap = relative_path.parent() == Some(Path::new("discarded_sessions"))
+            && !self.swapped.swap(true, std::sync::atomic::Ordering::SeqCst);
+        super::storage_transaction::write_storage_file_anchored_after_parent_open(
+            storage_dir_path,
+            relative_path,
+            transaction_id,
+            bytes,
+            permissions,
+            || {
+                if should_swap {
+                    let original = self.storage.join("discarded_sessions");
+                    fs::rename(&original, self.storage.join("discarded_sessions-old")).unwrap();
+                    std::os::unix::fs::symlink(&self.outside, original).unwrap();
+                }
+            },
+        )?;
+        Ok(true)
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn commit途中のparent_swapでもstorage外へ一byteも書かない() {
+    let root = TestStorage::new();
+    let storage = root.path().join("storage-parent-swap");
+    let outside = root.path().join("outside-parent-swap");
+    fs::create_dir(&storage).unwrap();
+    fs::create_dir(storage.join("discarded_sessions")).unwrap();
+    fs::create_dir(&outside).unwrap();
+    let io = Arc::new(SwapJournalParentIo {
+        storage: storage.clone(),
+        outside: outside.clone(),
+        swapped: std::sync::atomic::AtomicBool::new(false),
+    });
+    let mut repository =
+        TaskRepository::new_with_storage_transaction_io(storage.to_str().unwrap(), io);
+    repository
+        .append_discarded_session(event(Uuid::from_u128(75), "swap guard"))
+        .unwrap();
+
+    assert!(repository.save().is_err());
+
+    assert!(fs::read_dir(&outside).unwrap().next().is_none());
+    assert!(fs::read_dir(storage.join("discarded_sessions-old"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
 #[test]
 fn duplicate永続event_idは双方のpathとindexを診断する() {
     let storage = TestStorage::new();

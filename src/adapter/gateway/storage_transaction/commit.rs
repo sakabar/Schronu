@@ -405,6 +405,17 @@ impl CommittedTransaction {
         bytes: &[u8],
         permissions: Option<fs::Permissions>,
     ) -> Result<(), StorageTransactionError> {
+        if !self.state.manifest.replace_target_directories
+            && self.state.io.write_storage_file_anchored(
+                &self.state.paths.storage_dir_path,
+                relative_path,
+                self.state.manifest.transaction_id,
+                bytes,
+                permissions.as_ref(),
+            )?
+        {
+            return Ok(());
+        }
         validate_write_target(
             self.state.io.as_ref(),
             &self.state.paths.storage_dir_path,
