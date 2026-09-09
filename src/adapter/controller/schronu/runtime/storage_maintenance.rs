@@ -27,6 +27,52 @@ use crate::application::interface::{TaskRepositorySaveFailureDisposition, TaskRe
 use crate::entity::discarded_session::DiscardedSessionReason;
 use uuid::Uuid;
 
+#[derive(Debug)]
+pub(super) enum RestoreCurrentCompensationError {
+    RepositoryReload {
+        storage_directory: PathBuf,
+        source: crate::application::interface::TaskRepositoryError,
+    },
+    Cleanup {
+        path: PathBuf,
+        storage_restored: bool,
+        source: std::io::Error,
+    },
+}
+
+impl std::fmt::Display for RestoreCurrentCompensationError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RepositoryReload {
+                storage_directory,
+                source,
+            } => write!(
+                formatter,
+                "restore-current compensation failed during repository reload for {}: {source}",
+                storage_directory.display()
+            ),
+            Self::Cleanup {
+                path,
+                storage_restored,
+                source,
+            } => write!(
+                formatter,
+                "restore-current compensation failed during cleanup for {} (storage restored: {storage_restored}): {source}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for RestoreCurrentCompensationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::RepositoryReload { source, .. } => Some(source),
+            Self::Cleanup { source, .. } => Some(source),
+        }
+    }
+}
+
 pub(super) fn execute_non_interactive(
     task_repository: &mut dyn TaskRepositoryTrait,
     command: &Command,
@@ -267,23 +313,23 @@ pub(super) fn rollback_restore_current(
         storage_lock,
     )
     .map_err(RunError::Snapshot)?;
-    task_repository
-        .load()
-        .map_err(CliRepositoryTransactionError::Load)
-        .map_err(RunError::CliRepositoryTransaction)?;
+    task_repository.load().map_err(|source| {
+        RunError::RestoreCurrentCompensation(RestoreCurrentCompensationError::RepositoryReload {
+            storage_directory: storage_directory.to_path_buf(),
+            source,
+        })
+    })?;
     for cleanup_directory in [&rollback_backup_directory, pre_backup_directory] {
         if !cleanup_directory.is_dir() {
             continue;
         }
-        std::fs::remove_dir_all(cleanup_directory)
-            .map_err(|error| {
-                crate::application::interface::TaskRepositoryError::new(
-                    crate::application::interface::TaskRepositoryOperation::Load,
-                    error,
-                )
+        std::fs::remove_dir_all(cleanup_directory).map_err(|source| {
+            RunError::RestoreCurrentCompensation(RestoreCurrentCompensationError::Cleanup {
+                path: cleanup_directory.to_path_buf(),
+                storage_restored: true,
+                source,
             })
-            .map_err(CliRepositoryTransactionError::Load)
-            .map_err(RunError::CliRepositoryTransaction)?;
+        })?;
     }
     Ok(())
 }

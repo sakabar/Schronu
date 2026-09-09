@@ -656,6 +656,8 @@ struct TestTaskRepository {
     defer_candidate_leaf_task_id_opt: Option<Uuid>,
     last_defer_candidate_recent_threshold_opt: Option<DateTime<Local>>,
     load_should_fail: bool,
+    load_failure_on_attempt_opt: Option<usize>,
+    load_hook_on_attempt_opt: Option<(usize, Rc<dyn Fn()>)>,
     load_attempt_count: Cell<usize>,
     reload_if_changed_attempt_count: Cell<usize>,
     get_by_id_attempt_count: Cell<usize>,
@@ -752,6 +754,8 @@ impl TestTaskRepository {
             defer_candidate_leaf_task_id_opt: Some(task_id),
             last_defer_candidate_recent_threshold_opt: None,
             load_should_fail: false,
+            load_failure_on_attempt_opt: None,
+            load_hook_on_attempt_opt: None,
             load_attempt_count: Cell::new(0),
             reload_if_changed_attempt_count: Cell::new(0),
             get_by_id_attempt_count: Cell::new(0),
@@ -806,7 +810,13 @@ impl TaskRepositoryTrait for TestTaskRepository {
         self.operation_trace.borrow_mut().push("load");
         self.load_attempt_count
             .set(self.load_attempt_count.get() + 1);
-        if self.load_should_fail {
+        let load_attempt = self.load_attempt_count.get();
+        if let Some((hook_attempt, hook)) = &self.load_hook_on_attempt_opt {
+            if *hook_attempt == load_attempt {
+                hook();
+            }
+        }
+        if self.load_should_fail || self.load_failure_on_attempt_opt == Some(load_attempt) {
             Err(TaskRepositoryError::new(
                 TaskRepositoryOperation::Load,
                 std::io::Error::new(

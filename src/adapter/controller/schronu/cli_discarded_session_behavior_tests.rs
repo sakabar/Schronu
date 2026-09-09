@@ -500,3 +500,152 @@ fn interactive_restore_current_retry_cleans_failed_pre_backup_and_preserves_stat
     std::fs::remove_dir_all(snapshot).unwrap();
     std::fs::remove_dir_all(pre_backup).unwrap();
 }
+
+#[test]
+fn restore_current_compensation_reload_failure_is_fatal_after_storage_restore() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let started_at = now - Duration::minutes(10);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let _revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &root, now);
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-restore-source-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    crate::adapter::gateway::storage_snapshot::create_snapshot(&storage_dir.path, &snapshot)
+        .unwrap();
+    let task_files_before = storage_data_files(&storage_dir.path);
+    let pre_backup = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-restore-pre-backup-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    old.set_orig_status(Status::Done).unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    repository.load_failure_on_attempt_opt = Some(3);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+    let command = format!(
+        "restore current {} {} REPLACE_CURRENT_STORAGE",
+        snapshot.display(),
+        pre_backup.display()
+    );
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+
+    let error = match outcome {
+        InteractiveRepositoryEventOutcome::Fatal(error) => error.to_string(),
+        _ => panic!("compensation reload failure must be fatal"),
+    };
+    assert!(error.contains("repository reload"));
+    assert!(error.contains(storage_dir.path.to_str().unwrap()));
+    assert!(!String::from_utf8_lossy(&stdout.buffer).contains("restore current: OK"));
+    assert_eq!(repository.load_attempt_count.get(), 3);
+    assert_eq!(focus, Some(old_id));
+    assert_eq!(focus_started, started_at);
+    assert!(repository.discarded_sessions.is_empty());
+    assert_eq!(storage_data_files(&storage_dir.path), task_files_before);
+
+    std::fs::remove_dir_all(snapshot).unwrap();
+    std::fs::remove_dir_all(pre_backup).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn restore_current_compensation_cleanup_failure_is_fatal_after_storage_restore() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let storage_dir = TestStorageDir::new();
+    let maintenance_root = storage_dir.path.join("maintenance-root");
+    let storage = maintenance_root.join("storage");
+    std::fs::create_dir_all(&storage).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let started_at = now - Duration::minutes(10);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let _revision_observer = seed_clean_task_revision_observer(&storage, &root, now);
+    let snapshot = maintenance_root.join("source");
+    crate::adapter::gateway::storage_snapshot::create_snapshot(&storage, &snapshot).unwrap();
+    let task_files_before = storage_data_files(&storage);
+    let pre_backup = maintenance_root.join("pre-backup");
+    old.set_orig_status(Status::Done).unwrap();
+    let mut repository =
+        TestTaskRepository::new(root, started_at).with_storage_directory(&storage);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let cleanup_root = maintenance_root.clone();
+    repository.load_hook_on_attempt_opt = Some((
+        3,
+        Rc::new(move || {
+            std::fs::set_permissions(&cleanup_root, std::fs::Permissions::from_mode(0o555))
+                .unwrap();
+        }),
+    ));
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+    let command = format!(
+        "restore current {} {} REPLACE_CURRENT_STORAGE",
+        snapshot.display(),
+        pre_backup.display()
+    );
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+    std::fs::set_permissions(&maintenance_root, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let error = match outcome {
+        InteractiveRepositoryEventOutcome::Fatal(error) => error.to_string(),
+        _ => panic!("compensation cleanup failure must be fatal"),
+    };
+    assert!(error.contains("cleanup"));
+    assert!(error.contains("storage restored: true"));
+    assert!(!String::from_utf8_lossy(&stdout.buffer).contains("restore current: OK"));
+    assert_eq!(repository.load_attempt_count.get(), 3);
+    assert_eq!(focus, Some(old_id));
+    assert_eq!(focus_started, started_at);
+    assert!(repository.discarded_sessions.is_empty());
+    assert_eq!(storage_data_files(&storage), task_files_before);
+}

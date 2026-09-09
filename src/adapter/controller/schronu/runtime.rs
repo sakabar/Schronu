@@ -232,6 +232,7 @@ enum RunError {
     Repository(TaskRepositoryError),
     CliRepositoryTransaction(CliRepositoryTransactionError),
     Snapshot(SnapshotError),
+    RestoreCurrentCompensation(storage_maintenance::RestoreCurrentCompensationError),
     InteractiveIo(interactive::InteractiveIoError),
     InputDisconnected {
         save_error_opt: Option<TaskRepositoryError>,
@@ -429,6 +430,7 @@ impl std::fmt::Display for RunError {
             Self::Repository(error) => error.fmt(formatter),
             Self::CliRepositoryTransaction(error) => error.fmt(formatter),
             Self::Snapshot(error) => error.fmt(formatter),
+            Self::RestoreCurrentCompensation(error) => error.fmt(formatter),
             Self::InteractiveIo(error) => error.fmt(formatter),
             Self::InputDisconnected {
                 save_error_opt: Some(error),
@@ -474,6 +476,7 @@ impl std::error::Error for RunError {
             Self::Repository(error) => Some(error),
             Self::CliRepositoryTransaction(error) => Some(error),
             Self::Snapshot(error) => Some(error),
+            Self::RestoreCurrentCompensation(error) => Some(error),
             Self::InteractiveIo(error) => Some(error),
             Self::InputDisconnected { save_error_opt } => save_error_opt
                 .as_ref()
