@@ -93,7 +93,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-ACTION-013**: 2種類の完了が現在実績付きの実績競合になった場合、通常の手動確認blockとは分離し、元request、初回終了click時刻、最新実績をmemoryに保持すること。cardとbufferを初回click時刻で停止し、現在実績と保持した計測を`HH:MM:SS`で示す確認groupへ通常操作を置換すること。記録ありは「計測を再開」「加算して完了」、記録なしは「計測を再開」「実績を維持して完了」を提供すること。
 - **REQ-ACTION-014**: 競合確認後の完了は元requestのtask UUID、開始時刻、終了時刻、記録方針を維持し、期待実績だけを最新値へ差し替え、新しいrequest IDとsafety markerで1回送信すること。再競合では勝手に加算せず最新実績を更新して確認を続け、成功時は通常の完了cleanupを行うこと。現在実績がない旧errorまたは不正な現在実績は従来の手動確認blockへ移すこと。
 - **REQ-ACTION-015**: 競合確認の「計測を再開」は、確認待ちを除外しつつ初回clickまでの計測millisecondを保持するよう開始時刻を現在時刻から補正し、最新実績を開始時実績として`WorkSession`全体をstorage-firstで置換すること。保存成功時だけ競合とerrorを解除し、失敗時は保存済みsessionと停止中の競合確認を維持してlocalStorage errorを表示すること。
-- **REQ-ACTION-016**: 破棄系mutationは終了dispatchごとにUUID event IDをstorage-firstで固定し、transport切断、repository状態不確実、server commit後のlocal削除失敗でも保持すること。同じrequestの再送は二重計上せず、同じIDで異なるpayloadは競合errorにすること。
+- **REQ-ACTION-016**: 全終了mutationは操作種別と開始・終了時刻を含む完全なrequestをstorage-firstで固定し、transport切断またはrepository状態不確実ではrepository確認後も同一requestだけを再送可能にすること。異なる終了操作はUIとreducerの両方で拒否し、reload後も同じ制約を復元すること。破棄系mutationは終了dispatchごとのUUID event IDと開始時task名も固定する。同じrequestの再送は二重計上せず、同じIDで異なるpayloadは競合errorにすること。旧形式の破棄markerはpayloadを推測せず手動確認blockへ倒すこと。
 
 ### 4.6 buffer
 

@@ -75,7 +75,7 @@ fn 終了処理中のsession表示はclick時刻で停止し失敗時に再開�
 }
 
 #[test]
-fn commit成否不明のsession表示はrepository確認までclick時刻で停止する() {
+fn commit成否不明のsession表示はrepository確認後の再送までclick時刻で停止する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
     state.add_session_from_row(&storage, &session_row());
@@ -94,8 +94,8 @@ fn commit成否不明のsession表示はrepository確認までclick時刻で停�
     assert_eq!(uncertain[0].remaining_seconds, 540);
 
     state.confirm_repository_checked(&storage);
-    let resumed = project_session_cards(&state, JST_OFFSET_MINUTES);
-    assert_eq!(resumed[0].remaining_seconds, 530);
+    let retry_ready = project_session_cards(&state, JST_OFFSET_MINUTES);
+    assert_eq!(retry_ready[0].remaining_seconds, 540);
 }
 
 #[test]

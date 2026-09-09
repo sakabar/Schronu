@@ -7,6 +7,7 @@ use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
+use super::safety_state::FixedMutationKind;
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::{buffer_timing_with_sessions, session_timing};
 use super::view_state::ViewState;
@@ -219,6 +220,10 @@ impl ClientState {
 
     pub fn is_session_in_flight(&self, task_id: &str) -> bool {
         self.sessions.in_flight_task_ids.contains(task_id)
+    }
+
+    pub(crate) fn fixed_mutation_retry_kind(&self, task_id: &str) -> Option<FixedMutationKind> {
+        self.sessions.mutation_safety.fixed_request_kind(task_id)
     }
 
     pub(crate) fn session_stopped_at_epoch_ms(&self, task_id: &str) -> Option<i64> {

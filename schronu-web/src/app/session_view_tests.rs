@@ -12,6 +12,8 @@ use dioxus::dioxus_core::ScopeId;
 use dioxus::prelude::*;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod fixed_retry;
+
 #[derive(Clone)]
 struct RootProps {
     sessions: Vec<SessionCardViewModel>,
@@ -186,6 +188,10 @@ fn card(task_id: &str) -> SessionCardViewModel {
         in_flight: false,
         manual_check_blocked: false,
         server_committed: false,
+        retry_record_only: false,
+        retry_complete_only: false,
+        retry_discard_release_only: false,
+        retry_discard_complete_only: false,
         completion_conflict: None,
     }
 }

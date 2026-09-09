@@ -100,6 +100,120 @@ fn 破棄解除のtransport不確実はreload後も同じpayloadで再送する(
 }
 
 #[test]
+fn 破棄解除の不確実markerは異なる完了操作へ流用しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(61_000);
+    let ClientEffect::DiscardSession {
+        request_id,
+        request: first,
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    state.apply_discard_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+    state.confirm_repository_checked(&storage);
+
+    assert_eq!(
+        state.begin_complete_session_without_recording(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    let ClientEffect::DiscardSession {
+        request: retried, ..
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    assert_eq!(retried, first);
+}
+
+#[test]
+fn 破棄完了の不確実markerはreload後も同じrequestだけを再送する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(61_000);
+    let ClientEffect::CompleteSession {
+        request_id,
+        request: first,
+    } = state.begin_complete_session_without_recording(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    state.apply_complete_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+
+    let marker: serde_json::Value =
+        serde_json::from_str(storage.safety_value.borrow().as_deref().unwrap()).unwrap();
+    assert_eq!(marker["fixed_requests"][TASK_ID]["operation"], "complete");
+    assert_eq!(
+        marker["fixed_requests"][TASK_ID]["request"]["discard_event_id"],
+        first.discard_event_id.as_deref().unwrap()
+    );
+    assert_eq!(
+        marker["fixed_requests"][TASK_ID]["request"]["ended_at_epoch_ms"],
+        61_000
+    );
+
+    let mut restored = load_client_state(&storage, 121_000).unwrap();
+    restored.confirm_repository_checked(&storage);
+    assert_eq!(
+        restored.begin_discard_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    let ClientEffect::CompleteSession {
+        request: retried, ..
+    } = restored.begin_complete_session_without_recording(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    assert_eq!(retried, first);
+}
+
+#[test]
+fn 記録の不確実markerもreload後は同じrequestだけを再送する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(61_000);
+    let (request_id, first) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+
+    let mut restored = load_client_state(&storage, 121_000).unwrap();
+    restored.confirm_repository_checked(&storage);
+    assert_eq!(
+        restored.begin_complete_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    let (_, retried) = record_effect(restored.begin_record_session(&storage, TASK_ID));
+    assert_eq!(retried, first);
+}
+
+#[test]
+fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
+    let storage = FakeStorage::default();
+    *storage.safety_value.borrow_mut() = Some(format!(
+        r#"{{"version":1,"mutation_blocked":false,"discard_event_ids":{{"{TASK_ID}":"00000000-0000-4000-8000-000000000099"}},"discard_event_ended_at_epoch_ms":{{"{TASK_ID}":61000}}}}"#
+    ));
+    let mut state = load_client_state(&storage, 121_000).unwrap();
+
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.begin_discard_session(&storage, TASK_ID),
+        ClientEffect::None
+    );
+}
+
+#[test]
 fn repository確認はcommit済みsessionを除去して未確定discard_markerだけを保持する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
@@ -1743,7 +1857,7 @@ fn repository_state_uncertain後はpage全体のmutationを停止する() {
 }
 
 #[test]
-fn commit成否不明ならrepository確認までclick時刻で停止する() {
+fn commit成否不明ならrepository確認後の再送まで初回click時刻で停止する() {
     for uncertain_result in [
         ServerFailure::Transport("detail".to_owned()),
         ServerFailure::Operation(web_error(
@@ -1765,7 +1879,7 @@ fn commit成否不明ならrepository確認までclick時刻で停止する() {
         assert_eq!(state.display_buffer_seconds(), Some(50));
         assert!(state.can_confirm_repository_checked());
         state.confirm_repository_checked(&storage);
-        assert_eq!(state.display_buffer_seconds(), Some(60));
+        assert_eq!(state.display_buffer_seconds(), Some(50));
     }
 }
 

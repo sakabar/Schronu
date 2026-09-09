@@ -1,10 +1,12 @@
 use super::diagnostics::is_read_operation;
 use super::*;
+use crate::client::safety_state::{FixedMutationKind, FixedMutationRequest};
 use crate::{
     CompleteSessionRequest, DiscardSessionRequest, RecordSessionRequest, RecordSessionResult,
     RetryAdvice, SessionTask, WebSuccess,
 };
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MutationKind {
@@ -12,6 +14,17 @@ enum MutationKind {
     Complete,
     CompleteWithoutRecording,
     Discard,
+}
+
+impl MutationKind {
+    fn fixed_kind(self) -> FixedMutationKind {
+        match self {
+            Self::Record => FixedMutationKind::Record,
+            Self::Complete => FixedMutationKind::Complete,
+            Self::CompleteWithoutRecording => FixedMutationKind::CompleteWithoutRecording,
+            Self::Discard => FixedMutationKind::Discard,
+        }
+    }
 }
 
 pub(super) struct PendingMutation {
@@ -46,7 +59,7 @@ impl SessionState {
         mutation_safety: MutationSafetyState,
     ) -> Self {
         let committed_blocked_task_ids = mutation_safety.committed_task_ids().clone();
-        let uncertain_stopped_at_epoch_ms = mutation_safety.unresolved_discard_ended_at_epoch_ms();
+        let uncertain_stopped_at_epoch_ms = mutation_safety.unresolved_ended_at_epoch_ms();
         Self {
             work_sessions,
             in_flight_task_ids: HashSet::new(),
@@ -164,13 +177,11 @@ impl ClientState {
         let result = self
             .sessions
             .mutation_safety
-            .disarm_retaining_discard_events(storage, &uncertain_task_ids);
+            .disarm_retaining_requests(storage, &uncertain_task_ids);
         if result.is_ok() {
             self.sessions.mutation_globally_blocked = false;
-            self.sessions.uncertain_stopped_at_epoch_ms = self
-                .sessions
-                .mutation_safety
-                .unresolved_discard_ended_at_epoch_ms();
+            self.sessions.uncertain_stopped_at_epoch_ms =
+                self.sessions.mutation_safety.unresolved_ended_at_epoch_ms();
             if matches!(
                 &self.diagnostics.display_error,
                 Some(DisplayError::Operation {
@@ -237,6 +248,14 @@ impl ClientState {
         {
             return ClientEffect::None;
         }
+        if self
+            .sessions
+            .mutation_safety
+            .fixed_request_kind(task_id)
+            .is_some_and(|fixed| fixed != kind.fixed_kind())
+        {
+            return ClientEffect::None;
+        }
         let Some(session) = self
             .sessions()
             .iter()
@@ -252,75 +271,62 @@ impl ClientState {
         let Some(next_request_id) = request_id.checked_add(1) else {
             return ClientEffect::None;
         };
-        let requested_ended_at_epoch_ms = self.tick_now_epoch_ms;
-        let discard_marker = if matches!(
-            kind,
-            MutationKind::Discard | MutationKind::CompleteWithoutRecording
-        ) {
-            match self.sessions.mutation_safety.arm_discard(
-                storage,
-                task_id,
-                None,
-                requested_ended_at_epoch_ms,
-            ) {
-                Ok(marker) => Some(marker),
-                Err(_) => {
-                    self.record_local_result(Some(task_id), false);
-                    return ClientEffect::None;
-                }
-            }
-        } else {
-            if self.sessions.pending_mutations.is_empty()
-                && self.sessions.mutation_safety.arm(storage).is_err()
-            {
-                self.record_local_result(Some(task_id), false);
-                return ClientEffect::None;
-            }
-            None
-        };
-        self.sessions.next_mutation_request_id = next_request_id;
-        self.sessions.in_flight_task_ids.insert(task_id.to_owned());
-        let ended_at_epoch_ms = discard_marker
-            .as_ref()
-            .map_or(requested_ended_at_epoch_ms, |(_, ended_at)| *ended_at);
-        let discard_event_id = discard_marker.map(|(event_id, _)| event_id);
-        let effect = match kind {
+        let ended_at_epoch_ms = self.tick_now_epoch_ms;
+        let candidate = match kind {
+            MutationKind::Record => FixedMutationRequest::Record(RecordSessionRequest {
+                task_id: request_task_id,
+                started_at_epoch_ms,
+                ended_at_epoch_ms: Some(ended_at_epoch_ms),
+                expected_actual_work_seconds,
+            }),
             MutationKind::Complete | MutationKind::CompleteWithoutRecording => {
-                let request = CompleteSessionRequest {
+                FixedMutationRequest::Complete(CompleteSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
                     ended_at_epoch_ms: Some(ended_at_epoch_ms),
                     expected_actual_work_seconds,
                     record_elapsed_seconds: kind == MutationKind::Complete,
-                    discard_event_id,
+                    discard_event_id: (kind == MutationKind::CompleteWithoutRecording)
+                        .then(|| Uuid::new_v4().to_string()),
                     task_name_at_start: Some(task_name_at_start),
-                };
-                ClientEffect::CompleteSession {
-                    request_id,
-                    request,
-                }
+                })
             }
-            MutationKind::Record => {
-                let request = RecordSessionRequest {
-                    task_id: request_task_id,
-                    started_at_epoch_ms,
-                    ended_at_epoch_ms: Some(ended_at_epoch_ms),
-                    expected_actual_work_seconds,
-                };
-                ClientEffect::RecordSession {
-                    request_id,
-                    request,
-                }
+            MutationKind::Discard => FixedMutationRequest::Discard(DiscardSessionRequest {
+                event_id: Uuid::new_v4().to_string(),
+                task_id: request_task_id,
+                task_name_at_start,
+                started_at_epoch_ms,
+                ended_at_epoch_ms,
+            }),
+        };
+        let fixed_request = match self
+            .sessions
+            .mutation_safety
+            .arm_request(storage, task_id, candidate)
+        {
+            Ok(request) => request,
+            Err(_) => {
+                self.record_local_result(Some(task_id), false);
+                return ClientEffect::None;
             }
-            MutationKind::Discard => ClientEffect::DiscardSession {
+        };
+        self.sessions.next_mutation_request_id = next_request_id;
+        self.sessions.in_flight_task_ids.insert(task_id.to_owned());
+        let ended_at_epoch_ms = fixed_request
+            .ended_at_epoch_ms()
+            .expect("stored mutation request must contain its fixed end time");
+        let effect = match fixed_request {
+            FixedMutationRequest::Record(request) => ClientEffect::RecordSession {
                 request_id,
-                request: DiscardSessionRequest {
-                    event_id: discard_event_id.expect("discard must have an event ID"),
-                    task_id: request_task_id,
-                    task_name_at_start,
-                    started_at_epoch_ms,
-                    ended_at_epoch_ms,
-                },
+                request,
+            },
+            FixedMutationRequest::Complete(request) => ClientEffect::CompleteSession {
+                request_id,
+                request,
+            },
+            FixedMutationRequest::Discard(request) => ClientEffect::DiscardSession {
+                request_id,
+                request,
             },
         };
         let invocation = match &effect {
@@ -524,7 +530,7 @@ impl ClientState {
         };
         let mut request = conflict.original_request;
         request.expected_actual_work_seconds = conflict.current_actual_work_seconds;
-        self.enqueue_completion(storage, request, conflict.ended_at_epoch_ms)
+        self.enqueue_completion(storage, request)
     }
 
     pub fn resume_completion_conflict<S: KeyValueStorage>(
@@ -591,25 +597,36 @@ impl ClientState {
         &mut self,
         storage: &S,
         request: CompleteSessionRequest,
-        ended_at_epoch_ms: i64,
     ) -> ClientEffect {
         let request_id = self.sessions.next_mutation_request_id;
         let Some(next_request_id) = request_id.checked_add(1) else {
             return ClientEffect::None;
         };
-        let arm_result = if let Some(event_id) = request.discard_event_id.as_deref() {
-            self.sessions
-                .mutation_safety
-                .arm_discard(storage, &request.task_id, Some(event_id), ended_at_epoch_ms)
-                .map(|_| ())
-        } else {
-            self.sessions.mutation_safety.arm(storage)
-        };
-        if self.sessions.pending_mutations.is_empty() && arm_result.is_err() {
-            self.record_local_result(Some(&request.task_id), false);
+        let task_id = request.task_id.clone();
+        let requested_kind = FixedMutationRequest::Complete(request.clone()).kind();
+        if self
+            .sessions
+            .mutation_safety
+            .fixed_request_kind(&task_id)
+            .is_some_and(|fixed| fixed != requested_kind)
+        {
             return ClientEffect::None;
         }
-        let task_id = request.task_id.clone();
+        let request = match self.sessions.mutation_safety.arm_request(
+            storage,
+            &task_id,
+            FixedMutationRequest::Complete(request),
+        ) {
+            Ok(FixedMutationRequest::Complete(request)) => request,
+            Ok(_) => unreachable!("matching completion kind must retain a completion request"),
+            Err(_) => {
+                self.record_local_result(Some(&task_id), false);
+                return ClientEffect::None;
+            }
+        };
+        let ended_at_epoch_ms = request
+            .ended_at_epoch_ms
+            .expect("stored completion request must contain its fixed end time");
         let invocation = ServerActionInvocation::CompleteSession(request.clone());
         self.sessions.next_mutation_request_id = next_request_id;
         self.sessions.in_flight_task_ids.insert(task_id);

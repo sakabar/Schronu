@@ -81,12 +81,26 @@ fn SessionCard(
             }
         },
     ));
-    let discard_disabled = session.in_flight
+    let common_mutation_disabled = session.in_flight
         || session.server_committed
         || mutations_locked
         || server_actions_blocked
         || global_blocked;
-    let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
+    let fixed_retry = session.retry_record_only
+        || session.retry_complete_only
+        || session.retry_discard_release_only
+        || session.retry_discard_complete_only;
+    let discard_disabled =
+        common_mutation_disabled || (fixed_retry && !session.retry_discard_release_only);
+    let record_disabled = common_mutation_disabled
+        || session.manual_check_blocked
+        || (fixed_retry && !session.retry_record_only);
+    let complete_disabled = common_mutation_disabled
+        || session.manual_check_blocked
+        || (fixed_retry && !session.retry_complete_only);
+    let discard_completion_disabled = common_mutation_disabled
+        || session.manual_check_blocked
+        || (fixed_retry && !session.retry_discard_complete_only);
     let resume_disabled = session.in_flight
         || session.server_committed
         || mutations_locked
@@ -205,7 +219,7 @@ fn SessionCard(
                             task_name: session.task_name.clone(),
                             task_id: session.task_id.clone(),
                             kind: SessionActionKind::ConfirmCompletionConflict,
-                            disabled: mutation_disabled,
+                            disabled: complete_disabled,
                             on_action,
                         }
                     }
@@ -227,10 +241,10 @@ fn SessionCard(
                         button {
                             class: "session-action-complete-without-recording",
                             r#type: "button",
-                            disabled: mutation_disabled,
+                            disabled: discard_completion_disabled,
                             aria_label: "{session.task_name}: 計測を破棄して完了を確定",
                             onclick: move |_| {
-                                if !mutation_disabled {
+                                if !discard_completion_disabled {
                                     on_action.call(SessionAction {
                                         task_id: session.task_id.clone(),
                                         kind: SessionActionKind::CompleteWithoutRecording,
@@ -258,12 +272,12 @@ fn SessionCard(
                         task_name: session.task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Record,
-                        disabled: mutation_disabled,
+                        disabled: record_disabled,
                         on_action,
                     }
                     SessionDiscardCompletionButton {
                         task_name: session.task_name.clone(),
-                        disabled: mutation_disabled,
+                        disabled: discard_completion_disabled,
                         on_confirm: move |_| confirming_discard_completion.set(true),
                     }
                     SessionActionButton {
@@ -272,7 +286,7 @@ fn SessionCard(
                         task_name: session.task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Complete,
-                        disabled: mutation_disabled,
+                        disabled: complete_disabled,
                         on_action,
                     }
                 }

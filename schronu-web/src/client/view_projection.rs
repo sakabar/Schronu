@@ -1,3 +1,4 @@
+use super::safety_state::FixedMutationKind;
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
 use crate::SessionTask;
@@ -19,6 +20,10 @@ pub struct SessionCardViewModel {
     pub in_flight: bool,
     pub manual_check_blocked: bool,
     pub server_committed: bool,
+    pub retry_record_only: bool,
+    pub retry_complete_only: bool,
+    pub retry_discard_release_only: bool,
+    pub retry_discard_complete_only: bool,
     pub completion_conflict: Option<CompletionConflictViewModel>,
 }
 
@@ -108,6 +113,14 @@ fn project_session_cards_with(
                 in_flight: state.is_session_in_flight(&session.task_id),
                 manual_check_blocked: state.is_session_manual_check_blocked(&session.task_id),
                 server_committed,
+                retry_record_only: state.fixed_mutation_retry_kind(&session.task_id)
+                    == Some(FixedMutationKind::Record),
+                retry_complete_only: state.fixed_mutation_retry_kind(&session.task_id)
+                    == Some(FixedMutationKind::Complete),
+                retry_discard_release_only: state.fixed_mutation_retry_kind(&session.task_id)
+                    == Some(FixedMutationKind::Discard),
+                retry_discard_complete_only: state.fixed_mutation_retry_kind(&session.task_id)
+                    == Some(FixedMutationKind::CompleteWithoutRecording),
                 completion_conflict: state.completion_conflict(&session.task_id).map(|conflict| {
                     let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
                         - i128::from(conflict.original_request.started_at_epoch_ms))

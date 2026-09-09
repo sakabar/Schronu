@@ -1,17 +1,73 @@
 use super::work_sessions::{KeyValueStorage, StorageError};
+use crate::{CompleteSessionRequest, DiscardSessionRequest, RecordSessionRequest};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use uuid::Uuid;
 
 pub const MUTATION_SAFETY_STORAGE_KEY: &str = "schronu_web.mutation_safety.v1";
 const STORAGE_VERSION: u64 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FixedMutationKind {
+    Record,
+    Complete,
+    CompleteWithoutRecording,
+    Discard,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "operation", content = "request", rename_all = "snake_case")]
+pub(crate) enum FixedMutationRequest {
+    Record(RecordSessionRequest),
+    Complete(CompleteSessionRequest),
+    Discard(DiscardSessionRequest),
+}
+
+impl FixedMutationRequest {
+    pub(crate) fn kind(&self) -> FixedMutationKind {
+        match self {
+            Self::Record(_) => FixedMutationKind::Record,
+            Self::Complete(request) if request.record_elapsed_seconds => {
+                FixedMutationKind::Complete
+            }
+            Self::Complete(_) => FixedMutationKind::CompleteWithoutRecording,
+            Self::Discard(_) => FixedMutationKind::Discard,
+        }
+    }
+
+    pub(crate) fn task_id(&self) -> &str {
+        match self {
+            Self::Record(request) => &request.task_id,
+            Self::Complete(request) => &request.task_id,
+            Self::Discard(request) => &request.task_id,
+        }
+    }
+
+    pub(crate) fn ended_at_epoch_ms(&self) -> Option<i64> {
+        match self {
+            Self::Record(request) => request.ended_at_epoch_ms,
+            Self::Complete(request) => request.ended_at_epoch_ms,
+            Self::Discard(request) => Some(request.ended_at_epoch_ms),
+        }
+    }
+
+    fn is_valid_marker(&self, task_id: &str) -> bool {
+        if self.task_id() != task_id || self.ended_at_epoch_ms().is_none() {
+            return false;
+        }
+        match self {
+            Self::Complete(request) if !request.record_elapsed_seconds => {
+                request.discard_event_id.is_some() && request.task_name_at_start.is_some()
+            }
+            _ => true,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MutationSafetyState {
     mutation_blocked: bool,
     committed_task_ids: HashSet<String>,
-    discard_event_ids: HashMap<String, String>,
-    discard_event_ended_at_epoch_ms: HashMap<String, i64>,
+    fixed_requests: HashMap<String, FixedMutationRequest>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -21,8 +77,10 @@ struct StoredMutationSafety {
     #[serde(default)]
     committed_task_ids: Vec<String>,
     #[serde(default)]
+    fixed_requests: HashMap<String, FixedMutationRequest>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     discard_event_ids: HashMap<String, String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     discard_event_ended_at_epoch_ms: HashMap<String, i64>,
 }
 
@@ -36,11 +94,20 @@ pub fn load_mutation_safety<S: KeyValueStorage>(
     let Some(stored) = stored.filter(|value| value.version == STORAGE_VERSION) else {
         return Ok(MutationSafetyState::blocked());
     };
+    let legacy_discard_marker =
+        !stored.discard_event_ids.is_empty() || !stored.discard_event_ended_at_epoch_ms.is_empty();
+    let invalid_fixed_request = stored
+        .fixed_requests
+        .iter()
+        .any(|(task_id, request)| !request.is_valid_marker(task_id));
     Ok(MutationSafetyState {
-        mutation_blocked: stored.mutation_blocked,
+        mutation_blocked: stored.mutation_blocked || legacy_discard_marker || invalid_fixed_request,
         committed_task_ids: stored.committed_task_ids.into_iter().collect(),
-        discard_event_ids: stored.discard_event_ids,
-        discard_event_ended_at_epoch_ms: stored.discard_event_ended_at_epoch_ms,
+        fixed_requests: if legacy_discard_marker || invalid_fixed_request {
+            HashMap::new()
+        } else {
+            stored.fixed_requests
+        },
     })
 }
 
@@ -49,8 +116,7 @@ impl MutationSafetyState {
         Self {
             mutation_blocked: true,
             committed_task_ids: HashSet::new(),
-            discard_event_ids: HashMap::new(),
-            discard_event_ended_at_epoch_ms: HashMap::new(),
+            fixed_requests: HashMap::new(),
         }
     }
 
@@ -62,111 +128,67 @@ impl MutationSafetyState {
         &self.committed_task_ids
     }
 
-    pub(crate) fn unresolved_discard_ended_at_epoch_ms(&self) -> HashMap<String, i64> {
-        self.discard_event_ended_at_epoch_ms
+    pub(crate) fn fixed_request_kind(&self, task_id: &str) -> Option<FixedMutationKind> {
+        self.fixed_requests
+            .get(task_id)
+            .map(FixedMutationRequest::kind)
+    }
+
+    pub(crate) fn unresolved_ended_at_epoch_ms(&self) -> HashMap<String, i64> {
+        self.fixed_requests
             .iter()
             .filter(|(task_id, _)| !self.committed_task_ids.contains(*task_id))
-            .map(|(task_id, ended_at)| (task_id.clone(), *ended_at))
+            .filter_map(|(task_id, request)| {
+                request
+                    .ended_at_epoch_ms()
+                    .map(|ended_at| (task_id.clone(), ended_at))
+            })
             .collect()
     }
 
-    pub fn arm<S: KeyValueStorage>(&mut self, storage: &S) -> Result<(), StorageError> {
-        let stored = StoredMutationSafety {
-            version: STORAGE_VERSION,
-            mutation_blocked: true,
-            committed_task_ids: self.committed_task_ids.iter().cloned().collect(),
-            discard_event_ids: self.discard_event_ids.clone(),
-            discard_event_ended_at_epoch_ms: self.discard_event_ended_at_epoch_ms.clone(),
-        };
-        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
-        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+    pub(crate) fn arm_request<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+        candidate: FixedMutationRequest,
+    ) -> Result<FixedMutationRequest, StorageError> {
+        let request = self
+            .fixed_requests
+            .get(task_id)
+            .cloned()
+            .unwrap_or(candidate);
+        let mut fixed_requests = self.fixed_requests.clone();
+        fixed_requests.insert(task_id.to_owned(), request.clone());
+        self.store(storage, true, &self.committed_task_ids, &fixed_requests)?;
         self.mutation_blocked = true;
-        Ok(())
+        self.fixed_requests = fixed_requests;
+        Ok(request)
     }
 
     pub fn disarm<S: KeyValueStorage>(&mut self, storage: &S) -> Result<(), StorageError> {
-        let stored = StoredMutationSafety {
-            version: STORAGE_VERSION,
-            mutation_blocked: false,
-            committed_task_ids: Vec::new(),
-            discard_event_ids: HashMap::new(),
-            discard_event_ended_at_epoch_ms: HashMap::new(),
-        };
-        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
-        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+        self.store(storage, false, &HashSet::new(), &HashMap::new())?;
         self.mutation_blocked = false;
         self.committed_task_ids.clear();
-        self.discard_event_ids.clear();
-        self.discard_event_ended_at_epoch_ms.clear();
+        self.fixed_requests.clear();
         Ok(())
     }
 
-    pub fn disarm_retaining_discard_events<S: KeyValueStorage>(
+    pub fn disarm_retaining_requests<S: KeyValueStorage>(
         &mut self,
         storage: &S,
         retained_task_ids: &HashSet<String>,
     ) -> Result<(), StorageError> {
-        let discard_event_ids = self
-            .discard_event_ids
+        let fixed_requests = self
+            .fixed_requests
             .iter()
             .filter(|(task_id, _)| retained_task_ids.contains(*task_id))
-            .map(|(task_id, event_id)| (task_id.clone(), event_id.clone()))
+            .map(|(task_id, request)| (task_id.clone(), request.clone()))
             .collect::<HashMap<_, _>>();
-        let discard_event_ended_at_epoch_ms = self
-            .discard_event_ended_at_epoch_ms
-            .iter()
-            .filter(|(task_id, _)| retained_task_ids.contains(*task_id))
-            .map(|(task_id, ended_at)| (task_id.clone(), *ended_at))
-            .collect::<HashMap<_, _>>();
-        let stored = StoredMutationSafety {
-            version: STORAGE_VERSION,
-            mutation_blocked: false,
-            committed_task_ids: Vec::new(),
-            discard_event_ids: discard_event_ids.clone(),
-            discard_event_ended_at_epoch_ms: discard_event_ended_at_epoch_ms.clone(),
-        };
-        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
-        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+        self.store(storage, false, &HashSet::new(), &fixed_requests)?;
         self.mutation_blocked = false;
         self.committed_task_ids.clear();
-        self.discard_event_ids = discard_event_ids;
-        self.discard_event_ended_at_epoch_ms = discard_event_ended_at_epoch_ms;
+        self.fixed_requests = fixed_requests;
         Ok(())
-    }
-
-    pub fn arm_discard<S: KeyValueStorage>(
-        &mut self,
-        storage: &S,
-        task_id: &str,
-        requested_event_id: Option<&str>,
-        requested_ended_at_epoch_ms: i64,
-    ) -> Result<(String, i64), StorageError> {
-        let event_id = requested_event_id
-            .map(str::to_owned)
-            .or_else(|| self.discard_event_ids.get(task_id).cloned())
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        let mut discard_event_ids = self.discard_event_ids.clone();
-        discard_event_ids.insert(task_id.to_owned(), event_id.clone());
-        let ended_at_epoch_ms = self
-            .discard_event_ended_at_epoch_ms
-            .get(task_id)
-            .copied()
-            .unwrap_or(requested_ended_at_epoch_ms);
-        let mut discard_event_ended_at_epoch_ms = self.discard_event_ended_at_epoch_ms.clone();
-        discard_event_ended_at_epoch_ms.insert(task_id.to_owned(), ended_at_epoch_ms);
-        let stored = StoredMutationSafety {
-            version: STORAGE_VERSION,
-            mutation_blocked: true,
-            committed_task_ids: self.committed_task_ids.iter().cloned().collect(),
-            discard_event_ids: discard_event_ids.clone(),
-            discard_event_ended_at_epoch_ms: discard_event_ended_at_epoch_ms.clone(),
-        };
-        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
-        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
-        self.mutation_blocked = true;
-        self.discard_event_ids = discard_event_ids;
-        self.discard_event_ended_at_epoch_ms = discard_event_ended_at_epoch_ms;
-        Ok((event_id, ended_at_epoch_ms))
     }
 
     pub fn mark_committed<S: KeyValueStorage>(
@@ -176,17 +198,28 @@ impl MutationSafetyState {
     ) -> Result<(), StorageError> {
         let mut committed_task_ids = self.committed_task_ids.clone();
         committed_task_ids.insert(task_id.to_owned());
-        let stored = StoredMutationSafety {
-            version: STORAGE_VERSION,
-            mutation_blocked: true,
-            committed_task_ids: committed_task_ids.iter().cloned().collect(),
-            discard_event_ids: self.discard_event_ids.clone(),
-            discard_event_ended_at_epoch_ms: self.discard_event_ended_at_epoch_ms.clone(),
-        };
-        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
-        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)?;
+        self.store(storage, true, &committed_task_ids, &self.fixed_requests)?;
         self.mutation_blocked = true;
         self.committed_task_ids = committed_task_ids;
         Ok(())
+    }
+
+    fn store<S: KeyValueStorage>(
+        &self,
+        storage: &S,
+        mutation_blocked: bool,
+        committed_task_ids: &HashSet<String>,
+        fixed_requests: &HashMap<String, FixedMutationRequest>,
+    ) -> Result<(), StorageError> {
+        let stored = StoredMutationSafety {
+            version: STORAGE_VERSION,
+            mutation_blocked,
+            committed_task_ids: committed_task_ids.iter().cloned().collect(),
+            fixed_requests: fixed_requests.clone(),
+            discard_event_ids: HashMap::new(),
+            discard_event_ended_at_epoch_ms: HashMap::new(),
+        };
+        let serialized = serde_json::to_string(&stored).map_err(|_| StorageError::WriteFailed)?;
+        storage.set(MUTATION_SAFETY_STORAGE_KEY, &serialized)
     }
 }

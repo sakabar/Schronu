@@ -156,14 +156,24 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
   "version": 1,
   "mutation_blocked": true,
   "committed_task_ids": ["task UUID"],
-  "discard_event_ids": {"task UUID": "event UUID"},
-  "discard_event_ended_at_epoch_ms": {"task UUID": 1788912061000}
+  "fixed_requests": {
+    "task UUID": {
+      "operation": "discard",
+      "request": {
+        "event_id": "event UUID",
+        "task_id": "task UUID",
+        "task_name_at_start": "開始時task名",
+        "started_at_epoch_ms": 1788912001000,
+        "ended_at_epoch_ms": 1788912061000
+      }
+    }
+  }
 }
 ```
 
-このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけmutation可能な初期状態とする。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUID、`discard_event_ids`と`discard_event_ended_at_epoch_ms`は破棄系mutationの再送に使うevent UUIDと終了click時刻を保持し、省略された既存dataは空として読み込む。未知version、JSON不正、schema不正は安全側へ倒し、mutation blockedとして復元する。
+このkeyが存在しない場合、またはversion 1の`mutation_blocked`が`false`の場合だけ全体blockを解除する。`committed_task_ids`はserver commit成功後にlocal session削除だけが失敗したtask UUIDである。`fixed_requests`はtask UUIDごとに`record`、`complete`または`discard`の操作種別とwireへ送った完全なrequestを保持する。repository確認後に全体blockを解除しても未確定taskの固定requestは残し、そのtaskでは同じ操作の同じrequestだけを再送できる。旧schemaの`discard_event_ids`または`discard_event_ended_at_epoch_ms`を含むmarkerは、完全なpayloadを復元できないため安全側の手動確認blockとして読み込む。未知version、JSON不正、schema不正もmutation blockedとして復元する。
 
-`record_session`、`complete_session`、`discard_session`の送信前に、`mutation_blocked: true`をstorage-firstで保存する。破棄系ではevent UUIDと終了click時刻も同時に保存し、保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけ`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`を残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功やreloadでは解除しない。server commit後にlocal session削除だけが失敗している場合はtask UUIDを`committed_task_ids`へstorage-firstで追加し、reload後も再送とbuffer補正の対象外にする。明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerと`committed_task_ids`を解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。transportまたは`repository_state_uncertain`由来の未確定sessionは、手動確認結果に基づく再操作のため残し、同じevent UUIDと終了click時刻で再送する。
+`record_session`、`complete_session`、`discard_session`の送信前に、`mutation_blocked: true`と操作種別・完全なrequestをstorage-firstで保存し、保存失敗時はrequestを送信しない。成功、またはserverが未commitと確定できるerror responseの受信後、ほかに応答待ちのmutationがなく、repository状態も確定している場合だけmarkerを消して`false`へ戻す。browser crash、transport切断、`repository_state_uncertain`では`true`と固定requestを残し、reload後も全mutationを停止する。解除はrepositoryを手動確認する明示操作だけが所有し、通常のread成功やreloadでは解除しない。確認後は未確定taskの固定requestを保持したまま全体blockだけを解除し、該当cardでは同一操作以外のbuttonをdisabledにし、reducerも異種操作を拒否する。server commit後にlocal session削除だけが失敗している場合はtask UUIDを`committed_task_ids`へstorage-firstで追加し、reload後も再送とbuffer補正の対象外にする。明示解除は該当sessionを`work_sessions`からstorage-firstで削除してからmarkerと`committed_task_ids`を解除する。session削除に失敗した場合はmarkerを解除しない。session削除後のmarker解除に失敗した場合もblocked状態を維持するが、該当sessionは既に永続層から消えているため二重送信できない。
 
 持ち歩きロックは`MutationSafetyState`とは目的と解除条件が異なるため、独立した`CarryLockState`とkey `schronu_web.carry_lock.v1`を使用する。
 
@@ -553,7 +563,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
-- serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持する。repository確認完了後、記録・通常完了は計測を再開し、破棄系mutationは同じevent UUIDと終了click時刻で再送するため停止表示を維持する。
+- serverが未commitと確定できるerrorではpending終了時刻と固定requestを破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻と完全なrequestを保持する。repository確認完了後も全終了操作を初回click時刻で停止し、同じrequestだけを再送可能にする。
 - 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
 - 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
 - in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。global safety block中は4buttonをすべて無効化する。task単位のmanual safety blockでは記録と2種類の完了を無効化するが、sessionから退出する「計測を破棄して解除」は利用可能とする。
@@ -702,7 +712,7 @@ OperationHistoryEntry {
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、page内開始と復元を区別せず各sessionの未送信進捗秒を新snapshotへ加算することを検証する。一覧再取得の繰り返しと正・0・負のbufferを含める。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
-- 4終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの打ち切りを注入epochだけで検証する。破棄系mutationはreload後の再送でもevent UUIDと終了click時刻を維持する。実時間のsleepやtimer待機は使用しない。
+- 4終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認後も続く打ち切りを注入epochだけで検証する。不確実時は操作種別と完全なrequestをreload後も維持し、同一操作のidempotent再送だけを許可して異種操作をUIとreducerで拒否する。旧markerは手動確認blockへ倒す。実時間のsleepやtimer待機は使用しない。
 - 完了実績競合について、記録方針別の確認、初回click時刻でのcard・buffer停止、元requestを保った最新実績での再送、新request ID、再競合更新、成功cleanup、旧payloadのmanual block、計測再開の待ち時間除外とstorage失敗時の原子性を検証する。記録操作の競合は従来どおりmanual blockとなることを検証する。
 - 4種類のセッション終了成功後に選択中または最新snapshotのlogical dateを再取得し、response全体で一覧を置換することを検証する。終了errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持して再取得することも検証する。
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功後の再取得responseと、それより後に開始した明示的な`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonを更新し、反復taskは再取得responseに従うことを検証する。
