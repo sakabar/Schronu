@@ -8,6 +8,9 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
+mod error_policy;
+use error_policy::{completion_conflict_actual, keeps_safety_marker};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MutationKind {
     Record,
@@ -775,28 +778,4 @@ impl ClientState {
             task_id: Some(task_id.to_owned()),
         });
     }
-}
-
-fn completion_conflict_actual(error: &ServerFailure) -> Option<i64> {
-    match error {
-        ServerFailure::Operation(WebError {
-            code,
-            current_actual_work_seconds: Some(current_actual_work_seconds),
-            ..
-        }) if code == crate::web_error_codes::ACTUAL_WORK_CONFLICT
-            && *current_actual_work_seconds >= 0 =>
-        {
-            Some(*current_actual_work_seconds)
-        }
-        _ => None,
-    }
-}
-
-fn keeps_safety_marker(error: &ServerFailure) -> bool {
-    matches!(error, ServerFailure::Transport(_))
-        || matches!(
-            error,
-            ServerFailure::Operation(WebError { code, .. })
-                if code == crate::web_error_codes::REPOSITORY_STATE_UNCERTAIN
-        )
 }
