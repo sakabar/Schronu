@@ -1,9 +1,9 @@
-use crate::application::task_name;
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::read_project_category;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
 use crate::entity::task::{RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError};
+use crate::entity::task_name;
 use chrono::LocalResult;
 use chrono::TimeZone;
 use chrono::{DateTime, Duration, Local};

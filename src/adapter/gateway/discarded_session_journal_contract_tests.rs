@@ -155,6 +155,34 @@ fn 未知versionと破損yamlはload_errorになり既存fileを変更しない(
 }
 
 #[test]
+fn 永続journalの不正task名はpathとevent_indexとcanonical理由を保持する() {
+    for (yaml_name, reason) in [
+        (r#""""#, "must not be blank"),
+        (r#""123""#, "must not be an integer-only name"),
+        (r#""task\u0085name""#, "must not contain control characters"),
+    ] {
+        let storage = TestStorage::new();
+        let journal_dir = storage.path().join("discarded_sessions");
+        fs::create_dir_all(&journal_dir).unwrap();
+        let path = journal_dir.join("2026-09.yaml");
+        let yaml = format!(
+            "version: 1\nevents:\n  - event_id: {}\n    task_id: {}\n    task_name_at_start: {yaml_name}\n    started_at_epoch_ms: 1788998400000\n    ended_at_epoch_ms: 1788998401000\n    logical_date: 2026-09-10\n    source: cli\n    reason: cli_normal_exit\n",
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        fs::write(&path, yaml).unwrap();
+        let mut repository = new_repository(&storage);
+
+        let error = repository.load().unwrap_err();
+        let message = error.to_string();
+
+        assert!(message.contains(&path.display().to_string()), "{message}");
+        assert!(message.contains("events[0]"), "{message}");
+        assert!(message.contains(reason), "{message}");
+    }
+}
+
+#[test]
 fn journal保存だけでもrevisionを更新しreload_if_changedで反映する() {
     let storage = TestStorage::new();
     let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();

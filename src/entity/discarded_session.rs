@@ -1,4 +1,5 @@
 use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+use crate::entity::task_name;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
 use std::error::Error;
 use std::fmt;
@@ -107,6 +108,7 @@ pub(crate) struct PersistedDiscardedSessionEvent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiscardedSessionEventError {
+    InvalidTaskNameAtStart { reason: &'static str },
     EndBeforeStart,
     TimestampOutOfRange,
     LogicalDateOutOfRange,
@@ -117,6 +119,9 @@ pub enum DiscardedSessionEventError {
 impl fmt::Display for DiscardedSessionEventError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
+            Self::InvalidTaskNameAtStart { reason } => {
+                return write!(formatter, "discarded session task_name_at_start {reason}");
+            }
             Self::EndBeforeStart => "discarded session end precedes start",
             Self::TimestampOutOfRange => "discarded session timestamp is outside the local range",
             Self::LogicalDateOutOfRange => "discarded session logical date is outside the range",
@@ -189,6 +194,11 @@ impl DiscardedSessionEvent {
             source,
             reason,
         } = fields;
+        task_name::validate(&task_name_at_start).map_err(|violation| {
+            DiscardedSessionEventError::InvalidTaskNameAtStart {
+                reason: violation.reason(),
+            }
+        })?;
         let elapsed_milliseconds = ended_at_epoch_ms
             .checked_sub(started_at_epoch_ms)
             .ok_or(DiscardedSessionEventError::EndBeforeStart)?;
@@ -292,6 +302,60 @@ mod tests {
         .unwrap();
 
         assert_eq!(actual, None);
+    }
+
+    #[test]
+    fn task名はcanonical規則でblankと整数だけの名前を拒否する() {
+        for (name, reason) in [
+            ("", "must not be blank"),
+            ("   ", "must not be blank"),
+            ("123", "must not be an integer-only name"),
+            (" +123 ", "must not be an integer-only name"),
+            (" -123 ", "must not be an integer-only name"),
+        ] {
+            let error = DiscardedSessionEvent::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                name.to_string(),
+                started_at(),
+                started_at() + Duration::seconds(1),
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliNormalExit,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                DiscardedSessionEventError::InvalidTaskNameAtStart { reason },
+                "name={name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn task名は全unicode_controlをcanonical理由で拒否する() {
+        let controls = (0..=char::MAX as u32)
+            .filter_map(char::from_u32)
+            .filter(|character| character.is_control());
+
+        for control in controls {
+            let error = DiscardedSessionEvent::new(
+                Uuid::new_v4(),
+                Uuid::new_v4(),
+                format!("task{control}name"),
+                started_at(),
+                started_at() + Duration::seconds(1),
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliNormalExit,
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                DiscardedSessionEventError::InvalidTaskNameAtStart {
+                    reason: "must not contain control characters",
+                },
+                "control={control:?}"
+            );
+        }
     }
 
     #[test]

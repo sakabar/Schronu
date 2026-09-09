@@ -4,11 +4,11 @@ pub use crate::application::task_list::{
     list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
     TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE,
 };
-use crate::application::task_name;
 pub use crate::application::task_view::TaskView;
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
+use crate::entity::task_name;
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Timelike,
 };

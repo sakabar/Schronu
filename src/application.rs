@@ -13,7 +13,6 @@ mod scheduling_instrumentation;
 mod scheduling_policy;
 pub mod session_progress;
 mod task_list;
-pub(crate) mod task_name;
 pub mod task_use_case;
 mod task_view;
 

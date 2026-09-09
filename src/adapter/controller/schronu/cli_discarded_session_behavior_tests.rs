@@ -137,6 +137,50 @@ fn excluded_focus_transitions_do_not_create_discard_events() {
 }
 
 #[test]
+fn invalid_focus_task_name_control_does_not_reach_raw_terminal_output() {
+    let control = '\u{85}';
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 0).unwrap();
+    let now = started_at + Duration::seconds(5);
+    let task = new_test_task_handle(&format!("raw{control}terminal")).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository =
+        TestTaskRepository::new(task, started_at).with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = None;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(task_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        "外",
+        now,
+    );
+
+    let error = match outcome {
+        InteractiveRepositoryEventOutcome::Fatal(error) => error.to_string(),
+        _ => panic!("invalid task name must fail before journal output"),
+    };
+    assert!(error.contains("must not contain control characters"));
+    assert!(!stdout.into_string().contains(control));
+    assert!(repository.discarded_sessions.is_empty());
+    assert_eq!(focus, Some(task_id));
+    assert_eq!(focus_started, started_at);
+}
+
+#[test]
 fn abnormal_interactive_endings_do_not_create_discard_events() {
     for index in 0..3 {
         let storage_dir = TestStorageDir::new();

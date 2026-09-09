@@ -128,6 +128,92 @@ fn discard_sessionの0秒は成功no_opになる() {
 }
 
 #[test]
+fn discard_sessionは不正な開始時task名をcanonical理由で拒否し状態を変えない() {
+    for (name, reason) in [
+        ("   ", "must not be blank"),
+        ("123", "must not be an integer-only name"),
+        ("task\u{85}name", "must not contain control characters"),
+    ] {
+        let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 2).unwrap();
+        let fixture = Fixture::new(now);
+        let revision_before = fs::read(fixture.storage.join(".revision")).unwrap();
+        let error = fixture
+            .service()
+            .discard_session_at(
+                now,
+                DiscardSessionRequest {
+                    event_id: Uuid::new_v4().to_string(),
+                    task_id: fixture.task_id.to_string(),
+                    task_name_at_start: name.to_owned(),
+                    started_at_epoch_ms: now.timestamp_millis() - 1_000,
+                    ended_at_epoch_ms: now.timestamp_millis(),
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(&error, WebReadError::InvalidInput(_)));
+        assert!(error.to_string().contains(reason), "{error}");
+        let repository = fixture.repository(now);
+        let task = repository.get_by_id(fixture.task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds().unwrap(), 120);
+        assert!(repository
+            .discarded_sessions_on(NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+            .unwrap()
+            .events()
+            .is_empty());
+        assert_eq!(
+            fs::read(fixture.storage.join(".revision")).unwrap(),
+            revision_before
+        );
+    }
+}
+
+#[test]
+fn complete_sessionは不正な開始時task名をcanonical理由で拒否し状態を変えない() {
+    for (name, reason) in [
+        ("   ", "must not be blank"),
+        ("123", "must not be an integer-only name"),
+        ("task\u{85}name", "must not contain control characters"),
+    ] {
+        let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
+        let fixture = Fixture::new(now);
+        let revision_before = fs::read(fixture.storage.join(".revision")).unwrap();
+        let error = fixture
+            .service()
+            .complete_session_at(
+                now,
+                CompleteSessionRequest {
+                    task_id: fixture.task_id.to_string(),
+                    started_at_epoch_ms: now.timestamp_millis() - 1_000,
+                    ended_at_epoch_ms: Some(now.timestamp_millis()),
+                    expected_actual_work_seconds: 120,
+                    record_elapsed_seconds: false,
+                    discard_event_id: Some(Uuid::new_v4().to_string()),
+                    task_name_at_start: Some(name.to_owned()),
+                },
+            )
+            .unwrap_err();
+
+        assert!(matches!(&error, WebReadError::InvalidInput(_)));
+        assert!(error.to_string().contains(reason), "{error}");
+        let repository = fixture.repository(now);
+        let task = repository.get_by_id(fixture.task_id).unwrap().unwrap();
+        assert_eq!(task.get_status().unwrap(), Status::Todo);
+        assert_eq!(task.get_actual_work_seconds().unwrap(), 120);
+        assert!(repository
+            .discarded_sessions_on(NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+            .unwrap()
+            .events()
+            .is_empty());
+        assert_eq!(
+            fs::read(fixture.storage.join(".revision")).unwrap(),
+            revision_before
+        );
+    }
+}
+
+#[test]
 fn complete_sessionの破棄はtask完了とjournalを同じtransactionへ保存する() {
     let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
     let fixture = Fixture::new(now);

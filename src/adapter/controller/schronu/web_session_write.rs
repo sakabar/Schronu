@@ -74,7 +74,6 @@ pub enum WebSessionInputError {
     },
     MissingDiscardEventId,
     MissingTaskNameAtStart,
-    EmptyTaskNameAtStart,
     DiscardedSession(DiscardedSessionEventError),
 }
 
@@ -120,7 +119,6 @@ impl fmt::Display for WebSessionInputError {
             }
             Self::MissingDiscardEventId => formatter.write_str("discard_event_id is required"),
             Self::MissingTaskNameAtStart => formatter.write_str("task_name_at_start is required"),
-            Self::EmptyTaskNameAtStart => formatter.write_str("task_name_at_start must not be empty"),
             Self::DiscardedSession(error) => error.fmt(formatter),
         }
     }
@@ -222,9 +220,6 @@ fn prepare_discarded_event(
             event_id: event_id.to_owned(),
             reason: error.to_string(),
         })?;
-    if task_name_at_start.trim().is_empty() {
-        return Err(WebSessionInputError::EmptyTaskNameAtStart);
-    }
     let started_at = DateTime::<Utc>::from_timestamp_millis(started_at_epoch_ms)
         .ok_or(WebSessionInputError::StartedAtOutOfRange(
             started_at_epoch_ms,
