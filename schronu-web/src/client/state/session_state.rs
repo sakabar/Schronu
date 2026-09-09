@@ -129,6 +129,38 @@ impl ClientState {
         }
     }
 
+    pub fn restart_session_without_recording<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        if self.sessions.mutation_globally_blocked
+            || self.sessions.in_flight_task_ids.contains(task_id)
+            || self
+                .sessions
+                .manual_check_blocked_task_ids
+                .contains(task_id)
+            || self.sessions.committed_blocked_task_ids.contains(task_id)
+            || self.sessions.completion_conflicts.contains_key(task_id)
+        {
+            return ClientEffect::None;
+        }
+        let mut candidate = self.sessions().to_vec();
+        let Some(session) = candidate
+            .iter_mut()
+            .find(|session| session.task_id == task_id)
+        else {
+            return ClientEffect::None;
+        };
+        session.started_at_epoch_ms = self.tick_now_epoch_ms;
+        let result = self
+            .sessions
+            .work_sessions
+            .replace_sessions(storage, candidate);
+        self.record_local_result(Some(task_id), result.is_ok());
+        ClientEffect::None
+    }
+
     pub fn begin_record_session<S: KeyValueStorage>(
         &mut self,
         storage: &S,
