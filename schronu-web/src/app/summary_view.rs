@@ -1,13 +1,14 @@
 use super::list_view::DateButtonViewModel;
+use crate::client::state::DiscardedSessionsViewState;
 use crate::client::time_model::format_hh_mm_ss;
-use crate::DiscardedSessionDay;
 use dioxus::prelude::*;
 
 #[component]
 pub(crate) fn SummaryView(
     dates: Vec<DateButtonViewModel>,
-    summary: Option<DiscardedSessionDay>,
+    state: DiscardedSessionsViewState,
     on_select_date: EventHandler<String>,
+    on_retry: EventHandler<String>,
 ) -> Element {
     rsx! {
         section { class: "discard-summary", aria_label: "破棄セッション集計",
@@ -23,7 +24,7 @@ pub(crate) fn SummaryView(
                     }
                 }
             }
-            if let Some(summary) = summary {
+            if let DiscardedSessionsViewState::Loaded(summary) = state {
                 h1 { "破棄時間 {format_hh_mm_ss(i128::from(summary.total_seconds))}" }
                 if summary.events.is_empty() {
                     p { role: "status", "この日の破棄セッションはありません。" }
@@ -41,18 +42,48 @@ pub(crate) fn SummaryView(
                             li {
                                 article {
                                     h2 { "{event.task_name_at_start}" }
-                                    p { "{format_local_hh_mm(event.started_at_epoch_ms)}–{format_local_hh_mm(event.ended_at_epoch_ms)}" }
+                                    p {
+                                        aria_label: "{event.task_name_at_start}の開始・終了時刻",
+                                        time {
+                                            datetime: "{format_datetime(event.started_at_epoch_ms)}",
+                                            "{format_local_hh_mm(event.started_at_epoch_ms)}"
+                                        }
+                                        span { aria_hidden: "true", "–" }
+                                        time {
+                                            datetime: "{format_datetime(event.ended_at_epoch_ms)}",
+                                            "{format_local_hh_mm(event.ended_at_epoch_ms)}"
+                                        }
+                                    }
                                     p { "{format_hh_mm_ss(i128::from(event.elapsed_seconds))} / {reason_label(&event.reason)}" }
                                 }
                             }
                         }
                     }
                 }
+            } else if let DiscardedSessionsViewState::Loading { logical_date } = state {
+                p { class: "discard-summary-loading", role: "status", aria_live: "polite",
+                    "{logical_date}の破棄時間を読み込んでいます…"
+                }
+            } else if let DiscardedSessionsViewState::Error { logical_date, message } = state {
+                section { class: "discard-summary-error", role: "alert",
+                    p { "{message}" }
+                    button {
+                        r#type: "button",
+                        onclick: move |_| on_retry.call(logical_date.clone()),
+                        "再試行"
+                    }
+                }
             } else {
-                p { role: "status", "破棄時間を読み込んでいます…" }
+                p { role: "status", "集計する日付を選択してください。" }
             }
         }
     }
+}
+
+fn format_datetime(epoch_ms: i64) -> String {
+    chrono::DateTime::from_timestamp_millis(epoch_ms)
+        .map(|date| date.to_rfc3339())
+        .unwrap_or_default()
 }
 
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]

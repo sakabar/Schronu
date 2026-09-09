@@ -1080,3 +1080,43 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         carry_lock,
     );
 }
+
+#[test]
+#[cfg(feature = "web")]
+fn 集計read_errorはsummary内だけに表示してglobal_bannerと重複しない() {
+    let storage = MemoryStorage::default();
+    let (mut state, effect) = initialize_client(&storage, 1_000);
+    let ClientEffect::Bootstrap { request_id } = effect else {
+        panic!()
+    };
+    state.apply_bootstrap_result(
+        request_id,
+        Ok(ServerSnapshot {
+            observed_at_epoch_ms: 1_000,
+            logical_date: "2026-09-10".to_owned(),
+            buffer_seconds: 0,
+        }),
+    );
+    let ClientEffect::ListDiscardedSessions { request_id, .. } =
+        state.switch_tab(ActiveTab::Summary)
+    else {
+        panic!()
+    };
+    state.apply_discarded_sessions_result(
+        request_id,
+        "2026-09-10",
+        Err(ServerFailure::Operation(WebError {
+            code: web_error_codes::REPOSITORY_UNAVAILABLE.to_owned(),
+            message: "集計を取得できませんでした。".to_owned(),
+            retry_advice: RetryAdvice::Retry,
+            current_actual_work_seconds: None,
+        })),
+    );
+
+    let model = BrowserPageModel::from_state(&state);
+    assert!(matches!(
+        model.discarded_summary,
+        crate::client::state::DiscardedSessionsViewState::Error { .. }
+    ));
+    assert_eq!(model.display_error, None);
+}

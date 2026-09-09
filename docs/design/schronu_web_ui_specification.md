@@ -542,6 +542,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - mobile rowは32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。セッション追加cellは未追加のrank 0で幅44px・高さ32pxの「＋」、追加済みで同寸法かつdisabledの「✓」、rank非0で空cellとする。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、既存formatを省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
+集計画面は`Idle`、`Loading { logical_date }`、`Loaded(day)`、`Error { logical_date, message }`の排他的なstateを持つ。別日のread開始時は直前の`Loaded`を`Loading`へ置換して旧日の集計を表示しない。成功時は日次合計、task別合計、開始時task名、開始・終了のsemanticな`time`要素、経過時間、日本語理由を表示する。eventが0件なら空状態を表示する。失敗時は`Loading`を残さず集計内の`role=alert`と同じ日付を再送する「再試行」を表示し、同じerrorを共通error bannerへ重複表示しない。日付controlは一覧と同じ`date-pills`を使い、mobileでも横scrollを維持する。
+
 ### 7.4 操作結果
 
 - localStorage更新は、memory state確定前に保存成功を確認する。

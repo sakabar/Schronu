@@ -40,6 +40,8 @@ mod session_view_tests;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod summary_view;
 #[cfg(test)]
+mod summary_view_tests;
+#[cfg(test)]
 mod view_test_support;
 mod web_endpoint;
 

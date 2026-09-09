@@ -110,6 +110,23 @@ impl DiagnosticsState {
 }
 
 impl ClientState {
+    pub(super) fn clear_discarded_sessions_read_error(&mut self) {
+        if matches!(
+            &self.diagnostics.display_error,
+            Some(
+                DisplayError::Operation {
+                    operation: Operation::ListDiscardedSessions,
+                    ..
+                } | DisplayError::Transport {
+                    operation: Operation::ListDiscardedSessions,
+                    ..
+                }
+            )
+        ) {
+            self.diagnostics.display_error = None;
+        }
+    }
+
     pub(super) fn clear_task_error_after_discard(&mut self, task_id: &str) {
         if matches!(
             &self.diagnostics.display_error,

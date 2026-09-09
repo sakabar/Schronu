@@ -175,7 +175,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 - **REQ-SUMMARY-001**: 集計tabは一覧と同じ選択logical dateを使い、未選択時は最新snapshotのlogical dateを使うこと。
 - **REQ-SUMMARY-002**: 日次合計を`HH:MM:SS`、task別合計、開始・終了local時刻、開始時task名、経過時間、日本語の破棄理由を表示すること。eventは共通journal集計の開始時刻順とすること。
-- **REQ-SUMMARY-003**: empty、loading、errorを識別でき、日付buttonは一覧と選択状態を共有し、mobileでも横scroll可能であること。
+- **REQ-SUMMARY-003**: 集計状態を未選択、取得中、取得成功、取得失敗として区別すること。別日の取得開始時は旧日の集計を表示せず、取得失敗時は取得中表示を残さず、集計内にerrorと同じ日付を再試行するbuttonを表示すること。集計内errorを共通error bannerへ重複表示しないこと。日付buttonは一覧と選択状態を共有し、mobileでも横scroll可能であること。
 
 ## 5. 非機能要件
 

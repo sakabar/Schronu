@@ -1,6 +1,7 @@
 use chrono::{Local, TimeZone};
 use schronu_web::client::state::{
-    load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
+    load_client_state, ActiveTab, ClientEffect, DiscardedSessionsViewState, Operation, Outcome,
+    ServerFailure,
 };
 use schronu_web::client::view_projection::project_session_cards;
 use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
@@ -180,6 +181,12 @@ fn 集計tabは選択日だけをreadして成功結果を保持する() {
         panic!()
     };
     assert_eq!(request.logical_date, "2026-09-05");
+    assert_eq!(
+        state.discarded_sessions_view_state(),
+        &DiscardedSessionsViewState::Loading {
+            logical_date: "2026-09-05".to_owned()
+        }
+    );
     state.apply_discarded_sessions_result(
         request_id,
         "2026-09-05",
@@ -194,6 +201,72 @@ fn 集計tabは選択日だけをreadして成功結果を保持する() {
         }),
     );
     assert_eq!(state.discarded_sessions().unwrap().total_seconds, 60);
+}
+
+#[test]
+fn 集計readは別日の旧結果を隠して失敗を再試行可能な状態にする() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000)));
+    let ClientEffect::ListDiscardedSessions { request_id, .. } =
+        state.request_discarded_sessions("2026-09-05")
+    else {
+        panic!()
+    };
+    state.apply_discarded_sessions_result(
+        request_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2_000),
+            data: DiscardedSessionDay {
+                logical_date: "2026-09-05".to_owned(),
+                total_seconds: 60,
+                task_totals: vec![],
+                events: vec![],
+            },
+        }),
+    );
+
+    let ClientEffect::ListDiscardedSessions { request_id, .. } =
+        state.request_discarded_sessions("2026-09-06")
+    else {
+        panic!()
+    };
+    assert!(state.discarded_sessions().is_none());
+    assert!(matches!(
+        state.discarded_sessions_view_state(),
+        DiscardedSessionsViewState::Loading { logical_date }
+            if logical_date == "2026-09-06"
+    ));
+    state.apply_discarded_sessions_result(
+        request_id,
+        "2026-09-06",
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_UNAVAILABLE,
+            RetryAdvice::Retry,
+        ))),
+    );
+
+    assert!(matches!(
+        state.discarded_sessions_view_state(),
+        DiscardedSessionsViewState::Error {
+            logical_date,
+            message,
+        } if logical_date == "2026-09-06" && message == "safe"
+    ));
+    assert!(state.discarded_sessions().is_none());
+    let ClientEffect::ListDiscardedSessions { request, .. } =
+        state.request_discarded_sessions("2026-09-06")
+    else {
+        panic!()
+    };
+    assert_eq!(request.logical_date, "2026-09-06");
+    assert!(state.display_error().is_none());
+    assert!(matches!(
+        state.discarded_sessions_view_state(),
+        DiscardedSessionsViewState::Loading { .. }
+    ));
 }
 
 #[test]

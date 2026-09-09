@@ -1,12 +1,13 @@
 use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, ClientState, Outcome};
+use crate::client::state::{
+    ActiveTab, ClientState, DiscardedSessionsViewState, Operation, Outcome,
+};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
     SessionCardViewModel,
 };
-use crate::DiscardedSessionDay;
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
@@ -25,7 +26,7 @@ pub(crate) struct BrowserPageModel {
     pub auto_session_empty: bool,
     pub carry_lock: CarryLockViewModel,
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-    pub discarded_summary: Option<DiscardedSessionDay>,
+    pub discarded_summary: DiscardedSessionsViewState,
 }
 
 impl BrowserPageModel {
@@ -57,15 +58,24 @@ impl BrowserPageModel {
             history: history_view_models(state),
             warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),
-            display_error: state
-                .display_error()
-                .map(|error| error.message().to_owned()),
+            display_error: state.display_error().and_then(|error| {
+                let rendered_in_summary = state.active_tab() == ActiveTab::Summary
+                    && matches!(
+                        state.discarded_sessions_view_state(),
+                        DiscardedSessionsViewState::Error { .. }
+                    )
+                    && state.history().back().is_some_and(|entry| {
+                        entry.invocation.operation() == Operation::ListDiscardedSessions
+                            && entry.outcome == Outcome::Failure
+                    });
+                (!rendered_in_summary).then(|| error.message().to_owned())
+            }),
             global_blocked: state.mutation_globally_blocked(),
             can_confirm: state.can_confirm_repository_checked(),
             auto_session_in_flight: state.auto_session_in_flight(),
             auto_session_empty: state.auto_session_empty(),
             carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
-            discarded_summary: state.discarded_sessions().cloned(),
+            discarded_summary: state.discarded_sessions_view_state().clone(),
         }
     }
 }
@@ -103,6 +113,23 @@ fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
 }
 
 fn browser_hh_mm_ss(epoch_ms: i64) -> String {
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    {
+        return wasm_browser_hh_mm_ss(epoch_ms);
+    }
+
+    #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
+    chrono::DateTime::from_timestamp_millis(epoch_ms)
+        .map(|date| {
+            date.with_timezone(&chrono::Local)
+                .format("%H:%M:%S")
+                .to_string()
+        })
+        .unwrap_or_else(|| "--:--:--".to_owned())
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+fn wasm_browser_hh_mm_ss(epoch_ms: i64) -> String {
     let date = js_sys::Date::new_0();
     date.set_time(epoch_ms as f64);
     if !date.get_time().is_finite() {

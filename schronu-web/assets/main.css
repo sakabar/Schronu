@@ -807,6 +807,25 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+.discard-summary-loading,
+.discard-summary-error {
+    margin: 0;
+    border: 1px solid var(--line);
+    border-radius: 0.85rem;
+    background: var(--surface);
+    padding: 1rem;
+}
+
+.discard-summary-error {
+    border-color: var(--red);
+    background: var(--red-soft);
+    color: var(--red);
+}
+
+.discard-summary-error button {
+    min-height: max(2.75rem, 44px);
+}
+
 .error {
     margin-block: 1rem;
     padding: 1rem;

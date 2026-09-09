@@ -37,6 +37,19 @@ pub enum ServerFailure {
     Transport(String),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DiscardedSessionsViewState {
+    Idle,
+    Loading {
+        logical_date: String,
+    },
+    Loaded(DiscardedSessionDay),
+    Error {
+        logical_date: String,
+        message: String,
+    },
+}
+
 pub struct ClientState {
     active_tab: ActiveTab,
     read: ReadState,
@@ -145,7 +158,14 @@ impl ClientState {
     }
 
     pub fn discarded_sessions(&self) -> Option<&DiscardedSessionDay> {
-        self.read.discarded_sessions.as_ref()
+        match &self.read.discarded_sessions {
+            DiscardedSessionsViewState::Loaded(summary) => Some(summary),
+            _ => None,
+        }
+    }
+
+    pub fn discarded_sessions_view_state(&self) -> &DiscardedSessionsViewState {
+        &self.read.discarded_sessions
     }
 
     pub fn has_scheduled_list(&self) -> bool {

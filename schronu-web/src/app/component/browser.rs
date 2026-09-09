@@ -201,8 +201,9 @@ pub(super) fn BrowserApp() -> Element {
             } else {
                 SummaryView {
                     dates,
-                    summary: discarded_summary,
+                    state: discarded_summary,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectSummaryDate(date)),
+                    on_retry: move |date| dispatch_action(client, ComponentAction::SelectSummaryDate(date)),
                 }
             }
         }

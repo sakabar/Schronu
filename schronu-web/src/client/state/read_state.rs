@@ -17,7 +17,7 @@ pub(super) struct ReadState {
     pub(super) latest_bootstrap_request_id: Option<u64>,
     pub(super) latest_list_request_id: Option<u64>,
     pub(super) latest_auto_request_id: Option<u64>,
-    pub(super) discarded_sessions: Option<DiscardedSessionDay>,
+    pub(super) discarded_sessions: DiscardedSessionsViewState,
     pub(super) latest_discarded_request_id: Option<u64>,
 }
 
@@ -36,7 +36,7 @@ impl ReadState {
             latest_bootstrap_request_id: None,
             latest_list_request_id: None,
             latest_auto_request_id: None,
-            discarded_sessions: None,
+            discarded_sessions: DiscardedSessionsViewState::Idle,
             latest_discarded_request_id: None,
         }
     }
@@ -80,7 +80,11 @@ impl ClientState {
         let Some(request_id) = self.allocate_read_request_id() else {
             return ClientEffect::None;
         };
+        self.clear_discarded_sessions_read_error();
         self.read.latest_discarded_request_id = Some(request_id);
+        self.read.discarded_sessions = DiscardedSessionsViewState::Loading {
+            logical_date: logical_date.to_owned(),
+        };
         ClientEffect::ListDiscardedSessions {
             request_id,
             request: ListDiscardedSessionsRequest {
@@ -107,10 +111,23 @@ impl ClientState {
             Ok(success) => {
                 let _ = self.apply_snapshot_metadata(success.snapshot);
                 self.read.selected_logical_date = Some(requested_date.to_owned());
-                self.read.discarded_sessions = Some(success.data);
+                self.read.discarded_sessions = DiscardedSessionsViewState::Loaded(success.data);
                 self.record_server(invocation, Outcome::Success, "破棄時間を更新しました。");
             }
-            Err(error) => self.record_server_failure(invocation, error),
+            Err(error) => {
+                self.record_server_failure(invocation, error);
+                let message = self
+                    .diagnostics
+                    .display_error
+                    .as_ref()
+                    .map(DisplayError::message)
+                    .unwrap_or("破棄時間を取得できませんでした。")
+                    .to_owned();
+                self.read.discarded_sessions = DiscardedSessionsViewState::Error {
+                    logical_date: requested_date.to_owned(),
+                    message,
+                };
+            }
         }
         ClientEffect::None
     }
