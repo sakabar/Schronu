@@ -595,6 +595,146 @@ fn server応答で最後のsessionが消えた時だけ一覧tabへ移る() {
 }
 
 #[test]
+fn 一時許可中のauto_sessionで最初のsessionが追加されると即時再ロックする() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = mounted_orchestrator(&storage);
+    orchestrator.action(&storage, 1_000, ComponentAction::EnableCarryLock);
+    orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
+    let request_id = match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
+        ClientEffect::AutoSession { request_id } => request_id,
+        effect => panic!("auto_session effectを期待しました: {effect:?}"),
+    };
+
+    assert_eq!(
+        orchestrator.apply_response(
+            &storage,
+            ClientResponse::AutoSession {
+                request_id,
+                result: Ok(WebSuccess {
+                    snapshot: snapshot(2_001),
+                    data: Some(task(RECORD_ID)),
+                }),
+            },
+        ),
+        ClientEffect::None
+    );
+
+    let state = orchestrator.state().unwrap();
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::Locked
+    );
+}
+
+#[test]
+fn auto_sessionが追加しない応答では一時許可を維持する() {
+    for result in [
+        Ok(WebSuccess {
+            snapshot: snapshot(2_001),
+            data: None,
+        }),
+        Err(ServerFailure::Transport("切断".to_owned())),
+    ] {
+        let storage = MemoryStorage::default();
+        let mut orchestrator = mounted_orchestrator(&storage);
+        orchestrator.action(&storage, 1_000, ComponentAction::EnableCarryLock);
+        orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
+        let request_id =
+            match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
+                ClientEffect::AutoSession { request_id } => request_id,
+                effect => panic!("auto_session effectを期待しました: {effect:?}"),
+            };
+
+        orchestrator.apply_response(
+            &storage,
+            ClientResponse::AutoSession { request_id, result },
+        );
+
+        let state = orchestrator.state().unwrap();
+        assert!(state.sessions().is_empty());
+        assert_eq!(
+            state.carry_lock_mode(),
+            crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
+        );
+    }
+}
+
+#[test]
+fn auto_sessionのtaskあり応答でも0件から1件以外では一時許可を維持する() {
+    for existing_task_id in [RECORD_ID, COMPLETE_ID] {
+        let storage = MemoryStorage::default();
+        let mut orchestrator = mounted_orchestrator(&storage);
+        add_session(&mut orchestrator, &storage, RECORD_ID);
+        orchestrator.action(&storage, 1_600, ComponentAction::EnableCarryLock);
+        orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
+        let request_id =
+            match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
+                ClientEffect::AutoSession { request_id } => request_id,
+                effect => panic!("auto_session effectを期待しました: {effect:?}"),
+            };
+
+        orchestrator.apply_response(
+            &storage,
+            ClientResponse::AutoSession {
+                request_id,
+                result: Ok(WebSuccess {
+                    snapshot: snapshot(2_001),
+                    data: Some(task(existing_task_id)),
+                }),
+            },
+        );
+
+        let state = orchestrator.state().unwrap();
+        let expected_session_count = if existing_task_id == RECORD_ID { 1 } else { 2 };
+        assert_eq!(state.sessions().len(), expected_session_count);
+        assert_eq!(
+            state.carry_lock_mode(),
+            crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
+        );
+    }
+
+    let failing_storage = MemoryStorage::failing_writes();
+    let mut failing = mounted_orchestrator(&failing_storage);
+    failing.action(
+        &failing_storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    failing.action(
+        &failing_storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    let request_id = match failing.action(
+        &failing_storage,
+        2_001,
+        ComponentAction::AutoSession,
+    ) {
+        ClientEffect::AutoSession { request_id } => request_id,
+        effect => panic!("auto_session effectを期待しました: {effect:?}"),
+    };
+
+    failing.apply_response(
+        &failing_storage,
+        ClientResponse::AutoSession {
+            request_id,
+            result: Ok(WebSuccess {
+                snapshot: snapshot(2_001),
+                data: Some(task(RECORD_ID)),
+            }),
+        },
+    );
+
+    let state = failing.state().unwrap();
+    assert!(state.sessions().is_empty());
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
+    );
+}
+
+#[test]
 fn session削除失敗と他tabでは一覧へ強制遷移しない() {
     let failure_storage = MemoryStorage::default();
     let mut failure = mounted_orchestrator(&failure_storage);
