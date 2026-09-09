@@ -1,4 +1,6 @@
 pub mod free_time_manager;
+#[cfg(test)]
+mod discarded_session_journal_contract_tests;
 pub mod schronu_config;
 mod storage_content_integrity;
 pub mod storage_lock;

@@ -2,6 +2,7 @@
 #[doc(hidden)]
 pub mod benchmarking;
 pub mod daily_capacity;
+pub mod discarded_session_journal;
 pub mod flatten_use_case;
 pub mod interface;
 pub mod pack_use_case;
