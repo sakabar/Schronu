@@ -2,7 +2,9 @@ use super::storage_snapshot::{create_snapshot, restore_snapshot, verify_snapshot
 use super::storage_transaction_test_support::{
     FaultRule, PathMatcher, RecordingIo, RecordingOperation,
 };
-use super::task_repository::{DuplicateDiscardedSessionEventIdError, TaskRepository};
+use super::task_repository::{
+    DuplicateDiscardedSessionEventIdError, DuplicateDiscardedSessionEventKind, TaskRepository,
+};
 use crate::application::discarded_session_journal::AppendDiscardedSessionOutcome;
 use crate::application::interface::{DiscardedSessionJournalTrait, TaskRepositoryTrait};
 use crate::entity::discarded_session::{
@@ -409,6 +411,38 @@ fn duplicate永続event_idは双方のpathとindexを診断する() {
     assert_eq!(duplicate.first_index(), 0);
     assert_eq!(duplicate.duplicate_path(), october_path);
     assert_eq!(duplicate.duplicate_index(), 0);
+    assert_eq!(
+        duplicate.kind(),
+        DuplicateDiscardedSessionEventKind::ConflictingPayload
+    );
+}
+
+#[test]
+fn 同一payloadのduplicate永続event_idをkindで区別する() {
+    let storage = TestStorage::new();
+    let journal_directory = storage.path().join("discarded_sessions");
+    fs::create_dir(&journal_directory).unwrap();
+    let path = journal_directory.join("2026-09.yaml");
+    let event = event_at(Uuid::from_u128(83), 2026, 9, 10, "same");
+    let yaml = event_journal_yaml(&event);
+    let body = yaml.strip_prefix("version: 1\nevents:\n").unwrap();
+    fs::write(&path, format!("version: 1\nevents:\n{body}{body}")).unwrap();
+    let mut repository = new_repository(&storage);
+
+    let error = repository.load().unwrap_err();
+    let duplicate = std::error::Error::source(&error)
+        .and_then(|source| source.downcast_ref::<DuplicateDiscardedSessionEventIdError>())
+        .unwrap();
+
+    assert_eq!(duplicate.first_path(), path);
+    assert_eq!(duplicate.first_index(), 0);
+    assert_eq!(duplicate.duplicate_path(), path);
+    assert_eq!(duplicate.duplicate_index(), 1);
+    assert_eq!(
+        duplicate.kind(),
+        DuplicateDiscardedSessionEventKind::SamePayload
+    );
+    assert!(duplicate.to_string().contains("same payload"));
 }
 
 fn event_at(id: Uuid, year: i32, month: u32, day: u32, name: &str) -> DiscardedSessionEvent {
@@ -427,9 +461,11 @@ fn event_at(id: Uuid, year: i32, month: u32, day: u32, name: &str) -> DiscardedS
 }
 
 fn write_event_journal(path: &Path, event: &DiscardedSessionEvent) {
-    fs::write(
-        path,
-        format!(
+    fs::write(path, event_journal_yaml(event)).unwrap();
+}
+
+fn event_journal_yaml(event: &DiscardedSessionEvent) -> String {
+    format!(
             "version: 1\nevents:\n  - event_id: {}\n    task_id: {}\n    task_name_at_start: {}\n    started_at_epoch_ms: {}\n    ended_at_epoch_ms: {}\n    logical_date: {}\n    source: {}\n    reason: {}\n",
             event.event_id(),
             event.task_id(),
@@ -439,7 +475,5 @@ fn write_event_journal(path: &Path, event: &DiscardedSessionEvent) {
             event.logical_date(),
             event.source().as_str(),
             event.reason().as_str(),
-        ),
     )
-    .unwrap();
 }

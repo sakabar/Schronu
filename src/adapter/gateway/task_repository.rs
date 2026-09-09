@@ -34,7 +34,9 @@ use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
 pub(in crate::adapter::gateway) mod discarded_session_journal;
-pub use discarded_session_journal::DuplicateDiscardedSessionEventIdError;
+pub use discarded_session_journal::{
+    DuplicateDiscardedSessionEventIdError, DuplicateDiscardedSessionEventKind,
+};
 mod load;
 
 use load::{parse_storage_revision, RepositoryLoadBuilder};

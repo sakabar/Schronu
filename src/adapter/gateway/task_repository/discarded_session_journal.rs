@@ -5,15 +5,25 @@ const JOURNAL_DIRECTORY_NAME: &str = "discarded_sessions";
 #[derive(Debug, Eq, PartialEq)]
 pub struct DuplicateDiscardedSessionEventIdError {
     event_id: Uuid,
+    kind: DuplicateDiscardedSessionEventKind,
     first_path: PathBuf,
     first_index: usize,
     duplicate_path: PathBuf,
     duplicate_index: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DuplicateDiscardedSessionEventKind {
+    SamePayload,
+    ConflictingPayload,
+}
+
 impl DuplicateDiscardedSessionEventIdError {
     pub fn event_id(&self) -> Uuid {
         self.event_id
+    }
+    pub fn kind(&self) -> DuplicateDiscardedSessionEventKind {
+        self.kind
     }
     pub fn first_path(&self) -> &Path {
         &self.first_path
@@ -33,7 +43,11 @@ impl fmt::Display for DuplicateDiscardedSessionEventIdError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "duplicate discarded session event ID {} at {}:events[{}] and {}:events[{}]",
+            "{} discarded session event ID {} at {}:events[{}] and {}:events[{}]",
+            match self.kind {
+                DuplicateDiscardedSessionEventKind::SamePayload => "same payload duplicate",
+                DuplicateDiscardedSessionEventKind::ConflictingPayload => "conflicting payload",
+            },
             self.event_id,
             self.first_path.display(),
             self.first_index,
@@ -142,19 +156,25 @@ impl TaskRepository {
         I: IntoIterator<Item = (&'a Path, &'a [u8])>,
     {
         let mut events = Vec::new();
-        let mut by_id = HashMap::<Uuid, (PathBuf, usize)>::new();
+        let mut by_id = HashMap::<Uuid, (DiscardedSessionEvent, PathBuf, usize)>::new();
         for (path, bytes) in journal_files {
             for parsed in parse_journal(path, bytes).map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
             })? {
                 let event_id = parsed.event.event_id();
-                if let Some((first_path, first_index)) =
-                    by_id.insert(event_id, (path.to_path_buf(), parsed.index))
-                {
+                if let Some((first_event, first_path, first_index)) = by_id.insert(
+                    event_id,
+                    (parsed.event.clone(), path.to_path_buf(), parsed.index),
+                ) {
                     return Err(TaskRepositoryError::new(
                         ApplicationRepositoryOperation::Load,
                         DuplicateDiscardedSessionEventIdError {
                             event_id,
+                            kind: if first_event == parsed.event {
+                                DuplicateDiscardedSessionEventKind::SamePayload
+                            } else {
+                                DuplicateDiscardedSessionEventKind::ConflictingPayload
+                            },
                             first_path,
                             first_index,
                             duplicate_path: path.to_path_buf(),
