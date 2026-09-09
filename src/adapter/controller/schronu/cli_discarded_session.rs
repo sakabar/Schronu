@@ -273,4 +273,84 @@ mod tests {
         assert!(text.contains("合計: 00:00:00"));
         assert!(text.contains("記録はありません"));
     }
+
+    #[test]
+    fn summary_display_orders_events_and_labels_every_reason_in_japanese() {
+        let base = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 0).unwrap();
+        let reasons = [
+            (
+                DiscardedSessionSource::Web,
+                DiscardedSessionReason::WebDiscardRelease,
+                "Webで破棄して解除",
+            ),
+            (
+                DiscardedSessionSource::Web,
+                DiscardedSessionReason::WebDiscardComplete,
+                "Webで破棄して完了",
+            ),
+            (
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliUnfocus,
+                "フォーカス解除",
+            ),
+            (
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliTuckAway,
+                "伏せる",
+            ),
+            (
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliFocusSwitch,
+                "フォーカス切替",
+            ),
+            (
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliAutoSwitch,
+                "自動切替",
+            ),
+            (
+                DiscardedSessionSource::Cli,
+                DiscardedSessionReason::CliNormalExit,
+                "正常終了",
+            ),
+        ];
+        let mut events = reasons
+            .iter()
+            .enumerate()
+            .map(|(index, (source, reason, _))| {
+                let started_at = base + Duration::minutes(index as i64);
+                DiscardedSessionEvent::new(
+                    Uuid::from_u128(index as u128 + 1),
+                    Uuid::from_u128(index as u128 % 2 + 10),
+                    format!("task{}", index % 2),
+                    started_at,
+                    started_at + Duration::seconds(2),
+                    *source,
+                    *reason,
+                )
+                .unwrap()
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        events.reverse();
+
+        let display = discarded_sessions_display(
+            &Journal(events),
+            NaiveDate::from_ymd_opt(2026, 9, 10).unwrap(),
+        )
+        .unwrap();
+        let DisplayModel::Message { text, .. } = display else {
+            panic!("discarded summary must be a message model");
+        };
+
+        assert!(text.contains("合計: 00:00:14"));
+        assert!(text.contains("  00:00:08  task0"));
+        assert!(text.contains("  00:00:06  task1"));
+        let mut previous_position = 0;
+        for (_, _, label) in reasons {
+            let position = text.find(label).unwrap();
+            assert!(position >= previous_position, "{label}");
+            previous_position = position;
+        }
+    }
 }

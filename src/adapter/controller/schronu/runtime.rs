@@ -95,6 +95,7 @@ pub(super) enum FocusSelectionMode {
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
         session_snapshot: Option<FocusSnapshot>,
+        pending_submit: Option<PendingSubmit>,
         pending_exit: Option<PendingExit>,
     },
     LowestPriority {
@@ -102,6 +103,7 @@ pub(super) enum FocusSelectionMode {
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
         session_snapshot: Option<FocusSnapshot>,
+        pending_submit: Option<PendingSubmit>,
         pending_exit: Option<PendingExit>,
     },
 }
@@ -113,12 +115,21 @@ pub(super) struct PendingExit {
     exit_event_id: Uuid,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PendingSubmit {
+    command: String,
+    operation_now: DateTime<Local>,
+    auto_event_id: Uuid,
+    command_event_id: Uuid,
+}
+
 impl FocusSelectionMode {
     pub(super) fn highest_priority() -> Self {
         Self::HighestPriority {
             tucked_task_ids: Vec::new(),
             is_explicit: false,
             session_snapshot: None,
+            pending_submit: None,
             pending_exit: None,
         }
     }
@@ -129,6 +140,7 @@ impl FocusSelectionMode {
             tucked_task_ids: Vec::new(),
             is_explicit: false,
             session_snapshot: None,
+            pending_submit: None,
             pending_exit: None,
         }
     }
@@ -188,6 +200,20 @@ impl FocusSelectionMode {
         match self {
             Self::HighestPriority { pending_exit, .. }
             | Self::LowestPriority { pending_exit, .. } => pending_exit.as_ref(),
+        }
+    }
+
+    fn pending_submit(&self) -> Option<&PendingSubmit> {
+        match self {
+            Self::HighestPriority { pending_submit, .. }
+            | Self::LowestPriority { pending_submit, .. } => pending_submit.as_ref(),
+        }
+    }
+
+    fn set_pending_submit(&mut self, pending: Option<PendingSubmit>) {
+        match self {
+            Self::HighestPriority { pending_submit, .. }
+            | Self::LowestPriority { pending_submit, .. } => *pending_submit = pending,
         }
     }
 
@@ -1492,6 +1518,14 @@ fn handle_interactive_submit_at(
     operation_now: DateTime<Local>,
 ) -> InteractiveRepositoryEventOutcome {
     let command = line.trim().to_string();
+    state.focus_selection_mode.set_pending_exit(None);
+    if state
+        .focus_selection_mode
+        .pending_submit()
+        .is_some_and(|pending| pending.command != command)
+    {
+        state.focus_selection_mode.set_pending_submit(None);
+    }
     let (parsed_command, maintenance_kind) =
         parse_interactive_command_with_maintenance_kind(&command);
     if let Some(outcome) = storage_maintenance::execute_interactive(
@@ -1505,8 +1539,30 @@ fn handle_interactive_submit_at(
     ) {
         return outcome;
     }
+    let is_read_only = parsed_command
+        .as_ref()
+        .is_ok_and(Command::is_read_only_repository_command);
+    let pre_command_selection_mode = state.focus_selection_mode.clone();
+    let pending_submit = if parsed_command.is_ok() && !is_read_only {
+        if state.focus_selection_mode.pending_submit().is_none() {
+            state
+                .focus_selection_mode
+                .set_pending_submit(Some(PendingSubmit {
+                    command: command.clone(),
+                    operation_now,
+                    auto_event_id: Uuid::new_v4(),
+                    command_event_id: Uuid::new_v4(),
+                }));
+        }
+        state.focus_selection_mode.pending_submit().cloned()
+    } else {
+        state.focus_selection_mode.set_pending_submit(None);
+        None
+    };
+    let operation_now = pending_submit
+        .as_ref()
+        .map_or(operation_now, |pending| pending.operation_now);
     let original_focused_task_id = *state.focused_task_id_opt;
-    let original_selection_mode = state.focus_selection_mode.clone();
     if state.focus_selection_mode.session_snapshot().is_none() {
         let snapshot = match focus_snapshot(task_repository, original_focused_task_id) {
             Ok(snapshot) => snapshot,
@@ -1516,14 +1572,16 @@ fn handle_interactive_submit_at(
         };
         state.focus_selection_mode.set_session_snapshot(snapshot);
     }
+    let retry_selection_mode = state.focus_selection_mode.clone();
     let original_last_focused_task_id = *state.last_focused_task_id_opt;
     let original_focus_started = *state.focus_started_datetime;
     let original_snapshot = state.focus_selection_mode.session_snapshot().cloned();
-    let auto_event_id = Uuid::new_v4();
-    let command_event_id = Uuid::new_v4();
-    let is_read_only = parsed_command
+    let auto_event_id = pending_submit
         .as_ref()
-        .is_ok_and(Command::is_read_only_repository_command);
+        .map_or_else(Uuid::new_v4, |pending| pending.auto_event_id);
+    let command_event_id = pending_submit
+        .as_ref()
+        .map_or_else(Uuid::new_v4, |pending| pending.command_event_id);
     let execute = |task_repository: &mut dyn CliRepositoryTrait| {
         let auto_changed = if is_read_only {
             false
@@ -1618,39 +1676,58 @@ fn handle_interactive_submit_at(
             let committed_snapshot = if focus_changed {
                 next_snapshot
             } else {
-                original_selection_mode.session_snapshot().cloned()
+                pre_command_selection_mode.session_snapshot().cloned()
             };
             state
                 .focus_selection_mode
                 .set_session_snapshot(committed_snapshot);
+            state.focus_selection_mode.set_pending_submit(None);
             InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now)
+        }
+        Err(RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(
+            save_error,
+        ))) if save_error.save_failure_disposition()
+            == Some(TaskRepositorySaveFailureDisposition::Retryable) =>
+        {
+            *state.focused_task_id_opt = original_focused_task_id;
+            *state.last_focused_task_id_opt = original_last_focused_task_id;
+            *state.focus_started_datetime = original_focus_started;
+            *state.focus_selection_mode = retry_selection_mode;
+            match rollback_cli_repository_after_retryable_save(task_repository) {
+                Ok(()) => InteractiveRepositoryEventOutcome::Retry(
+                    CliRepositoryTransactionError::Save(save_error),
+                ),
+                Err(error) => InteractiveRepositoryEventOutcome::Fatal(
+                    RunError::CliRepositoryTransaction(error),
+                ),
+            }
         }
         Err(error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(_))) => {
             *state.focused_task_id_opt = original_focused_task_id;
             *state.last_focused_task_id_opt = original_last_focused_task_id;
             *state.focus_started_datetime = original_focus_started;
-            *state.focus_selection_mode = original_selection_mode;
+            *state.focus_selection_mode = pre_command_selection_mode;
             InteractiveRepositoryEventOutcome::Fatal(error)
         }
         Err(RunError::CliRepositoryTransaction(error)) => {
             *state.focused_task_id_opt = original_focused_task_id;
             *state.last_focused_task_id_opt = original_last_focused_task_id;
             *state.focus_started_datetime = original_focus_started;
-            *state.focus_selection_mode = original_selection_mode;
+            *state.focus_selection_mode = retry_selection_mode;
             InteractiveRepositoryEventOutcome::Retry(error)
         }
         Err(RunError::Repository(error)) => {
             *state.focused_task_id_opt = original_focused_task_id;
             *state.last_focused_task_id_opt = original_last_focused_task_id;
             *state.focus_started_datetime = original_focus_started;
-            *state.focus_selection_mode = original_selection_mode;
+            *state.focus_selection_mode = retry_selection_mode;
             InteractiveRepositoryEventOutcome::Retry(CliRepositoryTransactionError::Load(error))
         }
         Err(error) => {
             *state.focused_task_id_opt = original_focused_task_id;
             *state.last_focused_task_id_opt = original_last_focused_task_id;
             *state.focus_started_datetime = original_focus_started;
-            *state.focus_selection_mode = original_selection_mode;
+            *state.focus_selection_mode = pre_command_selection_mode;
             InteractiveRepositoryEventOutcome::Fatal(error)
         }
     }
@@ -1678,9 +1755,6 @@ fn handle_interactive_repository_event(
     mut state: InteractiveRepositoryState<'_>,
     event: InteractiveRepositoryEvent<'_>,
 ) -> InteractiveRepositoryEventOutcome {
-    if !matches!(&event, InteractiveRepositoryEvent::Exit) {
-        state.focus_selection_mode.set_pending_exit(None);
-    }
     match event {
         InteractiveRepositoryEvent::Submit { line } => handle_interactive_submit_at(
             stdout,
@@ -1767,6 +1841,7 @@ fn handle_interactive_repository_event(
             }
         }
         InteractiveRepositoryEvent::Exit => {
+            state.focus_selection_mode.set_pending_submit(None);
             if state.focus_selection_mode.pending_exit().is_none() {
                 state
                     .focus_selection_mode
@@ -1906,16 +1981,24 @@ fn handle_interactive_repository_event(
                 }
             }
         }
-        InteractiveRepositoryEvent::InputDisconnected => InteractiveRepositoryEventOutcome::Fatal(
-            handle_input_disconnected_with_reload(task_repository),
-        ),
+        InteractiveRepositoryEvent::InputDisconnected => {
+            state.focus_selection_mode.set_pending_exit(None);
+            state.focus_selection_mode.set_pending_submit(None);
+            InteractiveRepositoryEventOutcome::Fatal(handle_input_disconnected_with_reload(
+                task_repository,
+            ))
+        }
         InteractiveRepositoryEvent::InputRead(input_error) => {
+            state.focus_selection_mode.set_pending_exit(None);
+            state.focus_selection_mode.set_pending_submit(None);
             InteractiveRepositoryEventOutcome::Fatal(handle_input_read_error_with_reload(
                 task_repository,
                 input_error,
             ))
         }
         InteractiveRepositoryEvent::Interrupted => {
+            state.focus_selection_mode.set_pending_exit(None);
+            state.focus_selection_mode.set_pending_submit(None);
             InteractiveRepositoryEventOutcome::Fatal(RunError::Interrupted)
         }
     }
@@ -2063,3 +2146,6 @@ include!("runtime_contract_tests.rs");
 
 #[cfg(test)]
 include!("interactive_io_contract_tests.rs");
+
+#[cfg(test)]
+include!("cli_discarded_session_behavior_tests.rs");
