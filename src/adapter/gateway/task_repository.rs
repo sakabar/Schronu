@@ -34,6 +34,7 @@ use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
 pub(in crate::adapter::gateway) mod discarded_session_journal;
+pub use discarded_session_journal::DuplicateDiscardedSessionEventIdError;
 mod load;
 
 use load::{parse_storage_revision, RepositoryLoadBuilder};
@@ -72,49 +73,6 @@ pub struct DuplicateTaskIdError {
     first: TaskLocation,
     duplicate: TaskLocation,
 }
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct DuplicateDiscardedSessionEventIdError {
-    event_id: Uuid,
-    first_path: PathBuf,
-    first_index: usize,
-    duplicate_path: PathBuf,
-    duplicate_index: usize,
-}
-
-impl DuplicateDiscardedSessionEventIdError {
-    pub fn event_id(&self) -> Uuid {
-        self.event_id
-    }
-    pub fn first_path(&self) -> &Path {
-        &self.first_path
-    }
-    pub fn first_index(&self) -> usize {
-        self.first_index
-    }
-    pub fn duplicate_path(&self) -> &Path {
-        &self.duplicate_path
-    }
-    pub fn duplicate_index(&self) -> usize {
-        self.duplicate_index
-    }
-}
-
-impl fmt::Display for DuplicateDiscardedSessionEventIdError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "duplicate discarded session event ID {} at {}:events[{}] and {}:events[{}]",
-            self.event_id,
-            self.first_path.display(),
-            self.first_index,
-            self.duplicate_path.display(),
-            self.duplicate_index
-        )
-    }
-}
-
-impl Error for DuplicateDiscardedSessionEventIdError {}
 
 impl DuplicateTaskIdError {
     pub fn task_id(&self) -> Uuid {
