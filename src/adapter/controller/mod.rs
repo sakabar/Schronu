@@ -77,6 +77,10 @@ mod web_read_service_contract_tests;
 #[path = "schronu/web_discarded_session_contract_tests.rs"]
 mod web_discarded_session_contract_tests;
 
+#[cfg(test)]
+#[path = "schronu/cli_discarded_session_contract_tests.rs"]
+mod cli_discarded_session_contract_tests;
+
 /// CLI applicationを起動する。
 pub fn run_cli() {
     runtime::application();
