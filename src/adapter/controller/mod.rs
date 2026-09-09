@@ -4,6 +4,9 @@ mod command;
 #[path = "schronu/cli_syntax.rs"]
 mod cli_syntax;
 
+#[path = "schronu/cli_discarded_session.rs"]
+mod cli_discarded_session;
+
 #[path = "schronu/command_context.rs"]
 mod command_context;
 

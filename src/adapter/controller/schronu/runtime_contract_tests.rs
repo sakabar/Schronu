@@ -3,7 +3,7 @@ fn non_interactive_test_tokens(command: &str) -> Vec<String> {
 }
 
 fn execute_non_interactive_command_for_test(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command: &str,
 ) -> Result<(), RunError> {
@@ -15,7 +15,7 @@ fn execute_non_interactive_command_for_test(
 }
 
 fn execute_non_interactive_command_at_for_test(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command: &str,
     operation_now: DateTime<Local>,
@@ -7890,7 +7890,7 @@ fn test_interactive_commandによるfocus切替は次のrender時刻を開始時
     ));
     assert_eq!(focused_task_id_opt, Some(task_id));
     assert_eq!(last_focused_task_id_opt, Some(task_id));
-    assert_eq!(focus_started_datetime, first_render_datetime);
+    assert_eq!(focus_started_datetime, old_focus_started_datetime);
 }
 
 #[test]
@@ -7956,8 +7956,9 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     let now = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
     let task = new_test_task_handle("表示対象").unwrap();
     let task_id = task.get_id().unwrap();
-    let mut repository =
-        TestTaskRepository::new(task, now).with_storage_directory(&storage_dir.path);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut stdout = TestWriter::new();
     let mut focused_task_id_opt = Some(task_id);
@@ -7987,7 +7988,7 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
     assert_eq!(repository.save_attempt_count.get(), 0);
     assert_eq!(
         repository.operation_trace(),
-        ["reload_if_changed", "load"]
+        ["reload_if_changed", "load", "has_pending_changes"]
     );
     assert!(StorageLock::acquire(&storage_dir.path, LockMode::Mcp).is_ok());
 }
@@ -8770,4 +8771,149 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
         "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
     ));
     assert!(!output.contains("日          \t空          \t空差"));
+}
+#[test]
+fn cliの外は開始時task名と経過時間を破棄journalへ記録する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 0).unwrap();
+    let operation_now = started_at + Duration::seconds(75);
+    let root = new_test_task_handle("開始時task").unwrap();
+    let task_id = root.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = started_at;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    repository.highest_priority_leaf_task_id_opt = None;
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        "外",
+        operation_now,
+    );
+
+    assert!(matches!(outcome, InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Unfocus, _)));
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    let event = &repository.discarded_sessions[0];
+    assert_eq!(event.task_id(), task_id);
+    assert_eq!(event.task_name_at_start(), "開始時task");
+    assert_eq!(event.elapsed_seconds(), 75);
+    assert_eq!(event.reason(), DiscardedSessionReason::CliUnfocus);
+    assert_eq!(focus_started_datetime, operation_now);
+}
+
+#[test]
+fn cliの働はfocusが変わっても破棄journalへ記録しない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 0).unwrap();
+    let operation_now = started_at + Duration::seconds(75);
+    let root = new_test_task_handle("作業task").unwrap();
+    let task_id = root.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = None;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = started_at;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        "働",
+        operation_now,
+    );
+
+    assert!(matches!(outcome, InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Work, _)));
+    assert!(repository.discarded_sessions.is_empty());
+}
+
+#[test]
+fn 捨commandは指定日のjournalを表示しsaveしない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 9, 5, 59, 0).unwrap();
+    let task = new_test_task_handle("集計対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    let event = crate::entity::discarded_session::DiscardedSessionEvent::new(
+        Uuid::new_v4(), task_id, "集計対象".to_string(), started_at,
+        started_at + Duration::seconds(61),
+        crate::entity::discarded_session::DiscardedSessionSource::Cli,
+        DiscardedSessionReason::CliTuckAway,
+    ).unwrap().unwrap();
+    let mut repository = TestTaskRepository::new(task, operation_now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    repository.discarded_sessions.push(event);
+    let mut free_time_manager = TestFreeTimeManager::default();
+
+    let result = execute_non_interactive_command_at_for_test(
+        &mut repository,
+        &mut free_time_manager,
+        "捨 2026/9/8",
+        operation_now,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(repository.save_attempt_count.get(), 0);
+}
+
+#[test]
+fn 正常なinteractive_exitだけが現在focusをjournalへ記録する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local::now() - Duration::seconds(5);
+    let task = new_test_task_handle("終了時task").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, started_at)
+        .with_storage_directory(&storage_dir.path);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = started_at;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    let outcome = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Exit,
+    );
+
+    assert!(matches!(outcome, InteractiveRepositoryEventOutcome::Exit));
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    assert_eq!(
+        repository.discarded_sessions[0].reason(),
+        DiscardedSessionReason::CliNormalExit
+    );
 }

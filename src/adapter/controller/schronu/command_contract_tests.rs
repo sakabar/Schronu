@@ -56,6 +56,7 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
         (&["空", "clear"][..], CommandKind::Clear),
         (&["集", "gather"][..], CommandKind::Gather),
         (&["終", "finish", "fin"][..], CommandKind::Finish),
+        (&["捨", "discarded"][..], CommandKind::Discarded),
         (&["検証"][..], CommandKind::Verify),
     ];
 

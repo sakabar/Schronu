@@ -1,3 +1,7 @@
+use super::cli_discarded_session::{
+    append_focus_transition, discarded_sessions_display, focus_snapshot, CliRepositoryTrait,
+    FocusTransition,
+};
 #[cfg(test)]
 use super::command::ParseMode;
 use super::command::{
@@ -34,7 +38,7 @@ use crate::adapter::gateway::storage_snapshot::SnapshotError;
 use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(test)]
 use crate::application::daily_capacity::try_logical_date_start;
-use crate::application::daily_capacity::try_next_logical_date_start;
+use crate::application::daily_capacity::{try_logical_date, try_next_logical_date_start};
 use crate::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 #[cfg(test)]
@@ -43,6 +47,7 @@ use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::task_use_case::{get_focus_excluding, ApplicationError, TaskFactory};
+use crate::entity::discarded_session::DiscardedSessionReason;
 #[cfg(test)]
 use crate::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
 use crate::entity::task::{Status, TaskHandle};
@@ -170,7 +175,9 @@ enum RunError {
 pub(super) enum CommandError {
     Parse(CommandParseError),
     Application(ApplicationError),
+    DiscardedSession(super::cli_discarded_session::CliDiscardedSessionError),
     Output(std::io::Error),
+    #[cfg_attr(not(test), allow(dead_code))]
     ExitSaveDiagnostic {
         save_error: TaskRepositoryError,
         output_error: std::io::Error,
@@ -186,6 +193,7 @@ impl std::fmt::Display for CommandError {
         match self {
             Self::Parse(error) => error.fmt(formatter),
             Self::Application(error) => write!(formatter, "操作エラー: {error}"),
+            Self::DiscardedSession(error) => error.fmt(formatter),
             Self::Output(error) => write!(formatter, "出力エラー: {error}"),
             Self::ExitSaveDiagnostic {
                 save_error,
@@ -206,6 +214,7 @@ impl std::error::Error for CommandError {
         match self {
             Self::Parse(error) => Some(error),
             Self::Application(error) => Some(error),
+            Self::DiscardedSession(error) => Some(error),
             Self::Output(error) => Some(error),
             Self::ExitSaveDiagnostic { save_error, .. } => Some(save_error),
             Self::ExternalOpen { source, .. } => Some(source.as_ref()),
@@ -244,6 +253,12 @@ impl From<CommandValidationError> for CommandError {
             CommandValidationError::Parse(error) => Self::Parse(error),
             CommandValidationError::Application(error) => Self::Application(error),
         }
+    }
+}
+
+impl From<super::cli_discarded_session::CliDiscardedSessionError> for CommandError {
+    fn from(error: super::cli_discarded_session::CliDiscardedSessionError) -> Self {
+        Self::DiscardedSession(error)
     }
 }
 
@@ -572,7 +587,7 @@ fn execute_open_obsidian_root_task_search_with_config(url: &str) -> Result<(), C
 #[allow(clippy::too_many_arguments)]
 fn execute_parsed(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
@@ -586,7 +601,7 @@ fn execute_parsed(
         .is_some_and(|mode| mode.is_explicit());
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
-    let outcome = {
+    let mut outcome = {
         let mut context = CliCommandContext {
             task_repository,
             free_time_manager,
@@ -598,6 +613,13 @@ fn execute_parsed(
         handle_command(parsed_command, &mut context)?
     }
     .unwrap_or_else(|| unreachable!("Verify must be handled before command execution"));
+    if let Some(requested_date) = outcome.discarded_logical_date {
+        let logical_date = requested_date
+            .map(Ok)
+            .unwrap_or_else(|| try_logical_date(operation_now))
+            .map_err(CommandError::Application)?;
+        outcome.display = discarded_sessions_display(task_repository, logical_date)?;
+    }
     if let Some(focus_selection_mode) = application_mode.focus_selection_mode_mut() {
         match outcome.focus_session_effect {
             FocusSessionEffect::TuckAway => {
@@ -840,9 +862,9 @@ fn execute_verify_command(
 }
 
 fn run_cli_repository_transaction<T>(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     now: DateTime<Local>,
-    operation: impl FnOnce(&mut dyn TaskRepositoryTrait) -> Result<T, CommandError>,
+    operation: impl FnOnce(&mut dyn CliRepositoryTrait) -> Result<T, CommandError>,
 ) -> Result<T, RunError> {
     let storage_directory = task_repository.get_project_storage_dir_name().to_string();
     run_repository_transaction(
@@ -877,6 +899,15 @@ fn run_cli_repository_transaction<T>(
             RunError::from(CliRepositoryTransactionError::Save(error))
         }
     })
+}
+
+fn run_cli_repository_read_transaction<T>(
+    task_repository: &mut dyn CliRepositoryTrait,
+    now: DateTime<Local>,
+    operation: impl FnOnce(&mut dyn CliRepositoryTrait) -> Result<T, CommandError>,
+) -> Result<T, RunError> {
+    let _storage_lock = reload_repository_for_cli(task_repository, now)?;
+    operation(task_repository).map_err(RunError::Command)
 }
 
 fn reconcile_focus_after_reload(
@@ -970,7 +1001,7 @@ fn parse_non_interactive_command(args: Vec<String>) -> Option<Vec<String>> {
 }
 
 fn execute_non_interactive_command(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command_tokens: &[String],
 ) -> Result<(), RunError> {
@@ -983,7 +1014,7 @@ fn execute_non_interactive_command(
 }
 
 fn execute_non_interactive_command_at(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     command_tokens: &[String],
     operation_now: DateTime<Local>,
@@ -1014,7 +1045,7 @@ fn execute_non_interactive_command_at(
 
     let focus_started_datetime = operation_now;
     let mut stdout = stdout();
-    run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
+    let execute = |task_repository: &mut dyn CliRepositoryTrait| {
         let mut focused_task_id_opt: Option<Uuid> =
             select_focus_task_id(task_repository, &FocusSelectionMode::highest_priority())?;
         execute_parsed(
@@ -1026,10 +1057,16 @@ fn execute_non_interactive_command_at(
             &parsed_command,
             OutcomeApplicationMode::Flushed,
         )
-    })?;
+    };
+    if parsed_command.is_read_only_repository_command() {
+        run_cli_repository_read_transaction(task_repository, operation_now, execute)?;
+    } else {
+        run_cli_repository_transaction(task_repository, operation_now, execute)?;
+    }
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn try_save_before_exit(
     stdout: &mut dyn SchronuWriter,
     task_repository: &dyn TaskRepositoryTrait,
@@ -1091,6 +1128,7 @@ fn handle_input_read_error_with_reload(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(test), allow(dead_code))]
 fn try_exit_interactive(
     stdout: &mut dyn SchronuWriter,
     task_repository: &mut dyn TaskRepositoryTrait,
@@ -1101,7 +1139,23 @@ fn try_exit_interactive(
     if !try_save_before_exit(stdout, task_repository)? {
         return Ok(false);
     }
+    prepare_exit_interactive(
+        stdout,
+        task_repository,
+        free_time_manager,
+        focused_task_id_opt,
+        now,
+    )?;
+    Ok(true)
+}
 
+fn prepare_exit_interactive(
+    stdout: &mut dyn SchronuWriter,
+    task_repository: &mut dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    focused_task_id_opt: &mut Option<Uuid>,
+    now: DateTime<Local>,
+) -> Result<(), CommandError> {
     task_repository
         .sync_clock(now)
         .map_err(ApplicationError::TaskTree)
@@ -1112,7 +1166,7 @@ fn try_exit_interactive(
         task_repository,
         free_time_manager,
     )?;
-    Ok(true)
+    Ok(())
 }
 
 fn render_interactive_band(
@@ -1235,7 +1289,25 @@ fn render_interactive_screen(
 
 struct InteractiveCommandExecution {
     kind: CommandKind,
-    focus_changed: bool,
+}
+
+fn command_discard_reason(kind: CommandKind) -> Option<DiscardedSessionReason> {
+    match kind {
+        CommandKind::Unfocus => Some(DiscardedSessionReason::CliUnfocus),
+        CommandKind::TuckAway => Some(DiscardedSessionReason::CliTuckAway),
+        CommandKind::Focus
+        | CommandKind::Pick
+        | CommandKind::Root
+        | CommandKind::Parent
+        | CommandKind::Children
+        | CommandKind::Deepest
+        | CommandKind::NextUp => Some(DiscardedSessionReason::CliFocusSwitch),
+        CommandKind::FocusHighest | CommandKind::FocusLowest => {
+            Some(DiscardedSessionReason::CliAutoSwitch)
+        }
+        CommandKind::Work | CommandKind::Finish => None,
+        _ => Some(DiscardedSessionReason::CliAutoSwitch),
+    }
 }
 
 fn interactive_outcome_application_mode<'a>(
@@ -1261,7 +1333,7 @@ fn interactive_outcome_application_mode<'a>(
 #[allow(clippy::too_many_arguments)]
 fn execute_interactive_command(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
@@ -1271,6 +1343,7 @@ fn execute_interactive_command(
 ) -> Result<InteractiveCommandExecution, CommandError> {
     let parsed_command = parse_interactive_command(command).map_err(map_command_parse_error)?;
     let kind = parsed_command.kind();
+    let is_read_only = parsed_command.is_read_only_repository_command();
     let (command_result, propagates_error) = if kind == CommandKind::Verify {
         let mut output = ErrorCapturingWriter::new(stdout);
         (
@@ -1307,17 +1380,15 @@ fn execute_interactive_command(
         render_display_model(stdout, &error_display_model(&error)).map_err(CommandError::Output)?;
     }
 
-    task_repository
-        .sync_clock(operation_now)
-        .map_err(ApplicationError::TaskTree)
-        .map_err(CommandError::Application)?;
-    let focus_changed =
+    if !is_read_only {
+        task_repository
+            .sync_clock(operation_now)
+            .map_err(ApplicationError::TaskTree)
+            .map_err(CommandError::Application)?;
         reconcile_focus_after_reload(task_repository, focused_task_id_opt, focus_selection_mode)
             .map_err(CommandError::from)?;
-    Ok(InteractiveCommandExecution {
-        kind,
-        focus_changed,
-    })
+    }
+    Ok(InteractiveCommandExecution { kind })
 }
 
 struct InteractiveRepositoryState<'a> {
@@ -1346,7 +1417,7 @@ enum InteractiveRepositoryEventOutcome {
 
 fn handle_interactive_submit_at(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     mut state: InteractiveRepositoryState<'_>,
     line: &str,
@@ -1366,75 +1437,154 @@ fn handle_interactive_submit_at(
     ) {
         return outcome;
     }
-    let transaction_result =
-        run_cli_repository_transaction(task_repository, operation_now, |task_repository| {
-            reconcile_interactive_state_after_reload(task_repository, &mut state, operation_now)?;
-            writeln_newline(stdout, "").map_err(CommandError::Output)?;
-            writeln_newline(
-                stdout,
-                &format!(
-                    "{}{}> {}{}",
-                    style::Bold,
-                    operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
-                    command,
-                    style::Reset
-                ),
-            )
-            .map_err(CommandError::Output)?;
-            writeln_newline(stdout, "").map_err(CommandError::Output)?;
-            stdout.flush().map_err(CommandError::Output)?;
+    let original_focused_task_id = *state.focused_task_id_opt;
+    let original_last_focused_task_id = *state.last_focused_task_id_opt;
+    let original_focus_started = *state.focus_started_datetime;
+    let original_selection_mode = state.focus_selection_mode.clone();
+    let original_snapshot = match focus_snapshot(task_repository, original_focused_task_id) {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error.into()))
+        }
+    };
+    let auto_event_id = Uuid::new_v4();
+    let command_event_id = Uuid::new_v4();
+    let is_read_only = parsed_command
+        .as_ref()
+        .is_ok_and(Command::is_read_only_repository_command);
+    let execute = |task_repository: &mut dyn CliRepositoryTrait| {
+        let auto_changed = if is_read_only {
+            false
+        } else {
+            reconcile_interactive_state_after_reload(task_repository, &mut state)?
+        };
+        let command_focus_started = if auto_changed {
+            operation_now
+        } else {
+            original_focus_started
+        };
+        let command_old_focus = *state.focused_task_id_opt;
+        let command_snapshot = focus_snapshot(task_repository, command_old_focus)?;
+        writeln_newline(stdout, "").map_err(CommandError::Output)?;
+        writeln_newline(
+            stdout,
+            &format!(
+                "{}{}> {}{}",
+                style::Bold,
+                operation_now.format("%Y/%m/%d %H:%M:%S.%f"),
+                command,
+                style::Reset
+            ),
+        )
+        .map_err(CommandError::Output)?;
+        writeln_newline(stdout, "").map_err(CommandError::Output)?;
+        stdout.flush().map_err(CommandError::Output)?;
 
-            let execution = execute_interactive_command(
-                stdout,
+        let execution = execute_interactive_command(
+            stdout,
+            task_repository,
+            free_time_manager,
+            state.focused_task_id_opt,
+            &command_focus_started,
+            state.focus_selection_mode,
+            operation_now,
+            &command,
+        )?;
+        if !is_read_only {
+            append_focus_transition(
                 task_repository,
-                free_time_manager,
-                state.focused_task_id_opt,
-                state.focus_started_datetime,
-                state.focus_selection_mode,
-                operation_now,
-                &command,
+                FocusTransition {
+                    snapshot: original_snapshot.as_ref(),
+                    old_focus_id: original_focused_task_id,
+                    new_focus_id: command_old_focus,
+                    started_at: original_focus_started,
+                    ended_at: operation_now,
+                    event_id: auto_event_id,
+                    reason: DiscardedSessionReason::CliAutoSwitch,
+                },
             )?;
-            if execution.focus_changed {
-                *state.last_focused_task_id_opt = None;
+            if let Some(reason) = command_discard_reason(execution.kind) {
+                append_focus_transition(
+                    task_repository,
+                    FocusTransition {
+                        snapshot: command_snapshot.as_ref(),
+                        old_focus_id: command_old_focus,
+                        new_focus_id: *state.focused_task_id_opt,
+                        started_at: command_focus_started,
+                        ended_at: operation_now,
+                        event_id: command_event_id,
+                        reason,
+                    },
+                )?;
             }
-            Ok(execution.kind)
-        });
+        }
+        let focus_changed = original_focused_task_id != *state.focused_task_id_opt;
+        if focus_changed {
+            *state.last_focused_task_id_opt = None;
+        }
+        Ok((execution.kind, focus_changed))
+    };
+    let transaction_result = if is_read_only {
+        run_cli_repository_read_transaction(task_repository, operation_now, execute)
+    } else {
+        run_cli_repository_transaction(task_repository, operation_now, execute)
+    };
     match transaction_result {
-        Ok(command_kind) => {
+        Ok((command_kind, focus_changed)) => {
+            if focus_changed {
+                *state.focus_started_datetime = operation_now;
+            }
             InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now)
         }
         Err(error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(_))) => {
+            *state.focused_task_id_opt = original_focused_task_id;
+            *state.last_focused_task_id_opt = original_last_focused_task_id;
+            *state.focus_started_datetime = original_focus_started;
+            *state.focus_selection_mode = original_selection_mode;
             InteractiveRepositoryEventOutcome::Fatal(error)
         }
         Err(RunError::CliRepositoryTransaction(error)) => {
+            *state.focused_task_id_opt = original_focused_task_id;
+            *state.last_focused_task_id_opt = original_last_focused_task_id;
+            *state.focus_started_datetime = original_focus_started;
+            *state.focus_selection_mode = original_selection_mode;
             InteractiveRepositoryEventOutcome::Retry(error)
         }
         Err(RunError::Repository(error)) => {
+            *state.focused_task_id_opt = original_focused_task_id;
+            *state.last_focused_task_id_opt = original_last_focused_task_id;
+            *state.focus_started_datetime = original_focus_started;
+            *state.focus_selection_mode = original_selection_mode;
             InteractiveRepositoryEventOutcome::Retry(CliRepositoryTransactionError::Load(error))
         }
-        Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
+        Err(error) => {
+            *state.focused_task_id_opt = original_focused_task_id;
+            *state.last_focused_task_id_opt = original_last_focused_task_id;
+            *state.focus_started_datetime = original_focus_started;
+            *state.focus_selection_mode = original_selection_mode;
+            InteractiveRepositoryEventOutcome::Fatal(error)
+        }
     }
 }
 
 fn reconcile_interactive_state_after_reload(
     task_repository: &mut dyn TaskRepositoryTrait,
     state: &mut InteractiveRepositoryState<'_>,
-    now: DateTime<Local>,
-) -> Result<(), ApplicationError> {
-    if reconcile_focus_after_reload(
+) -> Result<bool, ApplicationError> {
+    let changed = reconcile_focus_after_reload(
         task_repository,
         state.focused_task_id_opt,
         state.focus_selection_mode,
-    )? {
+    )?;
+    if changed {
         *state.last_focused_task_id_opt = None;
-        *state.focus_started_datetime = now;
     }
-    Ok(())
+    Ok(changed)
 }
 
 fn handle_interactive_repository_event(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     mut state: InteractiveRepositoryState<'_>,
     event: InteractiveRepositoryEvent<'_>,
@@ -1450,47 +1600,164 @@ fn handle_interactive_repository_event(
         ),
         InteractiveRepositoryEvent::Refresh => {
             let now = Local::now();
-            match reload_repository_for_cli(task_repository, now) {
-                Ok(storage_lock) => {
-                    if let Err(error) =
-                        reconcile_interactive_state_after_reload(task_repository, &mut state, now)
-                    {
-                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                            CommandError::Application(error),
-                        ));
+            let old_focus = *state.focused_task_id_opt;
+            let old_started = *state.focus_started_datetime;
+            let old_last_focus = *state.last_focused_task_id_opt;
+            let old_selection_mode = state.focus_selection_mode.clone();
+            let snapshot = match focus_snapshot(task_repository, old_focus) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                        error.into(),
+                    ))
+                }
+            };
+            let event_id = Uuid::new_v4();
+            match run_cli_repository_transaction(task_repository, now, |repository| {
+                let changed = reconcile_interactive_state_after_reload(repository, &mut state)?;
+                append_focus_transition(
+                    repository,
+                    FocusTransition {
+                        snapshot: snapshot.as_ref(),
+                        old_focus_id: old_focus,
+                        new_focus_id: *state.focused_task_id_opt,
+                        started_at: old_started,
+                        ended_at: now,
+                        event_id,
+                        reason: DiscardedSessionReason::CliAutoSwitch,
+                    },
+                )?;
+                Ok(changed)
+            }) {
+                Ok(changed) => {
+                    if changed {
+                        *state.focus_started_datetime = now;
                     }
-                    drop(storage_lock);
                     InteractiveRepositoryEventOutcome::Continue
                 }
-                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
+                Err(error) => {
+                    *state.focused_task_id_opt = old_focus;
+                    *state.last_focused_task_id_opt = old_last_focus;
+                    *state.focus_started_datetime = old_started;
+                    *state.focus_selection_mode = old_selection_mode;
+                    match error {
+                        RunError::CliRepositoryTransaction(
+                            error @ CliRepositoryTransactionError::Save(_),
+                        ) => InteractiveRepositoryEventOutcome::Fatal(
+                            RunError::CliRepositoryTransaction(error),
+                        ),
+                        RunError::CliRepositoryTransaction(error) => {
+                            InteractiveRepositoryEventOutcome::Retry(error)
+                        }
+                        RunError::Repository(error) => InteractiveRepositoryEventOutcome::Retry(
+                            CliRepositoryTransactionError::Load(error),
+                        ),
+                        error => InteractiveRepositoryEventOutcome::Fatal(error),
+                    }
+                }
             }
         }
         InteractiveRepositoryEvent::Exit => {
             let now = Local::now();
-            match reload_repository_for_cli(task_repository, now) {
-                Ok(_storage_lock) => {
-                    if let Err(error) =
-                        reconcile_interactive_state_after_reload(task_repository, &mut state, now)
-                    {
-                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                            CommandError::Application(error),
-                        ));
+            let old_focus = *state.focused_task_id_opt;
+            let old_started = *state.focus_started_datetime;
+            let old_last_focus = *state.last_focused_task_id_opt;
+            let old_selection_mode = state.focus_selection_mode.clone();
+            let snapshot = match focus_snapshot(task_repository, old_focus) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                        error.into(),
+                    ))
+                }
+            };
+            let auto_event_id = Uuid::new_v4();
+            let exit_event_id = Uuid::new_v4();
+            match run_cli_repository_transaction(task_repository, now, |repository| {
+                let auto_changed =
+                    reconcile_interactive_state_after_reload(repository, &mut state)?;
+                let exit_snapshot = focus_snapshot(repository, *state.focused_task_id_opt)?;
+                let exit_started = if auto_changed { now } else { old_started };
+                repository
+                    .sync_clock(now)
+                    .map_err(ApplicationError::TaskTree)
+                    .map_err(CommandError::Application)?;
+                append_focus_transition(
+                    repository,
+                    FocusTransition {
+                        snapshot: snapshot.as_ref(),
+                        old_focus_id: old_focus,
+                        new_focus_id: *state.focused_task_id_opt,
+                        started_at: old_started,
+                        ended_at: now,
+                        event_id: auto_event_id,
+                        reason: DiscardedSessionReason::CliAutoSwitch,
+                    },
+                )?;
+                append_focus_transition(
+                    repository,
+                    FocusTransition {
+                        snapshot: exit_snapshot.as_ref(),
+                        old_focus_id: *state.focused_task_id_opt,
+                        new_focus_id: None,
+                        started_at: exit_started,
+                        ended_at: now,
+                        event_id: exit_event_id,
+                        reason: DiscardedSessionReason::CliNormalExit,
+                    },
+                )?;
+                Ok((true, auto_changed))
+            }) {
+                Ok((may_exit, auto_changed)) => {
+                    if auto_changed {
+                        *state.focus_started_datetime = now;
                     }
-                    match try_exit_interactive(
+                    if let Err(error) = prepare_exit_interactive(
                         stdout,
                         task_repository,
                         free_time_manager,
                         state.focused_task_id_opt,
                         now,
                     ) {
-                        Ok(true) => InteractiveRepositoryEventOutcome::Exit,
-                        Ok(false) => InteractiveRepositoryEventOutcome::Continue,
-                        Err(error) => {
-                            InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error))
+                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error));
+                    }
+                    debug_assert!(may_exit);
+                    InteractiveRepositoryEventOutcome::Exit
+                }
+                Err(error) => {
+                    *state.focused_task_id_opt = old_focus;
+                    *state.last_focused_task_id_opt = old_last_focus;
+                    *state.focus_started_datetime = old_started;
+                    *state.focus_selection_mode = old_selection_mode;
+                    match error {
+                        RunError::CliRepositoryTransaction(
+                            CliRepositoryTransactionError::Save(save_error),
+                        ) => match render_display_model_with_mode(
+                            stdout,
+                            &error_display_model(&save_error),
+                            RenderMode::Flushed,
+                        ) {
+                            Ok(()) => InteractiveRepositoryEventOutcome::Fatal(
+                                RunError::CliRepositoryTransaction(
+                                    CliRepositoryTransactionError::Save(save_error),
+                                ),
+                            ),
+                            Err(output_error) => InteractiveRepositoryEventOutcome::Fatal(
+                                RunError::Command(CommandError::ExitSaveDiagnostic {
+                                    save_error,
+                                    output_error,
+                                }),
+                            ),
+                        },
+                        RunError::CliRepositoryTransaction(error) => {
+                            InteractiveRepositoryEventOutcome::Retry(error)
                         }
+                        RunError::Repository(error) => InteractiveRepositoryEventOutcome::Retry(
+                            CliRepositoryTransactionError::Load(error),
+                        ),
+                        error => InteractiveRepositoryEventOutcome::Fatal(error),
                     }
                 }
-                Err(error) => InteractiveRepositoryEventOutcome::Retry(error),
             }
         }
         InteractiveRepositoryEvent::InputDisconnected => InteractiveRepositoryEventOutcome::Fatal(
@@ -1517,7 +1784,7 @@ fn load_busy_time_slots_for_interactive_application(
 }
 
 struct InteractiveDriverState<'a> {
-    task_repository: &'a mut dyn TaskRepositoryTrait,
+    task_repository: &'a mut dyn CliRepositoryTrait,
     free_time_manager: &'a mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &'a mut Option<Uuid>,
     last_focused_task_id_opt: &'a mut Option<Uuid>,
@@ -1603,7 +1870,7 @@ fn handle_interactive_driver_event(
 }
 
 fn interactive_application(
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
 ) -> Result<(), RunError> {
     let now = Local::now();

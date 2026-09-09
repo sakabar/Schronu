@@ -145,15 +145,16 @@ pub(super) fn execute_interactive(
                 pre_backup_directory,
                 operation_now,
             ) {
-                Ok(()) => match reconcile_interactive_state_after_reload(
-                    task_repository,
-                    state,
-                    operation_now,
-                ) {
-                    Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                        CommandKind::RestoreCurrent,
-                        operation_now,
-                    ),
+                Ok(()) => match reconcile_interactive_state_after_reload(task_repository, state) {
+                    Ok(changed) => {
+                        if changed {
+                            *state.focus_started_datetime = operation_now;
+                        }
+                        InteractiveRepositoryEventOutcome::CommandExecuted(
+                            CommandKind::RestoreCurrent,
+                            operation_now,
+                        )
+                    }
                     Err(error) => InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
                         CommandError::Application(error),
                     )),
@@ -196,15 +197,16 @@ pub(super) fn execute_interactive(
                             CliRepositoryTransactionError::Load(error),
                         ));
                     }
-                    match reconcile_interactive_state_after_reload(
-                        task_repository,
-                        state,
-                        operation_now,
-                    ) {
-                        Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                            CommandKind::Backup,
-                            operation_now,
-                        ),
+                    match reconcile_interactive_state_after_reload(task_repository, state) {
+                        Ok(changed) => {
+                            if changed {
+                                *state.focus_started_datetime = operation_now;
+                            }
+                            InteractiveRepositoryEventOutcome::CommandExecuted(
+                                CommandKind::Backup,
+                                operation_now,
+                            )
+                        }
                         Err(error) => InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
                             CommandError::Application(error),
                         )),

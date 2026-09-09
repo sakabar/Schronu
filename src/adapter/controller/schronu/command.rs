@@ -1,6 +1,7 @@
 use crate::application::task_use_case::{estimated_work_seconds_from_minutes, ApplicationError};
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
+use chrono::NaiveDate;
 use regex::Regex;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -69,6 +70,7 @@ pub(super) enum CommandKind {
     Restore,
     RestoreCurrent,
     Verify,
+    Discarded,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -149,6 +151,9 @@ pub(super) enum Command {
     RestoreCurrent {
         snapshot_directory: PathBuf,
         pre_backup_directory: PathBuf,
+    },
+    Discarded {
+        logical_date: Option<NaiveDate>,
     },
     InteractiveShortcut(InteractiveShortcut),
     Action(CommandAction),
@@ -264,12 +269,17 @@ impl Command {
             Self::BackupVerify { .. } => CommandKind::BackupVerify,
             Self::Restore { .. } => CommandKind::Restore,
             Self::RestoreCurrent { .. } => CommandKind::RestoreCurrent,
+            Self::Discarded { .. } => CommandKind::Discarded,
             Self::InteractiveShortcut(InteractiveShortcut::DeferRoutine) => {
                 CommandKind::DeferRoutines
             }
             Self::InteractiveShortcut(_) => CommandKind::Defer,
             Self::Action(action) => action.kind(),
         }
+    }
+
+    pub(super) fn is_read_only_repository_command(&self) -> bool {
+        matches!(self, Self::Discarded { .. })
     }
 }
 
@@ -584,6 +594,12 @@ pub(super) fn parse_command_tokens(
         CommandKind::Restore => Ok(Command::Restore {
             snapshot_directory: PathBuf::from(&arguments[0]),
             destination_directory: PathBuf::from(&arguments[1]),
+        }),
+        CommandKind::Discarded => Ok(Command::Discarded {
+            logical_date: arguments
+                .first()
+                .map(|value| parse_calendar_date(value, definition))
+                .transpose()?,
         }),
         CommandKind::Defer if arguments.len() == 2 => Ok(Command::Defer {
             amount: parse_i64(
@@ -900,6 +916,7 @@ fn parse_action(
         | CommandKind::BackupVerify
         | CommandKind::Restore
         | CommandKind::RestoreCurrent => unreachable!("handled before action parsing"),
+        CommandKind::Discarded => unreachable!("handled before action parsing"),
     };
     Ok(Command::Action(action))
 }
@@ -946,6 +963,30 @@ fn parse_i64(
     value
         .parse()
         .map_err(|_| parse_error(definition.canonical_name, field, reason, definition.usage))
+}
+
+fn parse_calendar_date(
+    value: &str,
+    definition: CommandDefinition,
+) -> Result<NaiveDate, CommandParseError> {
+    let mut parts = value.split('/');
+    let parsed = (|| {
+        let year = parts.next()?.parse::<i32>().ok()?;
+        let month = parts.next()?.parse::<u32>().ok()?;
+        let day = parts.next()?.parse::<u32>().ok()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        NaiveDate::from_ymd_opt(year, month, day)
+    })();
+    parsed.ok_or_else(|| {
+        parse_error(
+            definition.canonical_name,
+            "logical_date",
+            "有効なYYYY/M/D形式の日付で指定してください",
+            definition.usage,
+        )
+    })
 }
 
 fn parse_error(
@@ -1093,6 +1134,9 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
             Some(2),
         ),
         "検証" => CommandDefinition::new(Kind::Verify, "検証", "検証", 0, Some(0)),
+        "捨" | "discarded" => {
+            CommandDefinition::new(Kind::Discarded, "捨", "捨 [YYYY/M/D]", 0, Some(1))
+        }
         _ => return None,
     };
     Some(definition)
@@ -1127,7 +1171,7 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
         "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
         "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
-        "高", "低", "backup", "検証",
+        "高", "低", "捨", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

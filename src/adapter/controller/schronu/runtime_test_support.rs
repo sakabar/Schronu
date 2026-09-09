@@ -12,9 +12,16 @@ use chrono::{FixedOffset, TimeZone, Timelike};
 
 #[cfg(test)]
 use crate::application::interface::{
-    BusyTimeSlotRegistrationError, ProjectRegistrationError, RepositoryReloadOutcome,
+    BusyTimeSlotRegistrationError, DiscardedSessionJournalTrait, ProjectRegistrationError, RepositoryReloadOutcome,
     TaskRepositoryOperation,
 };
+#[cfg(test)]
+use crate::application::discarded_session_journal::{
+    summarize_discarded_sessions, AppendDiscardedSessionOutcome, DiscardedSessionConflictError,
+    DiscardedSessionDaySummary, DiscardedSessionSummaryError,
+};
+#[cfg(test)]
+use crate::entity::discarded_session::DiscardedSessionEvent;
 
 #[cfg(test)]
 use std::cell::{Cell, RefCell};
@@ -658,6 +665,7 @@ struct TestTaskRepository {
     reload_lock_contended_signal_opt: Option<Rc<Cell<bool>>>,
     has_pending_changes: Cell<bool>,
     operation_trace: RefCell<Vec<&'static str>>,
+    discarded_sessions: Vec<DiscardedSessionEvent>,
 }
 
 #[cfg(test)]
@@ -751,6 +759,7 @@ impl TestTaskRepository {
             reload_lock_contended_signal_opt: None,
             has_pending_changes: Cell::new(true),
             operation_trace: RefCell::new(Vec::new()),
+            discarded_sessions: Vec::new(),
         }
     }
 
@@ -915,6 +924,36 @@ impl TaskRepositoryTrait for TestTaskRepository {
     ) -> Result<(), ProjectRegistrationError> {
         self.task = root_task;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+impl DiscardedSessionJournalTrait for TestTaskRepository {
+    fn append_discarded_session(
+        &mut self,
+        event: DiscardedSessionEvent,
+    ) -> Result<AppendDiscardedSessionOutcome, DiscardedSessionConflictError> {
+        if let Some(existing) = self
+            .discarded_sessions
+            .iter()
+            .find(|existing| existing.event_id() == event.event_id())
+        {
+            return if existing == &event {
+                Ok(AppendDiscardedSessionOutcome::AlreadyPresent)
+            } else {
+                Err(DiscardedSessionConflictError::new(event.event_id()))
+            };
+        }
+        self.discarded_sessions.push(event);
+        self.has_pending_changes.set(true);
+        Ok(AppendDiscardedSessionOutcome::Appended)
+    }
+
+    fn discarded_sessions_on(
+        &self,
+        logical_date: NaiveDate,
+    ) -> Result<DiscardedSessionDaySummary, DiscardedSessionSummaryError> {
+        summarize_discarded_sessions(&self.discarded_sessions, logical_date)
     }
 }
 
@@ -1206,7 +1245,7 @@ fn execute_pack(
 #[cfg(test)]
 fn execute(
     stdout: &mut dyn SchronuWriter,
-    task_repository: &mut dyn TaskRepositoryTrait,
+    task_repository: &mut dyn CliRepositoryTrait,
     free_time_manager: &mut dyn FreeTimeManagerTrait,
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,

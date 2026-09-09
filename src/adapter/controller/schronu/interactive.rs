@@ -250,6 +250,7 @@ pub(super) fn should_suppress_leaf_tasks_after_command(kind: CommandKind) -> boo
             | CommandKind::DeferRoutines
             | CommandKind::Flatten
             | CommandKind::Pack
+            | CommandKind::Discarded
     )
 }
 

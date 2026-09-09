@@ -508,6 +508,10 @@ schronu> t
 
 `TuckAway`は、現在のタスクを現在の高・低優先度モードの自動フォーカス候補から一時的に外し、次の候補へ進む対話モード専用コマンドです。canonical inputは`tuck`、aliasは`伏`と`t`です。taskのstatus、優先度、着手可能時刻、`pending_until`は変更しません。
 
+対話CLIでfocusを解除・伏せる・別taskへ切り替える・自動再選定する、または正常終了すると、focus開始から遷移時刻までの1秒以上をtask実績とは別の破棄session journalへ記録します。`働`と`終`によるfocus終了、同じtaskの再選択、入力切断、読取error、割込みは破棄時間へ加えません。
+
+`捨 [YYYY/M/D]`(英語alias: `discarded`)は、指定したlogical dateの破棄時間を日次合計、task別合計、時刻順の内訳として表示します。日付省略時は現在の06:00境界のlogical dateを使い、指定日は未来日へ解決せず、そのcalendar dateを直接選びます。このcommandはread-onlyでrepository revisionを変更しません。
+
 伏せたtask IDは同じモードの間だけCLI process内に保持されます。`高`または`低`を切り替えた場合だけでなく、同じコマンドを再入力した場合も伏せた一覧をresetします。CLIを再起動した場合も伏せた状態は残りません。task一覧やscheduleからはtaskを隠しません。
 
 `見 <task_id>`を使うと、伏せたtaskにも明示的にフォーカスできます。`見`、`focus`、`fc`に複数の引数を渡した場合は、先頭のtask IDだけを受理し、2個目以降を無視します。この明示フォーカスは元の高・低モードと伏せた一覧を変更しません。`外`、`tuck`(`伏`または`t`)、または成功した`終`で明示フォーカスが終了すると、元のモードと伏せた一覧から自動選択し直します。

@@ -25,7 +25,11 @@ fn discarded_command_rejects_an_invalid_calendar_date_with_a_field_error() {
 
 #[test]
 fn cli_runtime_connects_every_discard_reason_and_read_only_summary() {
-    let source = include_str!("runtime.rs");
+    let source = format!(
+        "{}{}",
+        include_str!("runtime.rs"),
+        include_str!("cli_discarded_session.rs")
+    );
     for required in [
         "CliUnfocus",
         "CliTuckAway",
@@ -34,7 +38,10 @@ fn cli_runtime_connects_every_discard_reason_and_read_only_summary() {
         "CliNormalExit",
         "discarded_sessions_on",
     ] {
-        assert!(source.contains(required), "missing CLI contract: {required}");
+        assert!(
+            source.contains(required),
+            "missing CLI contract: {required}"
+        );
     }
 }
 

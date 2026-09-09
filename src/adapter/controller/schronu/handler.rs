@@ -58,6 +58,7 @@ pub(super) struct CommandOutcome {
     pub(super) external_request: Option<ExternalRequest>,
     pub(super) focus_change: FocusChange,
     pub(super) focus_session_effect: FocusSessionEffect,
+    pub(super) discarded_logical_date: Option<Option<chrono::NaiveDate>>,
 }
 
 pub(super) trait CommandContext:
@@ -247,6 +248,7 @@ impl CommandOutcome {
             external_request: None,
             focus_change: FocusChange::Keep,
             focus_session_effect: FocusSessionEffect::Keep,
+            discarded_logical_date: None,
         }
     }
 
@@ -317,6 +319,11 @@ pub(super) fn handle_command<C: CommandContext + ?Sized>(
     validate_command_input(command)?;
     if command.kind() == CommandKind::Verify {
         return Ok(None);
+    }
+    if let Command::Discarded { logical_date } = command {
+        let mut outcome = CommandOutcome::empty(CommandKind::Discarded);
+        outcome.discarded_logical_date = Some(*logical_date);
+        return Ok(Some(outcome));
     }
     if let Command::Focus { task_id } = command {
         let mut outcome = CommandOutcome::empty(CommandKind::Focus);
