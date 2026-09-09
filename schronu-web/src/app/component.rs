@@ -14,50 +14,6 @@ pub fn app() -> Element {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(test)]
-pub(super) enum InitialLoadPhase {
-    Loading,
-    Error,
-    Ready,
-}
-
-#[cfg(test)]
-pub(super) fn initial_load_phase(
-    snapshot_loaded: bool,
-    server_effect_in_flight: bool,
-    error: Option<&str>,
-) -> InitialLoadPhase {
-    if snapshot_loaded {
-        InitialLoadPhase::Ready
-    } else if server_effect_in_flight || error.is_none() {
-        InitialLoadPhase::Loading
-    } else {
-        InitialLoadPhase::Error
-    }
-}
-
-#[component]
-pub(super) fn InitialLoadView(in_flight: bool, error: Option<String>) -> Element {
-    let failed = !in_flight && error.is_some();
-    let id = if failed {
-        "schronu-web-load-error"
-    } else {
-        "schronu-web-loading"
-    };
-    rsx! {
-        main { id, class: "shell", aria_busy: !failed,
-            if let Some(error) = error {
-                section { class: "error", role: "alert", p { "{error}" } }
-            }
-        }
-        if !failed {
-            LoadingOverlay {}
-        }
-    }
-}
-
-#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 #[component]
 pub(super) fn InteractiveShell(blocked: bool, children: Element) -> Element {
     rsx! {
@@ -67,6 +23,15 @@ pub(super) fn InteractiveShell(blocked: bool, children: Element) -> Element {
             inert: blocked.then_some("true"),
             aria_busy: blocked,
             {children}
+        }
+    }
+}
+
+#[component]
+pub(super) fn RestoringShell() -> Element {
+    rsx! {
+        InteractiveShell { blocked: false,
+            p { role: "status", "画面を復元しています…" }
         }
     }
 }
@@ -88,7 +53,7 @@ fn AppBody() -> Element {
     }
 
     #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
-    rsx! { InitialLoadView { in_flight: true, error: None } }
+    rsx! { RestoringShell {} }
 }
 
 #[component]

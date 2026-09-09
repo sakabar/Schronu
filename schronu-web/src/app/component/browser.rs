@@ -13,7 +13,7 @@ use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
 use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
-    SessionChrome,
+    RestoringShell, SessionChrome,
 };
 use crate::client::state::{ActiveTab, ClientState};
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -53,11 +53,7 @@ pub(super) fn BrowserApp() -> Element {
             .map(|state| BrowserPageModel::from_state_at(state, browser_monotonic_now_ms()))
     };
     let Some(model) = model else {
-        return rsx! {
-            InteractiveShell { blocked: false,
-                p { role: "status", "画面を復元しています…" }
-            }
-        };
+        return rsx! { RestoringShell {} };
     };
     let BrowserPageModel {
         active_tab,

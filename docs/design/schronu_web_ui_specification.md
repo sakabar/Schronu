@@ -482,6 +482,8 @@ client componentは利用者起点の非`None`な`ClientEffect`をserverへdispa
 
 reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tasks`は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。失敗時は直前の一覧を維持し、「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
 
+SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
+
 背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。

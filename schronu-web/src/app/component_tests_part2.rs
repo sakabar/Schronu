@@ -302,34 +302,27 @@ fn background再試行は一度だけ発行し古いresponseで完了しない()
 }
 
 #[test]
-fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
+fn native_ssrはbrowser_storageへ触れず非blockingな復元shellを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
 
     assert!(!html.contains("Schronu"), "{html}");
-    assert!(html.contains("通信中…"), "{html}");
-    assert!(html.contains("loading-overlay"), "{html}");
-    assert!(html.contains("loading-spinner"), "{html}");
+    assert!(html.contains("画面を復元しています…"), "{html}");
     assert!(html.contains("role=\"status\""), "{html}");
-    assert!(html.contains("aria-live=\"polite\""), "{html}");
-    assert!(html.contains("aria-busy=\"true\""), "{html}");
-    assert!(html.contains("id=\"schronu-web-loading\""), "{html}");
-    assert!(!html.contains("schronu-web-ready"), "{html}");
+    assert!(html.contains("id=\"schronu-web-ready\""), "{html}");
+    assert!(!html.contains("通信中…"), "{html}");
+    assert!(!html.contains("loading-overlay"), "{html}");
+    assert!(!html.contains("loading-spinner"), "{html}");
+    assert!(!html.contains("aria-live=\"polite\""), "{html}");
+    assert!(!html.contains("aria-busy=\"true\""), "{html}");
+    assert!(!html.contains("id=\"schronu-web-loading\""), "{html}");
+    assert!(!html.contains("inert"), "{html}");
     assert!(!html.contains("schronu-buffer-ready"), "{html}");
     assert!(!html.contains("BUFFER"), "{html}");
     assert!(!html.contains("--:--:--"), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
-}
-
-fn failed_initial_load() -> Element {
-    rsx! {
-        InitialLoadView {
-            in_flight: false,
-            error: Some("初期データを取得できませんでした".to_owned()),
-        }
-    }
 }
 
 fn ready_buffer() -> Element {
@@ -341,15 +334,7 @@ fn ready_buffer() -> Element {
 }
 
 #[test]
-fn 初回取得失敗と成功後のbufferは別idと別domを持つ() {
-    let mut failed_dom = VirtualDom::new(failed_initial_load);
-    failed_dom.rebuild_in_place();
-    let failed_html = dioxus::ssr::render(&failed_dom);
-    assert!(failed_html.contains("id=\"schronu-web-load-error\""), "{failed_html}");
-    assert!(failed_html.contains("初期データを取得できませんでした"), "{failed_html}");
-    assert!(!failed_html.contains("schronu-buffer-ready"), "{failed_html}");
-    assert!(!failed_html.contains("BUFFER"), "{failed_html}");
-
+fn bufferは確定値だけをready_shellへ表示する() {
     let mut ready_dom = VirtualDom::new(ready_buffer);
     ready_dom.rebuild_in_place();
     let ready_html = dioxus::ssr::render(&ready_dom);
@@ -357,28 +342,6 @@ fn 初回取得失敗と成功後のbufferは別idと別domを持つ() {
     assert!(ready_html.contains("id=\"schronu-buffer-ready\""), "{ready_html}");
     assert!(ready_html.contains("01:01:01"), "{ready_html}");
     assert!(!ready_html.contains("--:--:--"), "{ready_html}");
-}
-
-#[test]
-fn 初回画面はsnapshotとerrorと通信状態からloading_error_readyを区別する() {
-    assert_eq!(
-        initial_load_phase(false, false, None),
-        InitialLoadPhase::Loading,
-        "mount直後の通信開始前もloadingを維持する"
-    );
-    assert_eq!(
-        initial_load_phase(false, true, None),
-        InitialLoadPhase::Loading
-    );
-    assert_eq!(
-        initial_load_phase(false, false, Some("失敗")),
-        InitialLoadPhase::Error
-    );
-    assert_eq!(
-        initial_load_phase(true, true, Some("古いerror")),
-        InitialLoadPhase::Ready,
-        "snapshot取得後の通常通信ではready DOMを維持する"
-    );
 }
 
 fn ready_buffer_during_follow_up_load() -> Element {
