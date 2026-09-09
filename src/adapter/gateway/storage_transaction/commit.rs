@@ -3,7 +3,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
-use super::io::{sync_directory, validate_write_target, DirectoryPermissionError};
+use super::io::{
+    sync_directory, validate_write_target, AnchoredReadOutcome, AnchoredTargetGuard,
+    DirectoryPermissionError,
+};
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
@@ -11,7 +14,9 @@ use super::{
 };
 
 enum PreflightEntry {
-    AlreadyApplied,
+    AlreadyApplied {
+        guard: Option<Box<dyn AnchoredTargetGuard>>,
+    },
     Write {
         target_path: PathBuf,
         relative_path: PathBuf,
@@ -128,9 +133,12 @@ impl CommittedTransaction {
                     )
                 })?;
         }
+        let mut already_applied_guards = Vec::new();
         for entry in writes {
             match entry {
-                PreflightEntry::AlreadyApplied => {}
+                PreflightEntry::AlreadyApplied { guard } => {
+                    already_applied_guards.extend(guard);
+                }
                 PreflightEntry::Write {
                     target_path,
                     relative_path,
@@ -168,6 +176,9 @@ impl CommittedTransaction {
                     };
                     StorageTransactionError::new(operation, &directory_path, source)
                 })?;
+        }
+        for guard in already_applied_guards {
+            guard.validate_current()?;
         }
         self.apply_revision(&layout.revision_path())?;
         cleanup_committed_transaction(&self)
@@ -246,7 +257,33 @@ impl CommittedTransaction {
                             ));
                         }
                     };
-                    match self.state.io.symlink_metadata(&target_path) {
+                    let anchored_target = if self.state.manifest.replace_target_directories {
+                        AnchoredReadOutcome::Unsupported
+                    } else {
+                        self.state.io.read_storage_file_anchored(
+                            &self.state.paths.storage_dir_path,
+                            target,
+                        )?
+                    };
+                    match anchored_target {
+                        AnchoredReadOutcome::File(target) => {
+                            if content_matches(
+                                &target.bytes,
+                                integrity.content_length,
+                                &integrity.checksum,
+                            ) && permission_matches(&target.permissions, *mode)
+                            {
+                                return Ok(PreflightEntry::AlreadyApplied {
+                                    guard: Some(target.guard),
+                                });
+                            }
+                        }
+                        AnchoredReadOutcome::MissingOrNotFile => {}
+                        AnchoredReadOutcome::Unsupported => match self
+                            .state
+                            .io
+                            .symlink_metadata(&target_path)
+                        {
                         Ok(metadata) if metadata.file_type().is_file() => {
                             let target_bytes = self.state.io.read_file(&target_path).map_err(|error| {
                                 StorageTransactionError::new(
@@ -261,7 +298,7 @@ impl CommittedTransaction {
                                 &integrity.checksum,
                             ) && permission_matches(&metadata.permissions(), *mode)
                             {
-                                return Ok(PreflightEntry::AlreadyApplied);
+                                return Ok(PreflightEntry::AlreadyApplied { guard: None });
                             }
                         }
                         Ok(_) => {}
@@ -278,6 +315,7 @@ impl CommittedTransaction {
                                 error,
                             ));
                         }
+                    },
                     }
                     let (bytes, staged_permissions) = staged_material.ok_or_else(|| {
                         StorageTransactionError::new(
@@ -304,7 +342,7 @@ impl CommittedTransaction {
             PreflightEntry::Delete { target_path, .. } => {
                 (0, Reverse(target_path.components().count()))
             }
-            PreflightEntry::AlreadyApplied | PreflightEntry::Write { .. } => (1, Reverse(0)),
+            PreflightEntry::AlreadyApplied { .. } | PreflightEntry::Write { .. } => (1, Reverse(0)),
         });
         Ok(entries)
     }

@@ -7,6 +7,8 @@ use std::sync::Arc;
 #[cfg(test)]
 use uuid::Uuid;
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod anchored_file_io;
 mod cleanup;
 mod commit;
 mod io;
@@ -16,7 +18,9 @@ mod prepare;
 mod recovery;
 
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
-pub(in crate::adapter::gateway) use io::write_storage_file_anchored_after_parent_open;
+pub(in crate::adapter::gateway) use anchored_file_io::{
+    read_storage_file_anchored_after_read, write_storage_file_anchored_after_parent_open,
+};
 pub(super) use io::FileSystemStorageTransactionIo;
 pub(crate) use io::StorageTransactionIo;
 use io::TransactionLock;

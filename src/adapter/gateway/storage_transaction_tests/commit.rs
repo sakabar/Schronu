@@ -1,3 +1,104 @@
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct SwapParentAfterAnchoredReadIo {
+    original_parent: PathBuf,
+    detached_parent: PathBuf,
+    external_parent: PathBuf,
+    swapped: AtomicBool,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl StorageTransactionIo for SwapParentAfterAnchoredReadIo {
+    fn read_storage_file_anchored(
+        &self,
+        storage_dir_path: &Path,
+        relative_path: &Path,
+    ) -> Result<super::super::io::AnchoredReadOutcome, StorageTransactionError> {
+        read_storage_file_anchored_after_read(storage_dir_path, relative_path, || {
+            if !self.swapped.swap(true, Ordering::SeqCst) {
+                fs::rename(&self.original_parent, &self.detached_parent).unwrap();
+                std::os::unix::fs::symlink(&self.external_parent, &self.original_parent).unwrap();
+            }
+        })
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn test_適用済み判定後に親directoryが差し替わった場合revisionを更新しない() {
+    let storage_dir = TestStorageDir::new();
+    let external_dir = TestStorageDir::new();
+    let original_parent = storage_dir.path.join("discarded_sessions");
+    let detached_parent = storage_dir.path.join("discarded_sessions-original");
+    fs::create_dir_all(&original_parent).unwrap();
+    fs::write(original_parent.join("2026-09.yaml"), b"same-content").unwrap();
+    fs::write(storage_dir.path.join(".revision"), b"old-revision\n").unwrap();
+    fs::write(external_dir.path.join("2026-09.yaml"), b"same-content").unwrap();
+    let io = Arc::new(SwapParentAfterAnchoredReadIo {
+        original_parent,
+        detached_parent,
+        external_parent: external_dir.path.clone(),
+        swapped: AtomicBool::new(false),
+    });
+    let target_path = storage_dir.path.join("discarded_sessions/2026-09.yaml");
+    let prepared = prepare(
+        io,
+        &storage_dir.path,
+        Uuid::from_u128(0x2260),
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"same-content",
+        }],
+    )
+    .unwrap();
+
+    let error = prepared.commit().unwrap_err();
+
+    assert_eq!(
+        error.operation,
+        StorageTransactionOperation::ValidateTargetPath
+    );
+    assert_eq!(
+        fs::read(storage_dir.path.join(".revision")).unwrap(),
+        b"old-revision\n"
+    );
+    assert_eq!(
+        fs::read(external_dir.path.join("2026-09.yaml")).unwrap(),
+        b"same-content"
+    );
+}
+
+#[test]
+fn test_anchored_io非対応実装は従来pathで適用済みを判定する() {
+    let storage_dir = TestStorageDir::new();
+    let target_path = storage_dir.path.join("project.yaml");
+    fs::write(&target_path, b"already-applied").unwrap();
+    let revision = Uuid::from_u128(0x2261);
+    let prepared = prepare(
+        Arc::new(RecordingIo::new(vec![])),
+        &storage_dir.path,
+        revision,
+        &[WriteRequest {
+            target_path: &target_path,
+            bytes: b"already-applied",
+        }],
+    )
+    .unwrap();
+    let manifest: Value = serde_json::from_slice(
+        &fs::read(prepared.transaction_dir_path().join("manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let staged_file = manifest["entries"][0]["staged_file"].as_str().unwrap();
+    fs::remove_file(prepared.transaction_dir_path().join(staged_file)).unwrap();
+
+    prepared.commit().unwrap();
+
+    assert_eq!(fs::read(&target_path).unwrap(), b"already-applied");
+    assert_eq!(
+        fs::read_to_string(storage_dir.path.join(".revision")).unwrap(),
+        format!("{revision}\n")
+    );
+}
+
 #[test]
 fn test_commit_markerをsyncしてからprojectを適用しrevisionを最後に更新する() {
     let storage_dir = TestStorageDir::new();
