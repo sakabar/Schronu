@@ -362,6 +362,10 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
     assert_eq!(effect, ClientEffect::None);
     assert_eq!(state.sessions().len(), 1);
     assert_eq!(state.active_tab(), ActiveTab::Session);
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::Normal
+    );
     assert!(state.history().is_empty());
     assert!(task_name_filter.is_empty());
     assert_eq!(date_input.text(), "2026/9/16");
@@ -571,7 +575,7 @@ fn 一覧のセッション保存失敗時は一覧tabに留まる() {
 }
 
 #[test]
-fn 持ち歩きロックはguard対象actionのたびに無操作期限を延長する() {
+fn 持ち歩きロックはguard対象actionの期限を延長し最初のsession追加成功時は再ロックする() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     reduce_component_action_at(
@@ -630,13 +634,16 @@ fn 持ち歩きロックはguard対象actionのたびに無操作期限を延長
             ComponentAction::ArmCarryLock,
         );
 
+        let adds_first_session =
+            matches!(&action, ComponentAction::AddSession { is_leaf: true, .. });
         let _ = reduce_component_action_at(&mut action_state, &action_storage, 2_001, action);
 
-        assert_eq!(
-            action_state.carry_lock_mode(),
-            crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001),
-            "成功・失敗や実変更の有無によらずdispatch時点から15秒延長する"
-        );
+        let expected = if adds_first_session {
+            crate::client::carry_lock::CarryLockMode::Locked
+        } else {
+            crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
+        };
+        assert_eq!(action_state.carry_lock_mode(), expected);
     }
 
     reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
@@ -696,8 +703,8 @@ fn 持ち歩きロックはguard対象actionのたびに無操作期限を延長
     );
     assert_eq!(
         state.carry_lock_mode(),
-        crate::client::carry_lock::CarryLockMode::ArmedUntil(25_000),
-        "次のguard対象actionから無操作期限を再計算する"
+        crate::client::carry_lock::CarryLockMode::Locked,
+        "最初のsession追加成功後は期限延長より即時再ロックを優先する"
     );
     reduce_component_action_at(
         &mut state,
@@ -733,6 +740,119 @@ fn 持ち歩きロックはguard対象actionのたびに無操作期限を延長
         failing_state.carry_lock_mode(),
         crate::client::carry_lock::CarryLockMode::ArmedUntil(18_000),
         "localStorage失敗でもdispatch時点から期限を延長する"
+    );
+}
+
+#[test]
+fn 一時許可中に一覧から最初のsessionを追加すると即時再ロックする() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            2_001,
+            ComponentAction::AddSession {
+                task: task(RECORD_ID),
+                is_leaf: true,
+            },
+        ),
+        ClientEffect::None
+    );
+
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::Locked
+    );
+}
+
+#[test]
+fn sessionが0件から1件へ増えない追加では一時許可を維持する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_001,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::ArmCarryLock);
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_001,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
+    );
+
+    reduce_component_action_at(
+        &mut state,
+        &storage,
+        2_002,
+        ComponentAction::AddSession {
+            task: task(COMPLETE_ID),
+            is_leaf: true,
+        },
+    );
+    assert_eq!(state.sessions().len(), 2);
+    assert_eq!(
+        state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_002)
+    );
+
+    let failing_storage = MemoryStorage::failing_writes();
+    let (mut failing_state, _) = initialize_client(&failing_storage, 1_000);
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        1_000,
+        ComponentAction::EnableCarryLock,
+    );
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        2_000,
+        ComponentAction::ArmCarryLock,
+    );
+    reduce_component_action_at(
+        &mut failing_state,
+        &failing_storage,
+        2_001,
+        ComponentAction::AddSession {
+            task: task(RECORD_ID),
+            is_leaf: true,
+        },
+    );
+    assert!(failing_state.sessions().is_empty());
+    assert_eq!(
+        failing_state.carry_lock_mode(),
+        crate::client::carry_lock::CarryLockMode::ArmedUntil(17_001)
     );
 }
 

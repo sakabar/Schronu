@@ -315,6 +315,7 @@ impl ComponentOrchestrator {
         let effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
             let previous_session_count = state.sessions().len();
             let effect = apply_response(state, storage, response, background_list);
+            relock_after_first_session_added(state, previous_session_count);
             switch_to_list_after_last_session_removed(state, previous_session_count);
             effect
         });
@@ -451,8 +452,15 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         | ComponentAction::RelockCarryLock
         | ComponentAction::DisableCarryLock => ClientEffect::None,
     };
+    relock_after_first_session_added(state, previous_session_count);
     switch_to_list_after_last_session_removed(state, previous_session_count);
     effect
+}
+
+fn relock_after_first_session_added(state: &mut ClientState, previous_session_count: usize) {
+    if previous_session_count == 0 && state.sessions().len() == 1 {
+        state.relock_carry_lock();
+    }
 }
 
 fn switch_to_list_after_last_session_removed(

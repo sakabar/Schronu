@@ -461,9 +461,11 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 
 `CarryLockState`は`Normal`、`Locked`、`ArmedUntil(monotonic_deadline_ms)`を持つ。`ArmedUntil`は`Performance.now()`相当の単調時計を基準に15秒後を期限とし、セッション経過時間などに使う壁時計とは分離する。一時許可の残り秒数も単調時計から算出する。単調時計が後退した場合も安全側へ倒して`Locked`へ戻す。即時再ロックは`ArmedUntil`の期限と最後の単調時計観測値をmemoryから破棄して`Locked`へ戻し、保存済みの`enabled: true`とwarningは変更しない。
 
-すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`ではdispatch時点の単調時刻から15秒後へ期限を更新してから処理する。成功、失敗、local stateが実際に変化したかには依存しない。tab切替、tick、日付選択とresponse適用では期限を更新しない。
+すべてのcomponent actionは同じreducerを通し、reducerはaction処理前に期限を観測する。`AutoSession`、`AddSession`、`DiscardSession`、`RecordSession`、`CompleteSession`、`CompleteSessionWithoutRecording`、`ResumeCompletionConflict`、`ConfirmCompletionConflict`、`ConfirmRepositoryChecked`を変更操作とする。`Locked`ではこれらをeffectなしで拒否し、`ArmedUntil`ではdispatch時点の単調時刻から15秒後へ期限を更新してから処理する。成功、失敗、local stateが実際に変化したかには依存しない。ただし、最初のsession追加成功後は後述の即時再ロックを優先する。tab切替、tick、日付選択とresponse適用では期限を更新しない。
 
 `RelockCarryLock`は変更操作ではなく、期限観測後にmutation guardより前で処理する。`ArmedUntil`だけを`Locked`へ戻し、`Normal`と`Locked`ではno-opとする。
+
+一時許可中に一覧または自動選定からsessionの追加が成功し、件数が0件から1件になった場合は、追加のdispatchによる15秒期限の更新より優先し、追加成功後に`Locked`へ戻す。追加前後の件数がこの遷移に一致しない場合は一時許可を維持する。この再ロックはmemory上の期限だけを破棄し、保存済みの`enabled: true`とwarningを変更しない。
 
 ## 7. UI behavior
 
@@ -500,6 +502,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
 - 「記録して解除」と2種類の完了確定ではclick時刻を`ended_at_epoch_ms`として送信し、応答待ち中は対象cardの進捗、bar、残り・超過時間をその時刻で停止する。「計測を破棄して完了」の確認表示だけでは停止しない。
 - 「自動セッション」成功時はresponseのtask snapshotから現在時刻を開始時刻とするsessionを追加する。
+- 持ち歩きロックの一時許可中に「自動セッション」成功で件数が0件から1件になった場合は、response適用後に即時再ロックする。
 - 自動選定結果が`None`なら空状態と案内を表示する。
 
 ### 7.3 一覧画面
@@ -516,6 +519,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信と発火履歴追加は行わない。
+- 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。46rem以下では追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
@@ -689,6 +693,7 @@ OperationHistoryEntry {
 - `History`へのtab切替がeffectを生成しないこと、履歴がserver通信結果だけを対象とすること、100件上限、成否、reload非永続化を検証する。
 - 持ち歩きロックのkeyなし・正常値・不正JSON・未知version・読込失敗、元value維持、memory-first有効化、storage-first解除、一時許可非永続化を検証する。
 - 単調時計による15秒境界と時計後退、閲覧操作と確認キャンセルでは期限を維持し、全変更操作のdispatchごとに成否を問わず期限を15秒後へ更新することを検証する。完了実績競合の再完了と計測再開も同じguardを通す。
+- 一時許可中に一覧と自動選定の各経路で最初のsessionを追加すると即時再ロックし、追加失敗、重複、自動選定結果なし、server error、1件以上からの追加では一時許可を維持することを検証する。
 - actionとresponseの製品orchestrator経路で、最後のsession削除成功時だけセッションtabから一覧tabへ移ることを検証する。複数session、server失敗、localStorage削除失敗、他tab表示中では遷移しないことも固定する。
 
 ### 12.5 UI and integration
