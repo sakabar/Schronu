@@ -8917,3 +8917,64 @@ fn 正常なinteractive_exitだけが現在focusをjournalへ記録する() {
         DiscardedSessionReason::CliNormalExit
     );
 }
+
+#[test]
+fn interactive_exitの再試行は同じevent_payloadを使う() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local::now() - Duration::seconds(5);
+    let task = new_test_task_handle("終了時task").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = started_at;
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+
+    let first = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Exit,
+    );
+    assert!(matches!(first, InteractiveRepositoryEventOutcome::Retry(_)));
+    assert_eq!(focus_started_datetime, started_at);
+    let pending_exit = focus_selection_mode.pending_exit().unwrap().clone();
+
+    let second = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        InteractiveRepositoryEvent::Exit,
+    );
+
+    assert!(matches!(second, InteractiveRepositoryEventOutcome::Exit));
+    assert_eq!(repository.save_attempt_count.get(), 2);
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    assert_eq!(
+        repository.discarded_sessions[0].event_id(),
+        pending_exit.exit_event_id
+    );
+    assert_eq!(
+        repository.discarded_sessions[0].ended_at_epoch_ms(),
+        pending_exit.ended_at.timestamp_millis()
+    );
+    assert!(focus_selection_mode.pending_exit().is_none());
+}

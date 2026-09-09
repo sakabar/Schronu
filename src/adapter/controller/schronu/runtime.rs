@@ -92,12 +92,21 @@ pub(super) enum FocusSelectionMode {
     HighestPriority {
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
+        pending_exit: Option<PendingExit>,
     },
     LowestPriority {
         recent_days: i64,
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
+        pending_exit: Option<PendingExit>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct PendingExit {
+    ended_at: DateTime<Local>,
+    auto_event_id: Uuid,
+    exit_event_id: Uuid,
 }
 
 impl FocusSelectionMode {
@@ -105,6 +114,7 @@ impl FocusSelectionMode {
         Self::HighestPriority {
             tucked_task_ids: Vec::new(),
             is_explicit: false,
+            pending_exit: None,
         }
     }
 
@@ -113,6 +123,7 @@ impl FocusSelectionMode {
             recent_days,
             tucked_task_ids: Vec::new(),
             is_explicit: false,
+            pending_exit: None,
         }
     }
 
@@ -142,6 +153,20 @@ impl FocusSelectionMode {
         match self {
             Self::HighestPriority { is_explicit, .. }
             | Self::LowestPriority { is_explicit, .. } => *is_explicit = explicit,
+        }
+    }
+
+    fn pending_exit(&self) -> Option<&PendingExit> {
+        match self {
+            Self::HighestPriority { pending_exit, .. }
+            | Self::LowestPriority { pending_exit, .. } => pending_exit.as_ref(),
+        }
+    }
+
+    fn set_pending_exit(&mut self, pending: Option<PendingExit>) {
+        match self {
+            Self::HighestPriority { pending_exit, .. }
+            | Self::LowestPriority { pending_exit, .. } => *pending_exit = pending,
         }
     }
 }
@@ -1658,7 +1683,21 @@ fn handle_interactive_repository_event(
             }
         }
         InteractiveRepositoryEvent::Exit => {
-            let now = Local::now();
+            if state.focus_selection_mode.pending_exit().is_none() {
+                state
+                    .focus_selection_mode
+                    .set_pending_exit(Some(PendingExit {
+                        ended_at: Local::now(),
+                        auto_event_id: Uuid::new_v4(),
+                        exit_event_id: Uuid::new_v4(),
+                    }));
+            }
+            let pending_exit = state
+                .focus_selection_mode
+                .pending_exit()
+                .expect("pending exit was initialized")
+                .clone();
+            let now = pending_exit.ended_at;
             let old_focus = *state.focused_task_id_opt;
             let old_started = *state.focus_started_datetime;
             let old_last_focus = *state.last_focused_task_id_opt;
@@ -1671,8 +1710,8 @@ fn handle_interactive_repository_event(
                     ))
                 }
             };
-            let auto_event_id = Uuid::new_v4();
-            let exit_event_id = Uuid::new_v4();
+            let auto_event_id = pending_exit.auto_event_id;
+            let exit_event_id = pending_exit.exit_event_id;
             match run_cli_repository_transaction(task_repository, now, |repository| {
                 let auto_changed =
                     reconcile_interactive_state_after_reload(repository, &mut state)?;
@@ -1709,6 +1748,7 @@ fn handle_interactive_repository_event(
                 Ok((true, auto_changed))
             }) {
                 Ok((may_exit, auto_changed)) => {
+                    state.focus_selection_mode.set_pending_exit(None);
                     if auto_changed {
                         *state.focus_started_datetime = now;
                     }
@@ -1730,6 +1770,14 @@ fn handle_interactive_repository_event(
                     *state.focus_started_datetime = old_started;
                     *state.focus_selection_mode = old_selection_mode;
                     match error {
+                        RunError::CliRepositoryTransaction(
+                            CliRepositoryTransactionError::Save(save_error),
+                        ) if save_error.save_failure_disposition()
+                            == Some(crate::application::interface::TaskRepositorySaveFailureDisposition::Retryable) => {
+                            InteractiveRepositoryEventOutcome::Retry(
+                                CliRepositoryTransactionError::Save(save_error),
+                            )
+                        }
                         RunError::CliRepositoryTransaction(
                             CliRepositoryTransactionError::Save(save_error),
                         ) => match render_display_model_with_mode(

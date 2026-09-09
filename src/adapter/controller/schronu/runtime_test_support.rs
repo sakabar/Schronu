@@ -660,6 +660,7 @@ struct TestTaskRepository {
     reload_if_changed_attempt_count: Cell<usize>,
     get_by_id_attempt_count: Cell<usize>,
     save_failures_remaining: Cell<usize>,
+    save_failure_is_retryable: bool,
     save_attempt_count: Cell<usize>,
     save_attempt_signal_opt: Option<Rc<Cell<bool>>>,
     reload_lock_contended_signal_opt: Option<Rc<Cell<bool>>>,
@@ -754,6 +755,7 @@ impl TestTaskRepository {
             reload_if_changed_attempt_count: Cell::new(0),
             get_by_id_attempt_count: Cell::new(0),
             save_failures_remaining: Cell::new(0),
+            save_failure_is_retryable: false,
             save_attempt_count: Cell::new(0),
             save_attempt_signal_opt: None,
             reload_lock_contended_signal_opt: None,
@@ -852,13 +854,18 @@ impl TaskRepositoryTrait for TestTaskRepository {
         let failures_remaining = self.save_failures_remaining.get();
         if failures_remaining > 0 {
             self.save_failures_remaining.set(failures_remaining - 1);
-            Err(TaskRepositoryError::new(
-                TaskRepositoryOperation::Save,
-                std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "WriteFile failed for /test/project.yaml: test save failure",
-                ),
-            ))
+            let source = std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "WriteFile failed for /test/project.yaml: test save failure",
+            );
+            if self.save_failure_is_retryable {
+                Err(TaskRepositoryError::retryable_save(source))
+            } else {
+                Err(TaskRepositoryError::new(
+                    TaskRepositoryOperation::Save,
+                    source,
+                ))
+            }
         } else {
             Ok(())
         }
