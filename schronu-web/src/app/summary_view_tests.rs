@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct RootProps {
     state: DiscardedSessionsViewState,
+    server_actions_blocked: bool,
     selected: Arc<Mutex<Vec<String>>>,
     retried: Arc<Mutex<Vec<String>>>,
 }
@@ -18,6 +19,7 @@ fn root(props: RootProps) -> Element {
         SummaryView {
             dates: dates(),
             state: props.state,
+            server_actions_blocked: props.server_actions_blocked,
             on_select_date: move |date| props.selected.lock().unwrap().push(date),
             on_retry: move |date| props.retried.lock().unwrap().push(date),
         }
@@ -29,6 +31,7 @@ fn render(state: DiscardedSessionsViewState) -> String {
         root,
         RootProps {
             state,
+            server_actions_blocked: false,
             selected: Arc::new(Mutex::new(Vec::new())),
             retried: Arc::new(Mutex::new(Vec::new())),
         },
@@ -96,6 +99,7 @@ fn idle_empty_loading_errorを混同せずerrorだけ再試行できる() {
                 logical_date: "2026-09-11".to_owned(),
                 message: "集計を取得できませんでした。".to_owned(),
             },
+            server_actions_blocked: false,
             selected,
             retried: Arc::clone(&retried),
         },
@@ -118,6 +122,7 @@ fn 日付controlとmobile_cssは一覧と同じ横scroll契約を使う() {
         root,
         RootProps {
             state: DiscardedSessionsViewState::Idle,
+            server_actions_blocked: false,
             selected: Arc::clone(&selected),
             retried: Arc::new(Mutex::new(Vec::new())),
         },
@@ -141,6 +146,37 @@ fn 日付controlとmobile_cssは一覧と同じ横scroll契約を使う() {
     assert!(css.contains("@media (max-width: 46rem)"));
     assert!(css.contains(".discard-summary-error button"));
     assert!(css.contains("min-height: max(2.75rem, 44px)"));
+}
+
+#[test]
+fn 通信可能時だけ日付選択と再試行をdispatchできる() {
+    for (server_actions_blocked, expected_calls) in [(false, 1), (true, 0)] {
+        let selected = Arc::new(Mutex::new(Vec::new()));
+        let retried = Arc::new(Mutex::new(Vec::new()));
+        let mut dom = VirtualDom::new_with_props(
+            root,
+            RootProps {
+                state: DiscardedSessionsViewState::Error {
+                    logical_date: "2026-09-11".to_owned(),
+                    message: "集計を取得できませんでした。".to_owned(),
+                },
+                server_actions_blocked,
+                selected: Arc::clone(&selected),
+                retried: Arc::clone(&retried),
+            },
+        );
+        let listeners = rebuild_with_click_listeners(&mut dom);
+        let html = dioxus::ssr::render(&dom);
+        assert_eq!(
+            html.matches(" disabled").count(),
+            if server_actions_blocked { 3 } else { 0 }
+        );
+        for listener in listeners {
+            dispatch_click(&dom, listener);
+        }
+        assert_eq!(selected.lock().unwrap().len(), expected_calls * 2);
+        assert_eq!(retried.lock().unwrap().len(), expected_calls);
+    }
 }
 
 fn dates() -> Vec<DateButtonViewModel> {

@@ -328,7 +328,7 @@ impl ClientState {
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
-        self.active_tab = tab;
+        self.switch_tab_without_read(tab);
         if tab == ActiveTab::List {
             let selected = self
                 .selected_logical_date()
@@ -357,6 +357,10 @@ impl ClientState {
             });
         }
         ClientEffect::None
+    }
+
+    pub(crate) fn switch_tab_without_read(&mut self, tab: ActiveTab) {
+        self.active_tab = tab;
     }
 
     pub fn tick(&mut self, now_epoch_ms: i64) -> ClientEffect {

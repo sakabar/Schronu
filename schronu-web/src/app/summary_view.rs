@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 pub(crate) fn SummaryView(
     dates: Vec<DateButtonViewModel>,
     state: DiscardedSessionsViewState,
+    #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
     on_retry: EventHandler<String>,
 ) -> Element {
@@ -19,7 +20,12 @@ pub(crate) fn SummaryView(
                         class: if date.selected { "date-pill is-selected" } else { "date-pill" },
                         r#type: "button",
                         aria_pressed: date.selected,
-                        onclick: move |_| on_select_date.call(date.logical_date.clone()),
+                        disabled: server_actions_blocked,
+                        onclick: move |_| {
+                            if !server_actions_blocked {
+                                on_select_date.call(date.logical_date.clone());
+                            }
+                        },
                         "{date.label}"
                     }
                 }
@@ -69,7 +75,12 @@ pub(crate) fn SummaryView(
                     p { "{message}" }
                     button {
                         r#type: "button",
-                        onclick: move |_| on_retry.call(logical_date.clone()),
+                        disabled: server_actions_blocked,
+                        onclick: move |_| {
+                            if !server_actions_blocked {
+                                on_retry.call(logical_date.clone());
+                            }
+                        },
                         "再試行"
                     }
                 }

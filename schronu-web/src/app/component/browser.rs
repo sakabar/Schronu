@@ -202,6 +202,7 @@ pub(super) fn BrowserApp() -> Element {
                 SummaryView {
                     dates,
                     state: discarded_summary,
+                    server_actions_blocked: server_actions_blocked || server_effect_in_flight,
                     on_select_date: move |date| dispatch_action(client, ComponentAction::SelectSummaryDate(date)),
                     on_retry: move |date| dispatch_action(client, ComponentAction::SelectSummaryDate(date)),
                 }

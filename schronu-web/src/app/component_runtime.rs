@@ -258,7 +258,20 @@ impl ComponentOrchestrator {
                 background_state_for_effect(&effect).unwrap_or(RefreshState::Failed);
             return effect;
         }
-        if self.server_actions_blocked() && action_requires_server(&action) {
+        let server_dispatch_blocked =
+            self.server_actions_blocked() || self.server_effect_in_flight();
+        if server_dispatch_blocked && matches!(action, ComponentAction::SwitchTab(_)) {
+            let Some(state) = self.state.as_mut() else {
+                return ClientEffect::None;
+            };
+            let ComponentAction::SwitchTab(tab) = action else {
+                unreachable!();
+            };
+            state.switch_tab_without_read(tab);
+            self.persist_view_state(storage);
+            return ClientEffect::None;
+        }
+        if server_dispatch_blocked && action_requires_server(&action) {
             return ClientEffect::None;
         }
         let should_persist = !matches!(action, ComponentAction::Tick { .. });

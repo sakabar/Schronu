@@ -98,6 +98,59 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
 }
 
 #[test]
+fn 通信block中のtab切替はlocal状態だけ変えて解除後に集計を一度取得する() {
+    let storage = MemoryStorage::default();
+    let mut background = ComponentOrchestrator::new();
+    assert!(matches!(
+        background.mount(&storage, 1_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    ));
+    assert_eq!(
+        background.action(
+            &storage,
+            1_001,
+            ComponentAction::SwitchTab(ActiveTab::Summary),
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(background.state().unwrap().active_tab(), ActiveTab::Summary);
+    assert!(matches!(
+        background.apply_response(
+            &storage,
+            ClientResponse::Bootstrap {
+                request_id: 1,
+                result: Ok(snapshot(1_000)),
+            },
+        ),
+        ClientEffect::ListDiscardedSessions {
+            request_id: 2,
+            request,
+        } if request.logical_date == "2026-09-05"
+    ));
+
+    let storage = MemoryStorage::default();
+    let mut foreground = mounted_orchestrator(&storage);
+    foreground.begin_server_effect();
+    assert_eq!(
+        foreground.action(
+            &storage,
+            2_000,
+            ComponentAction::SwitchTab(ActiveTab::Summary),
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(foreground.state().unwrap().active_tab(), ActiveTab::Summary);
+    assert_eq!(
+        foreground.action(
+            &storage,
+            2_001,
+            ComponentAction::SelectSummaryDate("2026-09-11".to_owned()),
+        ),
+        ClientEffect::None
+    );
+}
+
+#[test]
 fn local画面変更はview_stateへ保存して次のmountで復元する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = mounted_orchestrator(&storage);
