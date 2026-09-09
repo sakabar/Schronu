@@ -260,3 +260,57 @@ fn taskとjournalのcommit失敗はどちらも未反映でpendingを維持す�
         .exists());
     assert!(repository.has_pending_changes().unwrap());
 }
+
+#[test]
+fn nestedのvalidとinvalidなjournal候補はruntimeとsnapshotでjournal扱いしない() {
+    for (label, yaml) in [
+        ("valid", "version: 1\nevents: []\n"),
+        ("invalid", "version: [\n"),
+    ] {
+        let root = TestStorage::new();
+        let storage = root.path().join(format!("storage-{label}"));
+        let nested = storage.join("archive/discarded_sessions");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("2026-09.yaml"), yaml).unwrap();
+        fs::create_dir_all(storage.join("discarded_sessions")).unwrap();
+        fs::write(
+            storage.join("discarded_sessions/notes.yaml"),
+            "version: [\n",
+        )
+        .unwrap();
+        let mut repository = TaskRepository::new(storage.to_str().unwrap());
+
+        repository.load().unwrap();
+        assert!(repository
+            .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+            .events()
+            .is_empty());
+
+        let snapshot = root.path().join(format!("snapshot-{label}"));
+        create_snapshot(&storage, &snapshot).unwrap();
+        verify_snapshot(&snapshot).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn saveはdiscarded_sessions_parent_symlinkの外部へ書かない() {
+    use std::os::unix::fs::symlink;
+
+    let root = TestStorage::new();
+    let storage = root.path().join("storage-symlink");
+    let outside = root.path().join("outside");
+    fs::create_dir(&storage).unwrap();
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("sentinel"), b"unchanged").unwrap();
+    symlink(&outside, storage.join("discarded_sessions")).unwrap();
+    let mut repository = TaskRepository::new(storage.to_str().unwrap());
+    repository
+        .append_discarded_session(event(Uuid::from_u128(71), "outside guard"))
+        .unwrap();
+
+    assert!(repository.save().is_err());
+
+    assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"unchanged");
+    assert!(!outside.join("2026-09.yaml").exists());
+}

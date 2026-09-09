@@ -71,6 +71,32 @@ pub(super) fn parse_storage_revision(
 }
 
 impl TaskRepository {
+    #[cfg(test)]
+    pub(in crate::adapter::gateway) fn load_captured<'a, I>(
+        &mut self,
+        storage_revision: Option<(&Path, &[u8])>,
+        project_files: I,
+    ) -> Result<(), TaskRepositoryError>
+    where
+        I: IntoIterator<Item = (&'a Path, &'a [u8])>,
+    {
+        let storage_revision = storage_revision
+            .map(|(path, bytes)| parse_storage_revision(path, bytes))
+            .transpose()
+            .map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })?;
+        let mut project_files = project_files.into_iter().collect::<Vec<_>>();
+        project_files.sort_by(|left, right| left.0.cmp(right.0));
+        let mut builder = RepositoryLoadBuilder::new(self.last_synced_time);
+        for (path, bytes) in project_files {
+            builder.push(path.to_path_buf(), path.to_path_buf(), bytes)?;
+        }
+        let loaded = builder.finish(storage_revision, Vec::new())?;
+        self.apply_loaded_state(loaded);
+        Ok(())
+    }
+
     fn index_task_and_descendants(
         task: &TaskHandle,
         project_yaml_file_path: &Path,

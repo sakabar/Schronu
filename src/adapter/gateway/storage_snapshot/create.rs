@@ -377,8 +377,10 @@ fn strict_load_captured(
         .files
         .iter()
         .filter(|file| {
-            file.relative.extension() == Some(OsStr::new("yaml"))
-                && file.relative.parent() == Some(Path::new("discarded_sessions"))
+            crate::adapter::gateway::task_repository::discarded_session_journal::is_discarded_session_journal_path(
+                Path::new(""),
+                &file.relative,
+            )
         })
         .map(|file| (source_storage.join(&file.relative), file.bytes.as_slice()))
         .collect::<Vec<_>>();

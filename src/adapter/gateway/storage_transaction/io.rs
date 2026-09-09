@@ -340,9 +340,39 @@ pub(super) fn validate_delete_target(
     target_path: &Path,
 ) -> Result<PathBuf, StorageTransactionError> {
     let target = validate_delete_target_path(storage_dir_path, target_path)?;
+    validate_target_ancestors(
+        io,
+        storage_dir_path,
+        &target,
+        "delete target ancestors must be directories and must not be symbolic links",
+    )?;
+    Ok(target)
+}
+
+pub(super) fn validate_write_target(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    target_path: &Path,
+) -> Result<PathBuf, StorageTransactionError> {
+    let target = validate_storage_relative_path(storage_dir_path, target_path)?;
+    validate_target_ancestors(
+        io,
+        storage_dir_path,
+        &target,
+        "write target ancestors must be directories and must not be symbolic links",
+    )?;
+    Ok(target)
+}
+
+fn validate_target_ancestors(
+    io: &dyn StorageTransactionIo,
+    storage_dir_path: &Path,
+    target: &Path,
+    invalid_message: &'static str,
+) -> Result<(), StorageTransactionError> {
     let mut ancestor_path = storage_dir_path.to_path_buf();
     let Some(parent) = target.parent() else {
-        return Ok(target);
+        return Ok(());
     };
     for component in parent.components() {
         let Component::Normal(name) = component else {
@@ -354,7 +384,7 @@ pub(super) fn validate_delete_target(
             Ok(_) => {
                 return Err(layout::invalid_target_path_error(
                     &ancestor_path,
-                    "delete target ancestors must be directories and must not be symbolic links",
+                    invalid_message,
                 ));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => break,
@@ -367,7 +397,7 @@ pub(super) fn validate_delete_target(
             }
         }
     }
-    Ok(target)
+    Ok(())
 }
 
 pub(super) fn validate_delete_target_path(

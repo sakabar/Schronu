@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::cleanup::cleanup_committed_transaction;
-use super::io::{sync_directory, DirectoryPermissionError};
+use super::io::{sync_directory, validate_write_target, DirectoryPermissionError};
 use super::layout::TransactionLayout;
 use super::manifest::{content_matches, ValidatedEntry};
 use super::{
@@ -192,6 +192,11 @@ impl CommittedTransaction {
                     integrity,
                 } => {
                     let target_path = layout.target_path(target);
+                    validate_write_target(
+                        self.state.io.as_ref(),
+                        &self.state.paths.storage_dir_path,
+                        &target_path,
+                    )?;
                     let staged_file_path = TransactionLayout::staged_file_path(
                         &self.state.paths.transaction_dir_path,
                         staged_file,
@@ -399,6 +404,11 @@ impl CommittedTransaction {
         bytes: &[u8],
         permissions: Option<fs::Permissions>,
     ) -> Result<(), StorageTransactionError> {
+        validate_write_target(
+            self.state.io.as_ref(),
+            &self.state.paths.storage_dir_path,
+            target_path,
+        )?;
         let parent_path = target_path.parent().ok_or_else(|| {
             StorageTransactionError::new(
                 StorageTransactionOperation::CreateTargetDirectory,
@@ -489,6 +499,11 @@ impl CommittedTransaction {
                 error,
             )
         })?;
+        validate_write_target(
+            self.state.io.as_ref(),
+            &self.state.paths.storage_dir_path,
+            target_path,
+        )?;
         if self.state.manifest.replace_target_directories {
             self.state
                 .io

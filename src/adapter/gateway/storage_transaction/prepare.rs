@@ -7,7 +7,7 @@ use uuid::Uuid;
 use super::cleanup::cleanup_stale_tombstones;
 use super::io::{
     acquire_transaction_lock, resolve_transactions_directory, sync_directory,
-    validate_delete_target, validate_transactions_directory,
+    validate_delete_target, validate_transactions_directory, validate_write_target,
 };
 use super::layout::{invalid_target_path_error, validate_storage_relative_path, TransactionLayout};
 use super::manifest::{
@@ -220,8 +220,11 @@ fn prepare_contents(
     let mut entries = Vec::with_capacity(writes.len() + deletes.len());
     let mut targets = HashSet::with_capacity(writes.len() + deletes.len());
     for (index, write) in writes.iter().enumerate() {
-        let target =
-            validate_storage_relative_path(&context.paths.storage_dir_path, write.target_path)?;
+        let target = validate_write_target(
+            context.io,
+            &context.paths.storage_dir_path,
+            write.target_path,
+        )?;
         ensure_unique_target(&mut targets, target.clone(), write.target_path)?;
         let staged_file = TransactionLayout::staged_file_relative_path(index);
         let staged_file_path =
