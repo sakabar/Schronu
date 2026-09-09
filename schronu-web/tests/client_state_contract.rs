@@ -66,6 +66,152 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 }
 
 #[test]
+fn 計測破棄再開は開始時刻だけをstorage_firstで更新する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.tick(10_000);
+    assert_eq!(state.display_buffer_seconds(), Some(70));
+
+    let before = state.sessions().to_vec();
+    let history_len = state.history().len();
+    assert_eq!(
+        state.restart_session_without_recording(&storage, TASK_ID),
+        ClientEffect::None
+    );
+
+    assert_eq!(state.sessions().len(), 2);
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 10_000);
+    assert_eq!(state.sessions()[0].task_id, before[0].task_id);
+    assert_eq!(state.sessions()[0].task_name, before[0].task_name);
+    assert_eq!(
+        state.sessions()[0].estimated_work_seconds_at_start,
+        before[0].estimated_work_seconds_at_start
+    );
+    assert_eq!(
+        state.sessions()[0].actual_work_seconds_at_start,
+        before[0].actual_work_seconds_at_start
+    );
+    assert_eq!(state.sessions()[1], before[1], "sessionの順序を維持する");
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+    assert_eq!(state.history().len(), history_len);
+
+    let restored = load_client_state(&storage, 10_000).unwrap();
+    assert_eq!(restored.sessions(), state.sessions());
+}
+
+#[test]
+fn 計測破棄再開は保存失敗と対象不在時に状態を変更しない() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(10_000);
+    let before = state.sessions().to_vec();
+
+    storage.fail_work_session_writes.set(true);
+    assert_eq!(
+        state.restart_session_without_recording(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.sessions(), before);
+    assert!(matches!(
+        state.display_error(),
+        Some(schronu_web::client::state::DisplayError::LocalStorage {
+            committed_on_server: false,
+            task_id: Some(task_id),
+        }) if task_id == TASK_ID
+    ));
+
+    storage.fail_work_session_writes.set(false);
+    assert_eq!(
+        state.restart_session_without_recording(&storage, OTHER_TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.sessions(), before);
+}
+
+#[test]
+fn 計測破棄再開は変更中と安全停止中に拒否する() {
+    let in_flight_storage = FakeStorage::default();
+    let mut in_flight = state_with_sessions(&in_flight_storage, &[TASK_ID]);
+    in_flight.tick(5_000);
+    let _ = in_flight.begin_record_session(&in_flight_storage, TASK_ID);
+    assert_eq!(
+        in_flight.restart_session_without_recording(&in_flight_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(in_flight.sessions()[0].started_at_epoch_ms, 0);
+
+    let manual_storage = FakeStorage::default();
+    let mut manual = state_with_sessions(&manual_storage, &[TASK_ID]);
+    manual.tick(5_000);
+    let (request_id, _) = record_effect(manual.begin_record_session(&manual_storage, TASK_ID));
+    manual.apply_record_result(
+        &manual_storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    assert_eq!(
+        manual.restart_session_without_recording(&manual_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(manual.sessions()[0].started_at_epoch_ms, 0);
+
+    let conflict_storage = FakeStorage::default();
+    let mut conflict = state_with_sessions(&conflict_storage, &[TASK_ID]);
+    conflict.tick(5_000);
+    let (request_id, _) =
+        complete_effect(conflict.begin_complete_session(&conflict_storage, TASK_ID));
+    conflict.apply_complete_result(
+        &conflict_storage,
+        request_id,
+        Err(ServerFailure::Operation(actual_work_conflict(Some(250)))),
+    );
+    assert_eq!(
+        conflict.restart_session_without_recording(&conflict_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(conflict.sessions()[0].started_at_epoch_ms, 0);
+
+    let global_storage = FakeStorage::default();
+    let mut global = state_with_sessions(&global_storage, &[TASK_ID]);
+    global.tick(5_000);
+    let (request_id, _) = complete_effect(global.begin_complete_session(&global_storage, TASK_ID));
+    global.apply_complete_result(
+        &global_storage,
+        request_id,
+        Err(ServerFailure::Transport("network detail".to_owned())),
+    );
+    assert_eq!(
+        global.restart_session_without_recording(&global_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(global.sessions()[0].started_at_epoch_ms, 0);
+
+    let committed_storage = FakeStorage::default();
+    let mut committed = state_with_sessions(&committed_storage, &[TASK_ID]);
+    committed.tick(5_000);
+    let (request_id, _) =
+        record_effect(committed.begin_record_session(&committed_storage, TASK_ID));
+    committed_storage.fail_work_session_writes.set(true);
+    committed.apply_record_result(
+        &committed_storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 5_000),
+            data: RecordSessionResult {
+                actual_work_seconds: 105,
+            },
+        }),
+    );
+    assert_eq!(
+        committed.restart_session_without_recording(&committed_storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(committed.sessions()[0].started_at_epoch_ms, 0);
+}
+
+#[test]
 fn rank非0の一覧taskは手動sessionへ追加しない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 2_000).unwrap();
