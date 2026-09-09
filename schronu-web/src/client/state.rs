@@ -153,6 +153,11 @@ impl ClientState {
         self.read.selected_logical_date.as_deref()
     }
 
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn listed_logical_date(&self) -> Option<&str> {
+        self.read.listed_logical_date.as_deref()
+    }
+
     pub fn scheduled_rows(&self) -> &[ScheduledTaskRow] {
         &self.read.scheduled_rows
     }

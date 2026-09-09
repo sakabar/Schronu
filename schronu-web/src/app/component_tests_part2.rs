@@ -151,6 +151,89 @@ fn 通信block中のtab切替はlocal状態だけ変えて解除後に集計を�
 }
 
 #[test]
+fn 集計の別日取得後も一覧cacheは実際に取得した日付と組で復元する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = mounted_orchestrator(&storage);
+    let cached_row = ScheduledTaskRow {
+        task: task(RECORD_ID),
+        schedule_start_epoch_ms: 1_789_000_000_000,
+        schedule_end_epoch_ms: 1_789_000_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    let ClientEffect::ListTasks { request_id, .. } = orchestrator.action(
+        &storage,
+        2_000,
+        ComponentAction::SelectDate("2026-09-06".to_owned()),
+    ) else {
+        panic!();
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id,
+            requested_date: "2026-09-06".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: snapshot(2_000),
+                data: vec![cached_row.clone()],
+            }),
+        },
+    );
+    let ClientEffect::ListDiscardedSessions { request_id, .. } = orchestrator.action(
+        &storage,
+        2_001,
+        ComponentAction::SelectSummaryDate("2026-09-07".to_owned()),
+    ) else {
+        panic!();
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListDiscardedSessions {
+            request_id,
+            requested_date: "2026-09-07".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: snapshot(2_001),
+                data: DiscardedSessionDay {
+                    logical_date: "2026-09-07".to_owned(),
+                    total_seconds: 0,
+                    task_totals: Vec::new(),
+                    events: Vec::new(),
+                },
+            }),
+        },
+    );
+
+    let stored = load_view_state(&storage).into_state().unwrap();
+    assert_eq!(
+        stored.list.as_ref().map(|list| list.logical_date.as_str()),
+        Some("2026-09-06")
+    );
+    assert_eq!(
+        stored.list.unwrap().rows,
+        std::slice::from_ref(&cached_row)
+    );
+
+    let mut reloaded = ComponentOrchestrator::new();
+    assert!(matches!(
+        reloaded.mount(&storage, 3_000),
+        ClientEffect::Bootstrap { .. }
+    ));
+    assert_eq!(
+        reloaded.action(
+            &storage,
+            3_001,
+            ComponentAction::SwitchTab(ActiveTab::List),
+        ),
+        ClientEffect::None
+    );
+    let state = reloaded.state().unwrap();
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
+    assert_eq!(state.scheduled_rows(), [cached_row]);
+}
+
+#[test]
 fn local画面変更はview_stateへ保存して次のmountで復元する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = mounted_orchestrator(&storage);

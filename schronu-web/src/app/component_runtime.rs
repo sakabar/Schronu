@@ -395,7 +395,7 @@ impl ComponentOrchestrator {
         };
         let list = if state.has_scheduled_list() {
             state
-                .selected_logical_date()
+                .listed_logical_date()
                 .map(|logical_date| StoredListView {
                     logical_date: logical_date.to_owned(),
                     rows: state.scheduled_rows().to_vec(),

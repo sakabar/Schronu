@@ -18,8 +18,8 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, DiscardedSessionDay, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
