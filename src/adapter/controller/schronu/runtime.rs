@@ -1807,6 +1807,8 @@ fn handle_interactive_repository_event(
                 Ok((changed, next_snapshot)) => {
                     if changed {
                         *state.focus_started_datetime = now;
+                        state.focus_selection_mode.set_pending_submit(None);
+                        state.focus_selection_mode.set_pending_exit(None);
                     }
                     let committed_snapshot = if changed {
                         next_snapshot
