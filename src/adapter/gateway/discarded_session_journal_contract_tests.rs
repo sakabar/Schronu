@@ -2,7 +2,7 @@ use super::storage_snapshot::{create_snapshot, restore_snapshot, verify_snapshot
 use super::storage_transaction_test_support::{
     FaultRule, PathMatcher, RecordingIo, RecordingOperation,
 };
-use super::task_repository::TaskRepository;
+use super::task_repository::{DuplicateDiscardedSessionEventIdError, TaskRepository};
 use crate::application::discarded_session_journal::AppendDiscardedSessionOutcome;
 use crate::application::interface::{DiscardedSessionJournalTrait, TaskRepositoryTrait};
 use crate::entity::discarded_session::{
@@ -319,4 +319,61 @@ fn saveはdiscarded_sessions_parent_symlinkの外部へ書かない() {
 
     assert_eq!(fs::read(outside.join("sentinel")).unwrap(), b"unchanged");
     assert!(!outside.join("2026-09.yaml").exists());
+}
+
+#[test]
+fn duplicate永続event_idは双方のpathとindexを診断する() {
+    let storage = TestStorage::new();
+    let journal_directory = storage.path().join("discarded_sessions");
+    fs::create_dir(&journal_directory).unwrap();
+    let id = Uuid::from_u128(81);
+    let september_path = journal_directory.join("2026-09.yaml");
+    let october_path = journal_directory.join("2026-10.yaml");
+    write_event_journal(&september_path, &event_at(id, 2026, 9, 10, "first"));
+    write_event_journal(&october_path, &event_at(id, 2026, 10, 10, "duplicate"));
+    let mut repository = new_repository(&storage);
+
+    let error = repository.load().unwrap_err();
+    let duplicate = std::error::Error::source(&error)
+        .and_then(|source| source.downcast_ref::<DuplicateDiscardedSessionEventIdError>())
+        .unwrap();
+
+    assert_eq!(duplicate.event_id(), id);
+    assert_eq!(duplicate.first_path(), september_path);
+    assert_eq!(duplicate.first_index(), 0);
+    assert_eq!(duplicate.duplicate_path(), october_path);
+    assert_eq!(duplicate.duplicate_index(), 0);
+}
+
+fn event_at(id: Uuid, year: i32, month: u32, day: u32, name: &str) -> DiscardedSessionEvent {
+    let started_at = Local.with_ymd_and_hms(year, month, day, 12, 0, 0).unwrap();
+    DiscardedSessionEvent::new(
+        id,
+        Uuid::from_u128(82),
+        name.to_string(),
+        started_at,
+        started_at + Duration::seconds(1),
+        DiscardedSessionSource::Cli,
+        DiscardedSessionReason::CliNormalExit,
+    )
+    .unwrap()
+    .unwrap()
+}
+
+fn write_event_journal(path: &Path, event: &DiscardedSessionEvent) {
+    fs::write(
+        path,
+        format!(
+            "version: 1\nevents:\n  - event_id: {}\n    task_id: {}\n    task_name_at_start: {}\n    started_at_epoch_ms: {}\n    ended_at_epoch_ms: {}\n    logical_date: {}\n    source: {}\n    reason: {}\n",
+            event.event_id(),
+            event.task_id(),
+            event.task_name_at_start(),
+            event.started_at_epoch_ms(),
+            event.ended_at_epoch_ms(),
+            event.logical_date(),
+            event.source().as_str(),
+            event.reason().as_str(),
+        ),
+    )
+    .unwrap();
 }

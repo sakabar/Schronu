@@ -18,6 +18,11 @@ pub(super) struct DiscardedSessionJournalYamlError {
     detail: String,
 }
 
+pub(super) struct ParsedDiscardedSessionEvent {
+    pub(super) event: DiscardedSessionEvent,
+    pub(super) index: usize,
+}
+
 impl DiscardedSessionJournalYamlError {
     fn new(path: &Path, detail: impl Into<String>) -> Self {
         Self {
@@ -43,7 +48,7 @@ impl Error for DiscardedSessionJournalYamlError {}
 pub(super) fn parse_journal(
     path: &Path,
     bytes: &[u8],
-) -> Result<Vec<DiscardedSessionEvent>, DiscardedSessionJournalYamlError> {
+) -> Result<Vec<ParsedDiscardedSessionEvent>, DiscardedSessionJournalYamlError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|error| DiscardedSessionJournalYamlError::new(path, error.to_string()))?;
     let documents = YamlLoader::load_from_str(text)
@@ -81,7 +86,7 @@ fn parse_event(
     path: &Path,
     index: usize,
     yaml: &Yaml,
-) -> Result<DiscardedSessionEvent, DiscardedSessionJournalYamlError> {
+) -> Result<ParsedDiscardedSessionEvent, DiscardedSessionJournalYamlError> {
     let map = yaml.as_hash().ok_or_else(|| {
         DiscardedSessionJournalYamlError::new(path, format!("events[{index}] must be a mapping"))
     })?;
@@ -150,7 +155,7 @@ fn parse_event(
             format!("events[{index}] belongs to a different logical month"),
         ));
     }
-    Ok(event)
+    Ok(ParsedDiscardedSessionEvent { event, index })
 }
 
 fn mapping_value<'a>(map: &'a yaml_rust::yaml::Hash, key: &str) -> Option<&'a Yaml> {

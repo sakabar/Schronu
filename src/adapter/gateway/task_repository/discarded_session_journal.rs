@@ -99,27 +99,27 @@ impl TaskRepository {
         I: IntoIterator<Item = (&'a Path, &'a [u8])>,
     {
         let mut events = Vec::new();
-        let mut by_id = HashMap::new();
+        let mut by_id = HashMap::<Uuid, (PathBuf, usize)>::new();
         for (path, bytes) in journal_files {
-            for event in parse_journal(path, bytes).map_err(|error| {
+            for parsed in parse_journal(path, bytes).map_err(|error| {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
             })? {
-                if let Some(existing) = by_id.insert(event.event_id(), event.clone()) {
-                    let detail = if existing == event {
-                        "duplicate event ID"
-                    } else {
-                        "conflicting event ID"
-                    };
+                let event_id = parsed.event.event_id();
+                if let Some((first_path, first_index)) =
+                    by_id.insert(event_id, (path.to_path_buf(), parsed.index))
+                {
                     return Err(TaskRepositoryError::new(
                         ApplicationRepositoryOperation::Load,
-                        FileRepositoryError::new(
-                            FileRepositoryOperation::ParseJournal,
-                            path,
-                            std::io::Error::new(std::io::ErrorKind::InvalidData, detail),
-                        ),
+                        DuplicateDiscardedSessionEventIdError {
+                            event_id,
+                            first_path,
+                            first_index,
+                            duplicate_path: path.to_path_buf(),
+                            duplicate_index: parsed.index,
+                        },
                     ));
                 }
-                events.push(event);
+                events.push(parsed.event);
             }
         }
         Ok(events)
