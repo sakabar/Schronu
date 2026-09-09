@@ -22,6 +22,102 @@ fn component_actionはrank非0の手動session追加を拒否する() {
 }
 
 #[test]
+fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加を許可する() {
+    let storage = MemoryStorage::default();
+    let cached_row = ScheduledTaskRow {
+        task: task(RECORD_ID),
+        schedule_start_epoch_ms: 1_789_000_000_000,
+        schedule_end_epoch_ms: 1_789_000_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 1_789_000_000_000,
+                logical_date: "2026-09-09".to_owned(),
+                buffer_seconds: 60,
+            },
+            list: Some(StoredListView {
+                logical_date: "2026-09-12".to_owned(),
+                rows: vec![cached_row.clone()],
+            }),
+            active_tab: ActiveTab::List,
+            task_name_filter: "設計".to_owned(),
+            date_input_text: "2026/9/12".to_owned(),
+        },
+    )
+    .unwrap();
+
+    let mut orchestrator = ComponentOrchestrator::new();
+    assert!(matches!(
+        orchestrator.mount(&storage, 1_789_000_100_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    ));
+    let state = orchestrator.state().unwrap();
+    assert_eq!(state.active_tab(), ActiveTab::List);
+    assert_eq!(state.selected_logical_date(), Some("2026-09-12"));
+    assert_eq!(state.scheduled_rows(), [cached_row.clone()]);
+    assert_eq!(orchestrator.task_name_filter(), "設計");
+    assert_eq!(orchestrator.date_input().text(), "2026/9/12");
+    assert!(orchestrator.background_refreshing());
+    assert!(orchestrator.server_actions_blocked());
+    assert!(!orchestrator.server_effect_in_flight());
+
+    assert_eq!(
+        orchestrator.action(
+            &storage,
+            1_000,
+            ComponentAction::AddSession {
+                task: cached_row.task,
+                is_leaf: true,
+            },
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+
+    for blocked in [
+        ComponentAction::SelectDate("2026-09-13".to_owned()),
+        ComponentAction::AutoSession,
+        ComponentAction::DiscardSession(RECORD_ID.to_owned()),
+        ComponentAction::RecordSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSession(RECORD_ID.to_owned()),
+        ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned()),
+        ComponentAction::ConfirmCompletionConflict(RECORD_ID.to_owned()),
+    ] {
+        assert_eq!(
+            orchestrator.action(&storage, 1_001, blocked),
+            ClientEffect::None
+        );
+    }
+    assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+}
+
+#[test]
+fn local画面変更はview_stateへ保存して次のmountで復元する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = mounted_orchestrator(&storage);
+
+    orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
+    orchestrator.edit_date_input(&storage, "9/20".to_owned());
+    orchestrator.action(
+        &storage,
+        2_000,
+        ComponentAction::SwitchTab(ActiveTab::History),
+    );
+
+    let mut restored = ComponentOrchestrator::new();
+    restored.mount(&storage, 3_000);
+    assert_eq!(restored.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(restored.task_name_filter(), "実装");
+    assert_eq!(restored.date_input().text(), "9/20");
+}
+
+#[test]
 fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();
