@@ -464,17 +464,36 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
 
     let css = include_str!("../../assets/main.css");
     assert!(!css.contains(".session-actions button:nth-child"));
-    for (selector, declaration) in [
-        (".session-action-restart", "color: var(--blue-dark);"),
-        (".session-action-discard", "color: var(--muted);"),
-        (".session-action-record", "color: var(--blue-dark);"),
+    for (selector, border, color) in [
+        (
+            ".session-action-restart",
+            "border-color: var(--muted);",
+            "color: var(--muted);",
+        ),
+        (
+            ".session-action-discard",
+            "border-color: var(--muted);",
+            "color: var(--muted);",
+        ),
+        (
+            ".session-action-record",
+            "border-color: var(--blue);",
+            "color: var(--blue-dark);",
+        ),
         (
             ".session-action-complete-without-recording",
+            "border-color: var(--red);",
             "color: var(--red);",
         ),
-        (".session-action-complete", "color: var(--green-dark);"),
+        (
+            ".session-action-complete",
+            "border-color: var(--green-dark);",
+            "color: var(--green-dark);",
+        ),
     ] {
-        assert!(css_rule_body(css, selector).contains(declaration));
+        let rule = css_rule_body(css, selector);
+        assert!(rule.contains(border), "{selector} must contain {border}");
+        assert!(rule.contains(color), "{selector} must contain {color}");
     }
     let narrow_layout = css
         .split_once("@media (max-width: 34rem)")

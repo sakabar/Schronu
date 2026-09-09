@@ -536,8 +536,8 @@ button:disabled {
 
 .session-action-restart {
     grid-column: 1 / -1;
-    border-color: var(--blue);
-    color: var(--blue-dark);
+    border-color: var(--muted);
+    color: var(--muted);
 }
 
 .session-action-discard {
