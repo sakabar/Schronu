@@ -8815,6 +8815,51 @@ fn cliの外は開始時task名と経過時間を破棄journalへ記録する() 
 }
 
 #[test]
+fn cliの破棄journalはfocus開始後の改名をsnapshotへ反映しない() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 10, 9, 0, 0).unwrap();
+    let operation_now = started_at + Duration::seconds(75);
+    let task = new_test_task_handle("開始時task").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, started_at)
+        .with_storage_directory(&storage_dir.path);
+    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    focus_selection_mode.set_session_snapshot(focus_snapshot(&repository, Some(task_id)).unwrap());
+    repository.task = TaskHandle::with_identity("改名後task", task_id, started_at).unwrap();
+    repository.highest_priority_leaf_task_id_opt = None;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focused_task_id_opt = Some(task_id);
+    let mut last_focused_task_id_opt = Some(task_id);
+    let mut focus_started_datetime = started_at;
+
+    let outcome = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focused_task_id_opt,
+            last_focused_task_id_opt: &mut last_focused_task_id_opt,
+            focus_started_datetime: &mut focus_started_datetime,
+            focus_selection_mode: &mut focus_selection_mode,
+        },
+        "外",
+        operation_now,
+    );
+
+    assert!(matches!(
+        outcome,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Unfocus, _)
+    ));
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    assert_eq!(
+        repository.discarded_sessions[0].task_name_at_start(),
+        "開始時task"
+    );
+}
+
+#[test]
 fn cliの働はfocusが変わっても破棄journalへ記録しない() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();

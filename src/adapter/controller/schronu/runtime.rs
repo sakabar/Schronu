@@ -1,6 +1,6 @@
 use super::cli_discarded_session::{
     append_focus_transition, discarded_sessions_display, focus_snapshot, CliRepositoryTrait,
-    FocusTransition,
+    FocusSnapshot, FocusTransition,
 };
 #[cfg(test)]
 use super::command::ParseMode;
@@ -92,12 +92,14 @@ pub(super) enum FocusSelectionMode {
     HighestPriority {
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
+        session_snapshot: Option<FocusSnapshot>,
         pending_exit: Option<PendingExit>,
     },
     LowestPriority {
         recent_days: i64,
         tucked_task_ids: Vec<Uuid>,
         is_explicit: bool,
+        session_snapshot: Option<FocusSnapshot>,
         pending_exit: Option<PendingExit>,
     },
 }
@@ -114,6 +116,7 @@ impl FocusSelectionMode {
         Self::HighestPriority {
             tucked_task_ids: Vec::new(),
             is_explicit: false,
+            session_snapshot: None,
             pending_exit: None,
         }
     }
@@ -123,6 +126,7 @@ impl FocusSelectionMode {
             recent_days,
             tucked_task_ids: Vec::new(),
             is_explicit: false,
+            session_snapshot: None,
             pending_exit: None,
         }
     }
@@ -153,6 +157,28 @@ impl FocusSelectionMode {
         match self {
             Self::HighestPriority { is_explicit, .. }
             | Self::LowestPriority { is_explicit, .. } => *is_explicit = explicit,
+        }
+    }
+
+    fn session_snapshot(&self) -> Option<&FocusSnapshot> {
+        match self {
+            Self::HighestPriority {
+                session_snapshot, ..
+            }
+            | Self::LowestPriority {
+                session_snapshot, ..
+            } => session_snapshot.as_ref(),
+        }
+    }
+
+    fn set_session_snapshot(&mut self, snapshot: Option<FocusSnapshot>) {
+        match self {
+            Self::HighestPriority {
+                session_snapshot, ..
+            }
+            | Self::LowestPriority {
+                session_snapshot, ..
+            } => *session_snapshot = snapshot,
         }
     }
 
@@ -1463,15 +1489,19 @@ fn handle_interactive_submit_at(
         return outcome;
     }
     let original_focused_task_id = *state.focused_task_id_opt;
+    if state.focus_selection_mode.session_snapshot().is_none() {
+        let snapshot = match focus_snapshot(task_repository, original_focused_task_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error.into()))
+            }
+        };
+        state.focus_selection_mode.set_session_snapshot(snapshot);
+    }
     let original_last_focused_task_id = *state.last_focused_task_id_opt;
     let original_focus_started = *state.focus_started_datetime;
     let original_selection_mode = state.focus_selection_mode.clone();
-    let original_snapshot = match focus_snapshot(task_repository, original_focused_task_id) {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(error.into()))
-        }
-    };
+    let original_snapshot = state.focus_selection_mode.session_snapshot().cloned();
     let auto_event_id = Uuid::new_v4();
     let command_event_id = Uuid::new_v4();
     let is_read_only = parsed_command
@@ -1489,7 +1519,11 @@ fn handle_interactive_submit_at(
             original_focus_started
         };
         let command_old_focus = *state.focused_task_id_opt;
-        let command_snapshot = focus_snapshot(task_repository, command_old_focus)?;
+        let command_snapshot = if auto_changed {
+            focus_snapshot(task_repository, command_old_focus)?
+        } else {
+            original_snapshot.clone()
+        };
         writeln_newline(stdout, "").map_err(CommandError::Output)?;
         writeln_newline(
             stdout,
@@ -1547,7 +1581,12 @@ fn handle_interactive_submit_at(
         if focus_changed {
             *state.last_focused_task_id_opt = None;
         }
-        Ok((execution.kind, focus_changed))
+        let next_snapshot = if focus_changed {
+            focus_snapshot(task_repository, *state.focused_task_id_opt)?
+        } else {
+            original_snapshot.clone()
+        };
+        Ok((execution.kind, focus_changed, next_snapshot))
     };
     let transaction_result = if is_read_only {
         run_cli_repository_read_transaction(task_repository, operation_now, execute)
@@ -1555,10 +1594,13 @@ fn handle_interactive_submit_at(
         run_cli_repository_transaction(task_repository, operation_now, execute)
     };
     match transaction_result {
-        Ok((command_kind, focus_changed)) => {
+        Ok((command_kind, focus_changed, next_snapshot)) => {
             if focus_changed {
                 *state.focus_started_datetime = operation_now;
             }
+            state
+                .focus_selection_mode
+                .set_session_snapshot(next_snapshot);
             InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now)
         }
         Err(error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(_))) => {
@@ -1626,17 +1668,21 @@ fn handle_interactive_repository_event(
         InteractiveRepositoryEvent::Refresh => {
             let now = Local::now();
             let old_focus = *state.focused_task_id_opt;
+            if state.focus_selection_mode.session_snapshot().is_none() {
+                let snapshot = match focus_snapshot(task_repository, old_focus) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                            error.into(),
+                        ))
+                    }
+                };
+                state.focus_selection_mode.set_session_snapshot(snapshot);
+            }
             let old_started = *state.focus_started_datetime;
             let old_last_focus = *state.last_focused_task_id_opt;
             let old_selection_mode = state.focus_selection_mode.clone();
-            let snapshot = match focus_snapshot(task_repository, old_focus) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                        error.into(),
-                    ))
-                }
-            };
+            let snapshot = state.focus_selection_mode.session_snapshot().cloned();
             let event_id = Uuid::new_v4();
             match run_cli_repository_transaction(task_repository, now, |repository| {
                 let changed = reconcile_interactive_state_after_reload(repository, &mut state)?;
@@ -1652,12 +1698,20 @@ fn handle_interactive_repository_event(
                         reason: DiscardedSessionReason::CliAutoSwitch,
                     },
                 )?;
-                Ok(changed)
+                let next_snapshot = if changed {
+                    focus_snapshot(repository, *state.focused_task_id_opt)?
+                } else {
+                    snapshot.clone()
+                };
+                Ok((changed, next_snapshot))
             }) {
-                Ok(changed) => {
+                Ok((changed, next_snapshot)) => {
                     if changed {
                         *state.focus_started_datetime = now;
                     }
+                    state
+                        .focus_selection_mode
+                        .set_session_snapshot(next_snapshot);
                     InteractiveRepositoryEventOutcome::Continue
                 }
                 Err(error) => {
@@ -1699,23 +1753,31 @@ fn handle_interactive_repository_event(
                 .clone();
             let now = pending_exit.ended_at;
             let old_focus = *state.focused_task_id_opt;
+            if state.focus_selection_mode.session_snapshot().is_none() {
+                let snapshot = match focus_snapshot(task_repository, old_focus) {
+                    Ok(snapshot) => snapshot,
+                    Err(error) => {
+                        return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
+                            error.into(),
+                        ))
+                    }
+                };
+                state.focus_selection_mode.set_session_snapshot(snapshot);
+            }
             let old_started = *state.focus_started_datetime;
             let old_last_focus = *state.last_focused_task_id_opt;
             let old_selection_mode = state.focus_selection_mode.clone();
-            let snapshot = match focus_snapshot(task_repository, old_focus) {
-                Ok(snapshot) => snapshot,
-                Err(error) => {
-                    return InteractiveRepositoryEventOutcome::Fatal(RunError::Command(
-                        error.into(),
-                    ))
-                }
-            };
+            let snapshot = state.focus_selection_mode.session_snapshot().cloned();
             let auto_event_id = pending_exit.auto_event_id;
             let exit_event_id = pending_exit.exit_event_id;
             match run_cli_repository_transaction(task_repository, now, |repository| {
                 let auto_changed =
                     reconcile_interactive_state_after_reload(repository, &mut state)?;
-                let exit_snapshot = focus_snapshot(repository, *state.focused_task_id_opt)?;
+                let exit_snapshot = if auto_changed {
+                    focus_snapshot(repository, *state.focused_task_id_opt)?
+                } else {
+                    snapshot.clone()
+                };
                 let exit_started = if auto_changed { now } else { old_started };
                 repository
                     .sync_clock(now)
@@ -1935,6 +1997,11 @@ fn interactive_application(
     let mut focused_task_id_opt = select_focus_task_id(task_repository, &focus_selection_mode)
         .map_err(CommandError::from)
         .map_err(RunError::from)?;
+    focus_selection_mode.set_session_snapshot(
+        focus_snapshot(task_repository, focused_task_id_opt)
+            .map_err(CommandError::from)
+            .map_err(RunError::from)?,
+    );
     let mut last_focused_task_id_opt = None;
     let mut focus_started_datetime = now;
 
