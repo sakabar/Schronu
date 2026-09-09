@@ -248,6 +248,48 @@ fn bootstrap失敗でも前回一覧を維持し再試行を提供する() {
 }
 
 #[test]
+fn background再試行は一度だけ発行し古いresponseで完了しない() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    orchestrator.mount(&storage, 1_000);
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+
+    assert!(matches!(
+        orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
+        ClientEffect::Bootstrap { request_id: 2 }
+    ));
+    assert_eq!(
+        orchestrator.action(&storage, 2_001, ComponentAction::RetryRefresh),
+        ClientEffect::None
+    );
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(snapshot(2_000)),
+        },
+    );
+    assert!(orchestrator.background_refreshing());
+    assert!(orchestrator.server_actions_blocked());
+
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 2,
+            result: Ok(snapshot(2_001)),
+        },
+    );
+    assert!(!orchestrator.background_refreshing());
+    assert!(!orchestrator.server_actions_blocked());
+}
+
+#[test]
 fn native_ssrはbrowser_storageへ触れずloading_shellだけを描画する() {
     let mut dom = VirtualDom::new(app);
     dom.rebuild_in_place();

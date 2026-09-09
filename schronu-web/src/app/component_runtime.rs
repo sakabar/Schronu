@@ -116,8 +116,8 @@ pub(crate) struct ComponentOrchestrator {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RefreshState {
-    Bootstrap,
-    List,
+    Bootstrap(u64),
+    List(u64),
     Failed,
     Fresh,
 }
@@ -128,7 +128,7 @@ impl ComponentOrchestrator {
             state: None,
             mounted: false,
             pending_server_effects: 0,
-            refresh_state: RefreshState::Bootstrap,
+            refresh_state: RefreshState::Bootstrap(0),
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
         }
@@ -145,7 +145,7 @@ impl ComponentOrchestrator {
     pub fn background_refreshing(&self) -> bool {
         matches!(
             self.refresh_state,
-            RefreshState::Bootstrap | RefreshState::List
+            RefreshState::Bootstrap(_) | RefreshState::List(_)
         )
     }
 
@@ -228,7 +228,7 @@ impl ComponentOrchestrator {
         }
         state.set_view_state_warning(warning);
         self.state = Some(state);
-        self.refresh_state = RefreshState::Bootstrap;
+        self.refresh_state = background_state_for_effect(&effect).unwrap_or(RefreshState::Failed);
         effect
     }
 
@@ -239,11 +239,16 @@ impl ComponentOrchestrator {
         action: ComponentAction,
     ) -> ClientEffect {
         if matches!(action, ComponentAction::RetryRefresh) {
-            self.refresh_state = RefreshState::Bootstrap;
-            return self
+            if self.refresh_state != RefreshState::Failed {
+                return ClientEffect::None;
+            }
+            let effect = self
                 .state
                 .as_mut()
                 .map_or(ClientEffect::None, ClientState::request_bootstrap);
+            self.refresh_state =
+                background_state_for_effect(&effect).unwrap_or(RefreshState::Failed);
+            return effect;
         }
         if self.server_actions_blocked() && action_requires_server(&action) {
             return ClientEffect::None;
@@ -288,10 +293,16 @@ impl ComponentOrchestrator {
         response: ClientResponse,
     ) -> ClientEffect {
         let refresh_result = match (&self.refresh_state, &response) {
-            (RefreshState::Bootstrap, ClientResponse::Bootstrap { result, .. }) => {
-                Some(result.is_ok())
-            }
-            (RefreshState::List, ClientResponse::ListTasks { result, .. }) => Some(result.is_ok()),
+            (
+                RefreshState::Bootstrap(expected),
+                ClientResponse::Bootstrap { request_id, result },
+            ) if expected == request_id => Some(result.is_ok()),
+            (
+                RefreshState::List(expected),
+                ClientResponse::ListTasks {
+                    request_id, result, ..
+                },
+            ) if expected == request_id => Some(result.is_ok()),
             _ => None,
         };
         let effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
@@ -303,7 +314,7 @@ impl ComponentOrchestrator {
         if let Some(succeeded) = refresh_result {
             self.refresh_state = if succeeded {
                 if matches!(effect, ClientEffect::ListTasks { .. }) {
-                    RefreshState::List
+                    background_state_for_effect(&effect).unwrap_or(RefreshState::Failed)
                 } else {
                     RefreshState::Fresh
                 }
@@ -318,8 +329,12 @@ impl ComponentOrchestrator {
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
         matches!(
             (self.refresh_state, effect),
-            (RefreshState::Bootstrap, ClientEffect::Bootstrap { .. })
-                | (RefreshState::List, ClientEffect::ListTasks { .. })
+            (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
+                if expected == *request_id
+        ) || matches!(
+            (self.refresh_state, effect),
+            (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
+                if expected == *request_id
         )
     }
 
@@ -353,6 +368,14 @@ impl ComponentOrchestrator {
         if let Some(state) = self.state.as_mut() {
             state.set_view_state_warning(warning);
         }
+    }
+}
+
+fn background_state_for_effect(effect: &ClientEffect) -> Option<RefreshState> {
+    match effect {
+        ClientEffect::Bootstrap { request_id } => Some(RefreshState::Bootstrap(*request_id)),
+        ClientEffect::ListTasks { request_id, .. } => Some(RefreshState::List(*request_id)),
+        _ => None,
     }
 }
 
