@@ -179,6 +179,7 @@ pub(super) fn execute_interactive(
             if let Err(error) =
                 record_maintenance_auto_switch(task_repository, state, operation_now)
             {
+                // restoreと後続journal saveは別commitなので、後続失敗時はpre-backupから補償復元する。
                 rollback_restore_current(
                     task_repository,
                     &storage_directory,
@@ -218,6 +219,8 @@ pub(super) fn execute_interactive(
                 ));
             }
         };
+        // snapshot作成とrepository commitは1つのfilesystem transactionにできない。
+        // Retryを安全にするため、focus/journalを先にcommitしてから非冪等なsnapshotを作る。
         if let Err(error) = record_maintenance_auto_switch(task_repository, state, operation_now) {
             return Some(maintenance_outcome(
                 Err(error),
