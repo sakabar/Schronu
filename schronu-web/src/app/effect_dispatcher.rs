@@ -157,6 +157,7 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
     state: &mut ClientState,
     storage: &S,
     response: ClientResponse,
+    background_list: bool,
 ) -> ClientEffect {
     match response {
         ClientResponse::Bootstrap { request_id, result } => {
@@ -166,7 +167,13 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
             request_id,
             requested_date,
             result,
-        } => state.apply_list_result(request_id, &requested_date, result),
+        } => {
+            if background_list {
+                state.apply_background_list_result(request_id, &requested_date, result)
+            } else {
+                state.apply_list_result(request_id, &requested_date, result)
+            }
+        }
         ClientResponse::AutoSession { request_id, result } => {
             state.apply_auto_session_result(storage, request_id, result)
         }

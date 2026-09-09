@@ -305,9 +305,16 @@ impl ComponentOrchestrator {
             ) if expected == request_id => Some(result.is_ok()),
             _ => None,
         };
+        let background_list = matches!(
+            (&self.refresh_state, &response),
+            (
+                RefreshState::List(expected),
+                ClientResponse::ListTasks { request_id, .. }
+            ) if expected == request_id
+        );
         let effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
             let previous_session_count = state.sessions().len();
-            let effect = apply_response(state, storage, response);
+            let effect = apply_response(state, storage, response, background_list);
             switch_to_list_after_last_session_removed(state, previous_session_count);
             effect
         });

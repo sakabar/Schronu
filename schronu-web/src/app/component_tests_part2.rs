@@ -203,6 +203,15 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         },
     );
     assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
+    let refreshed_row = ScheduledTaskRow {
+        task: task(COMPLETE_ID),
+        schedule_start_epoch_ms: 1_789_300_000_000,
+        schedule_end_epoch_ms: 1_789_300_600_000,
+        deadline_epoch_ms: None,
+        deadline_label: "____/__/__".to_owned(),
+        misses_deadline: false,
+        is_leaf: true,
+    };
     orchestrator.apply_response(
         &storage,
         ClientResponse::ListTasks {
@@ -210,20 +219,23 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
             requested_date: "2026-09-12".to_owned(),
             result: Ok(WebSuccess {
                 snapshot: ServerSnapshot {
-                    observed_at_epoch_ms: 1_789_200_000_000,
-                    logical_date: "2026-09-11".to_owned(),
+                    observed_at_epoch_ms: 1_789_300_000_000,
+                    logical_date: "2026-09-12".to_owned(),
                     buffer_seconds: 20,
                 },
-                data: Vec::new(),
+                data: vec![refreshed_row.clone()],
             }),
         },
     );
-    assert!(orchestrator.state().unwrap().scheduled_rows().is_empty());
+    assert_eq!(
+        orchestrator.state().unwrap().scheduled_rows(),
+        std::slice::from_ref(&refreshed_row)
+    );
     assert!(orchestrator.state().unwrap().has_scheduled_list());
     assert!(!orchestrator.background_refreshing());
     assert!(!orchestrator.server_actions_blocked());
     let stored = load_view_state(&storage).into_state().unwrap();
-    assert_eq!(stored.list.unwrap().rows, Vec::new());
+    assert_eq!(stored.list.unwrap().rows, [refreshed_row]);
 }
 
 #[test]

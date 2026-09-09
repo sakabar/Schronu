@@ -108,6 +108,26 @@ impl ClientState {
         requested_date: &str,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     ) -> ClientEffect {
+        self.apply_list_result_with_policy(request_id, requested_date, result, false)
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn apply_background_list_result(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
+    ) -> ClientEffect {
+        self.apply_list_result_with_policy(request_id, requested_date, result, true)
+    }
+
+    fn apply_list_result_with_policy(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
+        preserve_across_logical_date_change: bool,
+    ) -> ClientEffect {
         let invocation = ServerActionInvocation::ListTasks(ListTasksRequest {
             logical_date: requested_date.to_owned(),
         });
@@ -121,8 +141,13 @@ impl ClientState {
                     self.read.snapshot.as_ref().is_some_and(|current| {
                         current.logical_date == success.snapshot.logical_date
                     });
-                let snapshot_result = self.apply_snapshot(success.snapshot);
-                if snapshot_result == Some(false)
+                let snapshot_result = if preserve_across_logical_date_change {
+                    self.apply_snapshot_metadata(success.snapshot)
+                } else {
+                    self.apply_snapshot(success.snapshot)
+                };
+                if (preserve_across_logical_date_change && snapshot_result.is_some())
+                    || snapshot_result == Some(false)
                     || (snapshot_result.is_none() && same_logical_date)
                 {
                     self.read.selected_logical_date = Some(requested_date.to_owned());
