@@ -1,6 +1,6 @@
 use super::component::{
-    app, initial_load_phase, BufferPanel, InitialLoadPhase, InitialLoadView, InteractiveShell,
-    LoadingOverlay, NavigationTabs, SessionChrome,
+    app, initial_load_phase, BackgroundRefreshStatus, BufferPanel, InitialLoadPhase,
+    InitialLoadView, InteractiveShell, LoadingOverlay, NavigationTabs, SessionChrome,
 };
 #[cfg(feature = "web")]
 use super::component_models::BrowserPageModel;
@@ -32,6 +32,39 @@ use std::sync::{Arc, Mutex};
 struct NavigationProps {
     active_tab: ActiveTab,
     events: Arc<Mutex<Vec<ActiveTab>>>,
+}
+
+#[test]
+fn background更新はshellを塞がずstale状態と再試行を表示する() {
+    fn refreshing() -> Element {
+        rsx! {
+            InteractiveShell { blocked: false,
+                BackgroundRefreshStatus { has_cached_list: true, failed: false }
+                button { "操作可能" }
+            }
+        }
+    }
+    let mut refreshing_dom = VirtualDom::new(refreshing);
+    refreshing_dom.rebuild_in_place();
+    let refreshing_html = dioxus::ssr::render(&refreshing_dom);
+    assert!(refreshing_html.contains("前回の表示です。最新状態を確認中…"));
+    assert!(!refreshing_html.contains(" inert"));
+    assert!(!refreshing_html.contains("loading-overlay"));
+
+    fn failed() -> Element {
+        rsx! {
+            BackgroundRefreshStatus {
+                has_cached_list: true,
+                failed: true,
+                on_retry: move |_| {},
+            }
+        }
+    }
+    let mut failed_dom = VirtualDom::new(failed);
+    failed_dom.rebuild_in_place();
+    let failed_html = dioxus::ssr::render(&failed_dom);
+    assert!(failed_html.contains("前回の表示です。最新状態を確認できませんでした。"));
+    assert!(failed_html.contains(">再試行<"));
 }
 
 fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
