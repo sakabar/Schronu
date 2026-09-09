@@ -6,6 +6,7 @@ pub(crate) use crate::client::view_projection::SessionCardViewModel;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 pub enum SessionActionKind {
+    RestartWithoutRecording,
     Discard,
     Record,
     Complete,
@@ -84,6 +85,11 @@ fn SessionCard(
     let discard_disabled =
         session.in_flight || session.server_committed || mutations_locked || server_actions_blocked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
+    let restart_disabled = session.in_flight
+        || session.server_committed
+        || mutations_locked
+        || global_blocked
+        || session.manual_check_blocked;
     let resume_disabled = session.in_flight
         || session.server_committed
         || mutations_locked
@@ -240,6 +246,15 @@ fn SessionCard(
                 }
             } else {
                 div { class: "session-actions",
+                    SessionActionButton {
+                        class: "session-action-restart",
+                        label: "計測を破棄して再開",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::RestartWithoutRecording,
+                        disabled: restart_disabled,
+                        on_action,
+                    }
                     SessionActionButton {
                         class: "session-action-discard",
                         label: "計測を破棄して解除",

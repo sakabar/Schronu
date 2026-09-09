@@ -534,6 +534,12 @@ button:disabled {
     min-width: 18rem;
 }
 
+.session-action-restart {
+    grid-column: 1 / -1;
+    border-color: var(--blue);
+    color: var(--blue-dark);
+}
+
 .session-action-discard {
     border-color: var(--muted);
     color: var(--muted);
