@@ -1,22 +1,28 @@
+use super::storage_snapshot::{create_snapshot, restore_snapshot, verify_snapshot};
+use super::storage_transaction_test_support::{
+    FaultRule, PathMatcher, RecordingIo, RecordingOperation,
+};
 use super::task_repository::TaskRepository;
 use crate::application::discarded_session_journal::AppendDiscardedSessionOutcome;
 use crate::application::interface::{DiscardedSessionJournalTrait, TaskRepositoryTrait};
 use crate::entity::discarded_session::{
     DiscardedSessionEvent, DiscardedSessionReason, DiscardedSessionSource,
 };
+use crate::entity::task::TaskHandle;
 use chrono::{Duration, Local, TimeZone};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use uuid::Uuid;
 
 struct TestStorage(PathBuf);
 
 impl TestStorage {
     fn new() -> Self {
-        Self(std::env::temp_dir().join(format!(
-            "schronu-discarded-journal-{}",
-            Uuid::new_v4()
-        )))
+        let path =
+            std::env::temp_dir().join(format!("schronu-discarded-journal-{}", Uuid::new_v4()));
+        fs::create_dir(&path).unwrap();
+        Self(path)
     }
 
     fn path(&self) -> &Path {
@@ -165,4 +171,92 @@ fn journal保存だけでもrevisionを更新しreload_if_changedで反映する
             .len(),
         1
     );
+}
+
+#[test]
+fn snapshot作成検証復元はjournalを全fileとして保持する() {
+    let root = TestStorage::new();
+    let storage = root.path().join("storage");
+    let snapshot = root.path().join("snapshot");
+    let restored = root.path().join("restored");
+    fs::create_dir(&storage).unwrap();
+    let mut repository = TaskRepository::new(storage.to_str().unwrap());
+    repository.load().unwrap();
+    let expected = event(Uuid::from_u128(51), "snapshot target");
+    repository
+        .append_discarded_session(expected.clone())
+        .unwrap();
+    repository.save().unwrap();
+
+    let created = create_snapshot(&storage, &snapshot).unwrap();
+    let verified = verify_snapshot(&snapshot).unwrap();
+    let restored_summary = restore_snapshot(&snapshot, &restored).unwrap();
+
+    assert_eq!(created.file_count(), 2);
+    assert_eq!(verified.file_count(), 2);
+    assert_eq!(restored_summary.file_count(), 2);
+    let mut restored_repository = TaskRepository::new(restored.to_str().unwrap());
+    restored_repository.load().unwrap();
+    assert_eq!(
+        restored_repository
+            .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 9).unwrap())
+            .events(),
+        &[expected]
+    );
+}
+
+#[test]
+fn taskとjournalのcommit失敗はどちらも未反映でpendingを維持する() {
+    let storage = TestStorage::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(61);
+    let task = TaskHandle::with_identity("atomic task", task_id, now).unwrap();
+    let mut baseline = new_repository(&storage);
+    baseline.sync_clock(now).unwrap();
+    baseline.start_new_project(task).unwrap();
+    baseline.save().unwrap();
+    let revision_before = fs::read(storage.path().join(".revision")).unwrap();
+    let project_path = fs::read_dir(storage.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let project_before = fs::read(&project_path).unwrap();
+    let io = Arc::new(RecordingIo::new(vec![FaultRule {
+        operation: RecordingOperation::WriteFile,
+        path_matcher: PathMatcher::Any,
+        occurrence: 2,
+        error_kind: std::io::ErrorKind::Other,
+        error_message: "injected pre-commit failure",
+    }]));
+    let mut repository =
+        TaskRepository::new_with_storage_transaction_io(storage.path().to_str().unwrap(), io);
+    repository.reload_if_changed(now).unwrap();
+    repository
+        .get_by_id(task_id)
+        .unwrap()
+        .unwrap()
+        .set_estimated_work_seconds(60)
+        .unwrap();
+    repository
+        .append_discarded_session(event(Uuid::from_u128(62), "atomic task"))
+        .unwrap();
+
+    let error = repository.save().unwrap_err();
+
+    assert_eq!(
+        error.save_failure_disposition(),
+        Some(crate::application::interface::TaskRepositorySaveFailureDisposition::Retryable)
+    );
+    assert_eq!(fs::read(&project_path).unwrap(), project_before);
+    assert_eq!(
+        fs::read(storage.path().join(".revision")).unwrap(),
+        revision_before
+    );
+    assert!(!storage
+        .path()
+        .join("discarded_sessions/2026-09.yaml")
+        .exists());
+    assert!(repository.has_pending_changes().unwrap());
 }

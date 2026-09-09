@@ -1,20 +1,27 @@
+use crate::adapter::gateway::discarded_session_journal_yaml::{parse_journal, serialize_journal};
 use crate::adapter::gateway::storage_transaction::{
     self, FileSystemStorageTransactionIo, StorageTransactionCommitState, StorageTransactionIo,
     WriteRequest,
 };
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
-use crate::application::interface::{
-    ProjectRegistrationError, RepositoryReloadOutcome, TaskRepositoryError,
-    TaskRepositoryOperation as ApplicationRepositoryOperation, TaskRepositoryTrait,
+use crate::application::discarded_session_journal::{
+    summarize_discarded_sessions, AppendDiscardedSessionOutcome, DiscardedSessionConflictError,
+    DiscardedSessionDaySummary,
 };
+use crate::application::interface::{
+    DiscardedSessionJournalTrait, ProjectRegistrationError, RepositoryReloadOutcome,
+    TaskRepositoryError, TaskRepositoryOperation as ApplicationRepositoryOperation,
+    TaskRepositoryTrait,
+};
+use crate::entity::discarded_session::DiscardedSessionEvent;
 use crate::entity::task::extract_leaf_tasks_from_project;
 use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
 use crate::entity::task::{Status, TaskHandle, TaskTreeError};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Datelike, Local, NaiveDate};
 use linked_hash_map::LinkedHashMap;
 use regex::Regex;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -38,6 +45,8 @@ pub struct TaskRepository {
     last_synced_time: DateTime<Local>,
     id_to_task_map: RefCell<HashMap<Uuid, TaskHandle>>,
     storage_revision: Cell<Option<Uuid>>,
+    discarded_sessions: Vec<DiscardedSessionEvent>,
+    dirty_journal_months: RefCell<HashSet<(i32, u32)>>,
     has_loaded: bool,
     storage_transaction_io: Arc<dyn StorageTransactionIo>,
 }
@@ -105,6 +114,7 @@ struct LoadedRepositoryState {
     projects: Vec<Project>,
     id_to_task_map: HashMap<Uuid, TaskHandle>,
     storage_revision: Option<Uuid>,
+    discarded_sessions: Vec<DiscardedSessionEvent>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -116,6 +126,8 @@ enum FileRepositoryOperation {
     ParseProject,
     ParseRevision,
     SerializeProject,
+    ParseJournal,
+    SerializeJournal,
     CreateDirectory,
 }
 
@@ -231,6 +243,8 @@ impl TaskRepository {
             last_synced_time: DateTime::<Local>::MIN_UTC.into(),
             id_to_task_map: RefCell::new(HashMap::new()),
             storage_revision: Cell::new(None),
+            discarded_sessions: Vec::new(),
+            dirty_journal_months: RefCell::new(HashSet::new()),
             has_loaded: false,
             storage_transaction_io: Arc::new(FileSystemStorageTransactionIo),
         }
@@ -246,6 +260,7 @@ impl TaskRepository {
         repository
     }
 
+    #[cfg(test)]
     pub(in crate::adapter::gateway) fn load_captured<'a, I>(
         &mut self,
         storage_revision: Option<(&Path, &[u8])>,
@@ -266,7 +281,35 @@ impl TaskRepository {
         for (path, bytes) in project_files {
             builder.push(path.to_path_buf(), path.to_path_buf(), bytes)?;
         }
-        let loaded = builder.finish(storage_revision)?;
+        let loaded = builder.finish(storage_revision, Vec::new())?;
+        self.apply_loaded_state(loaded);
+        Ok(())
+    }
+
+    pub(in crate::adapter::gateway) fn load_captured_with_journals<'a, I, J>(
+        &mut self,
+        storage_revision: Option<(&Path, &[u8])>,
+        project_files: I,
+        journal_files: J,
+    ) -> Result<(), TaskRepositoryError>
+    where
+        I: IntoIterator<Item = (&'a Path, &'a [u8])>,
+        J: IntoIterator<Item = (&'a Path, &'a [u8])>,
+    {
+        let storage_revision = storage_revision
+            .map(|(path, bytes)| parse_storage_revision(path, bytes))
+            .transpose()
+            .map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })?;
+        let mut project_files = project_files.into_iter().collect::<Vec<_>>();
+        project_files.sort_by(|left, right| left.0.cmp(right.0));
+        let mut builder = RepositoryLoadBuilder::new(self.last_synced_time);
+        for (path, bytes) in project_files {
+            builder.push(path.to_path_buf(), path.to_path_buf(), bytes)?;
+        }
+        let discarded_sessions = Self::parse_journal_files(journal_files)?;
+        let loaded = builder.finish(storage_revision, discarded_sessions)?;
         self.apply_loaded_state(loaded);
         Ok(())
     }
@@ -287,7 +330,37 @@ impl TaskRepository {
         last_synced_time: DateTime<Local>,
         storage_revision: Option<Uuid>,
     ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
+        let journal_directory =
+            Path::new(&self.project_storage_dir_name).join("discarded_sessions");
+        match fs::symlink_metadata(&journal_directory) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ReadMetadata,
+                        journal_directory,
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "discarded_sessions must be a non-symbolic-link directory",
+                        ),
+                    ),
+                ));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ReadMetadata,
+                        journal_directory,
+                        error,
+                    ),
+                ));
+            }
+        }
         let mut builder = RepositoryLoadBuilder::new(last_synced_time);
+        let mut journal_files = Vec::new();
         for entry_result in WalkDir::new(self.project_storage_dir_name.as_str()).sort_by_file_name()
         {
             let entry = entry_result.map_err(|error| {
@@ -308,8 +381,34 @@ impl TaskRepository {
                     ),
                 )
             })?;
-            if entry.file_name() != "project.yaml" {
+            let is_project = entry.file_name() == "project.yaml";
+            let is_journal = entry
+                .path()
+                .extension()
+                .is_some_and(|extension| extension == "yaml")
+                && entry
+                    .path()
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|name| name == "discarded_sessions");
+            if !is_project && !is_journal {
                 continue;
+            }
+            if is_journal
+                && fs::symlink_metadata(entry.path())
+                    .is_ok_and(|metadata| metadata.file_type().is_symlink())
+            {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    FileRepositoryError::new(
+                        FileRepositoryOperation::ReadMetadata,
+                        entry.path(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "discarded session journal must not be a symbolic link",
+                        ),
+                    ),
+                ));
             }
 
             let project_yaml_file_path = entry.path().to_path_buf();
@@ -328,15 +427,59 @@ impl TaskRepository {
                     ),
                 )
             })?;
-            builder.push(project_yaml_file_path, canonical_project_yaml_path, &bytes)?;
+            if is_project {
+                builder.push(project_yaml_file_path, canonical_project_yaml_path, &bytes)?;
+            } else {
+                journal_files.push((project_yaml_file_path, bytes));
+            }
         }
-        builder.finish(storage_revision)
+        let discarded_sessions = Self::parse_journal_files(
+            journal_files
+                .iter()
+                .map(|(path, bytes)| (path.as_path(), bytes.as_slice())),
+        )?;
+        builder.finish(storage_revision, discarded_sessions)
+    }
+
+    fn parse_journal_files<'a, I>(
+        journal_files: I,
+    ) -> Result<Vec<DiscardedSessionEvent>, TaskRepositoryError>
+    where
+        I: IntoIterator<Item = (&'a Path, &'a [u8])>,
+    {
+        let mut events = Vec::new();
+        let mut by_id = HashMap::new();
+        for (path, bytes) in journal_files {
+            for event in parse_journal(path, bytes).map_err(|error| {
+                TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
+            })? {
+                if let Some(existing) = by_id.insert(event.event_id(), event.clone()) {
+                    let detail = if existing == event {
+                        "duplicate event ID"
+                    } else {
+                        "conflicting event ID"
+                    };
+                    return Err(TaskRepositoryError::new(
+                        ApplicationRepositoryOperation::Load,
+                        FileRepositoryError::new(
+                            FileRepositoryOperation::ParseJournal,
+                            path,
+                            std::io::Error::new(std::io::ErrorKind::InvalidData, detail),
+                        ),
+                    ));
+                }
+                events.push(event);
+            }
+        }
+        Ok(events)
     }
 
     fn apply_loaded_state(&mut self, loaded: LoadedRepositoryState) {
         self.projects = loaded.projects;
         self.id_to_task_map.replace(loaded.id_to_task_map);
         self.storage_revision.set(loaded.storage_revision);
+        self.discarded_sessions = loaded.discarded_sessions;
+        self.dirty_journal_months.borrow_mut().clear();
         self.has_loaded = true;
     }
 
@@ -413,6 +556,12 @@ impl TaskRepository {
         out.push('\n');
         Ok(out.into_bytes())
     }
+
+    fn journal_path(&self, year: i32, month: u32) -> PathBuf {
+        Path::new(&self.project_storage_dir_name)
+            .join("discarded_sessions")
+            .join(format!("{year:04}-{month:02}.yaml"))
+    }
 }
 
 impl TaskRepositoryTrait for TaskRepository {
@@ -462,11 +611,13 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
-        self.projects
+        let task_changes = self
+            .projects
             .iter()
             .map(Project::needs_save)
             .collect::<Result<Vec<_>, _>>()
-            .map(|needs_save| needs_save.into_iter().any(|needs_save| needs_save))
+            .map(|needs_save| needs_save.into_iter().any(|needs_save| needs_save))?;
+        Ok(task_changes || !self.dirty_journal_months.borrow().is_empty())
     }
 
     fn save(&self) -> Result<(), TaskRepositoryError> {
@@ -480,22 +631,52 @@ impl TaskRepositoryTrait for TaskRepository {
             .filter_map(|(project, needs_save)| needs_save.then_some(project))
             .collect::<Vec<_>>();
 
-        let mut prepared_writes = Vec::new();
+        let mut prepared_project_writes = Vec::new();
         for project in &projects_to_save {
             let bytes = Self::serialize_project(project)?;
             let unchanged = fs::read(&project.project_yaml_file_path)
                 .is_ok_and(|existing_bytes| existing_bytes == bytes);
             if !unchanged {
-                prepared_writes.push((*project, bytes));
+                prepared_project_writes.push((*project, bytes));
             }
         }
 
-        if prepared_writes.is_empty() {
+        let dirty_journal_months = self
+            .dirty_journal_months
+            .borrow()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>();
+        let mut prepared_journal_writes = Vec::new();
+        for (year, month) in &dirty_journal_months {
+            let path = self.journal_path(*year, *month);
+            let events = self
+                .discarded_sessions
+                .iter()
+                .filter(|event| {
+                    event.logical_date().year() == *year && event.logical_date().month() == *month
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let bytes = serialize_journal(&path, &events).map_err(|error| {
+                TaskRepositoryError::retryable_save(FileRepositoryError::new(
+                    FileRepositoryOperation::SerializeJournal,
+                    &path,
+                    std::io::Error::new(std::io::ErrorKind::InvalidData, error),
+                ))
+            })?;
+            if !fs::read(&path).is_ok_and(|existing| existing == bytes) {
+                prepared_journal_writes.push((path, bytes));
+            }
+        }
+
+        if prepared_project_writes.is_empty() && prepared_journal_writes.is_empty() {
             for project in projects_to_save {
                 project
                     .mark_clean()
                     .map_err(TaskRepositoryError::retryable_save)?;
             }
+            self.dirty_journal_months.borrow_mut().clear();
             return Ok(());
         }
 
@@ -523,27 +704,40 @@ impl TaskRepositoryTrait for TaskRepository {
             ));
         }
         let new_storage_revision = Uuid::new_v4();
-        let write_requests = prepared_writes
+        let mut write_requests = prepared_project_writes
             .iter()
             .map(|(project, bytes)| WriteRequest {
                 target_path: &project.project_yaml_file_path,
                 bytes,
             })
             .collect::<Vec<_>>();
-        let markdown_directories = prepared_writes
+        write_requests.extend(
+            prepared_journal_writes
+                .iter()
+                .map(|(path, bytes)| WriteRequest {
+                    target_path: path,
+                    bytes,
+                }),
+        );
+        let markdown_directories = prepared_project_writes
             .iter()
             .map(|(project, _)| project.project_dir_path.join("markdown"))
             .collect::<Vec<_>>();
-        let markdown_directory_paths = markdown_directories
+        let mut directory_paths = markdown_directories
             .iter()
             .map(PathBuf::as_path)
             .collect::<Vec<_>>();
+        let journal_directory =
+            Path::new(&self.project_storage_dir_name).join("discarded_sessions");
+        if !prepared_journal_writes.is_empty() {
+            directory_paths.push(journal_directory.as_path());
+        }
         let prepared_transaction = storage_transaction::prepare_with_directories(
             self.storage_transaction_io.clone(),
             storage_dir_path,
             new_storage_revision,
             &write_requests,
-            &markdown_directory_paths,
+            &directory_paths,
         )
         .map_err(TaskRepositoryError::retryable_save)?;
         prepared_transaction
@@ -562,6 +756,7 @@ impl TaskRepositoryTrait for TaskRepository {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
         }
+        self.dirty_journal_months.borrow_mut().clear();
         self.storage_revision.set(Some(new_storage_revision));
         Ok(())
     }
@@ -739,6 +934,34 @@ impl TaskRepositoryTrait for TaskRepository {
             .map_err(ProjectRegistrationError::TaskTree)?;
         self.projects.push(project);
         Ok(())
+    }
+}
+
+impl DiscardedSessionJournalTrait for TaskRepository {
+    fn append_discarded_session(
+        &mut self,
+        event: DiscardedSessionEvent,
+    ) -> Result<AppendDiscardedSessionOutcome, DiscardedSessionConflictError> {
+        if let Some(existing) = self
+            .discarded_sessions
+            .iter()
+            .find(|existing| existing.event_id() == event.event_id())
+        {
+            return if existing == &event {
+                Ok(AppendDiscardedSessionOutcome::AlreadyPresent)
+            } else {
+                Err(DiscardedSessionConflictError::new(event.event_id()))
+            };
+        }
+        self.dirty_journal_months
+            .borrow_mut()
+            .insert((event.logical_date().year(), event.logical_date().month()));
+        self.discarded_sessions.push(event);
+        Ok(AppendDiscardedSessionOutcome::Appended)
+    }
+
+    fn discarded_sessions_on(&self, logical_date: NaiveDate) -> DiscardedSessionDaySummary {
+        summarize_discarded_sessions(&self.discarded_sessions, logical_date)
     }
 }
 

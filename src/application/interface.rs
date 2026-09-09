@@ -1,5 +1,11 @@
 use crate::entity::task::{TaskHandle, TaskTreeError};
-use chrono::{DateTime, Local};
+use crate::{
+    application::discarded_session_journal::{
+        AppendDiscardedSessionOutcome, DiscardedSessionConflictError, DiscardedSessionDaySummary,
+    },
+    entity::discarded_session::DiscardedSessionEvent,
+};
+use chrono::{DateTime, Local, NaiveDate};
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -149,6 +155,14 @@ pub trait TaskRepositoryTrait {
     ) -> Result<Option<Uuid>, TaskTreeError>;
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError>;
     fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError>;
+}
+
+pub trait DiscardedSessionJournalTrait {
+    fn append_discarded_session(
+        &mut self,
+        event: DiscardedSessionEvent,
+    ) -> Result<AppendDiscardedSessionOutcome, DiscardedSessionConflictError>;
+    fn discarded_sessions_on(&self, logical_date: NaiveDate) -> DiscardedSessionDaySummary;
 }
 
 pub trait FreeTimeManagerTrait {

@@ -44,8 +44,9 @@ impl RepositoryLoadBuilder {
     pub(super) fn finish(
         self,
         storage_revision: Option<Uuid>,
+        discarded_sessions: Vec<DiscardedSessionEvent>,
     ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
-        TaskRepository::finish_loaded_state(self.projects, storage_revision)
+        TaskRepository::finish_loaded_state(self.projects, storage_revision, discarded_sessions)
     }
 }
 
@@ -210,6 +211,7 @@ impl TaskRepository {
     fn finish_loaded_state(
         projects: Vec<Project>,
         storage_revision: Option<Uuid>,
+        discarded_sessions: Vec<DiscardedSessionEvent>,
     ) -> Result<LoadedRepositoryState, TaskRepositoryError> {
         let mut task_locations = HashMap::new();
         let mut id_to_task_map = HashMap::new();
@@ -226,6 +228,7 @@ impl TaskRepository {
             projects,
             id_to_task_map,
             storage_revision,
+            discarded_sessions,
         })
     }
 }

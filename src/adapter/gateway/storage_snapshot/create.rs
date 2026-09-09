@@ -373,11 +373,23 @@ fn strict_load_captured(
         .filter(|file| file.relative.file_name() == Some(OsStr::new("project.yaml")))
         .map(|file| (source_storage.join(&file.relative), file.bytes.as_slice()))
         .collect::<Vec<_>>();
+    let journal_files = scanned
+        .files
+        .iter()
+        .filter(|file| {
+            file.relative.extension() == Some(OsStr::new("yaml"))
+                && file.relative.parent() == Some(Path::new("discarded_sessions"))
+        })
+        .map(|file| (source_storage.join(&file.relative), file.bytes.as_slice()))
+        .collect::<Vec<_>>();
     let mut repository = TaskRepository::new("");
     repository
-        .load_captured(
+        .load_captured_with_journals(
             revision,
             project_files
+                .iter()
+                .map(|(path, bytes)| (path.as_path(), *bytes)),
+            journal_files
                 .iter()
                 .map(|(path, bytes)| (path.as_path(), *bytes)),
         )
