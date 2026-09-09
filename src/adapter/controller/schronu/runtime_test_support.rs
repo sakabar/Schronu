@@ -667,6 +667,7 @@ struct TestTaskRepository {
     has_pending_changes: Cell<bool>,
     operation_trace: RefCell<Vec<&'static str>>,
     discarded_sessions: Vec<DiscardedSessionEvent>,
+    persisted_discarded_sessions: RefCell<Vec<DiscardedSessionEvent>>,
 }
 
 #[cfg(test)]
@@ -762,6 +763,7 @@ impl TestTaskRepository {
             has_pending_changes: Cell::new(true),
             operation_trace: RefCell::new(Vec::new()),
             discarded_sessions: Vec::new(),
+            persisted_discarded_sessions: RefCell::new(Vec::new()),
         }
     }
 
@@ -813,6 +815,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
                 ),
             ))
         } else {
+            self.discarded_sessions = self.persisted_discarded_sessions.borrow().clone();
             Ok(())
         }
     }
@@ -867,6 +870,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
                 ))
             }
         } else {
+            *self.persisted_discarded_sessions.borrow_mut() = self.discarded_sessions.clone();
             Ok(())
         }
     }

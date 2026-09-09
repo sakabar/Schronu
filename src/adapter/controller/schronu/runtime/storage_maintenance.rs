@@ -6,9 +6,9 @@ use termion::style;
 
 use super::{
     append_focus_transition, error_display_model, focus_snapshot, map_command_parse_error,
-    reconcile_interactive_state_after_reload, run_cli_repository_transaction, CliRepositoryTrait,
-    CliRepositoryTransactionError, CommandError, InteractiveRepositoryEventOutcome,
-    InteractiveRepositoryState, RunError, CLI_LOCK_TIMEOUT,
+    reconcile_interactive_state_after_reload, CliRepositoryTrait, CliRepositoryTransactionError,
+    CommandError, InteractiveRepositoryEventOutcome, InteractiveRepositoryState, RunError,
+    CLI_LOCK_TIMEOUT,
 };
 use crate::adapter::controller::command::{Command, CommandKind, CommandParseError};
 use crate::adapter::controller::renderer::{
@@ -23,7 +23,7 @@ use crate::adapter::gateway::storage_snapshot::{
     create_snapshot_with_lock, restore_current_snapshot, restore_snapshot_to_alternate,
     verify_snapshot,
 };
-use crate::application::interface::TaskRepositoryTrait;
+use crate::application::interface::{TaskRepositorySaveFailureDisposition, TaskRepositoryTrait};
 use crate::entity::discarded_session::DiscardedSessionReason;
 use uuid::Uuid;
 
@@ -75,7 +75,16 @@ pub(super) fn execute_interactive(
     maintenance_kind: Option<CommandKind>,
     operation_now: DateTime<Local>,
 ) -> Option<InteractiveRepositoryEventOutcome> {
-    if maintenance_kind.is_some() && state.focus_selection_mode.session_snapshot().is_none() {
+    if matches!(
+        maintenance_kind,
+        Some(
+            CommandKind::Backup
+                | CommandKind::BackupVerify
+                | CommandKind::Restore
+                | CommandKind::RestoreCurrent
+        )
+    ) && state.focus_selection_mode.session_snapshot().is_none()
+    {
         let snapshot = match focus_snapshot(task_repository, *state.focused_task_id_opt) {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -151,37 +160,36 @@ pub(super) fn execute_interactive(
         if let Err(error) = render_interactive_command_echo(stdout, command, operation_now) {
             return Some(InteractiveRepositoryEventOutcome::Fatal(error));
         }
-        return Some(
-            match execute_restore_current_command(
-                stdout,
-                task_repository,
+        let storage_directory = PathBuf::from(task_repository.get_project_storage_dir_name());
+        let result = (|| {
+            let storage_lock = StorageLock::acquire_with_timeout(
+                &storage_directory,
+                LockMode::Cli,
+                CLI_LOCK_TIMEOUT,
+            )
+            .map_err(CliRepositoryTransactionError::Lock)
+            .map_err(RunError::CliRepositoryTransaction)?;
+            let summary = restore_current_snapshot(
+                &storage_directory,
                 snapshot_directory,
                 pre_backup_directory,
-                operation_now,
-            ) {
-                Ok(()) => {
-                    match record_maintenance_auto_switch(task_repository, state, operation_now) {
-                        Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                            CommandKind::RestoreCurrent,
-                            operation_now,
-                        ),
-                        Err(RunError::CliRepositoryTransaction(error)) => {
-                            InteractiveRepositoryEventOutcome::Retry(error)
-                        }
-                        Err(RunError::Repository(error)) => {
-                            InteractiveRepositoryEventOutcome::Retry(
-                                CliRepositoryTransactionError::Load(error),
-                            )
-                        }
-                        Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-                    }
-                }
-                Err(RunError::CliRepositoryTransaction(error)) => {
-                    InteractiveRepositoryEventOutcome::Retry(error)
-                }
-                Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-            },
-        );
+                &storage_lock,
+            )
+            .map_err(RunError::Snapshot)?;
+            record_maintenance_auto_switch(task_repository, state, operation_now)?;
+            render_display_model_with_mode(
+                stdout,
+                &restore_current_display(&storage_directory, &summary),
+                RenderMode::Flushed,
+            )
+            .map_err(CommandError::Output)
+            .map_err(RunError::Command)
+        })();
+        return Some(maintenance_outcome(
+            result,
+            CommandKind::RestoreCurrent,
+            operation_now,
+        ));
     }
     if let Ok(Command::Backup { snapshot_directory }) = parsed_command {
         if let Err(error) = render_interactive_command_echo(stdout, command, operation_now) {
@@ -208,24 +216,11 @@ pub(super) fn execute_interactive(
                 &storage_directory,
                 &storage_lock,
             ) {
-                Ok(()) => {
-                    drop(storage_lock);
-                    match record_maintenance_auto_switch(task_repository, state, operation_now) {
-                        Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
-                            CommandKind::Backup,
-                            operation_now,
-                        ),
-                        Err(RunError::CliRepositoryTransaction(error)) => {
-                            InteractiveRepositoryEventOutcome::Retry(error)
-                        }
-                        Err(RunError::Repository(error)) => {
-                            InteractiveRepositoryEventOutcome::Retry(
-                                CliRepositoryTransactionError::Load(error),
-                            )
-                        }
-                        Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
-                    }
-                }
+                Ok(()) => maintenance_outcome(
+                    record_maintenance_auto_switch(task_repository, state, operation_now),
+                    CommandKind::Backup,
+                    operation_now,
+                ),
                 Err(RunError::CliRepositoryTransaction(error)) => {
                     InteractiveRepositoryEventOutcome::Retry(error)
                 }
@@ -236,7 +231,33 @@ pub(super) fn execute_interactive(
     None
 }
 
-fn record_maintenance_auto_switch(
+fn maintenance_outcome(
+    result: Result<(), RunError>,
+    command_kind: CommandKind,
+    operation_now: DateTime<Local>,
+) -> InteractiveRepositoryEventOutcome {
+    match result {
+        Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now),
+        Err(RunError::CliRepositoryTransaction(error)) => {
+            if matches!(
+                &error,
+                CliRepositoryTransactionError::Save(save_error)
+                    if save_error.save_failure_disposition()
+                        != Some(TaskRepositorySaveFailureDisposition::Retryable)
+            ) {
+                InteractiveRepositoryEventOutcome::Fatal(RunError::CliRepositoryTransaction(error))
+            } else {
+                InteractiveRepositoryEventOutcome::Retry(error)
+            }
+        }
+        Err(RunError::Repository(error)) => {
+            InteractiveRepositoryEventOutcome::Retry(CliRepositoryTransactionError::Load(error))
+        }
+        Err(error) => InteractiveRepositoryEventOutcome::Fatal(error),
+    }
+}
+
+pub(super) fn record_maintenance_auto_switch(
     task_repository: &mut dyn CliRepositoryTrait,
     state: &mut InteractiveRepositoryState<'_>,
     operation_now: DateTime<Local>,
@@ -247,10 +268,16 @@ fn record_maintenance_auto_switch(
     let old_selection_mode = state.focus_selection_mode.clone();
     let snapshot = state.focus_selection_mode.session_snapshot().cloned();
     let event_id = Uuid::new_v4();
-    let result = run_cli_repository_transaction(task_repository, operation_now, |repository| {
-        let changed = reconcile_interactive_state_after_reload(repository, state)?;
+    let result = (|| {
+        task_repository
+            .reload_if_changed(operation_now)
+            .map_err(CliRepositoryTransactionError::Load)
+            .map_err(RunError::CliRepositoryTransaction)?;
+        let changed = reconcile_interactive_state_after_reload(task_repository, state)
+            .map_err(CommandError::Application)
+            .map_err(RunError::Command)?;
         append_focus_transition(
-            repository,
+            task_repository,
             super::FocusTransition {
                 snapshot: snapshot.as_ref(),
                 old_focus_id: old_focus,
@@ -260,14 +287,29 @@ fn record_maintenance_auto_switch(
                 event_id,
                 reason: DiscardedSessionReason::CliAutoSwitch,
             },
-        )?;
+        )
+        .map_err(CommandError::from)
+        .map_err(RunError::Command)?;
         let next_snapshot = if changed {
-            focus_snapshot(repository, *state.focused_task_id_opt)?
+            focus_snapshot(task_repository, *state.focused_task_id_opt)
+                .map_err(CommandError::from)
+                .map_err(RunError::Command)?
         } else {
             snapshot.clone()
         };
-        Ok((changed, next_snapshot))
-    });
+        let should_save = task_repository
+            .has_pending_changes()
+            .map_err(crate::application::task_use_case::ApplicationError::TaskTree)
+            .map_err(CommandError::Application)
+            .map_err(RunError::Command)?;
+        if should_save {
+            task_repository
+                .save()
+                .map_err(CliRepositoryTransactionError::Save)
+                .map_err(RunError::CliRepositoryTransaction)?;
+        }
+        Ok::<_, RunError>((changed, next_snapshot))
+    })();
     match result {
         Ok((changed, next_snapshot)) => {
             if changed {
@@ -283,6 +325,18 @@ fn record_maintenance_auto_switch(
             *state.last_focused_task_id_opt = old_last_focus;
             *state.focus_started_datetime = old_started;
             *state.focus_selection_mode = old_selection_mode;
+            if matches!(
+                &error,
+                RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(
+                    save_error
+                )) if save_error.save_failure_disposition()
+                    == Some(TaskRepositorySaveFailureDisposition::Retryable)
+            ) {
+                task_repository
+                    .load()
+                    .map_err(CliRepositoryTransactionError::Load)
+                    .map_err(RunError::CliRepositoryTransaction)?;
+            }
             Err(error)
         }
     }

@@ -40,7 +40,9 @@ use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::daily_capacity::try_logical_date_start;
 use crate::application::daily_capacity::{try_logical_date, try_next_logical_date_start};
 use crate::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
-use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+use crate::application::interface::{
+    TaskRepositoryError, TaskRepositorySaveFailureDisposition, TaskRepositoryTrait,
+};
 #[cfg(test)]
 use crate::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use crate::application::repository_transaction::{
@@ -1489,6 +1491,7 @@ fn handle_interactive_submit_at(
         return outcome;
     }
     let original_focused_task_id = *state.focused_task_id_opt;
+    let original_selection_mode = state.focus_selection_mode.clone();
     if state.focus_selection_mode.session_snapshot().is_none() {
         let snapshot = match focus_snapshot(task_repository, original_focused_task_id) {
             Ok(snapshot) => snapshot,
@@ -1500,7 +1503,6 @@ fn handle_interactive_submit_at(
     }
     let original_last_focused_task_id = *state.last_focused_task_id_opt;
     let original_focus_started = *state.focus_started_datetime;
-    let original_selection_mode = state.focus_selection_mode.clone();
     let original_snapshot = state.focus_selection_mode.session_snapshot().cloned();
     let auto_event_id = Uuid::new_v4();
     let command_event_id = Uuid::new_v4();
@@ -1598,9 +1600,14 @@ fn handle_interactive_submit_at(
             if focus_changed {
                 *state.focus_started_datetime = operation_now;
             }
+            let committed_snapshot = if focus_changed {
+                next_snapshot
+            } else {
+                original_selection_mode.session_snapshot().cloned()
+            };
             state
                 .focus_selection_mode
-                .set_session_snapshot(next_snapshot);
+                .set_session_snapshot(committed_snapshot);
             InteractiveRepositoryEventOutcome::CommandExecuted(command_kind, operation_now)
         }
         Err(error @ RunError::CliRepositoryTransaction(CliRepositoryTransactionError::Save(_))) => {
@@ -1656,6 +1663,9 @@ fn handle_interactive_repository_event(
     mut state: InteractiveRepositoryState<'_>,
     event: InteractiveRepositoryEvent<'_>,
 ) -> InteractiveRepositoryEventOutcome {
+    if !matches!(&event, InteractiveRepositoryEvent::Exit) {
+        state.focus_selection_mode.set_pending_exit(None);
+    }
     match event {
         InteractiveRepositoryEvent::Submit { line } => handle_interactive_submit_at(
             stdout,
@@ -1668,6 +1678,7 @@ fn handle_interactive_repository_event(
         InteractiveRepositoryEvent::Refresh => {
             let now = Local::now();
             let old_focus = *state.focused_task_id_opt;
+            let old_selection_mode = state.focus_selection_mode.clone();
             if state.focus_selection_mode.session_snapshot().is_none() {
                 let snapshot = match focus_snapshot(task_repository, old_focus) {
                     Ok(snapshot) => snapshot,
@@ -1681,7 +1692,6 @@ fn handle_interactive_repository_event(
             }
             let old_started = *state.focus_started_datetime;
             let old_last_focus = *state.last_focused_task_id_opt;
-            let old_selection_mode = state.focus_selection_mode.clone();
             let snapshot = state.focus_selection_mode.session_snapshot().cloned();
             let event_id = Uuid::new_v4();
             match run_cli_repository_transaction(task_repository, now, |repository| {
@@ -1709,9 +1719,14 @@ fn handle_interactive_repository_event(
                     if changed {
                         *state.focus_started_datetime = now;
                     }
+                    let committed_snapshot = if changed {
+                        next_snapshot
+                    } else {
+                        old_selection_mode.session_snapshot().cloned()
+                    };
                     state
                         .focus_selection_mode
-                        .set_session_snapshot(next_snapshot);
+                        .set_session_snapshot(committed_snapshot);
                     InteractiveRepositoryEventOutcome::Continue
                 }
                 Err(error) => {
@@ -1835,10 +1850,18 @@ fn handle_interactive_repository_event(
                         RunError::CliRepositoryTransaction(
                             CliRepositoryTransactionError::Save(save_error),
                         ) if save_error.save_failure_disposition()
-                            == Some(crate::application::interface::TaskRepositorySaveFailureDisposition::Retryable) => {
-                            InteractiveRepositoryEventOutcome::Retry(
-                                CliRepositoryTransactionError::Save(save_error),
-                            )
+                            == Some(TaskRepositorySaveFailureDisposition::Retryable) =>
+                        {
+                            match task_repository.load() {
+                                Ok(()) => InteractiveRepositoryEventOutcome::Retry(
+                                    CliRepositoryTransactionError::Save(save_error),
+                                ),
+                                Err(load_error) => InteractiveRepositoryEventOutcome::Fatal(
+                                    RunError::CliRepositoryTransaction(
+                                        CliRepositoryTransactionError::Load(load_error),
+                                    ),
+                                ),
+                            }
                         }
                         RunError::CliRepositoryTransaction(
                             CliRepositoryTransactionError::Save(save_error),
