@@ -1,3 +1,20 @@
+fn storage_data_files(path: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = std::fs::read_dir(path)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
+        .filter(|entry| !matches!(entry.file_name().to_str(), Some(".revision" | ".lock")))
+        .map(|entry| {
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                std::fs::read(entry.path()).unwrap(),
+            )
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
 #[test]
 fn high_and_low_selection_modes_record_cli_auto_switch() {
     for command in ["高", "低 3"] {
@@ -318,4 +335,168 @@ fn refresh_focus_change_cancels_pending_exit_and_next_exit_uses_new_payload() {
     assert_eq!(event.task_id(), next_id);
     assert_eq!(event.task_name_at_start(), "next focus");
     assert_eq!(event.reason(), DiscardedSessionReason::CliNormalExit);
+}
+
+#[test]
+fn interactive_backup_retry_does_not_create_destination_before_journal_commit() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let started_at = now - Duration::minutes(10);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let _revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &root, now);
+    old.set_orig_status(Status::Done).unwrap();
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-backup-retry-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+    let command = format!("backup {}", snapshot.display());
+
+    let first = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+    assert!(matches!(first, InteractiveRepositoryEventOutcome::Retry(_)));
+    assert!(!snapshot.exists());
+    assert!(!String::from_utf8_lossy(&stdout.buffer).contains("backup: OK"));
+    assert_eq!(focus, Some(old_id));
+    assert_eq!(focus_started, started_at);
+    assert!(repository.discarded_sessions.is_empty());
+
+    let second = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+    assert!(matches!(
+        second,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::Backup, _)
+    ));
+    assert!(snapshot.is_dir());
+    assert!(String::from_utf8_lossy(&stdout.buffer).contains("backup: OK"));
+    assert_eq!(focus, Some(next_id));
+    assert_eq!(repository.discarded_sessions.len(), 1);
+    std::fs::remove_dir_all(snapshot).unwrap();
+}
+
+#[test]
+fn interactive_restore_current_retry_cleans_failed_pre_backup_and_preserves_state() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let started_at = now - Duration::minutes(10);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let _revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &root, now);
+    let snapshot = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-restore-source-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    crate::adapter::gateway::storage_snapshot::create_snapshot(&storage_dir.path, &snapshot)
+        .unwrap();
+    let task_files_before = storage_data_files(&storage_dir.path);
+    let pre_backup = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-restore-pre-backup-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    old.set_orig_status(Status::Done).unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+    let command = format!(
+        "restore current {} {} REPLACE_CURRENT_STORAGE",
+        snapshot.display(),
+        pre_backup.display()
+    );
+
+    let first = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+    assert!(matches!(first, InteractiveRepositoryEventOutcome::Retry(_)));
+    assert!(!pre_backup.exists());
+    assert!(!String::from_utf8_lossy(&stdout.buffer).contains("restore current: OK"));
+    assert_eq!(focus, Some(old_id));
+    assert_eq!(focus_started, started_at);
+    assert!(repository.discarded_sessions.is_empty());
+    assert_eq!(storage_data_files(&storage_dir.path), task_files_before);
+    assert!(storage_dir.path.join(".revision").is_file());
+    assert_eq!(old.get_orig_status().unwrap(), Status::Done);
+
+    let second = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        &command,
+        now,
+    );
+    assert!(matches!(
+        second,
+        InteractiveRepositoryEventOutcome::CommandExecuted(CommandKind::RestoreCurrent, _)
+    ));
+    assert!(pre_backup.is_dir());
+    assert!(String::from_utf8_lossy(&stdout.buffer).contains("restore current: OK"));
+    assert_eq!(focus, Some(next_id));
+    assert_eq!(repository.discarded_sessions.len(), 1);
+
+    std::fs::remove_dir_all(snapshot).unwrap();
+    std::fs::remove_dir_all(pre_backup).unwrap();
 }

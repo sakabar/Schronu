@@ -7364,7 +7364,7 @@ fn restore_currentのjournal保存失敗時はpre_backupからstorage全体を�
     .unwrap();
 
     assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "before restore");
-    std::fs::remove_dir_all(pre_backup).unwrap();
+    assert!(!pre_backup.exists());
 }
 
 #[test]

@@ -218,6 +218,13 @@ pub(super) fn execute_interactive(
                 ));
             }
         };
+        if let Err(error) = record_maintenance_auto_switch(task_repository, state, operation_now) {
+            return Some(maintenance_outcome(
+                Err(error),
+                CommandKind::Backup,
+                operation_now,
+            ));
+        }
         return Some(
             match execute_backup_command_with_lock(
                 stdout,
@@ -226,8 +233,7 @@ pub(super) fn execute_interactive(
                 &storage_directory,
                 &storage_lock,
             ) {
-                Ok(()) => maintenance_outcome(
-                    record_maintenance_auto_switch(task_repository, state, operation_now),
+                Ok(()) => InteractiveRepositoryEventOutcome::CommandExecuted(
                     CommandKind::Backup,
                     operation_now,
                 ),
@@ -262,8 +268,11 @@ pub(super) fn rollback_restore_current(
         .load()
         .map_err(CliRepositoryTransactionError::Load)
         .map_err(RunError::CliRepositoryTransaction)?;
-    if rollback_backup_directory.is_dir() {
-        std::fs::remove_dir_all(&rollback_backup_directory)
+    for cleanup_directory in [&rollback_backup_directory, pre_backup_directory] {
+        if !cleanup_directory.is_dir() {
+            continue;
+        }
+        std::fs::remove_dir_all(cleanup_directory)
             .map_err(|error| {
                 crate::application::interface::TaskRepositoryError::new(
                     crate::application::interface::TaskRepositoryOperation::Load,
