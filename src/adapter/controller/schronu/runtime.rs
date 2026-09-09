@@ -963,6 +963,21 @@ fn run_cli_repository_read_transaction<T>(
     operation(task_repository).map_err(RunError::Command)
 }
 
+fn rollback_cli_repository_after_retryable_save(
+    task_repository: &mut dyn CliRepositoryTrait,
+) -> Result<(), CliRepositoryTransactionError> {
+    let storage_directory = task_repository.get_project_storage_dir_name().to_string();
+    let _storage_lock = StorageLock::acquire_with_timeout(
+        storage_directory.as_ref(),
+        LockMode::Cli,
+        CLI_LOCK_TIMEOUT,
+    )
+    .map_err(CliRepositoryTransactionError::Lock)?;
+    task_repository
+        .load()
+        .map_err(CliRepositoryTransactionError::Load)
+}
+
 fn reconcile_focus_after_reload(
     task_repository: &mut dyn TaskRepositoryTrait,
     focused_task_id_opt: &mut Option<Uuid>,
@@ -1852,14 +1867,12 @@ fn handle_interactive_repository_event(
                         ) if save_error.save_failure_disposition()
                             == Some(TaskRepositorySaveFailureDisposition::Retryable) =>
                         {
-                            match task_repository.load() {
+                            match rollback_cli_repository_after_retryable_save(task_repository) {
                                 Ok(()) => InteractiveRepositoryEventOutcome::Retry(
                                     CliRepositoryTransactionError::Save(save_error),
                                 ),
-                                Err(load_error) => InteractiveRepositoryEventOutcome::Fatal(
-                                    RunError::CliRepositoryTransaction(
-                                        CliRepositoryTransactionError::Load(load_error),
-                                    ),
+                                Err(rollback_error) => InteractiveRepositoryEventOutcome::Fatal(
+                                    RunError::CliRepositoryTransaction(rollback_error),
                                 ),
                             }
                         }

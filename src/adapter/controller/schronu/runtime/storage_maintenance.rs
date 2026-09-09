@@ -176,7 +176,17 @@ pub(super) fn execute_interactive(
                 &storage_lock,
             )
             .map_err(RunError::Snapshot)?;
-            record_maintenance_auto_switch(task_repository, state, operation_now)?;
+            if let Err(error) =
+                record_maintenance_auto_switch(task_repository, state, operation_now)
+            {
+                rollback_restore_current(
+                    task_repository,
+                    &storage_directory,
+                    pre_backup_directory,
+                    &storage_lock,
+                )?;
+                return Err(error);
+            }
             render_display_model_with_mode(
                 stdout,
                 &restore_current_display(&storage_directory, &summary),
@@ -229,6 +239,41 @@ pub(super) fn execute_interactive(
         );
     }
     None
+}
+
+pub(super) fn rollback_restore_current(
+    task_repository: &mut dyn CliRepositoryTrait,
+    storage_directory: &Path,
+    pre_backup_directory: &Path,
+    storage_lock: &StorageLock,
+) -> Result<(), RunError> {
+    let rollback_backup_directory = pre_backup_directory.with_file_name(format!(
+        ".schronu-failed-restore-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    restore_current_snapshot(
+        storage_directory,
+        pre_backup_directory,
+        &rollback_backup_directory,
+        storage_lock,
+    )
+    .map_err(RunError::Snapshot)?;
+    task_repository
+        .load()
+        .map_err(CliRepositoryTransactionError::Load)
+        .map_err(RunError::CliRepositoryTransaction)?;
+    if rollback_backup_directory.is_dir() {
+        std::fs::remove_dir_all(&rollback_backup_directory)
+            .map_err(|error| {
+                crate::application::interface::TaskRepositoryError::new(
+                    crate::application::interface::TaskRepositoryOperation::Load,
+                    error,
+                )
+            })
+            .map_err(CliRepositoryTransactionError::Load)
+            .map_err(RunError::CliRepositoryTransaction)?;
+    }
+    Ok(())
 }
 
 fn maintenance_outcome(

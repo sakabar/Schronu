@@ -7334,6 +7334,40 @@ fn maintenance自動切替の保存再試行は失敗eventをmemoryに残さな�
 }
 
 #[test]
+fn restore_currentのjournal保存失敗時はpre_backupからstorage全体を戻す() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let marker_path = storage_dir.path.join("marker.txt");
+    std::fs::write(&marker_path, "before restore").unwrap();
+    let pre_backup = storage_dir.path.parent().unwrap().join(format!(
+        "schronu-pre-backup-{}",
+        Uuid::new_v4().hyphenated()
+    ));
+    crate::adapter::gateway::storage_snapshot::create_snapshot(
+        &storage_dir.path,
+        &pre_backup,
+    )
+    .unwrap();
+    std::fs::write(&marker_path, "restored state").unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("restore rollback").unwrap();
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path);
+    let storage_lock = StorageLock::acquire(&storage_dir.path, LockMode::Cli).unwrap();
+
+    storage_maintenance::rollback_restore_current(
+        &mut repository,
+        &storage_dir.path,
+        &pre_backup,
+        &storage_lock,
+    )
+    .unwrap();
+
+    assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "before restore");
+    std::fs::remove_dir_all(pre_backup).unwrap();
+}
+
+#[test]
 fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_errorを返す() {
     let storage_dir = TestStorageDir::new();
     std::fs::create_dir_all(&storage_dir.path).unwrap();
