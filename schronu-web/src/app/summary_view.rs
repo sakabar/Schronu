@@ -71,6 +71,23 @@ fn reason_label(reason: &str) -> &'static str {
 
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 fn format_local_hh_mm(epoch_ms: i64) -> String {
+    #[cfg(all(feature = "web", target_arch = "wasm32"))]
+    {
+        return format_browser_hh_mm(epoch_ms);
+    }
+
+    #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
+    chrono::DateTime::from_timestamp_millis(epoch_ms)
+        .map(|date| {
+            date.with_timezone(&chrono::Local)
+                .format("%H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|| "--:--".to_owned())
+}
+
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+fn format_browser_hh_mm(epoch_ms: i64) -> String {
     let date = js_sys::Date::new_0();
     date.set_time(epoch_ms as f64);
     if !date.get_time().is_finite() {
