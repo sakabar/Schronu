@@ -243,6 +243,20 @@ fn session_card_renders_time_progress_overrun_and_five_typed_actions() {
             "{html}"
         );
     }
+    let mut action_cursor = 0;
+    for label in [
+        "計測を破棄して解除",
+        "記録して解除",
+        "計測を破棄して再開",
+        "計測を破棄して完了",
+        "記録して完了",
+    ] {
+        let aria_label = format!("aria-label=\"コピーをせん: {label}\"");
+        let offset = html[action_cursor..]
+            .find(&aria_label)
+            .unwrap_or_else(|| panic!("{label} must follow the previous action: {html}"));
+        action_cursor += offset + aria_label.len();
+    }
     assert!(events.is_empty());
 }
 
@@ -688,9 +702,9 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
     let (action_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
     assert_eq!(action_ids.len(), 5);
     for (element_id, expected) in action_ids.into_iter().rev().zip([
-        Some("task-a:RestartWithoutRecording"),
         Some("task-a:Discard"),
         Some("task-a:Record"),
+        Some("task-a:RestartWithoutRecording"),
         None,
         Some("task-a:Complete"),
     ]) {
@@ -702,16 +716,16 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
     assert_eq!(
         *events.lock().unwrap(),
         [
-            "task-a:RestartWithoutRecording",
             "task-a:Discard",
             "task-a:Record",
+            "task-a:RestartWithoutRecording",
             "task-a:Complete"
         ]
     );
 
     events.lock().unwrap().clear();
     let (other_dom, other_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
-    dispatch_click(&other_dom, *other_ids.last().unwrap());
+    dispatch_click(&other_dom, other_ids[2]);
     assert_eq!(*events.lock().unwrap(), ["task-b:RestartWithoutRecording"]);
 }
 

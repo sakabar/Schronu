@@ -247,15 +247,6 @@ fn SessionCard(
             } else {
                 div { class: "session-actions",
                     SessionActionButton {
-                        class: "session-action-restart",
-                        label: "計測を破棄して再開",
-                        task_name: session.task_name.clone(),
-                        task_id: session.task_id.clone(),
-                        kind: SessionActionKind::RestartWithoutRecording,
-                        disabled: restart_disabled,
-                        on_action,
-                    }
-                    SessionActionButton {
                         class: "session-action-discard",
                         label: "計測を破棄して解除",
                         task_name: session.task_name.clone(),
@@ -271,6 +262,15 @@ fn SessionCard(
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Record,
                         disabled: mutation_disabled,
+                        on_action,
+                    }
+                    SessionActionButton {
+                        class: "session-action-restart",
+                        label: "計測を破棄して再開",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::RestartWithoutRecording,
+                        disabled: restart_disabled,
                         on_action,
                     }
                     SessionDiscardCompletionButton {

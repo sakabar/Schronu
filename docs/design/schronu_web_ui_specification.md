@@ -496,8 +496,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 - 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonを表示する。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して再開」「計測を破棄して解除」「記録して解除」「計測を破棄して完了」「記録して完了」の5操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
-- 操作buttonは意味別classを持つ。「計測を破棄して再開」と「計測を破棄して解除」は灰、「記録して解除」は青、「計測を破棄して完了」は赤、「記録して完了」は緑とする。通常幅では「計測を破棄して再開」を全幅の最上段、解除系2つと完了系2つをそれぞれ同じ段に配置し、34rem以下では先頭の再開buttonから1列にする。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して再開」「計測を破棄して完了」「記録して完了」の順の5操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
+- 操作buttonは意味別classを持つ。「計測を破棄して再開」と「計測を破棄して解除」は灰、「記録して解除」は青、「計測を破棄して完了」は赤、「記録して完了」は緑とする。通常幅では解除系2buttonを1段目、「計測を破棄して再開」を全幅の2段目、完了系2buttonを3段目に配置し、34rem以下では同じ順序の1列にする。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
 - 「記録して解除」と2種類の完了確定ではclick時刻を`ended_at_epoch_ms`として送信し、応答待ち中は対象cardの進捗、bar、残り・超過時間をその時刻で停止する。「計測を破棄して完了」の確認表示だけでは停止しない。
@@ -711,7 +711,7 @@ OperationHistoryEntry {
 - 320px以上で高さ36pxの日付入力・表示button、検索欄、36px四方のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
 - 46rem以下で日付button、検索欄、clear button、各section間隔が圧縮され、日付buttonの横スクロールが維持されることを確認する。34rem以下ではbufferも圧縮されることを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
-- 5操作buttonのlabel、ARIA名、意味別class、通常幅の再開button全幅最上段と既存4buttonの2列配置、狭幅の1列配置を確認する。
+- 5操作buttonのlabel、ARIA名、意味別class、通常幅の解除系2button、再開button全幅、完了系2buttonの3段配置と、狭幅で同じ順序の1列配置を確認する。
 - 「計測を破棄して再開」で開始時刻だけがclick時刻へ更新され、他のsnapshot、session数・順序、tab、一覧、発火履歴を維持することを確認する。保存失敗と安全停止中の拒否、背景更新中の成功も確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 完了実績競合では通常の5操作をaccessibility付き確認groupへ置換し、記録方針ごとの正確な文言、`HH:MM:SS`、計測再開と再完了のtyped callbackを確認する。
