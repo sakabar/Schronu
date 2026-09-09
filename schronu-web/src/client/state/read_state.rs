@@ -10,6 +10,7 @@ pub(super) struct ReadState {
     pub(super) selected_logical_date: Option<String>,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
     pub(super) has_list: bool,
+    pub(super) listed_logical_date: Option<String>,
     pub(super) auto_session_empty: bool,
     pub(super) auto_session_in_flight: bool,
     pub(super) next_request_id: u64,
@@ -28,6 +29,7 @@ impl ReadState {
             selected_logical_date: None,
             scheduled_rows: Vec::new(),
             has_list: false,
+            listed_logical_date: None,
             auto_session_empty: false,
             auto_session_in_flight: false,
             next_request_id: 1,
@@ -196,6 +198,7 @@ impl ClientState {
                     || (snapshot_result.is_none() && same_logical_date)
                 {
                     self.read.selected_logical_date = Some(requested_date.to_owned());
+                    self.read.listed_logical_date = Some(requested_date.to_owned());
                     self.read.scheduled_rows = success.data;
                     self.read.has_list = true;
                 }
@@ -245,6 +248,7 @@ impl ClientState {
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
             self.read.has_list = false;
+            self.read.listed_logical_date = None;
         }
         Some(changed)
     }

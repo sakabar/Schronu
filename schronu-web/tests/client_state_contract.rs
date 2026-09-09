@@ -46,6 +46,7 @@ fn 破棄解除のtransport不確実後は確認と再送で同じevent_idを使
         panic!()
     };
     let event_id = request.event_id;
+    let ended_at_epoch_ms = request.ended_at_epoch_ms;
     state.apply_discard_result(
         &storage,
         request_id,
@@ -56,12 +57,113 @@ fn 破棄解除のtransport不確実後は確認と再送で同じevent_idを使
         state.confirm_repository_checked(&storage),
         ClientEffect::None
     );
+    state.tick(121_000);
     let ClientEffect::DiscardSession { request, .. } =
         state.begin_discard_session(&storage, TASK_ID)
     else {
         panic!()
     };
     assert_eq!(request.event_id, event_id);
+    assert_eq!(request.ended_at_epoch_ms, ended_at_epoch_ms);
+}
+
+#[test]
+fn 破棄解除のtransport不確実はreload後も同じpayloadで再送する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    state.add_session_from_row(&storage, &row(TASK_ID, 300));
+    state.tick(61_000);
+    let ClientEffect::DiscardSession {
+        request_id,
+        request: first,
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    state.apply_discard_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+
+    let mut restored = load_client_state(&storage, 121_000).unwrap();
+    restored.confirm_repository_checked(&storage);
+    let ClientEffect::DiscardSession {
+        request: retried, ..
+    } = restored.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+
+    assert_eq!(retried, first);
+}
+
+#[test]
+fn repository確認はcommit済みsessionを除去して未確定discard_markerだけを保持する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
+    state.tick(61_000);
+    let ClientEffect::DiscardSession {
+        request_id: committed_id,
+        ..
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    let ClientEffect::DiscardSession {
+        request_id: uncertain_id,
+        request: uncertain_request,
+    } = state.begin_discard_session(&storage, OTHER_TASK_ID)
+    else {
+        panic!()
+    };
+    storage.fail_work_session_writes.set(true);
+    state.apply_discard_result(&storage, committed_id, Ok(snapshot("2026-09-05", 61_000)));
+    storage.fail_work_session_writes.set(false);
+    state.apply_discard_result(
+        &storage,
+        uncertain_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+
+    let mut restored = load_client_state(&storage, 121_000).unwrap();
+    restored.confirm_repository_checked(&storage);
+    assert_eq!(restored.sessions().len(), 1);
+    assert_eq!(restored.sessions()[0].task_id, OTHER_TASK_ID);
+    let ClientEffect::DiscardSession {
+        request: retried, ..
+    } = restored.begin_discard_session(&storage, OTHER_TASK_ID)
+    else {
+        panic!()
+    };
+    assert_eq!(retried, uncertain_request);
+}
+
+#[test]
+fn task単位の手動確認errorから破棄解除で退出できる() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (record_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+    state.apply_record_result(
+        &storage,
+        record_id,
+        Err(ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::ManualCheck,
+        ))),
+    );
+    assert!(state.is_session_manual_check_blocked(TASK_ID));
+
+    let ClientEffect::DiscardSession { request_id, .. } =
+        state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!("discard must remain available");
+    };
+    state.apply_discard_result(&storage, request_id, Ok(snapshot("2026-09-05", 1_000)));
+
+    assert!(state.sessions().is_empty());
+    assert!(!state.is_session_manual_check_blocked(TASK_ID));
+    assert_eq!(state.display_error(), None);
 }
 
 #[test]
@@ -92,6 +194,46 @@ fn 集計tabは選択日だけをreadして成功結果を保持する() {
         }),
     );
     assert_eq!(state.discarded_sessions().unwrap().total_seconds, 60);
+}
+
+#[test]
+fn 集計で共有日付を変えた後は一覧tabが同じ日を再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1_000)));
+    let (list_id, _) = list_effect(state.request_list("2026-09-05"));
+    state.apply_list_result(
+        list_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2_000),
+            data: vec![row(TASK_ID, 0)],
+        }),
+    );
+    let ClientEffect::ListDiscardedSessions { request_id, .. } =
+        state.request_discarded_sessions("2026-09-06")
+    else {
+        panic!()
+    };
+    state.apply_discarded_sessions_result(
+        request_id,
+        "2026-09-06",
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 3_000),
+            data: DiscardedSessionDay {
+                logical_date: "2026-09-06".to_owned(),
+                total_seconds: 0,
+                task_totals: vec![],
+                events: vec![],
+            },
+        }),
+    );
+
+    let ClientEffect::ListTasks { request, .. } = state.switch_tab(ActiveTab::List) else {
+        panic!("shared logical date needs a fresh list");
+    };
+    assert_eq!(request.logical_date, "2026-09-06");
 }
 
 mod client_state_support;

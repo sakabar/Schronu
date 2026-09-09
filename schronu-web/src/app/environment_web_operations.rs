@@ -318,8 +318,8 @@ fn configuration_error() -> WebError {
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
-        web_error_codes, CompleteSessionRequest, ListTasksRequest, RecordSessionRequest,
-        WebOperations,
+        web_error_codes, CompleteSessionRequest, DiscardSessionRequest,
+        ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use std::fs;
@@ -328,7 +328,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 五操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
+    fn 七操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
         let fixture = Fixture::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -384,7 +384,30 @@ mod tests {
                 .code,
             web_error_codes::INVALID_INPUT
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(
+            operations
+                .discard_session(DiscardSessionRequest {
+                    event_id: "invalid".to_owned(),
+                    task_id: "invalid".to_owned(),
+                    task_name_at_start: "task".to_owned(),
+                    started_at_epoch_ms: now.timestamp_millis(),
+                    ended_at_epoch_ms: now.timestamp_millis() + 1_000,
+                })
+                .unwrap_err()
+                .code,
+            web_error_codes::INVALID_INPUT
+        );
+        let discarded = operations
+            .list_discarded_sessions(ListDiscardedSessionsRequest {
+                logical_date: "2026-09-05".to_owned(),
+            })
+            .unwrap();
+        assert_eq!(
+            discarded.snapshot.observed_at_epoch_ms,
+            now.timestamp_millis()
+        );
+        assert_eq!(discarded.data.total_seconds, 0);
+        assert_eq!(calls.load(Ordering::SeqCst), 7);
     }
 
     #[test]

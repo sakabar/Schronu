@@ -110,6 +110,24 @@ impl DiagnosticsState {
 }
 
 impl ClientState {
+    pub(super) fn clear_task_error_after_discard(&mut self, task_id: &str) {
+        if matches!(
+            &self.diagnostics.display_error,
+            Some(DisplayError::Operation {
+                task_id: Some(error_task_id),
+                ..
+            } | DisplayError::Transport {
+                task_id: Some(error_task_id),
+                ..
+            } | DisplayError::LocalStorage {
+                committed_on_server: false,
+                task_id: Some(error_task_id),
+            }) if error_task_id == task_id
+        ) {
+            self.diagnostics.display_error = None;
+        }
+    }
+
     pub(super) fn clear_superseded_completion_error(&mut self, task_id: &str) {
         if matches!(
             &self.diagnostics.display_error,

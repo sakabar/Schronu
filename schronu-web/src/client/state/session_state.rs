@@ -46,13 +46,14 @@ impl SessionState {
         mutation_safety: MutationSafetyState,
     ) -> Self {
         let committed_blocked_task_ids = mutation_safety.committed_task_ids().clone();
+        let uncertain_stopped_at_epoch_ms = mutation_safety.unresolved_discard_ended_at_epoch_ms();
         Self {
             work_sessions,
             in_flight_task_ids: HashSet::new(),
             manual_check_blocked_task_ids: HashSet::new(),
             committed_blocked_task_ids,
             committed_actual_work_seconds: HashMap::new(),
-            uncertain_stopped_at_epoch_ms: HashMap::new(),
+            uncertain_stopped_at_epoch_ms,
             mutation_globally_blocked: mutation_safety.mutation_blocked(),
             mutation_safety,
             next_mutation_request_id: 1,
@@ -82,42 +83,6 @@ impl ClientState {
         }
         self.add_session(storage, task);
         ClientEffect::None
-    }
-
-    pub fn discard_session<S: KeyValueStorage>(
-        &mut self,
-        storage: &S,
-        task_id: &str,
-    ) -> ClientEffect {
-        if self.sessions.in_flight_task_ids.contains(task_id)
-            || self.sessions.committed_blocked_task_ids.contains(task_id)
-        {
-            return ClientEffect::None;
-        }
-        let candidate: Vec<_> = self
-            .sessions()
-            .iter()
-            .filter(|session| session.task_id != task_id)
-            .cloned()
-            .collect();
-        if candidate.len() == self.sessions().len() {
-            return ClientEffect::None;
-        }
-        let result = self
-            .sessions
-            .work_sessions
-            .replace_sessions(storage, candidate);
-        if result.is_ok() {
-            self.sessions.manual_check_blocked_task_ids.remove(task_id);
-            self.sessions.completion_conflicts.remove(task_id);
-            self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
-        }
-        self.record_local_result(Some(task_id), result.is_ok());
-        if result.is_ok() {
-            self.request_selected_or_current_list()
-        } else {
-            ClientEffect::None
-        }
     }
 
     pub fn begin_discard_session<S: KeyValueStorage>(
@@ -156,8 +121,7 @@ impl ClientState {
         if !self.can_confirm_repository_checked() {
             return ClientEffect::None;
         }
-        let had_committed_sessions = !self.sessions.committed_blocked_task_ids.is_empty();
-        if had_committed_sessions {
+        if !self.sessions.committed_blocked_task_ids.is_empty() {
             let candidate = self
                 .sessions()
                 .iter()
@@ -191,16 +155,22 @@ impl ClientState {
             self.sessions.committed_blocked_task_ids.clear();
             self.sessions.committed_actual_work_seconds.clear();
         }
-        let result = if had_committed_sessions {
-            self.sessions.mutation_safety.disarm(storage)
-        } else {
-            self.sessions
-                .mutation_safety
-                .disarm_preserving_discard_events(storage)
-        };
+        let uncertain_task_ids = self
+            .sessions
+            .uncertain_stopped_at_epoch_ms
+            .keys()
+            .cloned()
+            .collect::<HashSet<_>>();
+        let result = self
+            .sessions
+            .mutation_safety
+            .disarm_retaining_discard_events(storage, &uncertain_task_ids);
         if result.is_ok() {
             self.sessions.mutation_globally_blocked = false;
-            self.sessions.uncertain_stopped_at_epoch_ms.clear();
+            self.sessions.uncertain_stopped_at_epoch_ms = self
+                .sessions
+                .mutation_safety
+                .unresolved_discard_ended_at_epoch_ms();
             if matches!(
                 &self.diagnostics.display_error,
                 Some(DisplayError::Operation {
@@ -254,14 +224,16 @@ impl ClientState {
         task_id: &str,
         kind: MutationKind,
     ) -> ClientEffect {
+        let discard_can_exit_task_scoped_block = kind == MutationKind::Discard;
         if self.sessions.mutation_globally_blocked
             || self.sessions.in_flight_task_ids.contains(task_id)
-            || self
-                .sessions
-                .manual_check_blocked_task_ids
-                .contains(task_id)
+            || (!discard_can_exit_task_scoped_block
+                && (self
+                    .sessions
+                    .manual_check_blocked_task_ids
+                    .contains(task_id)
+                    || self.sessions.completion_conflicts.contains_key(task_id)))
             || self.sessions.committed_blocked_task_ids.contains(task_id)
-            || self.sessions.completion_conflicts.contains_key(task_id)
         {
             return ClientEffect::None;
         }
@@ -280,16 +252,18 @@ impl ClientState {
         let Some(next_request_id) = request_id.checked_add(1) else {
             return ClientEffect::None;
         };
-        let discard_event_id = if matches!(
+        let requested_ended_at_epoch_ms = self.tick_now_epoch_ms;
+        let discard_marker = if matches!(
             kind,
             MutationKind::Discard | MutationKind::CompleteWithoutRecording
         ) {
-            match self
-                .sessions
-                .mutation_safety
-                .arm_discard(storage, task_id, None)
-            {
-                Ok(event_id) => Some(event_id),
+            match self.sessions.mutation_safety.arm_discard(
+                storage,
+                task_id,
+                None,
+                requested_ended_at_epoch_ms,
+            ) {
+                Ok(marker) => Some(marker),
                 Err(_) => {
                     self.record_local_result(Some(task_id), false);
                     return ClientEffect::None;
@@ -306,7 +280,10 @@ impl ClientState {
         };
         self.sessions.next_mutation_request_id = next_request_id;
         self.sessions.in_flight_task_ids.insert(task_id.to_owned());
-        let ended_at_epoch_ms = self.tick_now_epoch_ms;
+        let ended_at_epoch_ms = discard_marker
+            .as_ref()
+            .map_or(requested_ended_at_epoch_ms, |(_, ended_at)| *ended_at);
+        let discard_event_id = discard_marker.map(|(event_id, _)| event_id);
         let effect = match kind {
             MutationKind::Complete | MutationKind::CompleteWithoutRecording => {
                 let request = CompleteSessionRequest {
@@ -409,6 +386,8 @@ impl ClientState {
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
             Ok(snapshot) => {
+                self.sessions.completion_conflicts.remove(&task_id);
+                self.clear_task_error_after_discard(&task_id);
                 let follow_up = self.apply_mutation_snapshot_and_request_list(snapshot);
                 self.finish_committed_mutation(storage, &task_id, pending.invocation, None);
                 self.finish_mutation_safety(storage, false);
@@ -620,7 +599,7 @@ impl ClientState {
         let arm_result = if let Some(event_id) = request.discard_event_id.as_deref() {
             self.sessions
                 .mutation_safety
-                .arm_discard(storage, &request.task_id, Some(event_id))
+                .arm_discard(storage, &request.task_id, Some(event_id), ended_at_epoch_ms)
                 .map(|_| ())
         } else {
             self.sessions.mutation_safety.arm(storage)

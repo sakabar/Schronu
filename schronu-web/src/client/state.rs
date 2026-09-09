@@ -1,4 +1,5 @@
 mod diagnostics;
+mod local_session;
 mod read_state;
 mod session_state;
 
@@ -160,6 +161,7 @@ impl ClientState {
         self.read.snapshot = Some(view_state.snapshot.clone());
         if let Some(list) = &view_state.list {
             self.read.selected_logical_date = Some(list.logical_date.clone());
+            self.read.listed_logical_date = Some(list.logical_date.clone());
             self.read.scheduled_rows = list.rows.clone();
             self.read.has_list = true;
         }
@@ -307,6 +309,18 @@ impl ClientState {
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
         self.active_tab = tab;
+        if tab == ActiveTab::List {
+            let selected = self
+                .selected_logical_date()
+                .or_else(|| {
+                    self.snapshot()
+                        .map(|snapshot| snapshot.logical_date.as_str())
+                })
+                .map(str::to_owned);
+            if selected.as_deref() != self.read.listed_logical_date.as_deref() {
+                return selected.map_or(ClientEffect::None, |date| self.request_list(&date));
+            }
+        }
         if tab == ActiveTab::Summary {
             let logical_date = self
                 .selected_logical_date()

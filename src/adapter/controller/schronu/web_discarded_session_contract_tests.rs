@@ -167,6 +167,81 @@ fn complete_sessionの破棄はtask完了とjournalを同じtransactionへ保存
 }
 
 #[test]
+fn complete_sessionの破棄は同一event再送を二重計上せず成功扱いする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
+    let fixture = Fixture::new(now);
+    let mut service = fixture.service();
+    let request = CompleteSessionRequest {
+        task_id: fixture.task_id.to_string(),
+        started_at_epoch_ms: now.timestamp_millis() - 60_000,
+        ended_at_epoch_ms: Some(now.timestamp_millis()),
+        expected_actual_work_seconds: 120,
+        record_elapsed_seconds: false,
+        discard_event_id: Some(Uuid::from_u128(30).to_string()),
+        task_name_at_start: Some("開始時の名前".to_owned()),
+    };
+
+    service.complete_session_at(now, request.clone()).unwrap();
+    service.complete_session_at(now, request).unwrap();
+
+    let repository = fixture.repository(now);
+    assert_eq!(
+        repository
+            .discarded_sessions_on(NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+            .unwrap()
+            .events()
+            .len(),
+        1
+    );
+    assert_eq!(
+        repository
+            .get_by_id(fixture.task_id)
+            .unwrap()
+            .unwrap()
+            .get_actual_work_seconds()
+            .unwrap(),
+        120
+    );
+}
+
+#[test]
+fn complete_sessionの1秒未満破棄はeventなしでtaskだけを完了する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 1, 0).unwrap();
+    let fixture = Fixture::new(now);
+    fixture
+        .service()
+        .complete_session_at(
+            now,
+            CompleteSessionRequest {
+                task_id: fixture.task_id.to_string(),
+                started_at_epoch_ms: now.timestamp_millis() - 999,
+                ended_at_epoch_ms: Some(now.timestamp_millis()),
+                expected_actual_work_seconds: 120,
+                record_elapsed_seconds: false,
+                discard_event_id: Some(Uuid::from_u128(31).to_string()),
+                task_name_at_start: Some("開始時の名前".to_owned()),
+            },
+        )
+        .unwrap();
+
+    let repository = fixture.repository(now);
+    assert_eq!(
+        repository
+            .get_by_id(fixture.task_id)
+            .unwrap()
+            .unwrap()
+            .get_status()
+            .unwrap(),
+        Status::Done
+    );
+    assert!(repository
+        .discarded_sessions_on(NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+        .unwrap()
+        .events()
+        .is_empty());
+}
+
+#[test]
 fn list_discarded_sessionsはsnapshotと共通集計をwire向けdtoで返す() {
     let now = Local.with_ymd_and_hms(2026, 9, 10, 9, 2, 0).unwrap();
     let fixture = Fixture::new(now);

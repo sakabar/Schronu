@@ -75,7 +75,7 @@ pub async fn discard_session(
 ) -> Result<WebOperationResult<ServerSnapshot>, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        Ok(extract_worker().await?.discard_session(request).await)
+        Ok(dispatch_discard_session(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -87,10 +87,7 @@ pub async fn list_discarded_sessions(
 ) -> Result<WebOperationResult<WebSuccess<DiscardedSessionDay>>, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        Ok(extract_worker()
-            .await?
-            .list_discarded_sessions(request)
-            .await)
+        Ok(dispatch_list_discarded_sessions(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -141,14 +138,32 @@ async fn dispatch_complete_session(
     worker.complete_session(request).await
 }
 
+#[cfg(feature = "server")]
+async fn dispatch_discard_session(
+    worker: WebWorkerHandle,
+    request: DiscardSessionRequest,
+) -> WebOperationResult<ServerSnapshot> {
+    worker.discard_session(request).await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_list_discarded_sessions(
+    worker: WebWorkerHandle,
+    request: ListDiscardedSessionsRequest,
+) -> WebOperationResult<WebSuccess<DiscardedSessionDay>> {
+    worker.list_discarded_sessions(request).await
+}
+
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_list_tasks,
+        dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session,
+        dispatch_discard_session, dispatch_list_discarded_sessions, dispatch_list_tasks,
         dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
+        CompleteSessionRequest, CompleteSessionResponse, DiscardSessionRequest,
+        DiscardedSessionDay, ListDiscardedSessionsRequest, ListTasksRequest, RecordSessionRequest,
         RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
         WebOperations, WebSuccess, WebWorkerHandle,
     };
@@ -158,7 +173,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 五endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 七endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
@@ -195,11 +210,30 @@ mod tests {
             let _: WebOperationResult<WebSuccess<RecordSessionResult>> =
                 dispatch_record_session(worker.clone(), request.clone()).await;
             let completed: WebOperationResult<CompleteSessionResponse> =
-                dispatch_complete_session(worker, complete_request).await;
+                dispatch_complete_session(worker.clone(), complete_request).await;
             assert_eq!(completed, Ok(snapshot()));
+            let _: WebOperationResult<ServerSnapshot> = dispatch_discard_session(
+                worker.clone(),
+                DiscardSessionRequest {
+                    event_id: "event".to_owned(),
+                    task_id: "task".to_owned(),
+                    task_name_at_start: "name".to_owned(),
+                    started_at_epoch_ms: 1,
+                    ended_at_epoch_ms: 2,
+                },
+            )
+            .await;
+            let _: WebOperationResult<WebSuccess<DiscardedSessionDay>> =
+                dispatch_list_discarded_sessions(
+                    worker,
+                    ListDiscardedSessionsRequest {
+                        logical_date: "2026-09-05".to_owned(),
+                    },
+                )
+                .await;
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(calls.load(Ordering::SeqCst), 7);
     }
 
     #[test]
@@ -286,6 +320,30 @@ mod tests {
         ) -> Result<CompleteSessionResponse, WebError> {
             self.count();
             Ok(snapshot())
+        }
+
+        fn discard_session(
+            &mut self,
+            _request: DiscardSessionRequest,
+        ) -> Result<ServerSnapshot, WebError> {
+            self.count();
+            Ok(snapshot())
+        }
+
+        fn list_discarded_sessions(
+            &mut self,
+            _request: ListDiscardedSessionsRequest,
+        ) -> Result<WebSuccess<DiscardedSessionDay>, WebError> {
+            self.count();
+            Ok(WebSuccess {
+                snapshot: snapshot(),
+                data: DiscardedSessionDay {
+                    logical_date: "2026-09-05".to_owned(),
+                    total_seconds: 0,
+                    task_totals: Vec::new(),
+                    events: Vec::new(),
+                },
+            })
         }
     }
 
