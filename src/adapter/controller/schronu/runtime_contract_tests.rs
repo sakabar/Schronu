@@ -9195,6 +9195,32 @@ fn 捨commandは指定日のjournalを表示しsaveしない() {
 }
 
 #[test]
+fn 非対話捨commandはbusy_time_slotsが読み込めなくてもread_onlyで成功する() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 10, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("集計対象").unwrap();
+    let revision_observer = seed_clean_task_revision_observer(&storage_dir.path, &task, now);
+    let mut repository = TestTaskRepository::new(task, now)
+        .with_storage_directory(&storage_dir.path)
+        .with_pending_changes(false);
+    let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
+
+    let result = execute_non_interactive_command_at_for_test(
+        &mut repository,
+        &mut free_time_manager,
+        "捨 2026/9/10",
+        now,
+    );
+
+    assert!(result.is_ok());
+    assert_eq!(free_time_manager.loaded_path(), None);
+    assert_eq!(repository.save_attempt_count.get(), 0);
+    assert!(!revision_observer.has_pending_changes().unwrap());
+}
+
+
+#[test]
 fn 捨commandの日付省略は06時境界の現在論理日を表示する() {
     let now = Local.with_ymd_and_hms(2026, 9, 10, 5, 59, 59).unwrap();
     let task = new_test_task_handle("集計task").unwrap();

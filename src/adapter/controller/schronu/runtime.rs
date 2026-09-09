@@ -1130,6 +1130,24 @@ fn execute_non_interactive_command_at(
     ) {
         return result;
     }
+    if parsed_command.is_read_only_repository_command() {
+        let focus_started_datetime = operation_now;
+        let mut stdout = stdout();
+        run_cli_repository_read_transaction(task_repository, operation_now, |repository| {
+            let mut focused_task_id_opt =
+                select_focus_task_id(repository, &FocusSelectionMode::highest_priority())?;
+            execute_parsed(
+                &mut stdout,
+                repository,
+                free_time_manager,
+                &mut focused_task_id_opt,
+                &focus_started_datetime,
+                &parsed_command,
+                OutcomeApplicationMode::Flushed,
+            )
+        })?;
+        return Ok(());
+    }
     free_time_manager.load_busy_time_slots_from_file(
         active_config()
             .busy_time_slots_yaml_path
@@ -1152,11 +1170,7 @@ fn execute_non_interactive_command_at(
             OutcomeApplicationMode::Flushed,
         )
     };
-    if parsed_command.is_read_only_repository_command() {
-        run_cli_repository_read_transaction(task_repository, operation_now, execute)?;
-    } else {
-        run_cli_repository_transaction(task_repository, operation_now, execute)?;
-    }
+    run_cli_repository_transaction(task_repository, operation_now, execute)?;
     Ok(())
 }
 
