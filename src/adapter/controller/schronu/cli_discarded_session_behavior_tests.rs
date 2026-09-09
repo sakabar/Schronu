@@ -161,3 +161,161 @@ fn abnormal_interactive_endings_do_not_create_discard_events() {
         assert!(repository.discarded_sessions.is_empty());
     }
 }
+
+#[test]
+fn refresh_focus_change_cancels_pending_submit_and_next_command_uses_new_payload() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local::now() - Duration::seconds(5);
+    let first_attempt_at = started_at + Duration::seconds(2);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = None;
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+
+    let first = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        "外",
+        first_attempt_at,
+    );
+    assert!(matches!(first, InteractiveRepositoryEventOutcome::Retry(_)));
+    let old_pending = mode.pending_submit().unwrap().clone();
+
+    old.set_orig_status(Status::Done).unwrap();
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let refresh = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        InteractiveRepositoryEvent::Refresh,
+    );
+    assert!(matches!(refresh, InteractiveRepositoryEventOutcome::Continue));
+    assert_eq!(focus, Some(next_id));
+    assert!(mode.pending_submit().is_none());
+
+    repository.highest_priority_leaf_task_id_opt = None;
+    let next_attempt_at = Local::now() + Duration::seconds(2);
+    let second = handle_interactive_submit_at(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        "外",
+        next_attempt_at,
+    );
+    assert!(matches!(second, InteractiveRepositoryEventOutcome::CommandExecuted(..)));
+    let event = repository.discarded_sessions.last().unwrap();
+    assert_ne!(event.event_id(), old_pending.command_event_id);
+    assert_ne!(event.ended_at_epoch_ms(), old_pending.operation_now.timestamp_millis());
+    assert_eq!(event.task_id(), next_id);
+    assert_eq!(event.task_name_at_start(), "next focus");
+    assert_eq!(event.reason(), DiscardedSessionReason::CliUnfocus);
+}
+
+#[test]
+fn refresh_focus_change_cancels_pending_exit_and_next_exit_uses_new_payload() {
+    let storage_dir = TestStorageDir::new();
+    std::fs::create_dir_all(&storage_dir.path).unwrap();
+    let started_at = Local::now() - Duration::seconds(5);
+    let root = new_test_task_handle("root").unwrap();
+    let old = root.create_as_last_child(new_test_task_attr("old focus"));
+    let next = root.create_as_last_child(new_test_task_attr("next focus"));
+    let old_id = old.get_id().unwrap();
+    let next_id = next.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(root, started_at)
+        .with_storage_directory(&storage_dir.path);
+    repository.highest_priority_leaf_task_id_opt = Some(old_id);
+    repository.save_failures_remaining.set(1);
+    repository.save_failure_is_retryable = true;
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut stdout = TestWriter::new();
+    let mut focus = Some(old_id);
+    let mut last_focus = focus;
+    let mut focus_started = started_at;
+    let mut mode = FocusSelectionMode::highest_priority();
+
+    let first = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        InteractiveRepositoryEvent::Exit,
+    );
+    assert!(matches!(first, InteractiveRepositoryEventOutcome::Retry(_)));
+    let old_pending = mode.pending_exit().unwrap().clone();
+
+    old.set_orig_status(Status::Done).unwrap();
+    repository.highest_priority_leaf_task_id_opt = Some(next_id);
+    let refresh = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        InteractiveRepositoryEvent::Refresh,
+    );
+    assert!(matches!(refresh, InteractiveRepositoryEventOutcome::Continue));
+    assert_eq!(focus, Some(next_id));
+    assert!(mode.pending_exit().is_none());
+
+    focus_started = Local::now() - Duration::seconds(2);
+    let second = handle_interactive_repository_event(
+        &mut stdout,
+        &mut repository,
+        &mut free_time_manager,
+        InteractiveRepositoryState {
+            focused_task_id_opt: &mut focus,
+            last_focused_task_id_opt: &mut last_focus,
+            focus_started_datetime: &mut focus_started,
+            focus_selection_mode: &mut mode,
+        },
+        InteractiveRepositoryEvent::Exit,
+    );
+    assert!(matches!(second, InteractiveRepositoryEventOutcome::Exit));
+    let event = repository.discarded_sessions.last().unwrap();
+    assert_ne!(event.event_id(), old_pending.exit_event_id);
+    assert_ne!(event.ended_at_epoch_ms(), old_pending.ended_at.timestamp_millis());
+    assert_eq!(event.task_id(), next_id);
+    assert_eq!(event.task_name_at_start(), "next focus");
+    assert_eq!(event.reason(), DiscardedSessionReason::CliNormalExit);
+}
