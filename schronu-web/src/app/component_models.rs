@@ -14,7 +14,6 @@ pub(crate) struct BrowserPageModel {
     pub rows: Vec<ListRowViewModel>,
     pub active_task_ids: Vec<String>,
     pub dates: Vec<DateButtonViewModel>,
-    pub current_logical_date: Option<String>,
     pub history: Vec<HistoryEntryViewModel>,
     pub warnings: Vec<String>,
     pub safety_warning: Option<&'static str>,
@@ -52,9 +51,6 @@ impl BrowserPageModel {
                     selected: state.selected_logical_date() == Some(date.logical_date.as_str()),
                 })
                 .collect(),
-            current_logical_date: state
-                .snapshot()
-                .map(|snapshot| snapshot.logical_date.clone()),
             history: history_view_models(state),
             warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),

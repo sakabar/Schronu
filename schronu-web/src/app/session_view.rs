@@ -26,6 +26,7 @@ pub fn SessionView(
     global_blocked: bool,
     #[props(default)] mutations_locked: bool,
     #[props(default)] auto_session_in_flight: bool,
+    #[props(default)] server_actions_blocked: bool,
     on_auto_session: EventHandler<()>,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
@@ -35,9 +36,9 @@ pub fn SessionView(
                 button {
                     class: "primary-action",
                     r#type: "button",
-                    disabled: auto_session_in_flight || mutations_locked,
+                    disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
                     onclick: move |_| {
-                        if !auto_session_in_flight && !mutations_locked {
+                        if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
                             on_auto_session.call(());
                         }
                     },
@@ -55,6 +56,7 @@ pub fn SessionView(
                     session,
                     global_blocked,
                     mutations_locked,
+                    server_actions_blocked,
                     on_action,
                 }
             }
@@ -67,6 +69,7 @@ fn SessionCard(
     session: SessionCardViewModel,
     global_blocked: bool,
     mutations_locked: bool,
+    server_actions_blocked: bool,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
     let mut confirming_discard_completion = use_signal(|| false);
@@ -78,8 +81,14 @@ fn SessionCard(
             }
         },
     ));
-    let discard_disabled = session.in_flight || session.server_committed || mutations_locked;
+    let discard_disabled =
+        session.in_flight || session.server_committed || mutations_locked || server_actions_blocked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
+    let resume_disabled = session.in_flight
+        || session.server_committed
+        || mutations_locked
+        || global_blocked
+        || session.manual_check_blocked;
     let completion = session
         .completion_hh_mm
         .clone()
@@ -184,7 +193,7 @@ fn SessionCard(
                             task_name: session.task_name.clone(),
                             task_id: session.task_id.clone(),
                             kind: SessionActionKind::ResumeCompletionConflict,
-                            disabled: mutation_disabled,
+                            disabled: resume_disabled,
                             on_action,
                         }
                         SessionActionButton {

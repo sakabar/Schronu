@@ -60,7 +60,7 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
     let state = orchestrator.state().unwrap();
     assert_eq!(state.active_tab(), ActiveTab::List);
     assert_eq!(state.selected_logical_date(), Some("2026-09-12"));
-    assert_eq!(state.scheduled_rows(), [cached_row.clone()]);
+    assert_eq!(state.scheduled_rows(), std::slice::from_ref(&cached_row));
     assert_eq!(orchestrator.task_name_filter(), "設計");
     assert_eq!(orchestrator.date_input().text(), "2026/9/12");
     assert!(orchestrator.background_refreshing());
@@ -104,6 +104,13 @@ fn local画面変更はview_stateへ保存して次のmountで復元する() {
 
     orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
     orchestrator.edit_date_input(&storage, "9/20".to_owned());
+    assert!(matches!(
+        orchestrator.submit_date_input(&storage),
+        Some(ComponentAction::SelectDate(ref date)) if date == "2026-09-20"
+    ));
+    orchestrator.clear_date_input(&storage);
+    assert_eq!(orchestrator.date_input().text(), "");
+    orchestrator.edit_date_input(&storage, "9/20".to_owned());
     orchestrator.action(
         &storage,
         2_000,
@@ -144,7 +151,8 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     )
     .unwrap();
     let mut orchestrator = ComponentOrchestrator::new();
-    orchestrator.mount(&storage, 1_789_000_100_000);
+    let bootstrap_effect = orchestrator.mount(&storage, 1_789_000_100_000);
+    assert!(orchestrator.effect_is_background(&bootstrap_effect));
 
     let follow_up = orchestrator.apply_response(
         &storage,
@@ -164,6 +172,7 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
             request: ref list_request,
         } if list_request.logical_date == "2026-09-12"
     ));
+    assert!(orchestrator.effect_is_background(&follow_up));
     assert_eq!(orchestrator.state().unwrap().scheduled_rows(), [cached_row]);
     assert!(orchestrator.background_refreshing());
 

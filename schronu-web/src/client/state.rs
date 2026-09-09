@@ -8,6 +8,7 @@ pub use super::effect::ClientEffect;
 pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::{buffer_timing_with_sessions, session_timing};
+use super::view_state::ViewState;
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
@@ -41,6 +42,7 @@ pub struct ClientState {
     diagnostics: DiagnosticsState,
     carry_lock: CarryLockState,
     tick_now_epoch_ms: i64,
+    view_state_warning: Option<String>,
 }
 
 impl ClientState {
@@ -57,6 +59,7 @@ impl ClientState {
             diagnostics: DiagnosticsState::new(),
             carry_lock,
             tick_now_epoch_ms,
+            view_state_warning: None,
         }
     }
 
@@ -77,6 +80,7 @@ impl ClientState {
             .iter()
             .cloned()
             .chain(self.carry_lock.warning().map(str::to_owned))
+            .chain(self.view_state_warning.iter().cloned())
             .collect()
     }
 
@@ -136,6 +140,29 @@ impl ClientState {
 
     pub fn scheduled_rows(&self) -> &[ScheduledTaskRow] {
         &self.read.scheduled_rows
+    }
+
+    pub fn has_scheduled_list(&self) -> bool {
+        self.read.has_list
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn restore_view_state(&mut self, view_state: &ViewState) {
+        self.active_tab = view_state.active_tab;
+        self.read.date_buttons =
+            super::date_buttons::logical_date_buttons(&view_state.snapshot.logical_date)
+                .unwrap_or_default();
+        self.read.snapshot = Some(view_state.snapshot.clone());
+        if let Some(list) = &view_state.list {
+            self.read.selected_logical_date = Some(list.logical_date.clone());
+            self.read.scheduled_rows = list.rows.clone();
+            self.read.has_list = true;
+        }
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn set_view_state_warning(&mut self, warning: Option<String>) {
+        self.view_state_warning = warning;
     }
 
     pub fn display_error(&self) -> Option<&DisplayError> {

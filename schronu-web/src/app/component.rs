@@ -15,14 +15,14 @@ pub fn app() -> Element {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+#[cfg(test)]
 pub(super) enum InitialLoadPhase {
     Loading,
     Error,
     Ready,
 }
 
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+#[cfg(test)]
 pub(super) fn initial_load_phase(
     snapshot_loaded: bool,
     server_effect_in_flight: bool,
@@ -121,6 +121,32 @@ pub(super) fn LoadingOverlay() -> Element {
             div { class: "loading-indicator",
                 span { class: "loading-spinner", aria_hidden: "true" }
                 span { "通信中…" }
+            }
+        }
+    }
+}
+
+#[component]
+pub(super) fn BackgroundRefreshStatus(
+    has_cached_list: bool,
+    failed: bool,
+    #[props(default)] on_retry: EventHandler<()>,
+) -> Element {
+    let message = match (has_cached_list, failed) {
+        (true, false) => "前回の表示です。最新状態を確認中…",
+        (true, true) => "前回の表示です。最新状態を確認できませんでした。",
+        (false, false) => "最新状態を確認中…",
+        (false, true) => "最新状態を確認できませんでした。",
+    };
+    rsx! {
+        section { class: "background-refresh-status", role: if failed { "alert" } else { "status" },
+            span { "{message}" }
+            if failed {
+                button {
+                    r#type: "button",
+                    onclick: move |_| on_retry.call(()),
+                    "再試行"
+                }
             }
         }
     }

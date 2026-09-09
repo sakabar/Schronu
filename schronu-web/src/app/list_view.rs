@@ -20,6 +20,7 @@ pub fn ListView(
     date_input_error: Option<String>,
     filter_text: String,
     #[props(default)] mutations_locked: bool,
+    #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
@@ -41,7 +42,7 @@ pub fn ListView(
         section { class: "task-list-view",
             nav { class: "date-pills", aria_label: "logical date",
                 for date in dates {
-                    DateButton { date, on_select_date }
+                    DateButton { date, disabled: server_actions_blocked, on_select_date }
                 }
             }
             div { class: "list-controls",
@@ -69,7 +70,7 @@ pub fn ListView(
                         button {
                             class: "date-jump-submit",
                             r#type: "submit",
-                            disabled: date_input_text.trim().is_empty(),
+                            disabled: date_input_text.trim().is_empty() || server_actions_blocked,
                             "表示"
                         }
                     }
@@ -134,7 +135,11 @@ pub fn ListView(
 }
 
 #[component]
-fn DateButton(date: DateButtonViewModel, on_select_date: EventHandler<String>) -> Element {
+fn DateButton(
+    date: DateButtonViewModel,
+    disabled: bool,
+    on_select_date: EventHandler<String>,
+) -> Element {
     let class = if date.selected {
         "date-pill is-selected"
     } else {
@@ -145,7 +150,12 @@ fn DateButton(date: DateButtonViewModel, on_select_date: EventHandler<String>) -
             class,
             r#type: "button",
             aria_pressed: date.selected,
-            onclick: move |_| on_select_date.call(date.logical_date.clone()),
+            disabled,
+            onclick: move |_| {
+                if !disabled {
+                    on_select_date.call(date.logical_date.clone());
+                }
+            },
             "{date.label}"
         }
     }

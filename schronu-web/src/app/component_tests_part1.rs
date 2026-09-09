@@ -421,7 +421,7 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     date_input.edit("不正".to_owned());
     assert_eq!(date_input.submit("2026-09-05"), None);
     assert!(date_input.error().is_some());
-    let mut task_name_filter = "実装".to_owned();
+    orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
     let previous_history_len = orchestrator.state().unwrap().history().len();
 
     let effect = orchestrator.start_session_from_list(
@@ -429,7 +429,6 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
         1_000,
         task(RECORD_ID),
         true,
-        &mut task_name_filter,
     );
 
     let state = orchestrator.state().unwrap();
@@ -437,7 +436,7 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.selected_logical_date(), Some("2026-09-16"));
     assert_eq!(state.history().len(), previous_history_len);
-    assert!(task_name_filter.is_empty());
+    assert!(orchestrator.task_name_filter().is_empty());
     assert_eq!(date_input.text(), "不正");
     assert!(date_input.error().is_some());
 }
@@ -452,19 +451,18 @@ fn 製品orchestratorの一覧追加は保存失敗時に検索を保つ() {
         1_000,
         ComponentAction::SwitchTab(ActiveTab::List),
     );
-    let mut task_name_filter = "保存失敗".to_owned();
+    orchestrator.edit_task_name_filter(&storage, "保存失敗".to_owned());
 
     let effect = orchestrator.start_session_from_list(
         &storage,
         1_000,
         task(RECORD_ID),
         true,
-        &mut task_name_filter,
     );
 
     assert_eq!(effect, ClientEffect::None);
     assert!(orchestrator.state().unwrap().sessions().is_empty());
-    assert_eq!(task_name_filter, "保存失敗");
+    assert_eq!(orchestrator.task_name_filter(), "保存失敗");
 }
 
 #[test]
@@ -929,7 +927,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        current_logical_date,
         history,
         warnings,
         safety_warning,
@@ -947,7 +944,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        current_logical_date,
         history,
         warnings,
         safety_warning,
