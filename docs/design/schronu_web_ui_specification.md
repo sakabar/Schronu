@@ -492,7 +492,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 5. viewport下端へ「セッション」「一覧」「発火履歴」「集計」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
 7. 集計tabへの切替は選択日の`list_discarded_sessions`を送る。集計でlogical dateを変更した後に一覧へ戻る場合は、一覧cacheの日付が選択日と異なる時だけ`list_tasks`を送る。それ以外のtab切替はserver操作を行わない。選択中の1画面だけをDOMへ描画し、持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
-8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
+8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧、発火履歴、集計tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 
@@ -500,7 +500,7 @@ reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tas
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
-背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
+背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびserver成功後にlocal sessionを削除して一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。46rem以下の一覧画面では日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -551,10 +551,10 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - server mutationは、response成功後にlocalStorageからsessionを削除する。
 - server errorまたはlocalStorage削除失敗ではsessionを残す。server保存成功後にlocalStorage削除だけが失敗した場合、responseの更新後実績を反映した競合案内を表示し、再送による二重加算を防ぐため対象buttonを無効化し、対象sessionをbuffer計算上の計測中sessionから除外する。
 - component orchestratorはactionまたはresponse適用前後のsession件数を共通判定へ渡す。active tabがセッションで、件数が実際に減少して0件になった場合だけ一覧tabへ切り替える。即時削除、server成功後の削除、repository確認済みの削除を同じ判定へ通し、tab切替自体はeffectを生成しない。
-- serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持し、repository確認完了時に破棄して再開する。
+- serverが未commitと確定できるerrorではpending終了時刻を破棄し、対象sessionの表示と未送信進捗の加算を現在時刻基準で自動再開する。transport切断または`repository_state_uncertain`では終了時刻を保持する。repository確認完了後、記録・通常完了は計測を再開し、破棄系mutationは同じevent UUIDと終了click時刻で再送するため停止表示を維持する。
 - 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
 - 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
-- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中は破棄解除を含むserver mutationの4buttonを無効化する。
+- in-flight中は対象sessionの4buttonを無効化する。他sessionの計測は継続する。global safety block中は4buttonをすべて無効化する。task単位のmanual safety blockでは記録と2種類の完了を無効化するが、sessionから退出する「計測を破棄して解除」は利用可能とする。
 
 ### 7.5 持ち歩きロックbar
 
