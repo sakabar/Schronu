@@ -673,6 +673,9 @@ impl ClientState {
         invocation: ServerActionInvocation,
         error: ServerFailure,
     ) {
+        if !keeps_safety_marker(&error) {
+            self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
+        }
         if matches!(&error, ServerFailure::Transport(_))
             || matches!(
                 &error,
@@ -723,6 +726,7 @@ impl ClientState {
         invocation: ServerActionInvocation,
         actual_work_seconds: Option<i64>,
     ) {
+        self.sessions.uncertain_stopped_at_epoch_ms.remove(task_id);
         self.record_server(invocation, Outcome::Success, "server操作が完了しました。");
         if self
             .sessions

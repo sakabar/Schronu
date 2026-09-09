@@ -199,6 +199,131 @@ fn 記録の不確実markerもreload後は同じrequestだけを再送する() {
 }
 
 #[test]
+fn 不確実requestの再送が未commit確定なら四操作ともtimerと固定markerを解除する() {
+    #[derive(Clone, Copy)]
+    enum Case {
+        Discard,
+        Record,
+        Complete,
+        CompleteWithoutRecording,
+    }
+    fn uncertain() -> ServerFailure {
+        ServerFailure::Transport("lost".to_owned())
+    }
+    fn definitive() -> ServerFailure {
+        ServerFailure::Operation(web_error(
+            web_error_codes::REPOSITORY_SAVE_FAILED,
+            RetryAdvice::Retry,
+        ))
+    }
+
+    for case in [
+        Case::Discard,
+        Case::Record,
+        Case::Complete,
+        Case::CompleteWithoutRecording,
+    ] {
+        let storage = FakeStorage::default();
+        let mut state = state_with_sessions(&storage, &[TASK_ID]);
+        state.tick(61_000);
+        let (request_id, is_discard) = match case {
+            Case::Discard => match state.begin_discard_session(&storage, TASK_ID) {
+                ClientEffect::DiscardSession { request_id, .. } => (request_id, true),
+                other => panic!("unexpected effect: {other:?}"),
+            },
+            Case::Record => (
+                record_effect(state.begin_record_session(&storage, TASK_ID)).0,
+                false,
+            ),
+            Case::Complete => (
+                complete_effect(state.begin_complete_session(&storage, TASK_ID)).0,
+                false,
+            ),
+            Case::CompleteWithoutRecording => (
+                complete_effect(state.begin_complete_session_without_recording(&storage, TASK_ID))
+                    .0,
+                false,
+            ),
+        };
+        if is_discard {
+            state.apply_discard_result(&storage, request_id, Err(uncertain()));
+        } else if matches!(case, Case::Record) {
+            state.apply_record_result(&storage, request_id, Err(uncertain()));
+        } else {
+            state.apply_complete_result(&storage, request_id, Err(uncertain()));
+        }
+        state.confirm_repository_checked(&storage);
+
+        let retry_id = match case {
+            Case::Discard => match state.begin_discard_session(&storage, TASK_ID) {
+                ClientEffect::DiscardSession { request_id, .. } => request_id,
+                other => panic!("unexpected effect: {other:?}"),
+            },
+            Case::Record => record_effect(state.begin_record_session(&storage, TASK_ID)).0,
+            Case::Complete => complete_effect(state.begin_complete_session(&storage, TASK_ID)).0,
+            Case::CompleteWithoutRecording => {
+                complete_effect(state.begin_complete_session_without_recording(&storage, TASK_ID)).0
+            }
+        };
+        if is_discard {
+            state.apply_discard_result(&storage, retry_id, Err(definitive()));
+        } else if matches!(case, Case::Record) {
+            state.apply_record_result(&storage, retry_id, Err(definitive()));
+        } else {
+            state.apply_complete_result(&storage, retry_id, Err(definitive()));
+        }
+        state.tick(121_000);
+
+        assert_eq!(project_session_cards(&state, 0)[0].remaining_seconds, 679);
+        let different_operation = if is_discard {
+            state.begin_complete_session_without_recording(&storage, TASK_ID)
+        } else {
+            state.begin_discard_session(&storage, TASK_ID)
+        };
+        assert_ne!(different_operation, ClientEffect::None);
+    }
+}
+
+#[test]
+fn 不確実requestの再送commit後にlocal削除失敗しても確認時に固定markerを捨てる() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(61_000);
+    let ClientEffect::DiscardSession {
+        request_id,
+        request: first,
+    } = state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    state.apply_discard_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("lost".to_owned())),
+    );
+    state.confirm_repository_checked(&storage);
+    let ClientEffect::DiscardSession { request_id, .. } =
+        state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    storage.fail_work_session_writes.set(true);
+    state.apply_discard_result(&storage, request_id, Ok(snapshot("2026-09-05", 61_000)));
+    storage.fail_work_session_writes.set(false);
+    state.confirm_repository_checked(&storage);
+
+    state.tick(121_000);
+    state.add_session_from_row(&storage, &row(TASK_ID, 300));
+    let ClientEffect::DiscardSession { request: next, .. } =
+        state.begin_discard_session(&storage, TASK_ID)
+    else {
+        panic!()
+    };
+    assert_ne!(next.event_id, first.event_id);
+    assert_eq!(next.ended_at_epoch_ms, 121_000);
+}
+
+#[test]
 fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
     let storage = FakeStorage::default();
     *storage.safety_value.borrow_mut() = Some(format!(

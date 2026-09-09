@@ -85,7 +85,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-ACTION-005**: 「記録して完了」は対象taskのUUIDと終了操作click時刻を指定し、その時刻までの経過秒加算、task完了、終了時刻更新を同じrepository transactionで処理すること。browser時計がserver時計より進んでいる場合、経過秒はclick時刻差を使い、保存する完了時刻はserver操作時刻を上限とすること。
 - **REQ-ACTION-006**: 「計測を破棄して完了」は開始時刻を実績計算に使わず、追加実績秒を0とし、確定click時刻を完了時刻としてtaskを完了すること。既存の実績秒は変更しないこと。browser時計がserver時計より進んでいる場合、保存する完了時刻はserver操作時刻を上限とすること。
 - **REQ-ACTION-007**: 2種類の完了は開始時実績を期待値として検証し、不一致の場合は実績加算、完了、終了時刻更新、反復task生成を一切保存せず、セッションを保持すること。
-- **REQ-ACTION-008**: server処理中は同じセッションの操作buttonを無効化し、二重送信を防ぐこと。終了操作ではclick時刻でcardの進捗、残り・超過時間を停止し、serverが未commitと確定できるerror時は現在時刻基準の計測へ自動復帰すること。transport切断またはrepository状態が不確実な場合は、repository確認完了までclick時刻で停止し続けること。
+- **REQ-ACTION-008**: server処理中は同じセッションの操作buttonを無効化し、二重送信を防ぐこと。終了操作ではclick時刻でcardの進捗、残り・超過時間を停止し、serverが未commitと確定できるerror時は現在時刻基準の計測へ自動復帰すること。transport切断またはrepository状態が不確実な場合は、repository確認後も固定requestの確定応答までclick時刻で停止し続けること。
 - **REQ-ACTION-009**: 未知task、完了済みtask、不正な経過時間、overflow、repository errorではセッションを保持し、errorを表示すること。
 - **REQ-ACTION-010**: 「記録して解除」「計測を破棄して完了」「記録して完了」はserver処理成功後だけ対象セッションを削除すること。
 - **REQ-ACTION-011**: 「計測を破棄して完了」の最初のclickではserver requestを送らず、当該card内に「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示すること。キャンセルは元の4操作へ戻し、確定時だけrequestを1回送ること。
@@ -104,7 +104,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
 - **REQ-BUFFER-006**: 次の明示的server操作のresponseでlogical dateとbuffer snapshotを更新すること。
 - **REQ-BUFFER-007**: 開始時見積内のセッションは、snapshotの前後にかかわらずsnapshot後の壁時計減算を1秒ずつ相殺する進捗秒をbufferへ加算すること。見積到達またはより早い終了click後は対象セッションの加算を止め、ほかに加算対象がなければbufferを実時間と同速で減算すること。ただし、完了実績競合の確認中と再送中はREQ-ACTION-013を優先し、初回click後の壁時計減算も相殺して競合解消まで表示を固定すること。
-- **REQ-BUFFER-008**: 複数セッションの未送信進捗秒は重複を除かずセッションごとに合算すること。2セッションを同時に10分計測した場合は20分を加算すること。server commit済みでlocalStorage削除失敗により残ったセッションは加算対象から除外し、未commitが確定できるerror時は計測を再開し、transport切断またはrepository状態が不確実な場合はrepository確認完了まで終了click時刻で加算を打ち切ること。完了実績競合では通常の未送信進捗に加え、初回clickから競合解消までの壁時計減算を相殺し、click以前に減算済みのbufferを巻き戻さないこと。
+- **REQ-BUFFER-008**: 複数セッションの未送信進捗秒は重複を除かずセッションごとに合算すること。2セッションを同時に10分計測した場合は20分を加算すること。server commit済みでlocalStorage削除失敗により残ったセッションは加算対象から除外し、未commitが確定できるerror時は計測を再開し、transport切断またはrepository状態が不確実な場合はrepository確認後も固定requestの確定応答まで終了click時刻で加算を打ち切ること。完了実績競合では通常の未送信進捗に加え、初回clickから競合解消までの壁時計減算を相殺し、click以前に減算済みのbufferを巻き戻さないこと。
 - **REQ-BUFFER-009**: 「計測を破棄して解除」のlocalStorage削除成功後は、残存セッションの未送信進捗秒だけでbufferを再計算すること。全セッションを破棄した場合はsnapshot後の全経過秒を減算すること。保存失敗時はmemory上のセッションを維持し、buffer表示を変化させないこと。
 - **REQ-BUFFER-010**: 新しいserver responseを受信した場合は、そのbuffer秒と観測時刻を新たな表示計算の基準とし、page内開始とreload復元を区別せず、現在保持する各セッションの開始時刻から観測時刻までの未送信進捗秒も加算すること。一覧の再取得でserver bufferが進んだ観測時刻分減っても、同じ進捗秒を新基準へ加算すること。
 
