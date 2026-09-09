@@ -866,6 +866,57 @@ fn 日付入力は正規化後もtab往復で保持され日付buttonでclearさ
 }
 
 #[component]
+fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let date_events = Rc::clone(&events);
+    rsx! {
+        ListView {
+            dates: vec![DateButtonViewModel {
+                logical_date: "2026-09-17".to_owned(),
+                label: "木".to_owned(),
+                selected: false,
+            }],
+            rows: Vec::new(),
+            active_task_ids: Vec::new(),
+            date_input_text: "9/17".to_owned(),
+            date_input_error: None,
+            filter_text: String::new(),
+            server_actions_blocked: true,
+            on_select_date: move |_| date_events.borrow_mut().push("date".to_owned()),
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| events.borrow_mut().push("submit".to_owned()),
+            on_start_session: move |_| {},
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn background更新中は日付buttonとenter送信をuiで拒否する() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        BackgroundBlockedDateHarness,
+        BackgroundBlockedDateHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_named_event_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+
+    let submit_id = listeners
+        .iter()
+        .find_map(|(name, id)| (name == "submit").then_some(*id))
+        .unwrap();
+    dispatch_platform_event(
+        &dom,
+        "submit",
+        submit_id,
+        Box::new(SerializedFormData::new(String::new(), Vec::new())),
+    );
+    assert!(events.borrow().is_empty());
+}
+
+#[component]
 fn StatefulFilterHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
     let mut show_list = use_signal(|| true);
     let mut filter_text = use_signal(String::new);

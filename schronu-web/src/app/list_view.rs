@@ -51,7 +51,9 @@ pub fn ListView(
                     aria_label: "日付へ移動",
                     onsubmit: move |event| {
                         event.prevent_default();
-                        on_submit_date_input.call(());
+                        if !server_actions_blocked {
+                            on_submit_date_input.call(());
+                        }
                     },
                     div { class: "date-jump-controls",
                         input {
