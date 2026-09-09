@@ -2,6 +2,7 @@ use crate::entity::task::{TaskHandle, TaskTreeError};
 use crate::{
     application::discarded_session_journal::{
         AppendDiscardedSessionOutcome, DiscardedSessionConflictError, DiscardedSessionDaySummary,
+        DiscardedSessionSummaryError,
     },
     entity::discarded_session::DiscardedSessionEvent,
 };
@@ -162,7 +163,10 @@ pub trait DiscardedSessionJournalTrait {
         &mut self,
         event: DiscardedSessionEvent,
     ) -> Result<AppendDiscardedSessionOutcome, DiscardedSessionConflictError>;
-    fn discarded_sessions_on(&self, logical_date: NaiveDate) -> DiscardedSessionDaySummary;
+    fn discarded_sessions_on(
+        &self,
+        logical_date: NaiveDate,
+    ) -> Result<DiscardedSessionDaySummary, DiscardedSessionSummaryError>;
 }
 
 pub trait FreeTimeManagerTrait {

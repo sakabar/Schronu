@@ -81,6 +81,7 @@ fn 月別version付きyamlへ保存して再読込できる() {
     assert_eq!(
         reloaded
             .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 9).unwrap())
+            .unwrap()
             .events(),
         &[event]
     );
@@ -96,6 +97,7 @@ fn directory不存在は空journalとして扱う() {
 
     assert!(repository
         .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+        .unwrap()
         .events()
         .is_empty());
 }
@@ -125,6 +127,7 @@ fn 同じidとpayloadは冪等で異なるpayloadは競合になる() {
     assert_eq!(
         repository
             .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 9).unwrap())
+            .unwrap()
             .events()
             .len(),
         1
@@ -167,6 +170,7 @@ fn journal保存だけでもrevisionを更新しreload_if_changedで反映する
     assert_eq!(
         cached
             .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 9).unwrap())
+            .unwrap()
             .events()
             .len(),
         1
@@ -200,6 +204,7 @@ fn snapshot作成検証復元はjournalを全fileとして保持する() {
     assert_eq!(
         restored_repository
             .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 9).unwrap())
+            .unwrap()
             .events(),
         &[expected]
     );
@@ -283,6 +288,7 @@ fn nestedのvalidとinvalidなjournal候補はruntimeとsnapshotでjournal扱い
         repository.load().unwrap();
         assert!(repository
             .discarded_sessions_on(chrono::NaiveDate::from_ymd_opt(2026, 9, 10).unwrap())
+            .unwrap()
             .events()
             .is_empty());
 

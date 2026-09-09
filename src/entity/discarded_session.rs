@@ -205,6 +205,10 @@ impl DiscardedSessionEvent {
             .timestamp_millis_opt(started_at_epoch_ms)
             .single()
             .ok_or(DiscardedSessionEventError::TimestampOutOfRange)?;
+        Local
+            .timestamp_millis_opt(ended_at_epoch_ms)
+            .single()
+            .ok_or(DiscardedSessionEventError::TimestampOutOfRange)?;
         let logical_date = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
             .logical_date(started_at)
             .ok_or(DiscardedSessionEventError::LogicalDateOutOfRange)?;
@@ -345,5 +349,22 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, DiscardedSessionEventError::ReasonDoesNotMatchSource);
+    }
+
+    #[test]
+    fn 永続化された終了epochがlocal範囲外なら拒否する() {
+        let error = DiscardedSessionEvent::from_persisted(PersistedDiscardedSessionEvent {
+            event_id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            task_name_at_start: "task".to_string(),
+            started_at_epoch_ms: 0,
+            ended_at_epoch_ms: i64::MAX,
+            logical_date: chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
+            source: DiscardedSessionSource::Cli,
+            reason: DiscardedSessionReason::CliNormalExit,
+        })
+        .unwrap_err();
+
+        assert_eq!(error, DiscardedSessionEventError::TimestampOutOfRange);
     }
 }

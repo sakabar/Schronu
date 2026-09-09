@@ -188,7 +188,10 @@ impl DiscardedSessionJournalTrait for TaskRepository {
         Ok(AppendDiscardedSessionOutcome::Appended)
     }
 
-    fn discarded_sessions_on(&self, logical_date: NaiveDate) -> DiscardedSessionDaySummary {
+    fn discarded_sessions_on(
+        &self,
+        logical_date: NaiveDate,
+    ) -> Result<DiscardedSessionDaySummary, DiscardedSessionSummaryError> {
         summarize_discarded_sessions(&self.discarded_sessions, logical_date)
     }
 }

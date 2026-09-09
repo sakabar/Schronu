@@ -37,6 +37,19 @@ impl fmt::Display for DiscardedSessionConflictError {
 
 impl Error for DiscardedSessionConflictError {}
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DiscardedSessionSummaryError {
+    ElapsedSecondsOverflow,
+}
+
+impl fmt::Display for DiscardedSessionSummaryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("discarded session elapsed seconds overflow")
+    }
+}
+
+impl Error for DiscardedSessionSummaryError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscardedSessionTaskTotal {
     task_id: Uuid,
@@ -82,7 +95,7 @@ impl DiscardedSessionDaySummary {
 pub fn summarize_discarded_sessions(
     events: &[DiscardedSessionEvent],
     logical_date: NaiveDate,
-) -> DiscardedSessionDaySummary {
+) -> Result<DiscardedSessionDaySummary, DiscardedSessionSummaryError> {
     let mut events = events
         .iter()
         .filter(|event| event.logical_date() == logical_date)
@@ -99,17 +112,29 @@ pub fn summarize_discarded_sessions(
                 total_seconds: 0,
             });
         total.task_name_at_latest_start = event.task_name_at_start().to_string();
-        total.total_seconds += event.elapsed_seconds();
+        total.total_seconds = total
+            .total_seconds
+            .checked_add(event.elapsed_seconds())
+            .ok_or(DiscardedSessionSummaryError::ElapsedSecondsOverflow)?;
     }
-    DiscardedSessionDaySummary {
+    Ok(DiscardedSessionDaySummary {
         logical_date,
-        total_seconds: events
-            .iter()
-            .map(DiscardedSessionEvent::elapsed_seconds)
-            .sum(),
+        total_seconds: checked_total_seconds(
+            events.iter().map(DiscardedSessionEvent::elapsed_seconds),
+        )?,
         task_totals: totals.into_values().collect(),
         events,
-    }
+    })
+}
+
+fn checked_total_seconds(
+    seconds: impl IntoIterator<Item = i64>,
+) -> Result<i64, DiscardedSessionSummaryError> {
+    seconds.into_iter().try_fold(0_i64, |total, seconds| {
+        total
+            .checked_add(seconds)
+            .ok_or(DiscardedSessionSummaryError::ElapsedSecondsOverflow)
+    })
 }
 
 #[cfg(test)]
@@ -151,7 +176,7 @@ mod tests {
             event(3, 20, "別task", 8, 60),
         ];
 
-        let summary = summarize_discarded_sessions(&events, logical_date);
+        let summary = summarize_discarded_sessions(&events, logical_date).unwrap();
 
         assert_eq!(summary.total_seconds(), 180);
         assert_eq!(summary.task_totals().len(), 2);
@@ -168,5 +193,14 @@ mod tests {
         );
         assert_eq!(summary.events()[0].task_name_at_start(), "新名");
         assert_eq!(summary.events()[2].task_name_at_start(), "旧名");
+    }
+
+    #[test]
+    fn 集計値のi64境界超過はtyped_errorになる() {
+        assert_eq!(checked_total_seconds([i64::MAX, 0]), Ok(i64::MAX));
+        assert_eq!(
+            checked_total_seconds([i64::MAX, 1]),
+            Err(DiscardedSessionSummaryError::ElapsedSecondsOverflow)
+        );
     }
 }

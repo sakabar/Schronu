@@ -6,7 +6,7 @@ use crate::adapter::gateway::storage_transaction::{
 use crate::adapter::gateway::yaml::{task_snapshot_to_yaml, yaml_to_task};
 use crate::application::discarded_session_journal::{
     summarize_discarded_sessions, AppendDiscardedSessionOutcome, DiscardedSessionConflictError,
-    DiscardedSessionDaySummary,
+    DiscardedSessionDaySummary, DiscardedSessionSummaryError,
 };
 use crate::application::interface::{
     DiscardedSessionJournalTrait, ProjectRegistrationError, RepositoryReloadOutcome,
