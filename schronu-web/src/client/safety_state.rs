@@ -1,7 +1,9 @@
 use super::work_sessions::{KeyValueStorage, StorageError};
 use crate::{CompleteSessionRequest, DiscardSessionRequest, RecordSessionRequest};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use uuid::Uuid;
 
 pub const MUTATION_SAFETY_STORAGE_KEY: &str = "schronu_web.mutation_safety.v1";
 const STORAGE_VERSION: u64 = 1;
@@ -51,16 +53,46 @@ impl FixedMutationRequest {
     }
 
     fn is_valid_marker(&self, task_id: &str) -> bool {
-        if self.task_id() != task_id || self.ended_at_epoch_ms().is_none() {
+        if self.task_id() != task_id || Uuid::parse_str(task_id).is_err() {
             return false;
         }
         match self {
-            Self::Complete(request) if !request.record_elapsed_seconds => {
-                request.discard_event_id.is_some() && request.task_name_at_start.is_some()
+            Self::Record(request) => {
+                request.expected_actual_work_seconds >= 0
+                    && valid_interval(request.started_at_epoch_ms, request.ended_at_epoch_ms)
             }
-            _ => true,
+            Self::Complete(request) if !request.record_elapsed_seconds => {
+                request.expected_actual_work_seconds >= 0
+                    && valid_interval(request.started_at_epoch_ms, request.ended_at_epoch_ms)
+                    && request
+                        .discard_event_id
+                        .as_deref()
+                        .is_some_and(|event_id| Uuid::parse_str(event_id).is_ok())
+                    && request
+                        .task_name_at_start
+                        .as_deref()
+                        .is_some_and(|task_name| !task_name.trim().is_empty())
+            }
+            Self::Complete(request) => {
+                request.expected_actual_work_seconds >= 0
+                    && valid_interval(request.started_at_epoch_ms, request.ended_at_epoch_ms)
+            }
+            Self::Discard(request) => {
+                Uuid::parse_str(&request.event_id).is_ok()
+                    && !request.task_name_at_start.trim().is_empty()
+                    && valid_interval(request.started_at_epoch_ms, Some(request.ended_at_epoch_ms))
+            }
         }
     }
+}
+
+fn valid_interval(started_at_epoch_ms: i64, ended_at_epoch_ms: Option<i64>) -> bool {
+    let Some(ended_at_epoch_ms) = ended_at_epoch_ms else {
+        return false;
+    };
+    DateTime::<Utc>::from_timestamp_millis(started_at_epoch_ms).is_some()
+        && DateTime::<Utc>::from_timestamp_millis(ended_at_epoch_ms).is_some()
+        && started_at_epoch_ms <= ended_at_epoch_ms
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

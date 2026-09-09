@@ -339,6 +339,26 @@ fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
 }
 
 #[test]
+fn semanticに不正なfixed_request_markerは全体blockへ倒す() {
+    let invalid_markers = [
+        r#"{"operation":"record","request":{"task_id":"not-a-uuid","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0}}"#.to_owned(),
+        format!(r#"{{"operation":"record","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":-1}}}}"#),
+        format!(r#"{{"operation":"complete","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":2000,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0,"record_elapsed_seconds":false,"discard_event_id":"not-a-uuid","task_name_at_start":"task"}}}}"#),
+        format!(r#"{{"operation":"complete","request":{{"task_id":"{TASK_ID}","started_at_epoch_ms":0,"ended_at_epoch_ms":1000,"expected_actual_work_seconds":0,"record_elapsed_seconds":false,"discard_event_id":"00000000-0000-4000-8000-000000000099","task_name_at_start":"   "}}}}"#),
+        format!(r#"{{"operation":"discard","request":{{"event_id":"00000000-0000-4000-8000-000000000099","task_id":"{TASK_ID}","task_name_at_start":"task","started_at_epoch_ms":0,"ended_at_epoch_ms":9223372036854775807}}}}"#),
+    ];
+
+    for marker in invalid_markers {
+        let storage = FakeStorage::default();
+        *storage.safety_value.borrow_mut() = Some(format!(
+            r#"{{"version":1,"mutation_blocked":false,"fixed_requests":{{"{TASK_ID}":{marker}}}}}"#
+        ));
+        let state = load_client_state(&storage, 121_000).unwrap();
+        assert!(state.mutation_globally_blocked(), "marker: {marker}");
+    }
+}
+
+#[test]
 fn repository確認はcommit済みsessionを除去して未確定discard_markerだけを保持する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID, OTHER_TASK_ID]);
