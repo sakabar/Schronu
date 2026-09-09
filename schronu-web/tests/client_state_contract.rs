@@ -1302,16 +1302,19 @@ fn 完了実績競合の再開は安全marker解除成功後だけsessionを更�
     ));
     let blocked_after_reload = load_client_state(&storage, 20_000).unwrap();
     assert!(blocked_after_reload.mutation_globally_blocked());
-    assert_eq!(
-        blocked_after_reload.sessions()[0].started_at_epoch_ms,
-        13_500
-    );
+    assert_eq!(blocked_after_reload.sessions()[0].started_at_epoch_ms, 0);
     assert_eq!(
         blocked_after_reload.sessions()[0].actual_work_seconds_at_start,
-        250
+        100
     );
 
     storage.fail_safety_writes.set(false);
+    assert_eq!(
+        state.resume_completion_conflict(&storage, TASK_ID),
+        ClientEffect::None
+    );
+    assert_eq!(state.sessions()[0].started_at_epoch_ms, 0);
+    state.confirm_repository_checked(&storage);
     state.resume_completion_conflict(&storage, TASK_ID);
 
     assert_eq!(state.sessions()[0].started_at_epoch_ms, 13_500);
