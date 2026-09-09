@@ -132,10 +132,25 @@ pub fn load_mutation_safety<S: KeyValueStorage>(
         .fixed_requests
         .iter()
         .any(|(task_id, request)| !request.is_valid_marker(task_id));
+    let committed_task_ids = stored
+        .committed_task_ids
+        .iter()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let invalid_committed_task_ids = committed_task_ids.len() != stored.committed_task_ids.len()
+        || committed_task_ids
+            .iter()
+            .any(|task_id| !stored.fixed_requests.contains_key(task_id));
+    let invalid_marker =
+        legacy_discard_marker || invalid_fixed_request || invalid_committed_task_ids;
     Ok(MutationSafetyState {
-        mutation_blocked: stored.mutation_blocked || legacy_discard_marker || invalid_fixed_request,
-        committed_task_ids: stored.committed_task_ids.into_iter().collect(),
-        fixed_requests: if legacy_discard_marker || invalid_fixed_request {
+        mutation_blocked: stored.mutation_blocked || invalid_marker,
+        committed_task_ids: if invalid_marker {
+            HashSet::new()
+        } else {
+            committed_task_ids
+        },
+        fixed_requests: if invalid_marker {
             HashMap::new()
         } else {
             stored.fixed_requests

@@ -326,8 +326,9 @@ fn 不確実requestの再送commit後にlocal削除失敗しても確認時に�
 #[test]
 fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
     let storage = FakeStorage::default();
+    let _ = state_with_sessions(&storage, &[TASK_ID]);
     *storage.safety_value.borrow_mut() = Some(format!(
-        r#"{{"version":1,"mutation_blocked":false,"discard_event_ids":{{"{TASK_ID}":"00000000-0000-4000-8000-000000000099"}},"discard_event_ended_at_epoch_ms":{{"{TASK_ID}":61000}}}}"#
+        r#"{{"version":1,"mutation_blocked":false,"committed_task_ids":["{TASK_ID}"],"discard_event_ids":{{"{TASK_ID}":"00000000-0000-4000-8000-000000000099"}},"discard_event_ended_at_epoch_ms":{{"{TASK_ID}":61000}}}}"#
     ));
     let mut state = load_client_state(&storage, 121_000).unwrap();
 
@@ -336,6 +337,8 @@ fn 旧discard_markerはpayloadを推測せずmanual_blockへ倒す() {
         state.begin_discard_session(&storage, TASK_ID),
         ClientEffect::None
     );
+    state.confirm_repository_checked(&storage);
+    assert_eq!(state.sessions().len(), 1);
 }
 
 #[test]
@@ -350,11 +353,14 @@ fn semanticに不正なfixed_request_markerは全体blockへ倒す() {
 
     for marker in invalid_markers {
         let storage = FakeStorage::default();
+        let _ = state_with_sessions(&storage, &[TASK_ID]);
         *storage.safety_value.borrow_mut() = Some(format!(
-            r#"{{"version":1,"mutation_blocked":false,"fixed_requests":{{"{TASK_ID}":{marker}}}}}"#
+            r#"{{"version":1,"mutation_blocked":false,"committed_task_ids":["{TASK_ID}"],"fixed_requests":{{"{TASK_ID}":{marker}}}}}"#
         ));
-        let state = load_client_state(&storage, 121_000).unwrap();
+        let mut state = load_client_state(&storage, 121_000).unwrap();
         assert!(state.mutation_globally_blocked(), "marker: {marker}");
+        state.confirm_repository_checked(&storage);
+        assert_eq!(state.sessions().len(), 1, "marker: {marker}");
     }
 }
 
