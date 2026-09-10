@@ -430,6 +430,7 @@ conflict_session_credit(session) =
 session_credit = normal_session_credit + sum(conflict_session_credit)
 
 display_buffer = buffer_seconds - snapshot_elapsed + session_credit
+display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 ```
 
 `protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが見積到達以前なら開始から競合解消までを連続して加算し、見積到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。見積到達時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
@@ -441,8 +442,9 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 - 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。2件が10分ずつ同時計測された場合は20分を加算する。
 - 「計測を破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
-- `display_buffer >= 0`: 通常色の`HH:MM:SS`
-- `display_buffer < 0`: 赤色の`-HH:MM:SS`
+- `BASE_SLEEP_MINUTES`はWeb表示component付近へ定義するcompile-time定数とし、420分とする。0分へ変更した場合は従来のbufferと同じ表示値になる。
+- `display_buffer >= 0`: `display_sleep`を通常色の`HH:MM:SS`で表示する。
+- `display_buffer < 0`: `display_sleep`を赤色で表示する。`display_sleep`が負の場合は`-HH:MM:SS`とし、0以上の場合も赤色を維持する。
 - hourは総時間とし、24以上もそのまま表示する。
 
 ### 6.5 logical date buttons
@@ -472,7 +474,7 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 ### 7.1 初期化とtab
 
 1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、最後に表示した1日分の一覧、選択tab、検索文字列、日付入力文字列を保持する。
-2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければBUFFERと一覧だけを未取得として表示する。
+2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
@@ -656,6 +658,7 @@ OperationHistoryEntry {
 - `complete_session`: 記録ありではclickまでの経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0でclick時刻に完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseが`ServerSnapshot`だけで次task情報を含まないこと。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
+- 睡眠時間表示: buffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。

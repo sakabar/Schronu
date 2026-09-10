@@ -58,18 +58,21 @@ fn AppBody() -> Element {
 
 #[component]
 pub(super) fn BufferPanel(value: i128) -> Element {
+    const BASE_SLEEP_MINUTES: i128 = 420;
+
     let class = if value < 0 {
         "buffer-value is-negative"
     } else {
         "buffer-value"
     };
-    let label = format_hh_mm_ss(value);
+    let sleep_seconds = value + BASE_SLEEP_MINUTES * 60;
+    let label = format_hh_mm_ss(sleep_seconds);
     rsx! {
         section {
             id: "schronu-buffer-ready",
             class: "buffer-panel",
-            aria_label: "本日の余白",
-            span { class: "buffer-label", "BUFFER" }
+            aria_label: "睡眠時間",
+            span { class: "buffer-label", "睡眠時間" }
             strong { class, "{label}" }
         }
     }

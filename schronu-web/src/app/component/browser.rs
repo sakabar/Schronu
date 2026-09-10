@@ -111,8 +111,8 @@ pub(super) fn BrowserApp() -> Element {
                 if let Some(buffer) = buffer {
                     BufferPanel { value: buffer }
                 } else {
-                    section { class: "buffer-panel", aria_label: "本日の余白",
-                        span { class: "buffer-label", "BUFFER" }
+                    section { class: "buffer-panel", aria_label: "睡眠時間",
+                        span { class: "buffer-label", "睡眠時間" }
                         strong { "未取得" }
                     }
                 }

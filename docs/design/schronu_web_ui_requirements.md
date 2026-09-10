@@ -26,6 +26,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | `work_sessions` | 内部で複数のセッションを表す名称。 |
 | logical date | 06:00を日付境界とするSchronu上の日付。00:00から05:59までは前日として扱う。 |
 | buffer | 現在logical dateの符号付き残り容量から、同日の予定残作業秒を引いた値。符号付き残り容量は日次終端前には毎週固定の`busy_time_slot`を除いた残り空き秒、日次終端以後には日次終端からserver観測時刻までの壁時計超過秒を負値で表す。 |
+| 睡眠時間 | Web表示用の基準睡眠時間420分へbufferを加えた値。bufferが負なら、加算後の値が0以上でも不足を示す赤色で表示する。 |
 | 開始時実績 | セッションを開始した時点のtaskの実績作業秒。 |
 | 経過秒 | セッション開始時刻から、計測中はbrowser現在時刻、終了処理中は終了操作click時刻までに完了した整数秒。 |
 
@@ -37,7 +38,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-002**: tab切替はclient内だけで処理し、server通信を発生させないこと。tab barは通信中overlayより背面に配置すること。
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。タイトルやtoolbarは表示せず、持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは3画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
-- **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば確定値を`schronu-buffer-ready`へ表示し、なければBUFFERと一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存一覧があればそのlogical dateを`list_tasks`で再取得すること。
+- **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば睡眠時間の確定値を`schronu-buffer-ready`へ表示し、なければ睡眠時間と一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存一覧があればそのlogical dateを`list_tasks`で再取得すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
 - **REQ-COMMON-007**: 34rem以下ではbuffer領域を圧縮すること。46rem以下の一覧画面では日付buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持すること。
 - **REQ-COMMON-008**: 全buttonのhover配色はhover可能なfine pointerでだけ適用し、タッチ操作後に残留させないこと。desktopで選択済み日付buttonへhoverした場合は、緑背景と白文字を維持すること。`:active`と`:focus-visible`の操作feedbackはpointer種別によらず維持すること。
@@ -99,8 +100,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 - **REQ-BUFFER-001**: bufferを`現在logical dateの符号付き残り容量 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。server観測時刻が日次終端より前なら、符号付き残り容量は観測時刻から日次終端までの毎週固定`busy_time_slot`控除後の空き秒とする。日次終端以後なら、符号付き残り容量は`日次終端 - server観測時刻`の0以下の秒数とし、日次終端後の全壁時計超過時間を反映する。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。
 - **REQ-BUFFER-002**: serverからbuffer秒とその観測時刻を取得し、browser側で`server buffer - snapshot後の壁時計経過秒 + 各セッションのserverへ未送信の進捗秒の合計`を1秒ごとに再計算すること。未送信進捗秒は開始時刻から開始時見積到達時刻までとし、終了操作中は終了click時刻がそれより早ければその時刻で打ち切ること。ただし、完了実績競合の確認中と再送中は、見積到達後も競合を解消するまで初回click時点のbuffer表示を維持すること。この規則はbufferの正負とserver観測時刻が日次終端の前後かどうかに依存しない。
-- **REQ-BUFFER-003**: 0以上のbufferを`HH:MM:SS`でカウントダウン表示すること。
-- **REQ-BUFFER-004**: 負のbufferを赤い文字の`-HH:MM:SS`でカウントアップ表示すること。
+- **REQ-BUFFER-003**: clientで算出したbufferへWeb表示用の基準睡眠時間420分を加え、睡眠時間として`HH:MM:SS`で表示すること。基準睡眠時間を0分にすれば従来のbuffer表示と同じ値になり、加算後の値が負なら`-HH:MM:SS`のまま表示すること。
+- **REQ-BUFFER-004**: bufferが負の場合は、加算後の睡眠時間が0以上でも表示を赤い文字にすること。bufferが0以上の場合は通常色にすること。
 - **REQ-BUFFER-005**: logical dateが06:00境界で変化しても、それだけを理由にserverから再取得しないこと。
 - **REQ-BUFFER-006**: 次の明示的server操作のresponseでlogical dateとbuffer snapshotを更新すること。
 - **REQ-BUFFER-007**: 開始時見積内のセッションは、snapshotの前後にかかわらずsnapshot後の壁時計減算を1秒ずつ相殺する進捗秒をbufferへ加算すること。見積到達またはより早い終了click後は対象セッションの加算を止め、ほかに加算対象がなければbufferを実時間と同速で減算すること。ただし、完了実績競合の確認中と再送中はREQ-ACTION-013を優先し、初回click後の壁時計減算も相殺して競合解消まで表示を固定すること。
@@ -189,7 +190,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示は各セッションの未送信進捗秒を個別に加算し、終了操作中の加算は見積到達時刻と終了click時刻の早い方で打ち切る。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。いずれの進捗でもtrack全幅の3分の2に100%境界線を表示する。 |
 | AC-004 | 残り・超過`MM:SS`がtiming領域の主表示となり、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`が補助情報として表示され、320px幅でもcardが横へ超過しない。各値をassistive technologyが識別でき、見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
-| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足し、正負どちらのbufferも符号どおり表示する。 |
+| AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足す。表示はbufferへ基準睡眠時間420分を加え、bufferが負なら睡眠時間が正でも赤色、7時間を超えて不足すれば負の睡眠時間とする。 |
 | AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、計測を破棄して再開、破棄完了の確認とキャンセルではserver requestが増えない。 |
 | AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定、および4種類のセッション終了成功後の一覧再取得だけが仕様どおりのserver requestを発生させる。 |
 | AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
