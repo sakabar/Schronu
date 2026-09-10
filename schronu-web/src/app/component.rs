@@ -65,19 +65,23 @@ pub(super) fn BufferPanel(value: i128) -> Element {
     } else {
         "buffer-value"
     };
-    let panel_label = if value < 0 {
-        "睡眠時間(基準より不足)"
-    } else {
-        "睡眠時間"
-    };
     let sleep_seconds = value + BASE_SLEEP_MINUTES * 60;
     let label = format_hh_mm_ss(sleep_seconds);
+    let panel_label = if value < 0 {
+        let deficit = format_hh_mm_ss(value);
+        format!(
+            "睡眠時間 {label}、基準より{}不足",
+            deficit.trim_start_matches('-')
+        )
+    } else {
+        "睡眠時間".to_owned()
+    };
     rsx! {
         section {
             id: "schronu-buffer-ready",
             class: "buffer-panel",
             aria_label: panel_label,
-            span { class: "buffer-label", "{panel_label}" }
+            span { class: "buffer-label", "睡眠時間" }
             strong { class, "{label}" }
         }
     }

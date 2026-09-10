@@ -362,6 +362,7 @@ fn bufferは基準睡眠時間を加えた睡眠時間としてready_shellへ表
     assert!(ready_html.contains("id=\"schronu-buffer-ready\""), "{ready_html}");
     assert!(ready_html.contains("aria-label=\"睡眠時間\""), "{ready_html}");
     assert!(ready_html.contains(">睡眠時間<"), "{ready_html}");
+    assert!(!ready_html.contains("基準より"), "{ready_html}");
     assert!(ready_html.contains("08:01:01"), "{ready_html}");
     assert!(!ready_html.contains("is-negative"), "{ready_html}");
     assert!(!ready_html.contains("--:--:--"), "{ready_html}");
@@ -392,10 +393,11 @@ fn 負のbufferは睡眠時間が正でも赤色にする() {
     assert!(html.contains("06:59:00"), "{html}");
     assert!(html.contains("buffer-value is-negative"), "{html}");
     assert!(
-        html.contains("aria-label=\"睡眠時間(基準より不足)\""),
+        html.contains("aria-label=\"睡眠時間 06:59:00、基準より00:01:00不足\""),
         "{html}"
     );
-    assert!(html.contains(">睡眠時間(基準より不足)<"), "{html}");
+    assert!(html.contains(">睡眠時間<"), "{html}");
+    assert!(!html.contains(">睡眠時間(基準より不足)<"), "{html}");
 }
 
 #[test]
@@ -406,6 +408,10 @@ fn bufferが基準睡眠時間と同じ負値なら睡眠時間を0にする() {
 
     assert!(html.contains("00:00:00"), "{html}");
     assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間 00:00:00、基準より07:00:00不足\""),
+        "{html}"
+    );
 }
 
 #[test]
@@ -416,6 +422,10 @@ fn bufferが基準睡眠時間を超えて不足したら負の睡眠時間を�
 
     assert!(html.contains("-00:00:01"), "{html}");
     assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間 -00:00:01、基準より07:00:01不足\""),
+        "{html}"
+    );
 }
 
 #[test]
@@ -428,6 +438,7 @@ fn 未取得bufferも睡眠時間labelを表示する() {
     assert!(html.contains(">睡眠時間<"), "{html}");
     assert!(html.contains(">未取得<"), "{html}");
     assert!(!html.contains("BUFFER"), "{html}");
+    assert!(!html.contains("基準より"), "{html}");
 }
 
 fn ready_buffer_during_follow_up_load() -> Element {
