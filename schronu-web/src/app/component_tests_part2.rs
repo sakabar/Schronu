@@ -387,6 +387,11 @@ fn 負のbufferは睡眠時間が正でも赤色にする() {
 
     assert!(html.contains("06:59:00"), "{html}");
     assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間(基準より不足)\""),
+        "{html}"
+    );
+    assert!(html.contains(">睡眠時間(基準より不足)<"), "{html}");
 }
 
 #[test]

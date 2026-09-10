@@ -444,7 +444,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `BASE_SLEEP_MINUTES`はWeb表示component付近へ定義するcompile-time定数とし、420分とする。0分へ変更した場合は従来のbufferと同じ表示値になる。
 - `display_buffer >= 0`: `display_sleep`を通常色の`HH:MM:SS`で表示する。
-- `display_buffer < 0`: `display_sleep`を赤色で表示する。`display_sleep`が負の場合は`-HH:MM:SS`とし、0以上の場合も赤色を維持する。
+- `display_buffer < 0`: `display_sleep`を赤色で表示する。`display_sleep`が負の場合は`-HH:MM:SS`とし、0以上の場合も赤色を維持する。可視ラベルとsectionのARIA labelは「睡眠時間(基準より不足)」として、色以外でも不足を識別可能にする。
 - hourは総時間とし、24以上もそのまま表示する。
 
 ### 6.5 logical date buttons
