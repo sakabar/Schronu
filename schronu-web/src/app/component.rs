@@ -84,6 +84,16 @@ pub(super) fn BufferPanel(value: i128) -> Element {
 }
 
 #[component]
+pub(super) fn UnavailableBufferPanel() -> Element {
+    rsx! {
+        section { class: "buffer-panel", aria_label: "睡眠時間",
+            span { class: "buffer-label", "睡眠時間" }
+            strong { "未取得" }
+        }
+    }
+}
+
+#[component]
 pub(super) fn LoadingOverlay() -> Element {
     rsx! {
         div {

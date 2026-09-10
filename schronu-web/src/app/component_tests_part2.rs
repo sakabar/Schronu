@@ -379,6 +379,10 @@ fn negative_sleep_buffer() -> Element {
     rsx! { BufferPanel { value: -(7 * 60 * 60) - 1 } }
 }
 
+fn unavailable_buffer() -> Element {
+    rsx! { UnavailableBufferPanel {} }
+}
+
 #[test]
 fn 負のbufferは睡眠時間が正でも赤色にする() {
     let mut dom = VirtualDom::new(negative_buffer);
@@ -412,6 +416,18 @@ fn bufferが基準睡眠時間を超えて不足したら負の睡眠時間を�
 
     assert!(html.contains("-00:00:01"), "{html}");
     assert!(html.contains("buffer-value is-negative"), "{html}");
+}
+
+#[test]
+fn 未取得bufferも睡眠時間labelを表示する() {
+    let mut dom = VirtualDom::new(unavailable_buffer);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("aria-label=\"睡眠時間\""), "{html}");
+    assert!(html.contains(">睡眠時間<"), "{html}");
+    assert!(html.contains(">未取得<"), "{html}");
+    assert!(!html.contains("BUFFER"), "{html}");
 }
 
 fn ready_buffer_during_follow_up_load() -> Element {

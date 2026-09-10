@@ -13,7 +13,7 @@ use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
 use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
-    RestoringShell, SessionChrome,
+    RestoringShell, SessionChrome, UnavailableBufferPanel,
 };
 use crate::client::state::{ActiveTab, ClientState};
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -111,10 +111,7 @@ pub(super) fn BrowserApp() -> Element {
                 if let Some(buffer) = buffer {
                     BufferPanel { value: buffer }
                 } else {
-                    section { class: "buffer-panel", aria_label: "睡眠時間",
-                        span { class: "buffer-label", "睡眠時間" }
-                        strong { "未取得" }
-                    }
+                    UnavailableBufferPanel {}
                 }
             }
             NavigationTabs {
