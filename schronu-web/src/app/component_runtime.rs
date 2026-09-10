@@ -14,6 +14,7 @@ pub(crate) enum ComponentAction {
     SelectDate(String),
     AutoSession,
     AddSession { task: SessionTask, is_leaf: bool },
+    RestartSessionWithoutRecording(String),
     DiscardSession(String),
     RecordSession(String),
     CompleteSession(String),
@@ -57,6 +58,9 @@ pub(crate) fn reset_task_name_filter_after_session_add(
 
 pub(crate) fn component_action_from_session_action(action: SessionAction) -> ComponentAction {
     match action.kind {
+        SessionActionKind::RestartWithoutRecording => {
+            ComponentAction::RestartSessionWithoutRecording(action.task_id)
+        }
         SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
         SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
         SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
@@ -76,15 +80,16 @@ pub(crate) fn component_actions_from_session_action(
     action: SessionAction,
     ended_at_epoch_ms: i64,
 ) -> Vec<ComponentAction> {
-    let stops_session = matches!(
+    let uses_click_time = matches!(
         action.kind,
-        SessionActionKind::Record
+        SessionActionKind::RestartWithoutRecording
+            | SessionActionKind::Record
             | SessionActionKind::Complete
             | SessionActionKind::CompleteWithoutRecording
             | SessionActionKind::ResumeCompletionConflict
     );
     let mutation = component_action_from_session_action(action);
-    if stops_session {
+    if uses_click_time {
         vec![
             ComponentAction::Tick {
                 wall_now_epoch_ms: ended_at_epoch_ms,
@@ -432,6 +437,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
             }
             effect
         }
+        ComponentAction::RestartSessionWithoutRecording(task_id) => {
+            state.restart_session_without_recording(storage, &task_id)
+        }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
         ComponentAction::CompleteSession(task_id) => {
@@ -480,6 +488,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
         action,
         ComponentAction::AutoSession
             | ComponentAction::AddSession { .. }
+            | ComponentAction::RestartSessionWithoutRecording(_)
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteSession(_)

@@ -136,6 +136,10 @@ fn 日付入力actionは正規化して選択し日付buttonは入力をclearす
 #[test]
 fn session操作は対応するcomponent_actionへ変換する() {
     for (kind, expected) in [
+        (
+            SessionActionKind::RestartWithoutRecording,
+            "restart_without_recording",
+        ),
         (SessionActionKind::Discard, "discard"),
         (SessionActionKind::Record, "record"),
         (SessionActionKind::Complete, "complete"),
@@ -157,6 +161,9 @@ fn session操作は対応するcomponent_actionへ変換する() {
             kind,
         });
         let actual = match action {
+            ComponentAction::RestartSessionWithoutRecording(task_id) if task_id == "task" => {
+                "restart_without_recording"
+            }
             ComponentAction::DiscardSession(task_id) if task_id == "task" => "discard",
             ComponentAction::RecordSession(task_id) if task_id == "task" => "record",
             ComponentAction::CompleteSession(task_id) if task_id == "task" => "complete",
@@ -176,8 +183,9 @@ fn session操作は対応するcomponent_actionへ変換する() {
 }
 
 #[test]
-fn 三終了操作はbrowser時刻のtick後にdispatchする() {
+fn 計測再開と三終了操作はbrowser時刻のtick後にdispatchする() {
     for kind in [
+        SessionActionKind::RestartWithoutRecording,
         SessionActionKind::Record,
         SessionActionKind::Complete,
         SessionActionKind::CompleteWithoutRecording,
@@ -239,6 +247,7 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
             task: task(RECORD_ID),
             is_leaf: true,
         },
+        ComponentAction::RestartSessionWithoutRecording(RECORD_ID.to_owned()),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::ConfirmRepositoryChecked,
     ] {
@@ -591,6 +600,7 @@ fn 持ち歩きロックはguard対象actionの期限を延長し最初のsessio
             task: task(RECORD_ID),
             is_leaf: true,
         },
+        ComponentAction::RestartSessionWithoutRecording(RECORD_ID.to_owned()),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
@@ -611,6 +621,7 @@ fn 持ち歩きロックはguard対象actionの期限を延長し最初のsessio
             task: task(RECORD_ID),
             is_leaf: true,
         },
+        ComponentAction::RestartSessionWithoutRecording(RECORD_ID.to_owned()),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),

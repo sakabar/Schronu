@@ -79,6 +79,26 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         ClientEffect::None
     );
     assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+    orchestrator.action(
+        &storage,
+        1_001,
+        ComponentAction::Tick {
+            wall_now_epoch_ms: 1_500,
+        },
+    );
+    assert_eq!(
+        orchestrator.action(
+            &storage,
+            1_002,
+            ComponentAction::RestartSessionWithoutRecording(RECORD_ID.to_owned()),
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(
+        orchestrator.state().unwrap().sessions()[0].started_at_epoch_ms,
+        1_500,
+        "local再開は背景更新中も許可する"
+    );
 
     for blocked in [
         ComponentAction::SelectDate("2026-09-13".to_owned()),
