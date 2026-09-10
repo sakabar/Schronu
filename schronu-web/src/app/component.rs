@@ -58,19 +58,41 @@ fn AppBody() -> Element {
 
 #[component]
 pub(super) fn BufferPanel(value: i128) -> Element {
+    const BASE_SLEEP_MINUTES: i128 = 420;
+
     let class = if value < 0 {
         "buffer-value is-negative"
     } else {
         "buffer-value"
     };
-    let label = format_hh_mm_ss(value);
+    let sleep_seconds = value + BASE_SLEEP_MINUTES * 60;
+    let label = format_hh_mm_ss(sleep_seconds);
+    let panel_label = if value < 0 {
+        let deficit = format_hh_mm_ss(value);
+        format!(
+            "睡眠時間 {label}、基準より{}不足",
+            deficit.trim_start_matches('-')
+        )
+    } else {
+        "睡眠時間".to_owned()
+    };
     rsx! {
         section {
             id: "schronu-buffer-ready",
             class: "buffer-panel",
-            aria_label: "本日の余白",
-            span { class: "buffer-label", "BUFFER" }
+            aria_label: panel_label,
+            span { class: "buffer-label", "睡眠時間" }
             strong { class, "{label}" }
+        }
+    }
+}
+
+#[component]
+pub(super) fn UnavailableBufferPanel() -> Element {
+    rsx! {
+        section { class: "buffer-panel", aria_label: "睡眠時間",
+            span { class: "buffer-label", "睡眠時間" }
+            strong { "未取得" }
         }
     }
 }

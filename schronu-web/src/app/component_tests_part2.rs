@@ -354,14 +354,91 @@ fn ready_buffer() -> Element {
 }
 
 #[test]
-fn bufferは確定値だけをready_shellへ表示する() {
+fn bufferは基準睡眠時間を加えた睡眠時間としてready_shellへ表示する() {
     let mut ready_dom = VirtualDom::new(ready_buffer);
     ready_dom.rebuild_in_place();
     let ready_html = dioxus::ssr::render(&ready_dom);
     assert!(ready_html.contains("id=\"schronu-web-ready\""), "{ready_html}");
     assert!(ready_html.contains("id=\"schronu-buffer-ready\""), "{ready_html}");
-    assert!(ready_html.contains("01:01:01"), "{ready_html}");
+    assert!(ready_html.contains("aria-label=\"睡眠時間\""), "{ready_html}");
+    assert!(ready_html.contains(">睡眠時間<"), "{ready_html}");
+    assert!(!ready_html.contains("基準より"), "{ready_html}");
+    assert!(ready_html.contains("08:01:01"), "{ready_html}");
+    assert!(!ready_html.contains("is-negative"), "{ready_html}");
     assert!(!ready_html.contains("--:--:--"), "{ready_html}");
+}
+
+fn negative_buffer() -> Element {
+    rsx! { BufferPanel { value: -60 } }
+}
+
+fn exhausted_sleep_buffer() -> Element {
+    rsx! { BufferPanel { value: -(7 * 60 * 60) } }
+}
+
+fn negative_sleep_buffer() -> Element {
+    rsx! { BufferPanel { value: -(7 * 60 * 60) - 1 } }
+}
+
+fn unavailable_buffer() -> Element {
+    rsx! { UnavailableBufferPanel {} }
+}
+
+#[test]
+fn 負のbufferは睡眠時間が正でも赤色にする() {
+    let mut dom = VirtualDom::new(negative_buffer);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("06:59:00"), "{html}");
+    assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間 06:59:00、基準より00:01:00不足\""),
+        "{html}"
+    );
+    assert!(html.contains(">睡眠時間<"), "{html}");
+    assert!(!html.contains(">睡眠時間(基準より不足)<"), "{html}");
+}
+
+#[test]
+fn bufferが基準睡眠時間と同じ負値なら睡眠時間を0にする() {
+    let mut dom = VirtualDom::new(exhausted_sleep_buffer);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("00:00:00"), "{html}");
+    assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間 00:00:00、基準より07:00:00不足\""),
+        "{html}"
+    );
+}
+
+#[test]
+fn bufferが基準睡眠時間を超えて不足したら負の睡眠時間を表示する() {
+    let mut dom = VirtualDom::new(negative_sleep_buffer);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("-00:00:01"), "{html}");
+    assert!(html.contains("buffer-value is-negative"), "{html}");
+    assert!(
+        html.contains("aria-label=\"睡眠時間 -00:00:01、基準より07:00:01不足\""),
+        "{html}"
+    );
+}
+
+#[test]
+fn 未取得bufferも睡眠時間labelを表示する() {
+    let mut dom = VirtualDom::new(unavailable_buffer);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("aria-label=\"睡眠時間\""), "{html}");
+    assert!(html.contains(">睡眠時間<"), "{html}");
+    assert!(html.contains(">未取得<"), "{html}");
+    assert!(!html.contains("BUFFER"), "{html}");
+    assert!(!html.contains("基準より"), "{html}");
 }
 
 fn ready_buffer_during_follow_up_load() -> Element {
@@ -381,7 +458,7 @@ fn 初回取得後の通常通信中は確定済みbufferを維持する() {
 
     assert!(html.contains("id=\"schronu-web-ready\""), "{html}");
     assert!(html.contains("id=\"schronu-buffer-ready\""), "{html}");
-    assert!(html.contains("00:01:00"), "{html}");
+    assert!(html.contains("07:01:00"), "{html}");
     assert!(html.contains("loading-overlay"), "{html}");
 }
 
