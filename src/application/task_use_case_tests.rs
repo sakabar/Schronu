@@ -820,17 +820,44 @@ fn defer_task_by_policy_通常taskは指定時刻までpendingにする() {
     assert_eq!(task.get_pending_until().unwrap(), pending_until);
 }
 
-#[test]
-fn defer_task_by_policy_ルーチンtaskは通常延期先ではなく次周期へ送る() {
+fn routine_task_for_defer_policy(
+    now: DateTime<Local>,
+    deadline: DateTime<Local>,
+) -> (TaskHandle, TestTaskRepository) {
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
-    let original_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
     let mut child_attr = crate::test_support::new_task_attr("ルーチン延期");
-    child_attr.set_deadline_time_opt(Some(original_deadline));
+    child_attr.set_deadline_time_opt(Some(deadline));
     let child = parent.create_as_last_child(child_attr);
+    let repository = TestTaskRepository::new(vec![parent], now);
+    (child, repository)
+}
+
+#[test]
+fn defer_task_by_policy_未来の〆切を持つルーチンtaskは次の論理日までpendingにする() {
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let (child, mut repository) = routine_task_for_defer_policy(fixed_now(), original_deadline);
     let child_id = child.get_id().unwrap();
-    let original_pending_until = child.get_pending_until().unwrap();
-    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+    let original_start = child.get_start_time().unwrap();
+    let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+
+    defer_task_by_policy(&mut repository, child_id, pending_until).unwrap();
+
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(original_deadline)
+    );
+    assert_eq!(child.get_start_time().unwrap(), original_start);
+    assert_eq!(child.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(child.get_pending_until().unwrap(), pending_until);
+}
+
+#[test]
+fn defer_task_by_policy_現在の論理日が〆切日のルーチンtaskは次周期へ送る() {
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 11, 18, 0, 0).unwrap();
+    let (child, mut repository) = routine_task_for_defer_policy(fixed_now(), original_deadline);
+    let child_id = child.get_id().unwrap();
+    let original_start = child.get_start_time().unwrap();
 
     defer_task_by_policy(
         &mut repository,
@@ -841,10 +868,44 @@ fn defer_task_by_policy_ルーチンtaskは通常延期先ではなく次周期�
 
     assert_eq!(
         child.get_deadline_time_opt().unwrap(),
-        Some(Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap())
+        Some(Local.with_ymd_and_hms(2026, 8, 18, 18, 0, 0).unwrap())
+    );
+    assert_eq!(
+        child.get_start_time().unwrap(),
+        original_start + Duration::days(7)
     );
     assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
-    assert_eq!(child.get_pending_until().unwrap(), original_pending_until);
+}
+
+#[test]
+fn defer_task_by_policy_06時境界で未来日延期から次周期延期へ切り替える() {
+    let deadline = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+    let before_boundary = Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 0).unwrap();
+    let (before_child, mut before_repository) =
+        routine_task_for_defer_policy(before_boundary, deadline);
+    defer_task_by_policy(
+        &mut before_repository,
+        before_child.get_id().unwrap(),
+        deadline,
+    )
+    .unwrap();
+    assert_eq!(
+        before_child.get_deadline_time_opt().unwrap(),
+        Some(deadline)
+    );
+
+    let at_boundary = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+    let (at_child, mut at_repository) = routine_task_for_defer_policy(at_boundary, deadline);
+    defer_task_by_policy(
+        &mut at_repository,
+        at_child.get_id().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        at_child.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 19, 6, 0, 0).unwrap())
+    );
 }
 
 #[test]
