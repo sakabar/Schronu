@@ -1,5 +1,6 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, WebError, WebSuccess,
 };
@@ -36,6 +37,12 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
             "logical_date": "2026-09-05",
             "buffer_seconds": -61
         }),
+    );
+    assert_json_round_trip(
+        &DeferTaskRequest {
+            task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+        },
+        json!({"task_id": "00000000-0000-0000-0000-000000000001"}),
     );
     assert_json_round_trip(
         &ListTasksRequest {

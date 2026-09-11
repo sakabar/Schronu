@@ -33,6 +33,7 @@ fn root(props: RootProps) -> Element {
     let date_input_events = Arc::clone(&props.events);
     let date_submit_events = Arc::clone(&props.events);
     let task_events = Arc::clone(&props.events);
+    let defer_events = Arc::clone(&props.events);
     rsx! {
         ListView {
             dates: props.dates,
@@ -55,6 +56,10 @@ fn root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
+            on_defer_task: move |task_id: String| defer_events
+                .lock()
+                .unwrap()
+                .push(format!("defer:{task_id}")),
             on_filter_change: move |filter: String| props.events
                 .lock()
                 .unwrap()
@@ -103,6 +108,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                     .lock()
                     .unwrap()
                     .push(format!("task:{}:{is_leaf}", task.task_id)),
+                on_defer_task: move |_| {},
                 on_filter_change: move |filter: String| props.events
                     .lock()
                     .unwrap()
@@ -222,6 +228,12 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
         "{html}"
     );
     assert!(html.contains(">セッション</span>"), "{html}");
+    assert!(html.contains("aria-label=\"task leaf: 先送り\""), "{html}");
+    assert!(html.contains("先送り</span>"), "{html}");
+    assert!(
+        html.contains("class=\"task-defer-compact-label\" aria-hidden=\"true\">→</span>"),
+        "{html}"
+    );
     assert!(
         !html.contains("aria-label=\"task late: セッションに追加\""),
         "{html}"

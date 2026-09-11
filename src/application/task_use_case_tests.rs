@@ -808,6 +808,46 @@ fn defer_task_絶対時刻までpendingにする() {
 }
 
 #[test]
+fn defer_task_by_policy_通常taskは指定時刻までpendingにする() {
+    let task = crate::test_support::new_task_handle("通常延期").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+    let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
+
+    defer_task_by_policy(&mut repository, task_id, pending_until).unwrap();
+
+    assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(task.get_pending_until().unwrap(), pending_until);
+}
+
+#[test]
+fn defer_task_by_policy_ルーチンtaskは通常延期先ではなく次周期へ送る() {
+    let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
+    let mut child_attr = crate::test_support::new_task_attr("ルーチン延期");
+    child_attr.set_deadline_time_opt(Some(original_deadline));
+    let child = parent.create_as_last_child(child_attr);
+    let child_id = child.get_id().unwrap();
+    let original_pending_until = child.get_pending_until().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], fixed_now());
+
+    defer_task_by_policy(
+        &mut repository,
+        child_id,
+        Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        child.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap())
+    );
+    assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(child.get_pending_until().unwrap(), original_pending_until);
+}
+
+#[test]
 fn defer_routine_task_親deadlineの有無に応じて次周期へ延期する() {
     let orig_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
     let orig_start = Local.with_ymd_and_hms(2026, 8, 10, 9, 0, 0).unwrap();
