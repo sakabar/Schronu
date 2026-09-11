@@ -68,6 +68,52 @@ fn root(props: RootProps) -> Element {
     }
 }
 
+fn globally_blocked_root(props: RootProps) -> Element {
+    let defer_events = Arc::clone(&props.events);
+    rsx! {
+        ListView {
+            dates: props.dates,
+            rows: props.rows,
+            active_task_ids: props.active_task_ids,
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: props.filter_text,
+            mutation_globally_blocked: true,
+            on_select_date: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_defer_task: move |task_id: String| defer_events
+                .lock()
+                .unwrap()
+                .push(format!("defer:{task_id}")),
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn mutation_safety全体停止は先送りbuttonを無効化する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        globally_blocked_root,
+        RootProps {
+            dates: Vec::new(),
+            rows: vec![row("task-id", false, true)],
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("class=\"session-start\" disabled"), "{html}");
+    assert!(html.contains("先送り\" disabled=true"), "{html}");
+
+    dispatch_click(&dom, listeners[1]);
+    assert!(events.lock().unwrap().is_empty());
+}
+
 #[test]
 fn carry_lockはsession追加と先送りを無効化し日付選択は維持する() {
     let events = Arc::new(Mutex::new(Vec::new()));

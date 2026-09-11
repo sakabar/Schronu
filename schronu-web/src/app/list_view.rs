@@ -20,6 +20,7 @@ pub fn ListView(
     date_input_error: Option<String>,
     filter_text: String,
     #[props(default)] mutations_locked: bool,
+    #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
     on_date_input_change: EventHandler<String>,
@@ -126,6 +127,7 @@ pub fn ListView(
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                     row,
                                     mutations_locked,
+                                    mutation_globally_blocked,
                                     server_actions_blocked,
                                     on_start_session,
                                     on_defer_task,
@@ -171,6 +173,7 @@ fn TaskRow(
     row: ListRowViewModel,
     active: bool,
     mutations_locked: bool,
+    mutation_globally_blocked: bool,
     server_actions_blocked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
     on_defer_task: EventHandler<String>,
@@ -217,9 +220,9 @@ fn TaskRow(
                         class: "task-defer",
                         r#type: "button",
                         aria_label: format!("{}: 先送り", row.task.task_name),
-                        disabled: active || mutations_locked || server_actions_blocked,
+                        disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
                         onclick: move |_| {
-                            if !active && !mutations_locked && !server_actions_blocked {
+                            if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                 on_defer_task.call(defer_task_id.clone());
                             }
                         },

@@ -164,6 +164,7 @@ pub(super) fn BrowserApp() -> Element {
                     date_input_error,
                     filter_text,
                     mutations_locked,
+                    mutation_globally_blocked: global_blocked,
                     server_actions_blocked,
                     on_select_date: move |date| {
                         client.write().clear_date_input(&BrowserLocalStorage);
