@@ -352,6 +352,17 @@ button:disabled {
     display: none;
 }
 
+.task-defer {
+    margin-left: 0.4rem;
+    border-color: var(--line);
+    background: var(--surface-muted);
+    color: var(--ink);
+}
+
+.task-defer-compact-label {
+    display: none;
+}
+
 @media (hover: hover) and (pointer: fine) {
     button:hover:not(:disabled) {
         border-color: var(--green);
@@ -381,6 +392,12 @@ button:disabled {
     .session-start:hover:not(:disabled) {
         border-color: var(--green-dark);
         background: var(--green-dark);
+    }
+
+    .task-defer:hover:not(:disabled) {
+        border-color: var(--muted);
+        background: var(--surface-muted);
+        color: var(--ink);
     }
 }
 
@@ -876,7 +893,7 @@ button:disabled {
     .task-row {
         display: grid;
         width: 100%;
-        grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);
+        grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);
         grid-template-areas: "action schedule deadline task";
     }
 
@@ -968,7 +985,8 @@ button:disabled {
         padding: 0;
     }
 
-    .session-cell .session-start {
+    .session-cell .session-start,
+    .session-cell .task-defer {
         width: 44px;
         min-height: 32px;
         border-width: 0 1px 0 0;
@@ -977,11 +995,23 @@ button:disabled {
         font-size: 1.1rem;
     }
 
+    .session-cell .task-defer {
+        margin-left: 0;
+    }
+
     .session-start-full-label {
         display: none;
     }
 
+    .task-defer-full-label {
+        display: none;
+    }
+
     .session-start-compact-label {
+        display: inline;
+    }
+
+    .task-defer-compact-label {
         display: inline;
     }
 }

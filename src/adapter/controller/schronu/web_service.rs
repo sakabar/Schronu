@@ -12,19 +12,22 @@ pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
 
 use super::web_session_write::{
-    prepare_add_actual_work_input, prepare_complete_task_input, CompleteSessionRequest,
-    RecordSessionRequest, RecordSessionResult,
+    prepare_add_actual_work_input, prepare_complete_task_input, prepare_defer_task_id,
+    CompleteSessionRequest, DeferTaskRequest, RecordSessionRequest, RecordSessionResult,
 };
 use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
+use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::get_schedule;
-use crate::application::task_use_case::{add_actual_work, complete_task, TaskFactory};
+use crate::application::task_use_case::{
+    add_actual_work, complete_task, defer_task_by_policy, TaskFactory,
+};
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
@@ -125,6 +128,27 @@ impl WebService {
                 },
                 true,
             ))
+        })
+    }
+
+    pub fn defer_task_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        request: DeferTaskRequest,
+    ) -> Result<ServerSnapshot, WebReadError> {
+        let task_id = prepare_defer_task_id(request).map_err(WebReadError::InvalidInput)?;
+        let pending_until =
+            try_next_logical_date_start(operation_now).map_err(WebReadError::Application)?;
+        self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
+            defer_task_by_policy(repository, task_id, pending_until)
+                .map_err(WebReadCoreError::Application)?;
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok((snapshot, true))
         })
     }
 

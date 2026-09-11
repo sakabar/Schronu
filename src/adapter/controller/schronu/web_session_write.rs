@@ -14,6 +14,11 @@ pub struct RecordSessionRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferTaskRequest {
+    pub task_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompleteSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
@@ -112,6 +117,12 @@ pub(super) fn prepare_add_actual_work_input(
     })
 }
 
+pub(super) fn prepare_defer_task_id(
+    request: DeferTaskRequest,
+) -> Result<Uuid, WebSessionInputError> {
+    parse_task_id(&request.task_id)
+}
+
 pub(super) fn prepare_complete_task_input(
     request: CompleteSessionRequest,
     operation_now: DateTime<Local>,
@@ -139,17 +150,20 @@ fn validate_task_and_expected_actual_work(
     task_id: &str,
     expected_actual_work_seconds: i64,
 ) -> Result<Uuid, WebSessionInputError> {
-    let task_id =
-        Uuid::parse_str(task_id).map_err(|error| WebSessionInputError::InvalidTaskId {
-            task_id: task_id.to_owned(),
-            reason: error.to_string(),
-        })?;
+    let task_id = parse_task_id(task_id)?;
     if expected_actual_work_seconds < 0 {
         return Err(WebSessionInputError::NegativeExpectedActualWorkSeconds(
             expected_actual_work_seconds,
         ));
     }
     Ok(task_id)
+}
+
+fn parse_task_id(task_id: &str) -> Result<Uuid, WebSessionInputError> {
+    Uuid::parse_str(task_id).map_err(|error| WebSessionInputError::InvalidTaskId {
+        task_id: task_id.to_owned(),
+        reason: error.to_string(),
+    })
 }
 
 fn calculate_elapsed_seconds(

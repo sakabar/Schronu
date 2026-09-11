@@ -1,13 +1,14 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
-    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
-    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
+    DeferTaskRequest as CoreDeferTaskRequest, RecordSessionRequest as CoreRecordSessionRequest,
+    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
+    WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use std::env;
@@ -102,6 +103,14 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .defer_task_at(operation_now, request.into())
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
     fn record_session(
         &mut self,
         request: RecordSessionRequest,
@@ -167,6 +176,14 @@ impl From<RecordSessionRequest> for CoreRecordSessionRequest {
             started_at_epoch_ms: request.started_at_epoch_ms,
             ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
+        }
+    }
+}
+
+impl From<DeferTaskRequest> for CoreDeferTaskRequest {
+    fn from(request: DeferTaskRequest) -> Self {
+        Self {
+            task_id: request.task_id,
         }
     }
 }
@@ -243,8 +260,8 @@ fn configuration_error() -> WebError {
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
-        web_error_codes, CompleteSessionRequest, ListTasksRequest, RecordSessionRequest,
-        WebOperations,
+        web_error_codes, CompleteSessionRequest, DeferTaskRequest, ListTasksRequest,
+        RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use std::fs;
@@ -253,7 +270,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 五操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
+    fn 六操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
         let fixture = Fixture::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -295,6 +312,15 @@ mod tests {
         };
         assert_eq!(
             operations
+                .defer_task(DeferTaskRequest {
+                    task_id: "invalid".to_owned(),
+                })
+                .unwrap_err()
+                .code,
+            web_error_codes::INVALID_INPUT
+        );
+        assert_eq!(
+            operations
                 .record_session(invalid_request.clone())
                 .unwrap_err()
                 .code,
@@ -307,7 +333,7 @@ mod tests {
                 .code,
             web_error_codes::INVALID_INPUT
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
     }
 
     #[test]

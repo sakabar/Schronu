@@ -1,4 +1,6 @@
-use super::{CompleteSessionRequest, RecordSessionRequest, WebReadError, WebService};
+use super::{
+    CompleteSessionRequest, DeferTaskRequest, RecordSessionRequest, WebReadError, WebService,
+};
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
 use crate::adapter::gateway::storage_transaction_test_support::{
@@ -46,6 +48,19 @@ impl WebReadServiceFixture {
 
     fn seed_fixed_task(&self, now: chrono::DateTime<Local>) -> Uuid {
         self.seed_fixed_task_with_actual(now, 5 * 60, false)
+    }
+
+    fn seed_unconstrained_task(&self, now: chrono::DateTime<Local>) -> Uuid {
+        let task_id = Uuid::from_u128(0x2026_0905_0003);
+        let task = TaskHandle::with_identity("defer service task", task_id, now).unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        repository.start_new_project(task).unwrap();
+        repository.save().unwrap();
+        task_id
     }
 
     fn seed_fixed_task_with_actual(
@@ -208,6 +223,62 @@ fn serviceはbusy_time_slot読込失敗を元情報付きtyped_errorで返す() 
         }
         other => panic!("unexpected error: {other:?}"),
     }
+}
+
+#[test]
+fn defer_taskは通常taskを次の論理日開始まで延期して1回保存する() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_unconstrained_task(seeded_at);
+    let revision_before = fs::read(fixture.storage.join(".revision")).unwrap();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service
+        .defer_task_at(
+            operation_now,
+            DeferTaskRequest {
+                task_id: task_id.to_string(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(
+        response.observed_at_epoch_ms,
+        operation_now.timestamp_millis()
+    );
+    assert_ne!(
+        fs::read(fixture.storage.join(".revision")).unwrap(),
+        revision_before
+    );
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let task = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        task.get_pending_until().unwrap(),
+        Local.with_ymd_and_hms(2026, 9, 6, 6, 0, 0).unwrap()
+    );
+}
+
+#[test]
+fn defer_taskは不正uuidを保存前に拒否する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    assert!(matches!(
+        service.defer_task_at(
+            operation_now,
+            DeferTaskRequest {
+                task_id: "not-a-uuid".to_owned(),
+            }
+        ),
+        Err(WebReadError::InvalidInput(_))
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
 }
 
 #[test]

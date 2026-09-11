@@ -1,7 +1,7 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -16,6 +16,7 @@ pub trait WebOperations: 'static {
         request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>;
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
+    fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError>;
     fn record_session(
         &mut self,
         request: RecordSessionRequest,
@@ -41,6 +42,10 @@ enum WebWorkerCommand {
     },
     AutoSession {
         response: oneshot::Sender<Result<WebSuccess<Option<SessionTask>>, WebError>>,
+    },
+    DeferTask {
+        request: DeferTaskRequest,
+        response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
     },
     RecordSession {
         request: RecordSessionRequest,
@@ -94,6 +99,14 @@ impl WebWorkerHandle {
         receiver.await.map_err(|_| unavailable_error())?
     }
 
+    pub async fn defer_task(&self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::DeferTask { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
     pub async fn record_session(
         &self,
         request: RecordSessionRequest,
@@ -128,6 +141,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::AutoSession { response } => {
                 let _ = response.send(operations.auto_session());
+            }
+            WebWorkerCommand::DeferTask { request, response } => {
+                let _ = response.send(operations.defer_task(request));
             }
             WebWorkerCommand::RecordSession { request, response } => {
                 let _ = response.send(operations.record_session(request));

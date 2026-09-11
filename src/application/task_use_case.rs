@@ -339,6 +339,33 @@ pub fn defer_task(
     Ok(())
 }
 
+pub fn defer_task_by_policy(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    normal_pending_until: DateTime<Local>,
+) -> Result<(), ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    let has_deadline = task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .is_some();
+    let has_routine_parent =
+        if let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? {
+            parent
+                .get_repetition_interval_days_opt()
+                .map_err(ApplicationError::TaskTree)?
+                .is_some()
+        } else {
+            false
+        };
+
+    if has_deadline && has_routine_parent {
+        defer_routine_task(repository, task_id)
+    } else {
+        defer_task(repository, task_id, normal_pending_until)
+    }
+}
+
 fn validate_additional_actual_work_seconds(
     additional_actual_work_seconds: i64,
 ) -> Result<(), ApplicationError> {

@@ -103,6 +103,7 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
     for blocked in [
         ComponentAction::SelectDate("2026-09-13".to_owned()),
         ComponentAction::AutoSession,
+        ComponentAction::DeferTask(COMPLETE_ID.to_owned()),
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),

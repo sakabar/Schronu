@@ -8,6 +8,66 @@ mod client_state_support;
 use client_state_support::*;
 
 #[test]
+fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
+    let (list_id, list_request) = list_effect(state.request_list("2026-09-06"));
+    state.apply_list_result(
+        list_id,
+        &list_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2),
+            data: vec![row(TASK_ID, 0)],
+        }),
+    );
+
+    let (request_id, request) = defer_effect(state.request_defer_task(&storage, TASK_ID));
+    assert_eq!(request.task_id, TASK_ID);
+    assert!(load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+
+    let follow_up =
+        state.apply_defer_task_result(&storage, request_id, Ok(snapshot("2026-09-05", 3)));
+    let (_, refresh) = list_effect(follow_up);
+    assert_eq!(refresh.logical_date, "2026-09-06");
+    assert!(!load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+    assert_eq!(
+        state.history().back().unwrap().invocation,
+        ServerActionInvocation::DeferTask(request)
+    );
+}
+
+#[test]
+fn task先送りはsession中の対象とtransport不明後の再送信を拒否する() {
+    let storage = FakeStorage::default();
+    let mut active = state_with_sessions(&storage, &[TASK_ID]);
+    assert_eq!(
+        active.request_defer_task(&storage, TASK_ID),
+        ClientEffect::None
+    );
+
+    let other_storage = FakeStorage::default();
+    let mut state = load_client_state(&other_storage, 0).unwrap();
+    let (request_id, _) = defer_effect(state.request_defer_task(&other_storage, TASK_ID));
+    state.apply_defer_task_result(
+        &other_storage,
+        request_id,
+        Err(ServerFailure::Transport("disconnected".to_owned())),
+    );
+
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.request_defer_task(&other_storage, TASK_ID),
+        ClientEffect::None
+    );
+}
+
+#[test]
 fn server発火履歴は実actionと送信時の全引数を保持する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000).unwrap();

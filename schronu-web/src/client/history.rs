@@ -1,6 +1,6 @@
 use std::{collections::VecDeque, fmt};
 
-use crate::{CompleteSessionRequest, ListTasksRequest, RecordSessionRequest};
+use crate::{CompleteSessionRequest, DeferTaskRequest, ListTasksRequest, RecordSessionRequest};
 
 const MAX_HISTORY_ENTRIES: usize = 100;
 
@@ -10,6 +10,7 @@ pub enum Operation {
     ListTasks,
     AutoSession,
     AddSession,
+    DeferTask,
     DiscardSession,
     RecordSession,
     CompleteSession,
@@ -28,6 +29,7 @@ pub enum ServerActionInvocation {
     Bootstrap,
     ListTasks(ListTasksRequest),
     AutoSession,
+    DeferTask(DeferTaskRequest),
     RecordSession(RecordSessionRequest),
     CompleteSession(CompleteSessionRequest),
 }
@@ -38,6 +40,7 @@ impl ServerActionInvocation {
             Self::Bootstrap => Operation::Bootstrap,
             Self::ListTasks(_) => Operation::ListTasks,
             Self::AutoSession => Operation::AutoSession,
+            Self::DeferTask(_) => Operation::DeferTask,
             Self::RecordSession(_) => Operation::RecordSession,
             Self::CompleteSession(request) if request.record_elapsed_seconds => {
                 Operation::CompleteSession
@@ -50,6 +53,7 @@ impl ServerActionInvocation {
         match self {
             Self::RecordSession(request) => Some(&request.task_id),
             Self::CompleteSession(request) => Some(&request.task_id),
+            Self::DeferTask(request) => Some(&request.task_id),
             Self::Bootstrap | Self::ListTasks(_) | Self::AutoSession => None,
         }
     }
@@ -63,6 +67,9 @@ impl fmt::Display for ServerActionInvocation {
                 write!(formatter, "list_tasks(logical_date: {:?})", request.logical_date)
             }
             Self::AutoSession => formatter.write_str("auto_session()"),
+            Self::DeferTask(request) => {
+                write!(formatter, "defer_task(task_id: {:?})", request.task_id)
+            }
             Self::RecordSession(request) => write!(
                 formatter,
                 "record_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {})",

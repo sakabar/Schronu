@@ -25,6 +25,7 @@ pub fn ListView(
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
+    #[props(default)] on_defer_task: EventHandler<String>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
@@ -113,7 +114,7 @@ pub fn ListView(
                     table { class: "task-table",
                         thead {
                             tr {
-                                th { class: "session-heading", aria_label: "セッション操作", "" }
+                                th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
                                 th { class: "deadline-heading", "締切" }
                                 th { class: "task-heading", "タスク" }
@@ -125,7 +126,9 @@ pub fn ListView(
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                     row,
                                     mutations_locked,
+                                    server_actions_blocked,
                                     on_start_session,
+                                    on_defer_task,
                                 }
                             }
                         }
@@ -168,7 +171,9 @@ fn TaskRow(
     row: ListRowViewModel,
     active: bool,
     mutations_locked: bool,
+    server_actions_blocked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
+    on_defer_task: EventHandler<String>,
 ) -> Element {
     let deadline_class = if row.misses_deadline {
         "deadline is-overdue"
@@ -188,6 +193,7 @@ fn TaskRow(
     };
     let button_text = if active { "✓" } else { "＋" };
     let task = row.task.clone();
+    let defer_task_id = row.task.task_id.clone();
     let is_leaf = row.is_leaf;
 
     rsx! {
@@ -206,6 +212,19 @@ fn TaskRow(
                         },
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
+                    }
+                    button {
+                        class: "task-defer",
+                        r#type: "button",
+                        aria_label: format!("{}: 先送り", row.task.task_name),
+                        disabled: active || mutations_locked || server_actions_blocked,
+                        onclick: move |_| {
+                            if !active && !mutations_locked && !server_actions_blocked {
+                                on_defer_task.call(defer_task_id.clone());
+                            }
+                        },
+                        span { class: "task-defer-full-label", "先送り" }
+                        span { class: "task-defer-compact-label", aria_hidden: "true", "→" }
                     }
                 }
             }

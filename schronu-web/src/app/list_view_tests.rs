@@ -69,7 +69,7 @@ fn root(props: RootProps) -> Element {
 }
 
 #[test]
-fn carry_lockはsession追加だけを無効化し日付選択は維持する() {
+fn carry_lockはsession追加と先送りを無効化し日付選択は維持する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         root,
@@ -88,6 +88,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
     dom.rebuild_in_place();
     let unlocked = dioxus::ssr::render(&dom);
     assert!(!unlocked.contains("class=\"session-start\" disabled"));
+    assert!(!unlocked.contains("先送り\" disabled=true"));
 
     fn locked_root(props: RootProps) -> Element {
         let date_events = Arc::clone(&props.events);
@@ -137,6 +138,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
         html.contains("class=\"session-start\"") && html.contains("disabled=true"),
         "{html}"
     );
+    assert!(html.contains("先送り\" disabled=true"), "{html}");
     for id in ids {
         dispatch_click(&locked, id);
     }
@@ -316,7 +318,7 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         ".task-table {\n        display: block;\n        min-width: 0;",
         ".task-table thead {\n        display: block;",
         ".task-table thead tr,\n    .task-row {\n        display: grid;",
-        "grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);",
+        "grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);",
         "grid-template-areas: \"action schedule deadline task\";",
         ".task-row {\n        min-height: 32px;",
         ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
@@ -326,7 +328,7 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         ".task-name {\n        overflow: hidden;\n        font-size: 0.75rem;",
         ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: hidden;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",
-        ".session-cell .session-start {\n        width: 44px;\n        min-height: 32px;",
+        ".session-cell .session-start,\n    .session-cell .task-defer {\n        width: 44px;\n        min-height: 32px;",
     ] {
         assert!(mobile_list_layout.contains(required), "missing: {required}");
     }
@@ -422,6 +424,11 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     assert_eq!(html.matches(">✓</span>").count(), 2, "{html}");
     assert_eq!(html.matches(">＋</span>").count(), 1, "{html}");
     assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
+    assert_eq!(
+        html.matches(": 先送り\" disabled=true").count(),
+        2,
+        "{html}"
+    );
 }
 
 #[test]
@@ -464,6 +471,10 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     });
     dispatch_click(&task_dom, task_listeners[0]);
     assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
+
+    events.lock().unwrap().clear();
+    dispatch_click(&task_dom, task_listeners[1]);
+    assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
 }
 
 #[test]
@@ -519,7 +530,7 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("週次 Planning").count(), 4, "{html}");
+    assert_eq!(html.matches("週次 Planning").count(), 6, "{html}");
     assert!(!html.contains("実装"), "{html}");
 
     let (japanese_dom, _) = build(RootProps {
@@ -880,6 +891,7 @@ fn 日付入力は正規化後もtab往復で保持され日付buttonでclearさ
 #[component]
 fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
     let date_events = Rc::clone(&events);
+    let defer_events = Rc::clone(&events);
     rsx! {
         ListView {
             dates: vec![DateButtonViewModel {
@@ -887,7 +899,7 @@ fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                 label: "木".to_owned(),
                 selected: false,
             }],
-            rows: Vec::new(),
+            rows: vec![row("defer", false, true)],
             active_task_ids: Vec::new(),
             date_input_text: "9/17".to_owned(),
             date_input_error: None,
@@ -897,6 +909,7 @@ fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| events.borrow_mut().push("submit".to_owned()),
             on_start_session: move |_| {},
+            on_defer_task: move |_| defer_events.borrow_mut().push("defer".to_owned()),
             on_filter_change: move |_| {},
         }
     }
@@ -913,7 +926,7 @@ fn background更新中は日付buttonとenter送信をuiで拒否する() {
     );
     let listeners = rebuild_with_named_event_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
-    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(html.matches("disabled").count(), 3, "{html}");
 
     let submit_id = listeners
         .iter()

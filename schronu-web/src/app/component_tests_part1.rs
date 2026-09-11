@@ -233,7 +233,7 @@ fn 初期化はstorage失敗時もbootstrapを一度だけ要求する() {
 }
 
 #[test]
-fn component_actionは仕様の五操作だけをserver_effectへ変換する() {
+fn component_actionは仕様の六操作だけをserver_effectへ変換する() {
     let storage = MemoryStorage::default();
     let (mut state, bootstrap) = initialize_client(&storage, 1_000);
     assert!(matches!(bootstrap, ClientEffect::Bootstrap { .. }));
@@ -269,6 +269,18 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
     assert!(matches!(
         reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
+    ));
+
+    let defer_storage = MemoryStorage::default();
+    let (mut defer_state, _) = initialize_client(&defer_storage, 1_000);
+    assert!(matches!(
+        reduce_component_action_at(
+            &mut defer_state,
+            &defer_storage,
+            2_000,
+            ComponentAction::DeferTask(RECORD_ID.to_owned())
+        ),
+        ClientEffect::DeferTask { request, .. } if request.task_id == RECORD_ID
     ));
 
     assert_eq!(

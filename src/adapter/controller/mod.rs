@@ -84,7 +84,8 @@ pub use web_service::{
     WebService, WebSuccess,
 };
 pub use web_session_write::{
-    CompleteSessionRequest, RecordSessionRequest, RecordSessionResult, WebSessionInputError,
+    CompleteSessionRequest, DeferTaskRequest, RecordSessionRequest, RecordSessionResult,
+    WebSessionInputError,
 };
 
 #[cfg(test)]

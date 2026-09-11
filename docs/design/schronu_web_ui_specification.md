@@ -179,7 +179,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ## 4. Server operations
 
-専用workerは次の5 commandを順番に処理する。workerへの送信順が実行順となる。
+専用workerは次の6 commandを順番に処理する。workerへの送信順が実行順となる。
 
 各commandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
 
@@ -205,7 +205,11 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 - 候補がなければ`None`を正常結果として返す。
 - task dataは変更しない。
 
-### 4.4 `record_session`
+### 4.4 `defer_task`
+
+入力は`DeferTaskRequest { task_id: UUID }`とする。server操作時刻から次の論理日開始を求め、applicationの共通先送り方針へ渡す。対象自身にdeadlineがあり、直接の親に`repetition_interval_days`がある場合はCLI `W`と同じルーチン延期を行い、それ以外はCLI `d`と同じ通常延期を行う。repository transactionで1回だけ保存し、成功時は`ServerSnapshot`を返す。current taskとWeb sessionは変更しない。
+
+### 4.5 `record_session`
 
 入力:
 
@@ -229,7 +233,7 @@ RecordSessionRequest {
 
 成功出力は`WebSuccess<RecordSessionResult>`とし、`RecordSessionResult`は更新後の実績秒を持つ。current taskは参照・変更しない。
 
-### 4.5 `complete_session`
+### 4.6 `complete_session`
 
 入力:
 
@@ -528,8 +532,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
-- 全幅でheaderとrowをセッション追加、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。46rem以下ではtable全体の横スクロールを解除し、`44px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
-- mobile rowは32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。セッション追加cellは未追加のrank 0で幅44px・高さ32pxの「＋」、追加済みで同寸法かつdisabledの「✓」、rank非0で空cellとする。
+- 全幅でheaderとrowを操作、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。46rem以下ではtable全体の横スクロールを解除し、`88px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
+- mobile rowは32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0で幅44px・高さ32pxの「＋/✓」と「→」を並べ、rank非0で空cellとする。desktopでは同じ順で「セッション」「先送り」と表示する。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、既存formatを省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
 ### 7.4 操作結果
@@ -567,6 +571,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
+| 一覧の「先送り」 | safety marker保存後に`defer_task`。成功後に`list_tasks` | 通常taskは次の論理日開始までPending、ルーチンtaskは次周期へ移動 | 送信前marker設定、確定応答後marker解除 | 選択日の一覧を再取得。検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
 | 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
@@ -711,7 +716,7 @@ OperationHistoryEntry {
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 一覧、選択tab、検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。
-- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、32px以上の1行row、左端の幅44px・高さ32pxの「＋」・disabledの「✓」・rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
+- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順を確認し、46rem以下では可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 320px以上で高さ36pxの日付入力・表示button、検索欄、36px四方のclear buttonがviewportを超えないことをCSS contract testとbrowser目視で確認する。
 - 46rem以下で日付button、検索欄、clear button、各section間隔が圧縮され、日付buttonの横スクロールが維持されることを確認する。34rem以下ではbufferも圧縮されることを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
@@ -743,7 +748,7 @@ OperationHistoryEntry {
 - today text専用worker commandおよびendpoint
 - 現行component階層とCSS
 
-専用worker threadというrepository操作の直列化方針は維持し、today text専用interfaceを5つの型付きWeb操作へ置換する。旧経路を互換目的で残さず、未使用APIとtestを整理する。
+専用worker threadというrepository操作の直列化方針は維持し、today text専用interfaceを6つの型付きWeb操作へ置換する。旧経路を互換目的で残さず、未使用APIとtestを整理する。
 
 ## 14. 要件対応表
 

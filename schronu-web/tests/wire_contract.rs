@@ -1,14 +1,13 @@
 use schronu_web::{
     web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
 
 #[test]
-fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
+fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
     let snapshot = ServerSnapshot {
         observed_at_epoch_ms: 1_788_565_500_123,
         logical_date: "2026-09-05".to_owned(),

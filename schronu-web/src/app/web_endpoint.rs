@@ -1,6 +1,7 @@
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -39,6 +40,18 @@ pub async fn auto_session(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_auto_session(extract_worker().await?).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_defer_task")]
+pub async fn defer_task(
+    request: DeferTaskRequest,
+) -> Result<WebOperationResult<ServerSnapshot>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_defer_task(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -98,6 +111,14 @@ async fn dispatch_auto_session(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_defer_task(
+    worker: WebWorkerHandle,
+    request: DeferTaskRequest,
+) -> WebOperationResult<ServerSnapshot> {
+    worker.defer_task(request).await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_record_session(
     worker: WebWorkerHandle,
     request: RecordSessionRequest,
@@ -116,13 +137,13 @@ async fn dispatch_complete_session(
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use super::{
-        dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_list_tasks,
-        dispatch_record_session, WebOperationResult,
+        dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_defer_task,
+        dispatch_list_tasks, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-        RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-        WebOperations, WebSuccess, WebWorkerHandle,
+        CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
+        RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+        SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -130,7 +151,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 五endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 六endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
@@ -162,6 +183,13 @@ mod tests {
             .await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
+            let _: WebOperationResult<ServerSnapshot> = dispatch_defer_task(
+                worker.clone(),
+                DeferTaskRequest {
+                    task_id: "task".to_owned(),
+                },
+            )
+            .await;
             let _: WebOperationResult<WebSuccess<RecordSessionResult>> =
                 dispatch_record_session(worker.clone(), request.clone()).await;
             let completed: WebOperationResult<CompleteSessionResponse> =
@@ -169,7 +197,7 @@ mod tests {
             assert_eq!(completed, Ok(snapshot()));
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
     }
 
     #[test]
@@ -235,6 +263,11 @@ mod tests {
                 snapshot: snapshot(),
                 data: None,
             })
+        }
+
+        fn defer_task(&mut self, _request: DeferTaskRequest) -> Result<ServerSnapshot, WebError> {
+            self.count();
+            Ok(snapshot())
         }
 
         fn record_session(

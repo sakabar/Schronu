@@ -231,9 +231,9 @@ impl ClientState {
     }
 
     pub fn mutation_safety_warning(&self) -> Option<&'static str> {
-        self.sessions.mutation_globally_blocked.then_some(
-            "repositoryの状態を手動確認するまで、セッションの記録と完了は停止されています。",
-        )
+        self.sessions
+            .mutation_globally_blocked
+            .then_some("repositoryの状態を手動確認するまで、変更操作は停止されています。")
     }
 
     pub fn can_confirm_repository_checked(&self) -> bool {

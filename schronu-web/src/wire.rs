@@ -40,6 +40,11 @@ pub struct ListTasksRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferTaskRequest {
+    pub task_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RecordSessionRequest {
     pub task_id: String,
     pub started_at_epoch_ms: i64,
