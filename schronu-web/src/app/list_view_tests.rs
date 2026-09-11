@@ -9,7 +9,10 @@ use std::{
 use super::component_runtime::{
     component_action_from_date_button, component_action_from_date_input, ComponentAction,
 };
-use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
+use super::list_view::{
+    DateButtonViewModel, DeferConfirmationKind, DeferConfirmationViewModel, ListRowViewModel,
+    ListView,
+};
 use super::view_test_support::{
     dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
@@ -227,7 +230,17 @@ fn named_row(
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
+        defer_confirmation: None,
     }
+}
+
+fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
+    let mut row = named_row(task_id, &format!("task {task_id}"), false, true);
+    row.defer_confirmation = Some(DeferConfirmationViewModel {
+        kind,
+        deadline_datetime_label: "9/12 05:59".to_owned(),
+    });
+    row
 }
 
 fn eight_dates() -> Vec<DateButtonViewModel> {
@@ -521,6 +534,47 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     events.lock().unwrap().clear();
     dispatch_click(&task_dom, task_listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
+}
+
+#[test]
+fn 今日締切の先送りは確認後だけdispatchしキャンセルできる() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut cancel_dom, initial_ids) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![confirmation_row(
+            "due-today",
+            DeferConfirmationKind::DueToday,
+        )],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::clone(&events),
+    });
+    dispatch_click(&cancel_dom, initial_ids[1]);
+    let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
+    let html = dioxus::ssr::render(&cancel_dom);
+    assert!(events.lock().unwrap().is_empty());
+    assert!(html.contains("今日が締切です"), "{html}");
+    assert!(html.contains("9/12 05:59"), "{html}");
+    assert!(html.contains("キャンセル"), "{html}");
+    assert!(html.contains("先送りする"), "{html}");
+    dispatch_click(&cancel_dom, confirmation_ids[0]);
+    cancel_dom.render_immediate_to_vec();
+    assert!(events.lock().unwrap().is_empty());
+    assert!(!dioxus::ssr::render(&cancel_dom).contains("今日が締切です"));
+
+    let (mut confirm_dom, initial_ids) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![confirmation_row("overdue", DeferConfirmationKind::Overdue)],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::clone(&events),
+    });
+    dispatch_click(&confirm_dom, initial_ids[1]);
+    let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
+    let html = dioxus::ssr::render(&confirm_dom);
+    assert!(html.contains("締切を過ぎています"), "{html}");
+    dispatch_click(&confirm_dom, confirmation_ids[1]);
+    assert_eq!(*events.lock().unwrap(), ["defer:overdue"]);
 }
 
 #[test]

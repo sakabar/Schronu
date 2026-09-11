@@ -187,3 +187,33 @@ fn browser_utc_offset_minutes(epoch_ms: i64) -> Option<i32> {
     }
     (-(utc_minus_local as i64)).try_into().ok()
 }
+
+#[cfg(test)]
+mod defer_confirmation_tests {
+    use super::{classify_defer_confirmation, DeferConfirmationKind};
+
+    fn epoch_ms(value: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn 締切logical_dateが今日以前だけ先送り確認を要求する() {
+        let today = "2026-09-11";
+
+        assert_eq!(
+            classify_defer_confirmation(Some(epoch_ms("2026-09-12T05:59:00+09:00")), today, 540),
+            Ok(Some(DeferConfirmationKind::DueToday))
+        );
+        assert_eq!(
+            classify_defer_confirmation(Some(epoch_ms("2026-09-11T05:59:00+09:00")), today, 540),
+            Ok(Some(DeferConfirmationKind::Overdue))
+        );
+        assert_eq!(
+            classify_defer_confirmation(Some(epoch_ms("2026-09-12T06:00:00+09:00")), today, 540),
+            Ok(None)
+        );
+        assert_eq!(classify_defer_confirmation(None, today, 540), Ok(None));
+    }
+}
