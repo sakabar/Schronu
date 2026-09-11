@@ -1,4 +1,6 @@
-use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
+use crate::application::daily_capacity::{
+    try_local_date_and_time, try_logical_date, try_next_logical_date_start,
+};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 pub use crate::application::task_list::{
     list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
@@ -345,10 +347,9 @@ pub fn defer_task_by_policy(
     normal_pending_until: DateTime<Local>,
 ) -> Result<(), ApplicationError> {
     let task = find_task(repository, task_id)?;
-    let has_deadline = task
+    let deadline = task
         .get_deadline_time_opt()
-        .map_err(ApplicationError::TaskTree)?
-        .is_some();
+        .map_err(ApplicationError::TaskTree)?;
     let has_routine_parent =
         if let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? {
             parent
@@ -359,7 +360,17 @@ pub fn defer_task_by_policy(
             false
         };
 
-    if has_deadline && has_routine_parent {
+    let should_defer_routine = if has_routine_parent {
+        if let Some(deadline) = deadline {
+            try_logical_date(deadline)? <= try_logical_date(repository.get_last_synced_time())?
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if should_defer_routine {
         defer_routine_task(repository, task_id)
     } else {
         defer_task(repository, task_id, normal_pending_until)
