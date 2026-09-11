@@ -734,6 +734,42 @@ button:disabled {
     border-bottom: 0;
 }
 
+.task-defer-confirmation-row td {
+    padding: 0.65rem 1rem;
+}
+
+.task-defer-confirmation {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    border: 1px solid var(--red);
+    border-radius: 0.65rem;
+    background: var(--red-soft);
+    padding: 0.65rem;
+}
+
+.task-defer-confirmation p {
+    margin: 0;
+    color: var(--red);
+    font-size: 0.85rem;
+}
+
+.task-defer-confirmation-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 0.45rem;
+}
+
+.task-defer-confirmation-actions button {
+    min-height: 2.5rem;
+}
+
+.task-defer-confirm {
+    border-color: var(--red);
+    color: var(--red);
+}
+
 .deadline,
 .schedule-time {
     white-space: nowrap;
@@ -983,6 +1019,27 @@ button:disabled {
 
     .task-table .session-cell {
         padding: 0;
+    }
+
+    .task-defer-confirmation-row {
+        display: block;
+        min-height: 0;
+        border-bottom: 1px solid var(--line);
+    }
+
+    .task-table .task-defer-confirmation-row td {
+        display: block;
+        padding: 0.35rem;
+    }
+
+    .task-defer-confirmation {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .task-defer-confirmation-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .session-cell .session-start,

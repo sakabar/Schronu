@@ -1,7 +1,7 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
 use crate::SessionTask;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc};
 
 const INVALID_TIME: &str = "--:--";
 
@@ -36,6 +36,27 @@ pub struct ListRowViewModel {
     pub schedule_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
+    pub defer_confirmation: Option<DeferConfirmationViewModel>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeferConfirmationKind {
+    DueToday,
+    Overdue,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeferConfirmationViewModel {
+    pub kind: DeferConfirmationKind,
+    pub deadline_datetime_label: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeferClassificationError {
+    InvalidCurrentLogicalDate,
+    InvalidDeadline,
+    DeadlineDateOutOfRange,
 }
 
 pub fn project_session_cards(
@@ -143,21 +164,98 @@ fn project_list_rows_with(
     state: &ClientState,
     offset_at: impl Fn(i64) -> Option<i32>,
 ) -> Vec<ListRowViewModel> {
+    let current_logical_date = state
+        .snapshot()
+        .map(|snapshot| snapshot.logical_date.as_str());
     state
         .scheduled_rows()
         .iter()
-        .map(|row| ListRowViewModel {
-            task: row.task.clone(),
-            deadline_label: row.deadline_label.clone(),
-            schedule_label: format!(
-                "{}-{}",
-                format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
-                format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
-            ),
-            misses_deadline: row.misses_deadline,
-            is_leaf: row.is_leaf,
+        .map(|row| {
+            let defer_confirmation = row.deadline_epoch_ms.and_then(|deadline_epoch_ms| {
+                let Some(current_logical_date) = current_logical_date else {
+                    return Some(DeferConfirmationViewModel {
+                        kind: DeferConfirmationKind::Unknown,
+                        deadline_datetime_label: INVALID_TIME.to_owned(),
+                    });
+                };
+                let Some(offset) = offset_at(deadline_epoch_ms) else {
+                    return Some(DeferConfirmationViewModel {
+                        kind: DeferConfirmationKind::Unknown,
+                        deadline_datetime_label: INVALID_TIME.to_owned(),
+                    });
+                };
+                let deadline_datetime_label =
+                    format_local_month_day_hh_mm(deadline_epoch_ms, offset);
+                match classify_defer_confirmation(
+                    Some(deadline_epoch_ms),
+                    current_logical_date,
+                    offset,
+                ) {
+                    Ok(Some(kind)) => Some(DeferConfirmationViewModel {
+                        kind,
+                        deadline_datetime_label,
+                    }),
+                    Ok(None) => None,
+                    Err(_) => Some(DeferConfirmationViewModel {
+                        kind: DeferConfirmationKind::Unknown,
+                        deadline_datetime_label,
+                    }),
+                }
+            });
+            ListRowViewModel {
+                task: row.task.clone(),
+                deadline_label: row.deadline_label.clone(),
+                schedule_label: format!(
+                    "{}-{}",
+                    format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
+                    format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
+                ),
+                misses_deadline: row.misses_deadline,
+                is_leaf: row.is_leaf,
+                defer_confirmation,
+            }
         })
         .collect()
+}
+
+fn classify_defer_confirmation(
+    deadline_epoch_ms: Option<i64>,
+    current_logical_date: &str,
+    utc_offset_minutes: i32,
+) -> Result<Option<DeferConfirmationKind>, DeferClassificationError> {
+    let Some(deadline_epoch_ms) = deadline_epoch_ms else {
+        return Ok(None);
+    };
+    let current_logical_date = NaiveDate::parse_from_str(current_logical_date, "%Y-%m-%d")
+        .map_err(|_| DeferClassificationError::InvalidCurrentLogicalDate)?;
+    let deadline = local_datetime(deadline_epoch_ms, utc_offset_minutes)
+        .ok_or(DeferClassificationError::InvalidDeadline)?;
+    let deadline_logical_date = if deadline.hour() < 6 {
+        deadline
+            .date_naive()
+            .pred_opt()
+            .ok_or(DeferClassificationError::DeadlineDateOutOfRange)?
+    } else {
+        deadline.date_naive()
+    };
+    match deadline_logical_date.cmp(&current_logical_date) {
+        std::cmp::Ordering::Less => Ok(Some(DeferConfirmationKind::Overdue)),
+        std::cmp::Ordering::Equal => Ok(Some(DeferConfirmationKind::DueToday)),
+        std::cmp::Ordering::Greater => Ok(None),
+    }
+}
+
+fn format_local_month_day_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
+    local_datetime(epoch_ms, utc_offset_minutes)
+        .map(|datetime| {
+            format!(
+                "{}/{} {}",
+                datetime.month(),
+                datetime.day(),
+                datetime.format("%H:%M")
+            )
+        })
+        .unwrap_or_else(|| INVALID_TIME.to_owned())
 }
 
 fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option<i32>) -> String {

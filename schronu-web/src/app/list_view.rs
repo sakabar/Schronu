@@ -1,7 +1,9 @@
 use dioxus::prelude::*;
 use std::rc::Rc;
 
-pub(crate) use crate::client::view_projection::ListRowViewModel;
+#[cfg(test)]
+pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
+pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::SessionTask;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -178,6 +180,7 @@ fn TaskRow(
     on_start_session: EventHandler<(SessionTask, bool)>,
     on_defer_task: EventHandler<String>,
 ) -> Element {
+    let mut confirming_defer = use_signal(|| false);
     let deadline_class = if row.misses_deadline {
         "deadline is-overdue"
     } else {
@@ -197,6 +200,19 @@ fn TaskRow(
     let button_text = if active { "✓" } else { "＋" };
     let task = row.task.clone();
     let defer_task_id = row.task.task_id.clone();
+    let defer_task_id_on_confirm = defer_task_id.clone();
+    let defer_confirmation = row.defer_confirmation.clone();
+    let confirmation_message = defer_confirmation.as_ref().map(|confirmation| {
+        let status = match confirmation.kind {
+            DeferConfirmationKind::DueToday => "今日が締切です",
+            DeferConfirmationKind::Overdue => "締切を過ぎています",
+            DeferConfirmationKind::Unknown => "締切日を確認できません",
+        };
+        format!(
+            "{}は{}(締切: {})。先送りしますか?",
+            row.task.task_name, status, confirmation.deadline_datetime_label
+        )
+    });
     let is_leaf = row.is_leaf;
 
     rsx! {
@@ -223,7 +239,11 @@ fn TaskRow(
                         disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
                         onclick: move |_| {
                             if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
-                                on_defer_task.call(defer_task_id.clone());
+                                if defer_confirmation.is_some() {
+                                    confirming_defer.set(true);
+                                } else {
+                                    on_defer_task.call(defer_task_id.clone());
+                                }
                             }
                         },
                         span { class: "task-defer-full-label", "先送り" }
@@ -238,6 +258,37 @@ fn TaskRow(
                     class: "task-name-scroll",
                     tabindex: 0,
                     "{row.task.task_name}"
+                }
+            }
+        }
+        if confirming_defer() {
+            tr { class: "task-defer-confirmation-row",
+                td { colspan: "4",
+                    div {
+                        class: "task-defer-confirmation",
+                        role: "group",
+                        aria_label: format!("{}: 先送りの確認", row.task.task_name),
+                        p { "{confirmation_message.as_deref().unwrap_or_default()}" }
+                        div { class: "task-defer-confirmation-actions",
+                            button {
+                                r#type: "button",
+                                onclick: move |_| confirming_defer.set(false),
+                                "キャンセル"
+                            }
+                            button {
+                                class: "task-defer-confirm",
+                                r#type: "button",
+                                disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
+                                onclick: move |_| {
+                                    if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
+                                        confirming_defer.set(false);
+                                        on_defer_task.call(defer_task_id_on_confirm.clone());
+                                    }
+                                },
+                                "先送りする"
+                            }
+                        }
+                    }
                 }
             }
         }

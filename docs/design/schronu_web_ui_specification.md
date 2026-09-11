@@ -207,6 +207,8 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ### 4.4 `defer_task`
 
+clientは一覧rowの`deadline_epoch_ms`をbrowser local時刻へ変換し、06:00未満を前日として締切logical dateを求める。`ServerSnapshot.logical_date`以前なら、task名、締切日時、当日または超過の状態、「キャンセル」「先送りする」を行内に表示し、確定までrequestを送らない。deadlineなしまたは未来なら最初のclickで送る。変換不能時も確認し、日次容量用の`logical_date_end`はこの判定に使わない。
+
 入力は`DeferTaskRequest { task_id: UUID }`とする。server操作時刻から次の論理日開始を求め、applicationの共通先送り方針へ渡す。applicationはrepositoryへ同期された操作時刻とtaskのdeadlineを既存の06:00境界でlogical dateへ変換する。対象自身にdeadlineがあり、直接の親に`repetition_interval_days`があり、かつ`deadline logical date <= current logical date`の場合だけCLI `W`と同じルーチン延期を行い、それ以外はCLI `d`と同じ通常延期を行う。通常延期は次の論理日開始を`pending_until`として指定するが、deadlineを持つtaskではentityの既存方針により`deadline - 見積時間 - 5分`まで前倒しし、deadline接近時は実効statusをTodoにしてよい。repository transactionで1回だけ保存し、成功時は`ServerSnapshot`を返す。current taskとWeb sessionは変更しない。
 
 ### 4.5 `record_session`
@@ -571,7 +573,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 一覧の「先送り」 | safety marker保存後に`defer_task`。成功後に`list_tasks` | 通常taskと未来〆切日のルーチンtaskは次の論理日開始を指定してPending(deadline policyによる前倒し・実効Todoあり)。〆切logical dateが現在以前のルーチンtaskは次周期へ移動 | 送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。再取得失敗時も除去状態を維持し、検索と日付入力を維持 | なし |
+| 一覧の「先送り」 | deadlineなし・未来〆切は即時、現在以前の〆切は行内確認の確定後にsafety markerを保存して`defer_task`。成功後に`list_tasks` | 通常taskと未来〆切日のルーチンtaskは次の論理日開始を指定してPending(deadline policyによる前倒し・実効Todoあり)。〆切logical dateが現在以前のルーチンtaskは次周期へ移動 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。再取得失敗時も除去状態を維持し、検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
 | 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
