@@ -571,7 +571,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 一覧の「先送り」 | safety marker保存後に`defer_task`。成功後に`list_tasks` | 通常taskは次の論理日開始までPending、ルーチンtaskは次周期へ移動 | 送信前marker設定、確定応答後marker解除 | 選択日の一覧を再取得。検索と日付入力を維持 | なし |
+| 一覧の「先送り」 | safety marker保存後に`defer_task`。成功後に`list_tasks` | 通常taskは次の論理日開始までPending、ルーチンtaskは次周期へ移動 | 送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。再取得失敗時も除去状態を維持し、検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
 | 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |

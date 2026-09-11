@@ -122,6 +122,9 @@ impl ClientState {
         match result {
             Ok(snapshot) => {
                 self.record_server(invocation, Outcome::Success, "タスクを先送りしました。");
+                self.read
+                    .scheduled_rows
+                    .retain(|row| row.task.task_id != task_id);
                 if !self.finish_mutation_safety(storage, false) {
                     self.sessions.mutation_globally_blocked = true;
                 }

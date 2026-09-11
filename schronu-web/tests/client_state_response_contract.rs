@@ -19,7 +19,7 @@ fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取
         &list_request.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 2),
-            data: vec![row(TASK_ID, 0)],
+            data: vec![row(TASK_ID, 0), row(TASK_ID, 1), row(OTHER_TASK_ID, 2)],
         }),
     );
 
@@ -31,15 +31,22 @@ fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取
 
     let follow_up =
         state.apply_defer_task_result(&storage, request_id, Ok(snapshot("2026-09-05", 3)));
-    let (_, refresh) = list_effect(follow_up);
+    let (refresh_id, refresh) = list_effect(follow_up);
     assert_eq!(refresh.logical_date, "2026-09-06");
-    assert!(!load_client_state(&storage, 0)
-        .unwrap()
-        .mutation_globally_blocked());
+    assert_eq!(state.scheduled_rows(), &[row(OTHER_TASK_ID, 2)]);
     assert_eq!(
         state.history().back().unwrap().invocation,
         ServerActionInvocation::DeferTask(request)
     );
+    state.apply_list_result(
+        refresh_id,
+        &refresh.logical_date,
+        Err(ServerFailure::Transport("refresh failed".to_owned())),
+    );
+    assert_eq!(state.scheduled_rows(), &[row(OTHER_TASK_ID, 2)]);
+    assert!(!load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
 }
 
 #[test]
