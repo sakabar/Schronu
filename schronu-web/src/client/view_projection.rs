@@ -31,6 +31,7 @@ pub struct CompletionConflictViewModel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListRowViewModel {
+    pub row_key: String,
     pub task: SessionTask,
     pub deadline_label: String,
     pub schedule_label: String,
@@ -203,6 +204,10 @@ fn project_list_rows_with(
                 }
             });
             ListRowViewModel {
+                row_key: format!(
+                    "{}:{}:{}",
+                    row.task.task_id, row.schedule_start_epoch_ms, row.schedule_end_epoch_ms
+                ),
                 task: row.task.clone(),
                 deadline_label: row.deadline_label.clone(),
                 schedule_label: format!(

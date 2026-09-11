@@ -126,6 +126,7 @@ pub fn ListView(
                         tbody {
                             for row in filtered_rows {
                                 TaskRow {
+                                    key: "{row.row_key}",
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                     row,
                                     mutations_locked,

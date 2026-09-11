@@ -225,6 +225,7 @@ fn named_row(
     is_leaf: bool,
 ) -> ListRowViewModel {
     ListRowViewModel {
+        row_key: format!("row:{task_id}"),
         task: task(task_id, task_name),
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
@@ -575,6 +576,64 @@ fn 今日締切の先送りは確認後だけdispatchしキャンセルできる
     assert!(html.contains("締切を過ぎています"), "{html}");
     dispatch_click(&confirm_dom, confirmation_ids[1]);
     assert_eq!(*events.lock().unwrap(), ["defer:overdue"]);
+}
+
+#[component]
+fn ReplacingConfirmationRowsHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_first = use_signal(|| true);
+    let rows = if show_first() {
+        vec![
+            confirmation_row("first", DeferConfirmationKind::DueToday),
+            confirmation_row("second", DeferConfirmationKind::DueToday),
+        ]
+    } else {
+        vec![confirmation_row("second", DeferConfirmationKind::DueToday)]
+    };
+    let defer_events = Rc::clone(&events);
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "先頭rowを除去",
+            onclick: move |_| show_first.set(false),
+            "先頭rowを除去"
+        }
+        ListView {
+            dates: Vec::new(),
+            rows,
+            active_task_ids: Vec::new(),
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: String::new(),
+            on_select_date: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_defer_task: move |task_id: String| defer_events.borrow_mut().push(task_id),
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn row差替えで先送り確認stateを別taskへ継承しない() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        ReplacingConfirmationRowsHarness,
+        ReplacingConfirmationRowsHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let initial_ids = rebuild_with_click_listeners(&mut dom);
+    dispatch_click(&dom, initial_ids[2]);
+    dom.render_immediate_to_vec();
+    assert!(dioxus::ssr::render(&dom).contains("task firstは今日が締切です"));
+
+    dispatch_click(&dom, initial_ids[0]);
+    dom.render_immediate_to_vec();
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("先送りしますか?"), "{html}");
+    assert!(html.contains("task second"), "{html}");
+    assert!(events.borrow().is_empty());
 }
 
 #[test]
