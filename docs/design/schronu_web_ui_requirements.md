@@ -127,7 +127,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外した英字大小無視の部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替とreloadで保持すること。一覧からセッションを追加できた場合は検索文字列と絞り込みを解除し、追加の保存失敗または拒否時は保持すること。この解除で選択日、日付入力、日付入力errorを変更しないこと。46rem以下では検索欄を高さ36px、入力中だけ表示するclear buttonを36px四方とし、clear後は検索欄へkeyboard focusを戻すこと。検索入力とclearではserver通信、task更新、発火履歴追加を行わず、view stateだけをlocalStorageへ保存すること。
 - **REQ-LIST-015**: 日付buttonの下に`M/D`または`YYYY/M/D`を入力してEnterまたは「表示」で一覧取得できること。年省略時はserver snapshotの現在logical dateを含む未来方向の直近日へ解決し、同じ月日は当日、過ぎた月日は翌年とすること。妥当な入力は`YYYY/M/D`へ正規化してpage内に保持し、serverへは`YYYY-MM-DD`を送ること。不正入力はfieldと関連付けたerrorを表示して通信せず、日付button選択時は入力とerrorを消去すること。desktopでは日付入力をtask名検索の左、46rem以下では検索の上に配置し、狭幅でもviewportを超えないこと。
 - **REQ-LIST-016**: schedule rank 0の各行に先送りbuttonを表示し、46remを超える画面では「先送り」、46rem以下では幅44pxかつ高さ32pxの「→」とすること。assistive technologyがtask名と先送り操作を識別できるlabelを持ち、セッション操作と合わせた狭幅の操作列は88pxとすること。
-- **REQ-LIST-017**: 先送りは確認を挟まず、通常taskを次の論理日開始までPendingにし、ルーチン延期条件を満たすtaskは親の反復日数だけdeadlineとstart timeを移動すること。セッション中の同一task、rank非0、通信操作禁止中、mutation safetyによる全体停止中、持ち歩きロック中はbuttonを無効化して実行せず、成功応答時に同一taskの全segmentを表示一覧から除去してから選択日の一覧を再取得し、検索と日付入力を維持すること。一覧再取得に失敗しても除去したsegmentを復活させないこと。
+- **REQ-LIST-017**: 先送りは確認を挟まず、通常taskを次の論理日開始を指定してPendingにすること。ただしdeadlineを持つ通常taskでは既存のdeadline policyに従い、`pending_until`を`deadline - 見積時間 - 5分`まで前倒しし、deadline接近時は実効statusをTodoにしてよい。ルーチン延期条件を満たすtaskは親の反復日数だけdeadlineとstart timeを移動すること。セッション中の同一task、rank非0、通信操作禁止中、mutation safetyによる全体停止中、持ち歩きロック中はbuttonを無効化して実行せず、成功応答時に同一taskの全segmentを表示一覧から除去してから選択日の一覧を再取得し、検索と日付入力を維持すること。一覧再取得に失敗しても除去したsegmentを復活させないこと。
 
 ### 4.8 通信制限と発火履歴
 
