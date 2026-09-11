@@ -268,7 +268,12 @@ fn TaskRow(
                     div {
                         class: "task-defer-confirmation",
                         role: "group",
+                        tabindex: "-1",
+                        aria_live: "assertive",
                         aria_label: format!("{}: 先送りの確認", row.task.task_name),
+                        onmounted: move |element| async move {
+                            let _ = element.data().set_focus(true).await;
+                        },
                         p { "{confirmation_message.as_deref().unwrap_or_default()}" }
                         div { class: "task-defer-confirmation-actions",
                             button {

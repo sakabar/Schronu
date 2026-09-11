@@ -556,6 +556,8 @@ fn 今日締切の先送りは確認後だけdispatchしキャンセルできる
     assert!(events.lock().unwrap().is_empty());
     assert!(html.contains("今日が締切です"), "{html}");
     assert!(html.contains("9/12 05:59"), "{html}");
+    assert!(html.contains("tabindex=\"-1\""), "{html}");
+    assert!(html.contains("aria-live=\"assertive\""), "{html}");
     assert!(html.contains("キャンセル"), "{html}");
     assert!(html.contains("先送りする"), "{html}");
     dispatch_click(&cancel_dom, confirmation_ids[0]);

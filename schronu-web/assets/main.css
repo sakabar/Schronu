@@ -755,6 +755,11 @@ button:disabled {
     font-size: 0.85rem;
 }
 
+.task-defer-confirmation:focus-visible {
+    outline: 3px solid rgb(186 49 43 / 35%);
+    outline-offset: 2px;
+}
+
 .task-defer-confirmation-actions {
     display: flex;
     flex: 0 0 auto;
