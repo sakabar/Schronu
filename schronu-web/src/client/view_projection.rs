@@ -54,9 +54,9 @@ pub struct DeferConfirmationViewModel {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DeferClassificationError {
-    InvalidCurrentLogicalDate,
+    InvalidCurrentTime,
     InvalidDeadline,
-    DeadlineDateOutOfRange,
+    LogicalDateOutOfRange,
 }
 
 pub fn project_session_cards(
@@ -164,15 +164,14 @@ fn project_list_rows_with(
     state: &ClientState,
     offset_at: impl Fn(i64) -> Option<i32>,
 ) -> Vec<ListRowViewModel> {
-    let current_logical_date = state
-        .snapshot()
-        .map(|snapshot| snapshot.logical_date.as_str());
+    let current_epoch_ms = state.tick_now_epoch_ms();
+    let current_offset = offset_at(current_epoch_ms);
     state
         .scheduled_rows()
         .iter()
         .map(|row| {
             let defer_confirmation = row.deadline_epoch_ms.and_then(|deadline_epoch_ms| {
-                let Some(current_logical_date) = current_logical_date else {
+                let Some(current_offset) = current_offset else {
                     return Some(DeferConfirmationViewModel {
                         kind: DeferConfirmationKind::Unknown,
                         deadline_datetime_label: INVALID_TIME.to_owned(),
@@ -188,8 +187,9 @@ fn project_list_rows_with(
                     format_local_month_day_hh_mm(deadline_epoch_ms, offset);
                 match classify_defer_confirmation(
                     Some(deadline_epoch_ms),
-                    current_logical_date,
                     offset,
+                    current_epoch_ms,
+                    current_offset,
                 ) {
                     Ok(Some(kind)) => Some(DeferConfirmationViewModel {
                         kind,
@@ -220,28 +220,37 @@ fn project_list_rows_with(
 
 fn classify_defer_confirmation(
     deadline_epoch_ms: Option<i64>,
-    current_logical_date: &str,
-    utc_offset_minutes: i32,
+    deadline_utc_offset_minutes: i32,
+    current_epoch_ms: i64,
+    current_utc_offset_minutes: i32,
 ) -> Result<Option<DeferConfirmationKind>, DeferClassificationError> {
     let Some(deadline_epoch_ms) = deadline_epoch_ms else {
         return Ok(None);
     };
-    let current_logical_date = NaiveDate::parse_from_str(current_logical_date, "%Y-%m-%d")
-        .map_err(|_| DeferClassificationError::InvalidCurrentLogicalDate)?;
-    let deadline = local_datetime(deadline_epoch_ms, utc_offset_minutes)
-        .ok_or(DeferClassificationError::InvalidDeadline)?;
-    let deadline_logical_date = if deadline.hour() < 6 {
-        deadline
-            .date_naive()
-            .pred_opt()
-            .ok_or(DeferClassificationError::DeadlineDateOutOfRange)?
-    } else {
-        deadline.date_naive()
-    };
+    let current_logical_date = logical_date(current_epoch_ms, current_utc_offset_minutes)
+        .map_err(|_| DeferClassificationError::InvalidCurrentTime)?;
+    let deadline_logical_date = logical_date(deadline_epoch_ms, deadline_utc_offset_minutes)
+        .map_err(|_| DeferClassificationError::InvalidDeadline)?;
     match deadline_logical_date.cmp(&current_logical_date) {
         std::cmp::Ordering::Less => Ok(Some(DeferConfirmationKind::Overdue)),
         std::cmp::Ordering::Equal => Ok(Some(DeferConfirmationKind::DueToday)),
         std::cmp::Ordering::Greater => Ok(None),
+    }
+}
+
+fn logical_date(
+    epoch_ms: i64,
+    utc_offset_minutes: i32,
+) -> Result<NaiveDate, DeferClassificationError> {
+    let datetime = local_datetime(epoch_ms, utc_offset_minutes)
+        .ok_or(DeferClassificationError::LogicalDateOutOfRange)?;
+    if datetime.hour() < 6 {
+        datetime
+            .date_naive()
+            .pred_opt()
+            .ok_or(DeferClassificationError::LogicalDateOutOfRange)
+    } else {
+        Ok(datetime.date_naive())
     }
 }
 
@@ -298,20 +307,48 @@ mod defer_confirmation_tests {
 
     #[test]
     fn 締切logical_dateが今日以前だけ先送り確認を要求する() {
-        let today = "2026-09-11";
+        let before_boundary = epoch_ms("2026-09-12T05:59:00+09:00");
+        let at_boundary = epoch_ms("2026-09-12T06:00:00+09:00");
 
         assert_eq!(
-            classify_defer_confirmation(Some(epoch_ms("2026-09-12T05:59:00+09:00")), today, 540),
+            classify_defer_confirmation(
+                Some(epoch_ms("2026-09-12T05:59:00+09:00")),
+                540,
+                before_boundary,
+                540,
+            ),
             Ok(Some(DeferConfirmationKind::DueToday))
         );
         assert_eq!(
-            classify_defer_confirmation(Some(epoch_ms("2026-09-11T05:59:00+09:00")), today, 540),
+            classify_defer_confirmation(
+                Some(epoch_ms("2026-09-11T05:59:00+09:00")),
+                540,
+                before_boundary,
+                540,
+            ),
             Ok(Some(DeferConfirmationKind::Overdue))
         );
         assert_eq!(
-            classify_defer_confirmation(Some(epoch_ms("2026-09-12T06:00:00+09:00")), today, 540),
+            classify_defer_confirmation(
+                Some(epoch_ms("2026-09-12T06:00:00+09:00")),
+                540,
+                before_boundary,
+                540,
+            ),
             Ok(None)
         );
-        assert_eq!(classify_defer_confirmation(None, today, 540), Ok(None));
+        assert_eq!(
+            classify_defer_confirmation(
+                Some(epoch_ms("2026-09-12T05:59:00+09:00")),
+                540,
+                at_boundary,
+                540,
+            ),
+            Ok(Some(DeferConfirmationKind::Overdue))
+        );
+        assert_eq!(
+            classify_defer_confirmation(None, 540, before_boundary, 540),
+            Ok(None)
+        );
     }
 }

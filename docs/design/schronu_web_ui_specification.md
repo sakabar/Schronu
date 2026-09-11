@@ -207,7 +207,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ### 4.4 `defer_task`
 
-clientは一覧rowの`deadline_epoch_ms`をbrowser local時刻へ変換し、06:00未満を前日として締切logical dateを求める。`ServerSnapshot.logical_date`以前なら、task名、締切日時、当日または超過の状態、「キャンセル」「先送りする」を行内に表示し、確定までrequestを送らない。deadlineなしまたは未来なら最初のclickで送る。変換不能時も確認し、日次容量用の`logical_date_end`はこの判定に使わない。
+clientは一覧rowの`deadline_epoch_ms`と毎秒更新するbrowser時刻をbrowser local時刻へ変換し、06:00未満を前日として各logical dateを求める。締切logical dateが現在以前なら、task名、締切日時、当日または超過の状態、「キャンセル」「先送りする」を行内に表示し、確定までrequestを送らない。deadlineなしまたは未来なら最初のclickで送る。変換不能時も確認し、日次容量用の`logical_date_end`はこの判定に使わない。Web UIはbrowserとserverが同じtimezoneで使われることを前提とする。
 
 入力は`DeferTaskRequest { task_id: UUID }`とする。server操作時刻から次の論理日開始を求め、applicationの共通先送り方針へ渡す。applicationはrepositoryへ同期された操作時刻とtaskのdeadlineを既存の06:00境界でlogical dateへ変換する。対象自身にdeadlineがあり、直接の親に`repetition_interval_days`があり、かつ`deadline logical date <= current logical date`の場合だけCLI `W`と同じルーチン延期を行い、それ以外はCLI `d`と同じ通常延期を行う。通常延期は次の論理日開始を`pending_until`として指定するが、deadlineを持つtaskではentityの既存方針により`deadline - 見積時間 - 5分`まで前倒しし、deadline接近時は実効statusをTodoにしてよい。repository transactionで1回だけ保存し、成功時は`ServerSnapshot`を返す。current taskとWeb sessionは変更しない。
 
