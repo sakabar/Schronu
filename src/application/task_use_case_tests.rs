@@ -854,9 +854,7 @@ fn plan_defer_taskは表示日と現在日の遅い方の翌日06時を希望延
 fn plan_defer_taskは期限余裕とルーチン性でmodeを分類する() {
     let normal = crate::test_support::new_task_handle("期限内").unwrap();
     normal
-        .set_deadline_time_opt(Some(
-            Local.with_ymd_and_hms(2026, 8, 12, 6, 20, 0).unwrap(),
-        ))
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 12, 6, 20, 0).unwrap()))
         .unwrap();
     normal.set_estimated_work_seconds(15 * 60).unwrap();
 
@@ -882,21 +880,44 @@ fn plan_defer_taskは期限余裕とルーチン性でmodeを分類する() {
             .mode,
         DeferMode::Normal
     );
-    let limited_plan =
-        plan_defer_task(&repository, limited.get_id().unwrap(), selected).unwrap();
+    let limited_plan = plan_defer_task(&repository, limited.get_id().unwrap(), selected).unwrap();
     assert_eq!(limited_plan.mode, DeferMode::DeadlineLimited);
     assert_eq!(
         limited_plan.effective_pending_until,
         Some(Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 59).unwrap())
     );
-    let routine_plan = plan_defer_task(
-        &routine_repository,
-        routine.get_id().unwrap(),
-        selected,
-    )
-    .unwrap();
+    let routine_plan =
+        plan_defer_task(&routine_repository, routine.get_id().unwrap(), selected).unwrap();
     assert_eq!(routine_plan.mode, DeferMode::RoutinePeriod);
     assert_eq!(routine_plan.repetition_interval_days, Some(7));
+}
+
+#[test]
+fn execute_defer_task_planはmode変更時にtaskを変更しない() {
+    let task = crate::test_support::new_task_handle("条件変更").unwrap();
+    task.set_estimated_work_seconds(15 * 60).unwrap();
+    task.set_deadline_time_opt(Some(
+        Local.with_ymd_and_hms(2026, 8, 12, 6, 19, 59).unwrap(),
+    ))
+    .unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_pending_until = task.get_pending_until().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+
+    assert_eq!(
+        execute_defer_task_plan(
+            &mut repository,
+            task_id,
+            NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
+            DeferMode::Normal,
+        ),
+        Err(ApplicationError::DeferPlanChanged {
+            expected: DeferMode::Normal,
+            actual: DeferMode::DeadlineLimited,
+        })
+    );
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(task.get_pending_until().unwrap(), original_pending_until);
 }
 
 fn routine_task_for_defer_policy(
