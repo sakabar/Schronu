@@ -1,12 +1,16 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
-use super::model::{ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto};
+use super::model::{
+    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+};
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
 };
 use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
-use crate::application::task_use_case::{get_focus, ApplicationError};
+use crate::application::task_use_case::{
+    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
+};
 use chrono::{DateTime, Local, NaiveDate};
 
 #[cfg(test)]
@@ -105,6 +109,7 @@ where
 }
 
 pub(in crate::adapter::controller) fn build_scheduled_task_rows(
+    repository: &dyn TaskRepositoryTrait,
     schedule: &[ScheduledTaskView],
     logical_date: NaiveDate,
     last_synced_time: DateTime<Local>,
@@ -143,9 +148,28 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
                 is_leaf: segment.rank == 0,
+                defer_plan: defer_plan_dto(
+                    plan_defer_task(repository, segment.task.id, logical_date)
+                        .map_err(WebReadCoreError::Application)?,
+                ),
             })
         })
         .collect()
+}
+
+fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {
+    DeferPlanDto {
+        mode: match plan.mode {
+            DeferMode::Normal => DeferModeDto::Normal,
+            DeferMode::DeadlineLimited => DeferModeDto::DeadlineLimited,
+            DeferMode::RoutinePeriod => DeferModeDto::RoutinePeriod,
+        },
+        requested_pending_until_epoch_ms: plan.requested_pending_until.timestamp_millis(),
+        effective_pending_until_epoch_ms: plan
+            .effective_pending_until
+            .map(|datetime| datetime.timestamp_millis()),
+        repetition_interval_days: plan.repetition_interval_days,
+    }
 }
 
 pub(in crate::adapter::controller) fn build_auto_session_dto(

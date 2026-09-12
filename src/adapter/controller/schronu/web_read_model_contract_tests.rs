@@ -1,4 +1,4 @@
-use super::web_service::{build_auto_session_dto, build_scheduled_task_rows};
+use super::web_service::{build_auto_session_dto, build_scheduled_task_rows, DeferModeDto};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
@@ -57,7 +57,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
     ];
 
-    let rows = build_scheduled_task_rows(&schedule, date, day_start).unwrap();
+    let rows = build_scheduled_task_rows(&repository, &schedule, date, day_start).unwrap();
 
     assert_eq!(rows.len(), 3);
     assert_eq!(rows[0].task.task_id, second_id.hyphenated().to_string());
@@ -85,6 +85,7 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     let deadline = task.deadline_time.unwrap();
 
     let rows = build_scheduled_task_rows(
+        &repository,
         &[ScheduledTaskView {
             task,
             first_available_time: start,
@@ -113,6 +114,23 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     assert_eq!(rows[0].deadline_label, "____-07:40");
     assert!(!rows[0].misses_deadline);
     assert!(rows[0].is_leaf);
+    assert_eq!(rows[0].defer_plan.mode, DeferModeDto::DeadlineLimited);
+    assert_eq!(
+        rows[0].defer_plan.requested_pending_until_epoch_ms,
+        Local
+            .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
+            .unwrap()
+            .timestamp_millis()
+    );
+    assert_eq!(
+        rows[0].defer_plan.effective_pending_until_epoch_ms,
+        Some(
+            Local
+                .with_ymd_and_hms(2026, 9, 5, 15, 25, 0)
+                .unwrap()
+                .timestamp_millis()
+        )
+    );
 
     let encoded = serde_json::to_string(&rows[0]).unwrap();
     let decoded = serde_json::from_str(&encoded).unwrap();
@@ -168,7 +186,7 @@ fn listのdtoは予定終了が締切を過ぎる場合だけmisses_deadlineに�
         })
         .collect::<Vec<_>>();
 
-    let rows = build_scheduled_task_rows(&schedule, date, start).unwrap();
+    let rows = build_scheduled_task_rows(&repository, &schedule, date, start).unwrap();
 
     for (row, (_, expected_label, expected_miss)) in rows.iter().zip(cases) {
         assert_eq!(row.deadline_label, expected_label);
@@ -199,6 +217,7 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
     assert!(rank_one_task.child_ids.is_empty());
 
     let rows = build_scheduled_task_rows(
+        &repository,
         &[
             ScheduledTaskView {
                 task: rank_zero_task,

@@ -188,8 +188,11 @@ pub(super) fn BrowserApp() -> Element {
                         );
                         dispatch_action_effect(client, effect);
                     },
-                    on_defer_task: move |task_id| {
-                        dispatch_action(client, ComponentAction::DeferTask(task_id));
+                    on_defer_task: move |(task_id, expected_mode)| {
+                        dispatch_action(client, ComponentAction::DeferTask {
+                            task_id,
+                            expected_mode,
+                        });
                     },
                     on_filter_change: move |filter| {
                         client.write().edit_task_name_filter(&BrowserLocalStorage, filter);

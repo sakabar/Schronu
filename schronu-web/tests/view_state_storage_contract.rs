@@ -48,7 +48,7 @@ fn view_stateは最後の一覧と画面入力をversion付きで復元する() 
     assert!(loaded.warning().is_none());
     let raw: serde_json::Value =
         serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
-    assert_eq!(raw["version"], 1);
+    assert_eq!(raw["version"], 2);
 }
 
 #[test]
@@ -74,7 +74,8 @@ fn view_stateの破損と未知versionと不正rowは全体を無視してwarnin
     let storage = MemoryStorage::default();
     for raw in [
         "{",
-        r#"{"version":2}"#,
+        r#"{"version":3}"#,
+        r#"{"version":1,"snapshot":{"observed_at_epoch_ms":1789000000000,"logical_date":"2026-09-09","buffer_seconds":0},"list":null,"active_tab":"list","task_name_filter":"","date_input_text":""}"#,
         r#"{"version":1,"snapshot":{"observed_at_epoch_ms":0,"logical_date":"2026-09-09","buffer_seconds":0},"list":{"logical_date":"2026-09-09","rows":[{"task":{"task_id":"not-a-uuid","task_name":"task","estimated_work_seconds":1,"actual_work_seconds":0},"schedule_start_epoch_ms":0,"schedule_end_epoch_ms":1,"deadline_epoch_ms":null,"deadline_label":"","misses_deadline":false,"is_leaf":true}]},"active_tab":"list","task_name_filter":"","date_input_text":""}"#,
     ] {
         *storage.value.borrow_mut() = Some(raw.to_owned());
@@ -148,5 +149,11 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: schronu_web::DeferPlan {
+            mode: schronu_web::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_086_400_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     }
 }

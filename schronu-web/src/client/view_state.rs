@@ -1,14 +1,14 @@
 use super::date_buttons::logical_date_buttons;
 use super::state::ActiveTab;
 use super::work_sessions::{KeyValueStorage, StorageError};
-use crate::{ScheduledTaskRow, ServerSnapshot};
+use crate::{DeferMode, ScheduledTaskRow, ServerSnapshot};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
 pub const VIEW_STATE_STORAGE_KEY: &str = "schronu_web.view_state.v1";
-const STORAGE_VERSION: u64 = 1;
+const STORAGE_VERSION: u64 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -146,6 +146,26 @@ fn valid_row(row: &ScheduledTaskRow) -> bool {
         && valid_epoch(row.schedule_end_epoch_ms)
         && row.schedule_start_epoch_ms <= row.schedule_end_epoch_ms
         && row.deadline_epoch_ms.is_none_or(valid_epoch)
+        && valid_epoch(row.defer_plan.requested_pending_until_epoch_ms)
+        && match row.defer_plan.mode {
+            DeferMode::Normal => {
+                row.defer_plan.effective_pending_until_epoch_ms.is_none()
+                    && row.defer_plan.repetition_interval_days.is_none()
+            }
+            DeferMode::DeadlineLimited => {
+                row.defer_plan
+                    .effective_pending_until_epoch_ms
+                    .is_some_and(valid_epoch)
+                    && row.defer_plan.repetition_interval_days.is_none()
+            }
+            DeferMode::RoutinePeriod => {
+                row.defer_plan.effective_pending_until_epoch_ms.is_none()
+                    && row
+                        .defer_plan
+                        .repetition_interval_days
+                        .is_some_and(|days| days > 0)
+            }
+        }
 }
 
 fn valid_epoch(epoch_ms: i64) -> bool {

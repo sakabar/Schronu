@@ -113,6 +113,12 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: schronu_web::DeferPlan {
+            mode: schronu_web::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_788_652_800_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     }
 }
 

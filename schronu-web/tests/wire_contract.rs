@@ -199,6 +199,7 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
         web_error_codes::TASK_NOT_FOUND,
         web_error_codes::TASK_ALREADY_COMPLETED,
         web_error_codes::ACTUAL_WORK_CONFLICT,
+        web_error_codes::DEFER_PLAN_CHANGED,
         web_error_codes::ARITHMETIC_OVERFLOW,
         web_error_codes::TASK_NOT_COMPLETABLE,
         web_error_codes::CONFIGURATION_ERROR,

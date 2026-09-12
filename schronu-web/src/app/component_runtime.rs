@@ -2,7 +2,7 @@ use crate::client::date_input::DateInputState;
 use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
-use crate::SessionTask;
+use crate::{DeferMode, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
 use super::session_view::{SessionAction, SessionActionKind};
@@ -20,7 +20,10 @@ pub(crate) enum ComponentAction {
         is_leaf: bool,
     },
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-    DeferTask(String),
+    DeferTask {
+        task_id: String,
+        expected_mode: DeferMode,
+    },
     RestartSessionWithoutRecording(String),
     DiscardSession(String),
     RecordSession(String),
@@ -404,7 +407,7 @@ fn action_requires_server(action: &ComponentAction) -> bool {
         action,
         ComponentAction::SelectDate(_)
             | ComponentAction::AutoSession
-            | ComponentAction::DeferTask(_)
+            | ComponentAction::DeferTask { .. }
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteSession(_)
@@ -437,7 +440,16 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
         ComponentAction::AutoSession => state.request_auto_session(),
-        ComponentAction::DeferTask(task_id) => state.request_defer_task(storage, &task_id),
+        ComponentAction::DeferTask {
+            task_id,
+            expected_mode,
+        } => {
+            let Some(selected_logical_date) = state.selected_logical_date().map(str::to_owned)
+            else {
+                return ClientEffect::None;
+            };
+            state.request_defer_task(storage, &task_id, &selected_logical_date, expected_mode)
+        }
         ComponentAction::AddSession { task, is_leaf } => {
             let session_count = state.sessions().len();
             let effect = state.add_session_from_list_task(storage, &task, is_leaf);
@@ -496,7 +508,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::AutoSession
-            | ComponentAction::DeferTask(_)
+            | ComponentAction::DeferTask { .. }
             | ComponentAction::AddSession { .. }
             | ComponentAction::RestartSessionWithoutRecording(_)
             | ComponentAction::DiscardSession(_)

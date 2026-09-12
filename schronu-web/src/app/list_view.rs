@@ -4,7 +4,7 @@ use std::rc::Rc;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
-use crate::SessionTask;
+use crate::{DeferMode, SessionTask};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DateButtonViewModel {
@@ -28,7 +28,7 @@ pub fn ListView(
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
-    #[props(default)] on_defer_task: EventHandler<String>,
+    #[props(default)] on_defer_task: EventHandler<(String, DeferMode)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
@@ -179,7 +179,7 @@ fn TaskRow(
     mutation_globally_blocked: bool,
     server_actions_blocked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
-    on_defer_task: EventHandler<String>,
+    on_defer_task: EventHandler<(String, DeferMode)>,
 ) -> Element {
     let mut confirming_defer = use_signal(|| false);
     let deadline_class = if row.misses_deadline {
@@ -202,16 +202,16 @@ fn TaskRow(
     let task = row.task.clone();
     let defer_task_id = row.task.task_id.clone();
     let defer_task_id_on_confirm = defer_task_id.clone();
+    let defer_mode = row.defer_mode;
     let defer_confirmation = row.defer_confirmation.clone();
     let confirmation_message = defer_confirmation.as_ref().map(|confirmation| {
         let status = match confirmation.kind {
-            DeferConfirmationKind::DueToday => "今日が締切です",
-            DeferConfirmationKind::Overdue => "締切を過ぎています",
-            DeferConfirmationKind::Unknown => "締切日を確認できません",
+            DeferConfirmationKind::DeadlineLimited => "締切までの余裕がありません",
+            DeferConfirmationKind::RoutinePeriod => "次の周期へ送ります",
         };
         format!(
-            "{}は{}(締切: {})。先送りしますか?",
-            row.task.task_name, status, confirmation.deadline_datetime_label
+            "{}は{}({})。先送りしますか?",
+            row.task.task_name, status, confirmation.detail_label
         )
     });
     let is_leaf = row.is_leaf;
@@ -243,7 +243,7 @@ fn TaskRow(
                                 if defer_confirmation.is_some() {
                                     confirming_defer.set(true);
                                 } else {
-                                    on_defer_task.call(defer_task_id.clone());
+                                    on_defer_task.call((defer_task_id.clone(), defer_mode));
                                 }
                             }
                         },
@@ -288,7 +288,7 @@ fn TaskRow(
                                 onclick: move |_| {
                                     if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                         confirming_defer.set(false);
-                                        on_defer_task.call(defer_task_id_on_confirm.clone());
+                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_mode));
                                     }
                                 },
                                 "先送りする"

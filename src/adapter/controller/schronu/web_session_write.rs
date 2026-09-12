@@ -1,5 +1,5 @@
-use crate::application::task_use_case::{AddActualWorkInput, CompleteTaskInput};
-use chrono::{DateTime, Local, Utc};
+use crate::application::task_use_case::{AddActualWorkInput, CompleteTaskInput, DeferMode};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -16,6 +16,14 @@ pub struct RecordSessionRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeferTaskRequest {
     pub task_id: String,
+    pub selected_logical_date: String,
+    pub expected_mode: DeferMode,
+}
+
+pub(super) struct PreparedDeferTaskInput {
+    pub task_id: Uuid,
+    pub selected_logical_date: NaiveDate,
+    pub expected_mode: DeferMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -38,6 +46,7 @@ pub enum WebSessionInputError {
         task_id: String,
         reason: String,
     },
+    InvalidSelectedLogicalDate(String),
     FutureStartedAt {
         started_at_epoch_ms: i64,
         observed_at_epoch_ms: i64,
@@ -60,6 +69,9 @@ impl fmt::Display for WebSessionInputError {
         match self {
             Self::InvalidTaskId { task_id, reason } => {
                 write!(formatter, "invalid task_id {task_id:?}: {reason}")
+            }
+            Self::InvalidSelectedLogicalDate(value) => {
+                write!(formatter, "invalid selected_logical_date: {value:?}")
             }
             Self::FutureStartedAt {
                 started_at_epoch_ms,
@@ -117,10 +129,20 @@ pub(super) fn prepare_add_actual_work_input(
     })
 }
 
-pub(super) fn prepare_defer_task_id(
+pub(super) fn prepare_defer_task_input(
     request: DeferTaskRequest,
-) -> Result<Uuid, WebSessionInputError> {
-    parse_task_id(&request.task_id)
+) -> Result<PreparedDeferTaskInput, WebSessionInputError> {
+    Ok(PreparedDeferTaskInput {
+        task_id: parse_task_id(&request.task_id)?,
+        selected_logical_date: NaiveDate::parse_from_str(
+            &request.selected_logical_date,
+            "%Y-%m-%d",
+        )
+        .map_err(|_| {
+            WebSessionInputError::InvalidSelectedLogicalDate(request.selected_logical_date)
+        })?,
+        expected_mode: request.expected_mode,
+    })
 }
 
 pub(super) fn prepare_complete_task_input(

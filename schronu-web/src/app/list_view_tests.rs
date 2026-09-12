@@ -18,7 +18,7 @@ use super::view_test_support::{
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::client::date_input::DateInputState;
-use crate::SessionTask;
+use crate::{DeferMode, SessionTask};
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
 
@@ -59,7 +59,7 @@ fn root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
-            on_defer_task: move |task_id: String| defer_events
+            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events
                 .lock()
                 .unwrap()
                 .push(format!("defer:{task_id}")),
@@ -86,7 +86,7 @@ fn globally_blocked_root(props: RootProps) -> Element {
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| {},
             on_start_session: move |_| {},
-            on_defer_task: move |task_id: String| defer_events
+            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events
                 .lock()
                 .unwrap()
                 .push(format!("defer:{task_id}")),
@@ -231,6 +231,7 @@ fn named_row(
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
+        defer_mode: DeferMode::Normal,
         defer_confirmation: None,
     }
 }
@@ -239,8 +240,12 @@ fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewMo
     let mut row = named_row(task_id, &format!("task {task_id}"), false, true);
     row.defer_confirmation = Some(DeferConfirmationViewModel {
         kind,
-        deadline_datetime_label: "9/12 05:59".to_owned(),
+        detail_label: "9/12 05:59".to_owned(),
     });
+    row.defer_mode = match kind {
+        DeferConfirmationKind::DeadlineLimited => DeferMode::DeadlineLimited,
+        DeferConfirmationKind::RoutinePeriod => DeferMode::RoutinePeriod,
+    };
     row
 }
 
@@ -538,13 +543,13 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
 }
 
 #[test]
-fn 今日締切の先送りは確認後だけdispatchしキャンセルできる() {
+fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルできる() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (mut cancel_dom, initial_ids) = build(RootProps {
         dates: Vec::new(),
         rows: vec![confirmation_row(
             "due-today",
-            DeferConfirmationKind::DueToday,
+            DeferConfirmationKind::DeadlineLimited,
         )],
         active_task_ids: Vec::new(),
         filter_text: String::new(),
@@ -554,7 +559,7 @@ fn 今日締切の先送りは確認後だけdispatchしキャンセルできる
     let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
     let html = dioxus::ssr::render(&cancel_dom);
     assert!(events.lock().unwrap().is_empty());
-    assert!(html.contains("今日が締切です"), "{html}");
+    assert!(html.contains("締切までの余裕がありません"), "{html}");
     assert!(html.contains("9/12 05:59"), "{html}");
     assert!(html.contains("tabindex=\"-1\""), "{html}");
     assert!(html.contains("aria-live=\"assertive\""), "{html}");
@@ -563,11 +568,14 @@ fn 今日締切の先送りは確認後だけdispatchしキャンセルできる
     dispatch_click(&cancel_dom, confirmation_ids[0]);
     cancel_dom.render_immediate_to_vec();
     assert!(events.lock().unwrap().is_empty());
-    assert!(!dioxus::ssr::render(&cancel_dom).contains("今日が締切です"));
+    assert!(!dioxus::ssr::render(&cancel_dom).contains("締切までの余裕がありません"));
 
     let (mut confirm_dom, initial_ids) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![confirmation_row("overdue", DeferConfirmationKind::Overdue)],
+        rows: vec![confirmation_row(
+            "routine",
+            DeferConfirmationKind::RoutinePeriod,
+        )],
         active_task_ids: Vec::new(),
         filter_text: String::new(),
         events: Arc::clone(&events),
@@ -575,9 +583,9 @@ fn 今日締切の先送りは確認後だけdispatchしキャンセルできる
     dispatch_click(&confirm_dom, initial_ids[1]);
     let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
     let html = dioxus::ssr::render(&confirm_dom);
-    assert!(html.contains("締切を過ぎています"), "{html}");
+    assert!(html.contains("次の周期へ送ります"), "{html}");
     dispatch_click(&confirm_dom, confirmation_ids[1]);
-    assert_eq!(*events.lock().unwrap(), ["defer:overdue"]);
+    assert_eq!(*events.lock().unwrap(), ["defer:routine"]);
 }
 
 #[component]
@@ -585,11 +593,14 @@ fn ReplacingConfirmationRowsHarness(events: Rc<RefCell<Vec<String>>>) -> Element
     let mut show_first = use_signal(|| true);
     let rows = if show_first() {
         vec![
-            confirmation_row("first", DeferConfirmationKind::DueToday),
-            confirmation_row("second", DeferConfirmationKind::DueToday),
+            confirmation_row("first", DeferConfirmationKind::DeadlineLimited),
+            confirmation_row("second", DeferConfirmationKind::DeadlineLimited),
         ]
     } else {
-        vec![confirmation_row("second", DeferConfirmationKind::DueToday)]
+        vec![confirmation_row(
+            "second",
+            DeferConfirmationKind::DeadlineLimited,
+        )]
     };
     let defer_events = Rc::clone(&events);
     rsx! {
@@ -610,7 +621,7 @@ fn ReplacingConfirmationRowsHarness(events: Rc<RefCell<Vec<String>>>) -> Element
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| {},
             on_start_session: move |_| {},
-            on_defer_task: move |task_id: String| defer_events.borrow_mut().push(task_id),
+            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events.borrow_mut().push(task_id),
             on_filter_change: move |_| {},
         }
     }
@@ -628,7 +639,7 @@ fn row差替えで先送り確認stateを別taskへ継承しない() {
     let initial_ids = rebuild_with_click_listeners(&mut dom);
     dispatch_click(&dom, initial_ids[2]);
     dom.render_immediate_to_vec();
-    assert!(dioxus::ssr::render(&dom).contains("task firstは今日が締切です"));
+    assert!(dioxus::ssr::render(&dom).contains("task firstは締切までの余裕がありません"));
 
     dispatch_click(&dom, initial_ids[0]);
     dom.render_immediate_to_vec();

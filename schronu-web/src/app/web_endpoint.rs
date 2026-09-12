@@ -187,6 +187,8 @@ mod tests {
                 worker.clone(),
                 DeferTaskRequest {
                     task_id: "task".to_owned(),
+                    selected_logical_date: "2026-09-05".to_owned(),
+                    expected_mode: crate::DeferMode::Normal,
                 },
             )
             .await;

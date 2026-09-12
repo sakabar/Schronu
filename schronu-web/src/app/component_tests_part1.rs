@@ -273,14 +273,30 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
 
     let defer_storage = MemoryStorage::default();
     let (mut defer_state, _) = initialize_client(&defer_storage, 1_000);
+    defer_state.restore_view_state(&ViewState {
+        snapshot: snapshot(1_000),
+        list: Some(StoredListView {
+            logical_date: "2026-09-05".to_owned(),
+            rows: Vec::new(),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
     assert!(matches!(
         reduce_component_action_at(
             &mut defer_state,
             &defer_storage,
             2_000,
-            ComponentAction::DeferTask(RECORD_ID.to_owned())
+            ComponentAction::DeferTask {
+                task_id: RECORD_ID.to_owned(),
+                expected_mode: crate::DeferMode::Normal,
+            }
         ),
-        ClientEffect::DeferTask { request, .. } if request.task_id == RECORD_ID
+        ClientEffect::DeferTask { request, .. }
+            if request.task_id == RECORD_ID
+                && request.selected_logical_date == "2026-09-05"
+                && request.expected_mode == crate::DeferMode::Normal
     ));
 
     assert_eq!(

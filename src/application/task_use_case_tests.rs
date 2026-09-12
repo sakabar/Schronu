@@ -920,6 +920,27 @@ fn execute_defer_task_planはmode変更時にtaskを変更しない() {
     assert_eq!(task.get_pending_until().unwrap(), original_pending_until);
 }
 
+#[test]
+fn execute_defer_task_planは余裕不足のルーチンを次周期へ送る() {
+    let original_deadline = Local.with_ymd_and_hms(2026, 8, 12, 6, 19, 59).unwrap();
+    let (task, mut repository) = routine_task_for_defer_policy(fixed_now(), original_deadline);
+    task.set_estimated_work_seconds(15 * 60).unwrap();
+
+    execute_defer_task_plan(
+        &mut repository,
+        task.get_id().unwrap(),
+        NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
+        DeferMode::RoutinePeriod,
+    )
+    .unwrap();
+
+    assert_eq!(
+        task.get_deadline_time_opt().unwrap(),
+        Some(original_deadline + Duration::days(7))
+    );
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+}
+
 fn routine_task_for_defer_policy(
     now: DateTime<Local>,
     deadline: DateTime<Local>,

@@ -26,6 +26,25 @@ pub struct ScheduledTaskRow {
     pub deadline_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
+    pub defer_plan: DeferPlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferMode {
+    Normal,
+    DeadlineLimited,
+    RoutinePeriod,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferPlan {
+    pub mode: DeferMode,
+    pub requested_pending_until_epoch_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_pending_until_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_interval_days: Option<i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -42,6 +61,8 @@ pub struct ListTasksRequest {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeferTaskRequest {
     pub task_id: String,
+    pub selected_logical_date: String,
+    pub expected_mode: DeferMode,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -73,6 +94,7 @@ pub mod web_error_codes {
     pub const TASK_NOT_FOUND: &str = "task_not_found";
     pub const TASK_ALREADY_COMPLETED: &str = "task_already_completed";
     pub const ACTUAL_WORK_CONFLICT: &str = "actual_work_conflict";
+    pub const DEFER_PLAN_CHANGED: &str = "defer_plan_changed";
     pub const ARITHMETIC_OVERFLOW: &str = "arithmetic_overflow";
     pub const TASK_NOT_COMPLETABLE: &str = "task_not_completable";
     pub const CONFIGURATION_ERROR: &str = "configuration_error";

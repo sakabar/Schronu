@@ -1,16 +1,18 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
+    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
+    WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
-    DeferTaskRequest as CoreDeferTaskRequest, RecordSessionRequest as CoreRecordSessionRequest,
-    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
-    WebSuccess as CoreWebSuccess,
+    DeferModeDto, DeferTaskRequest as CoreDeferTaskRequest,
+    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
+use schronu::application::task_use_case::DeferMode as CoreDeferMode;
 use std::env;
 use std::ffi::OsString;
 
@@ -165,6 +167,16 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
             deadline_label: row.deadline_label,
             misses_deadline: row.misses_deadline,
             is_leaf: row.is_leaf,
+            defer_plan: DeferPlan {
+                mode: match row.defer_plan.mode {
+                    DeferModeDto::Normal => DeferMode::Normal,
+                    DeferModeDto::DeadlineLimited => DeferMode::DeadlineLimited,
+                    DeferModeDto::RoutinePeriod => DeferMode::RoutinePeriod,
+                },
+                requested_pending_until_epoch_ms: row.defer_plan.requested_pending_until_epoch_ms,
+                effective_pending_until_epoch_ms: row.defer_plan.effective_pending_until_epoch_ms,
+                repetition_interval_days: row.defer_plan.repetition_interval_days,
+            },
         }
     }
 }
@@ -184,6 +196,12 @@ impl From<DeferTaskRequest> for CoreDeferTaskRequest {
     fn from(request: DeferTaskRequest) -> Self {
         Self {
             task_id: request.task_id,
+            selected_logical_date: request.selected_logical_date,
+            expected_mode: match request.expected_mode {
+                DeferMode::Normal => CoreDeferMode::Normal,
+                DeferMode::DeadlineLimited => CoreDeferMode::DeadlineLimited,
+                DeferMode::RoutinePeriod => CoreDeferMode::RoutinePeriod,
+            },
         }
     }
 }
@@ -260,7 +278,7 @@ fn configuration_error() -> WebError {
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
-        web_error_codes, CompleteSessionRequest, DeferTaskRequest, ListTasksRequest,
+        web_error_codes, CompleteSessionRequest, DeferMode, DeferTaskRequest, ListTasksRequest,
         RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
@@ -314,6 +332,8 @@ mod tests {
             operations
                 .defer_task(DeferTaskRequest {
                     task_id: "invalid".to_owned(),
+                    selected_logical_date: "2026-09-05".to_owned(),
+                    expected_mode: DeferMode::Normal,
                 })
                 .unwrap_err()
                 .code,

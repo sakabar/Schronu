@@ -76,6 +76,8 @@ fn workerは6操作を送信順に専用threadで実行してpayloadを保持す
             worker
                 .defer_task(DeferTaskRequest {
                     task_id: "task-1".to_owned(),
+                    selected_logical_date: "2026-09-05".to_owned(),
+                    expected_mode: schronu_web::DeferMode::Normal,
                 })
                 .await,
             Ok(snapshot(6))

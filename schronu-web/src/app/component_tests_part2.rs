@@ -32,6 +32,12 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_086_000_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     store_view_state(
         &storage,
@@ -103,7 +109,10 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
     for blocked in [
         ComponentAction::SelectDate("2026-09-13".to_owned()),
         ComponentAction::AutoSession,
-        ComponentAction::DeferTask(COMPLETE_ID.to_owned()),
+        ComponentAction::DeferTask {
+            task_id: COMPLETE_ID.to_owned(),
+            expected_mode: crate::DeferMode::Normal,
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
@@ -156,6 +165,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_086_000_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     store_view_state(
         &storage,
@@ -232,6 +247,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_386_400_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     orchestrator.apply_response(
         &storage,
