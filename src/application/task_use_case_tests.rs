@@ -820,6 +820,85 @@ fn defer_task_by_policy_通常taskは指定時刻までpendingにする() {
     assert_eq!(task.get_pending_until().unwrap(), pending_until);
 }
 
+#[test]
+fn plan_defer_taskは表示日と現在日の遅い方の翌日06時を希望延期先にする() {
+    let task = crate::test_support::new_task_handle("表示日基準の延期").unwrap();
+    let task_id = task.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    let future = plan_defer_task(
+        &repository,
+        task_id,
+        NaiveDate::from_ymd_opt(2026, 8, 15).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(future.mode, DeferMode::Normal);
+    assert_eq!(
+        future.requested_pending_until,
+        Local.with_ymd_and_hms(2026, 8, 16, 6, 0, 0).unwrap()
+    );
+
+    let past = plan_defer_task(
+        &repository,
+        task_id,
+        NaiveDate::from_ymd_opt(2026, 8, 10).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        past.requested_pending_until,
+        Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap()
+    );
+}
+
+#[test]
+fn plan_defer_taskは期限余裕とルーチン性でmodeを分類する() {
+    let normal = crate::test_support::new_task_handle("期限内").unwrap();
+    normal
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 8, 12, 6, 20, 0).unwrap(),
+        ))
+        .unwrap();
+    normal.set_estimated_work_seconds(15 * 60).unwrap();
+
+    let limited = crate::test_support::new_task_handle("期限制限").unwrap();
+    limited
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 8, 12, 6, 19, 59).unwrap(),
+        ))
+        .unwrap();
+    limited.set_estimated_work_seconds(15 * 60).unwrap();
+
+    let (routine, routine_repository) = routine_task_for_defer_policy(
+        fixed_now(),
+        Local.with_ymd_and_hms(2026, 8, 12, 6, 19, 59).unwrap(),
+    );
+    routine.set_estimated_work_seconds(15 * 60).unwrap();
+
+    let selected = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+    let repository = TestTaskRepository::new(vec![normal.clone(), limited.clone()], fixed_now());
+    assert_eq!(
+        plan_defer_task(&repository, normal.get_id().unwrap(), selected)
+            .unwrap()
+            .mode,
+        DeferMode::Normal
+    );
+    let limited_plan =
+        plan_defer_task(&repository, limited.get_id().unwrap(), selected).unwrap();
+    assert_eq!(limited_plan.mode, DeferMode::DeadlineLimited);
+    assert_eq!(
+        limited_plan.effective_pending_until,
+        Some(Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 59).unwrap())
+    );
+    let routine_plan = plan_defer_task(
+        &routine_repository,
+        routine.get_id().unwrap(),
+        selected,
+    )
+    .unwrap();
+    assert_eq!(routine_plan.mode, DeferMode::RoutinePeriod);
+    assert_eq!(routine_plan.repetition_interval_days, Some(7));
+}
+
 fn routine_task_for_defer_policy(
     now: DateTime<Local>,
     deadline: DateTime<Local>,
