@@ -111,8 +111,11 @@ ScheduledTaskRow {
     schedule_end_epoch_ms: i64,
     deadline_epoch_ms: Option<i64>,
     is_leaf: bool,
+    defer_plan: DeferPlan,
 }
 ```
+
+`DeferPlan`は`mode: Normal | DeadlineLimited | RoutinePeriod`と希望延期epoch millisecondsを必ず持つ。`DeadlineLimited`だけが実効延期epoch millisecondsを、`RoutinePeriod`だけが反復日数を持つ。planはserverが一覧生成時に算出し、clientは再計算しない。
 
 `is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。
 
@@ -149,7 +152,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
-画面復元状態は別key `schronu_web.view_state.v1`へversion 1として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと全`ScheduledTaskRow`、選択tab、検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せずwarningを表示するが、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationをwrite-blockしない。発火履歴、通信中state、error、確認dialogは保存しない。
+画面復元状態は別key `schronu_web.view_state.v1`へversion 2として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと`defer_plan`を含む全`ScheduledTaskRow`、選択tab、検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。発火履歴、通信中state、error、確認dialogは保存しない。
 
 ```json
 {
@@ -207,9 +210,9 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ### 4.4 `defer_task`
 
-clientは一覧rowの`deadline_epoch_ms`と毎秒更新するbrowser時刻をbrowser local時刻へ変換し、06:00未満を前日として各logical dateを求める。締切logical dateが現在以前なら、task名、締切日時、当日または超過の状態、「キャンセル」「先送りする」を行内に表示し、確定までrequestを送らない。deadlineなしまたは未来なら最初のclickで送る。変換不能時も確認し、日次容量用の`logical_date_end`はこの判定に使わない。Web UIはbrowserとserverが同じtimezoneで使われることを前提とする。
+clientは一覧rowの`defer_plan.mode`だけで操作を分岐する。`Normal`は最初のclickで送信し、`DeadlineLimited`は実効延期日時、`RoutinePeriod`は反復日数を行内表示して確定まで送信しない。確認表示とキャンセルでは通信しない。
 
-入力は`DeferTaskRequest { task_id: UUID }`とする。server操作時刻から次の論理日開始を求め、applicationの共通先送り方針へ渡す。applicationはrepositoryへ同期された操作時刻とtaskのdeadlineを既存の06:00境界でlogical dateへ変換する。対象自身にdeadlineがあり、直接の親に`repetition_interval_days`があり、かつ`deadline logical date <= current logical date`の場合だけCLI `W`と同じルーチン延期を行い、それ以外はCLI `d`と同じ通常延期を行う。通常延期は次の論理日開始を`pending_until`として指定するが、deadlineを持つtaskではentityの既存方針により`deadline - 見積時間 - 5分`まで前倒しし、deadline接近時は実効statusをTodoにしてよい。repository transactionで1回だけ保存し、成功時は`ServerSnapshot`を返す。current taskとWeb sessionは変更しない。
+入力は`DeferTaskRequest { task_id: UUID, selected_logical_date: YYYY-MM-DD, expected_mode: DeferMode }`とする。applicationは希望延期先を`max(selected logical date, current logical date) + 1日`の06:00として算出する。希望延期先が既存の`deadline - 見積時間 - 5分`以前なら`Normal`、それより後で直接の親に反復日数があれば`RoutinePeriod`、それ以外は`DeadlineLimited`とする。同時刻は`Normal`に含める。serverはtransaction内でplanを再計算し、`expected_mode`と異なる場合は`defer_plan_changed`を返して保存しない。clientはmutation safetyを解除して選択日の一覧を再取得する。一致時は`Normal`を希望時刻、`DeadlineLimited`を期限上限までPendingにし、`RoutinePeriod`をCLI `W`と同じ次周期へ移動して1回だけ保存する。current taskとWeb sessionは変更しない。
 
 ### 4.5 `record_session`
 
@@ -573,7 +576,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 一覧の「先送り」 | deadlineなし・未来〆切は即時、現在以前の〆切は行内確認の確定後にsafety markerを保存して`defer_task`。成功後に`list_tasks` | 通常taskと未来〆切日のルーチンtaskは次の論理日開始を指定してPending(deadline policyによる前倒し・実効Todoあり)。〆切logical dateが現在以前のルーチンtaskは次周期へ移動 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。再取得失敗時も除去状態を維持し、検索と日付入力を維持 | なし |
+| 一覧の「先送り」 | `Normal`は即時、`DeadlineLimited`と`RoutinePeriod`は行内確認後に表示日・期待mode付きで`safety marker`を保存して`defer_task`。成功または`defer_plan_changed`後に`list_tasks` | 表示日と現在日の遅い方の翌日06:00を希望先とし、期限余裕に応じて通常延期、期限上限への短縮、次周期移動を選択 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。plan変更時は除去せず再取得。検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
 | 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
