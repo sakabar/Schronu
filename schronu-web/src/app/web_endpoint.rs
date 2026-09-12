@@ -188,7 +188,12 @@ mod tests {
                 DeferTaskRequest {
                     task_id: "task".to_owned(),
                     selected_logical_date: "2026-09-05".to_owned(),
-                    expected_mode: crate::DeferMode::Normal,
+                    expected_plan: crate::DeferPlan {
+                        mode: crate::DeferMode::Normal,
+                        requested_pending_until_epoch_ms: 1_000,
+                        effective_pending_until_epoch_ms: None,
+                        repetition_interval_days: None,
+                    },
                 },
             )
             .await;

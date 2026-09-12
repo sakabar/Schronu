@@ -62,7 +62,7 @@ pub struct ListTasksRequest {
 pub struct DeferTaskRequest {
     pub task_id: String,
     pub selected_logical_date: String,
-    pub expected_mode: DeferMode,
+    pub expected_plan: DeferPlan,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

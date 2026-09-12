@@ -2,7 +2,7 @@ use crate::client::date_input::DateInputState;
 use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
-use crate::{DeferMode, SessionTask};
+use crate::{DeferPlan, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
 use super::session_view::{SessionAction, SessionActionKind};
@@ -22,7 +22,7 @@ pub(crate) enum ComponentAction {
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
     DeferTask {
         task_id: String,
-        expected_mode: DeferMode,
+        expected_plan: DeferPlan,
     },
     RestartSessionWithoutRecording(String),
     DiscardSession(String),
@@ -442,13 +442,13 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::DeferTask {
             task_id,
-            expected_mode,
+            expected_plan,
         } => {
             let Some(selected_logical_date) = state.selected_logical_date().map(str::to_owned)
             else {
                 return ClientEffect::None;
             };
-            state.request_defer_task(storage, &task_id, &selected_logical_date, expected_mode)
+            state.request_defer_task(storage, &task_id, &selected_logical_date, expected_plan)
         }
         ComponentAction::AddSession { task, is_leaf } => {
             let session_count = state.sessions().len();

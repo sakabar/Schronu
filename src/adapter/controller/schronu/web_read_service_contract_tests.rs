@@ -1,5 +1,6 @@
 use super::{
-    CompleteSessionRequest, DeferTaskRequest, RecordSessionRequest, WebReadError, WebService,
+    CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest, WebReadError,
+    WebService,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
@@ -241,7 +242,15 @@ fn defer_taskは表示日が未来ならその翌日の論理日開始まで延�
             DeferTaskRequest {
                 task_id: task_id.to_string(),
                 selected_logical_date: "2026-09-08".to_owned(),
-                expected_mode: DeferMode::Normal,
+                expected_plan: DeferPlanRequest {
+                    mode: DeferMode::Normal,
+                    requested_pending_until_epoch_ms: Local
+                        .with_ymd_and_hms(2026, 9, 9, 6, 0, 0)
+                        .unwrap()
+                        .timestamp_millis(),
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
             },
         )
         .unwrap();
@@ -278,7 +287,12 @@ fn defer_taskは不正uuidを保存前に拒否する() {
             DeferTaskRequest {
                 task_id: "not-a-uuid".to_owned(),
                 selected_logical_date: "2026-09-05".to_owned(),
-                expected_mode: DeferMode::Normal,
+                expected_plan: DeferPlanRequest {
+                    mode: DeferMode::Normal,
+                    requested_pending_until_epoch_ms: operation_now.timestamp_millis(),
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
             }
         ),
         Err(WebReadError::InvalidInput(_))
@@ -300,13 +314,56 @@ fn defer_taskは一覧後にmodeが変わった場合に保存しない() {
             DeferTaskRequest {
                 task_id: task_id.to_string(),
                 selected_logical_date: "2026-09-05".to_owned(),
-                expected_mode: DeferMode::Normal,
+                expected_plan: DeferPlanRequest {
+                    mode: DeferMode::Normal,
+                    requested_pending_until_epoch_ms: Local
+                        .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
+                        .unwrap()
+                        .timestamp_millis(),
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
             }
         ),
         Err(WebReadError::Application(
             crate::application::task_use_case::ApplicationError::DeferPlanChanged {
                 expected: DeferMode::Normal,
                 actual: DeferMode::DeadlineLimited,
+            }
+        ))
+    ));
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
+fn defer_taskはmodeが同じでも一覧後に延期先が変わった場合に保存しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_unconstrained_task(operation_now - Duration::hours(1));
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    assert!(matches!(
+        service.defer_task_at(
+            operation_now,
+            DeferTaskRequest {
+                task_id: task_id.to_string(),
+                selected_logical_date: "2026-09-05".to_owned(),
+                expected_plan: DeferPlanRequest {
+                    mode: DeferMode::Normal,
+                    requested_pending_until_epoch_ms: Local
+                        .with_ymd_and_hms(2026, 9, 7, 6, 0, 0)
+                        .unwrap()
+                        .timestamp_millis(),
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
+            }
+        ),
+        Err(WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::DeferPlanChanged {
+                expected: DeferMode::Normal,
+                actual: DeferMode::Normal,
             }
         ))
     ));

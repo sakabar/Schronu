@@ -1,7 +1,7 @@
 use super::session_state::keeps_safety_marker;
 use super::*;
 use crate::client::date_buttons::logical_date_buttons;
-use crate::{DeferMode, DeferTaskRequest, ListTasksRequest, SessionTask, WebSuccess};
+use crate::{DeferPlan, DeferTaskRequest, ListTasksRequest, SessionTask, WebSuccess};
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
@@ -76,7 +76,7 @@ impl ClientState {
         storage: &S,
         task_id: &str,
         selected_logical_date: &str,
-        expected_mode: DeferMode,
+        expected_plan: DeferPlan,
     ) -> ClientEffect {
         if self.sessions.mutation_globally_blocked
             || !self.sessions.pending_mutations.is_empty()
@@ -98,7 +98,7 @@ impl ClientState {
         let request = DeferTaskRequest {
             task_id: task_id.to_owned(),
             selected_logical_date: selected_logical_date.to_owned(),
-            expected_mode,
+            expected_plan,
         };
         self.read.pending_defer_task = Some((request_id, request.clone()));
         ClientEffect::DeferTask {

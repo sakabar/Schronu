@@ -144,7 +144,7 @@ impl WebService {
                 repository,
                 input.task_id,
                 input.selected_logical_date,
-                input.expected_mode,
+                &input.expected_plan,
             )
             .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(

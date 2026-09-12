@@ -290,13 +290,18 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
             2_000,
             ComponentAction::DeferTask {
                 task_id: RECORD_ID.to_owned(),
-                expected_mode: crate::DeferMode::Normal,
+                expected_plan: crate::DeferPlan {
+                    mode: crate::DeferMode::Normal,
+                    requested_pending_until_epoch_ms: 1_000,
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
             }
         ),
         ClientEffect::DeferTask { request, .. }
             if request.task_id == RECORD_ID
                 && request.selected_logical_date == "2026-09-05"
-                && request.expected_mode == crate::DeferMode::Normal
+                && request.expected_plan.mode == crate::DeferMode::Normal
     ));
 
     assert_eq!(

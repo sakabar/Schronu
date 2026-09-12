@@ -84,8 +84,8 @@ pub use web_service::{
     WebReadOverflowError, WebService, WebSuccess,
 };
 pub use web_session_write::{
-    CompleteSessionRequest, DeferTaskRequest, RecordSessionRequest, RecordSessionResult,
-    WebSessionInputError,
+    CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest,
+    RecordSessionResult, WebSessionInputError,
 };
 
 #[cfg(test)]

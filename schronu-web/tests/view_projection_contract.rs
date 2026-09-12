@@ -175,12 +175,12 @@ fn listの先送り確認はserverのplanだけから生成する() {
     );
 
     let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
-    assert_eq!(rows[0].defer_mode, DeferMode::DeadlineLimited);
+    assert_eq!(rows[0].defer_plan.mode, DeferMode::DeadlineLimited);
     assert_eq!(
         rows[0].defer_confirmation.as_ref().unwrap().kind,
         DeferConfirmationKind::DeadlineLimited
     );
-    assert_eq!(rows[1].defer_mode, DeferMode::RoutinePeriod);
+    assert_eq!(rows[1].defer_plan.mode, DeferMode::RoutinePeriod);
     assert_eq!(
         rows[1].defer_confirmation.as_ref().unwrap().detail_label,
         "7日"

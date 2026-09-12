@@ -188,10 +188,10 @@ pub(super) fn BrowserApp() -> Element {
                         );
                         dispatch_action_effect(client, effect);
                     },
-                    on_defer_task: move |(task_id, expected_mode)| {
+                    on_defer_task: move |(task_id, expected_plan)| {
                         dispatch_action(client, ComponentAction::DeferTask {
                             task_id,
-                            expected_mode,
+                            expected_plan,
                         });
                     },
                     on_filter_change: move |filter| {

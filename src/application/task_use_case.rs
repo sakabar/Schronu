@@ -435,12 +435,12 @@ pub fn execute_defer_task_plan(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     selected_logical_date: NaiveDate,
-    expected_mode: DeferMode,
+    expected_plan: &DeferTaskPlan,
 ) -> Result<(), ApplicationError> {
     let plan = plan_defer_task(repository, task_id, selected_logical_date)?;
-    if plan.mode != expected_mode {
+    if &plan != expected_plan {
         return Err(ApplicationError::DeferPlanChanged {
-            expected: expected_mode,
+            expected: expected_plan.mode,
             actual: plan.mode,
         });
     }

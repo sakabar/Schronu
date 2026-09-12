@@ -1,6 +1,6 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::{DeferMode, SessionTask};
+use crate::{DeferMode, DeferPlan, SessionTask};
 use chrono::{DateTime, Datelike, FixedOffset, Utc};
 
 const INVALID_TIME: &str = "--:--";
@@ -37,7 +37,7 @@ pub struct ListRowViewModel {
     pub schedule_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
-    pub defer_mode: DeferMode,
+    pub defer_plan: DeferPlan,
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
 }
 
@@ -198,7 +198,7 @@ fn project_list_rows_with(
                 ),
                 misses_deadline: row.misses_deadline,
                 is_leaf: row.is_leaf,
-                defer_mode: row.defer_plan.mode,
+                defer_plan: row.defer_plan.clone(),
                 defer_confirmation,
             }
         })

@@ -4,7 +4,7 @@ use std::rc::Rc;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
-use crate::{DeferMode, SessionTask};
+use crate::{DeferPlan, SessionTask};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DateButtonViewModel {
@@ -28,7 +28,7 @@ pub fn ListView(
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
-    #[props(default)] on_defer_task: EventHandler<(String, DeferMode)>,
+    #[props(default)] on_defer_task: EventHandler<(String, DeferPlan)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
@@ -179,7 +179,7 @@ fn TaskRow(
     mutation_globally_blocked: bool,
     server_actions_blocked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
-    on_defer_task: EventHandler<(String, DeferMode)>,
+    on_defer_task: EventHandler<(String, DeferPlan)>,
 ) -> Element {
     let mut confirming_defer = use_signal(|| false);
     let deadline_class = if row.misses_deadline {
@@ -202,7 +202,8 @@ fn TaskRow(
     let task = row.task.clone();
     let defer_task_id = row.task.task_id.clone();
     let defer_task_id_on_confirm = defer_task_id.clone();
-    let defer_mode = row.defer_mode;
+    let defer_plan = row.defer_plan.clone();
+    let defer_plan_on_confirm = defer_plan.clone();
     let defer_confirmation = row.defer_confirmation.clone();
     let confirmation_message = defer_confirmation.as_ref().map(|confirmation| {
         let status = match confirmation.kind {
@@ -243,7 +244,7 @@ fn TaskRow(
                                 if defer_confirmation.is_some() {
                                     confirming_defer.set(true);
                                 } else {
-                                    on_defer_task.call((defer_task_id.clone(), defer_mode));
+                                    on_defer_task.call((defer_task_id.clone(), defer_plan.clone()));
                                 }
                             }
                         },
@@ -288,7 +289,7 @@ fn TaskRow(
                                 onclick: move |_| {
                                     if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                         confirming_defer.set(false);
-                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_mode));
+                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_plan_on_confirm.clone()));
                                     }
                                 },
                                 "先送りする"

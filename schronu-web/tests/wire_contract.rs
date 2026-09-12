@@ -47,12 +47,21 @@ fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() 
         &DeferTaskRequest {
             task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
             selected_logical_date: "2026-09-05".to_owned(),
-            expected_mode: DeferMode::DeadlineLimited,
+            expected_plan: DeferPlan {
+                mode: DeferMode::DeadlineLimited,
+                requested_pending_until_epoch_ms: 1_788_600_000_000_i64,
+                effective_pending_until_epoch_ms: Some(1_788_599_000_000_i64),
+                repetition_interval_days: None,
+            },
         },
         json!({
             "task_id": "00000000-0000-0000-0000-000000000001",
             "selected_logical_date": "2026-09-05",
-            "expected_mode": "deadline_limited"
+            "expected_plan": {
+                "mode": "deadline_limited",
+                "requested_pending_until_epoch_ms": 1_788_600_000_000_i64,
+                "effective_pending_until_epoch_ms": 1_788_599_000_000_i64
+            }
         }),
     );
     assert_json_round_trip(

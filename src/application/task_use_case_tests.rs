@@ -904,16 +904,51 @@ fn execute_defer_task_planはmode変更時にtaskを変更しない() {
     let original_pending_until = task.get_pending_until().unwrap();
     let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
 
+    let expected_plan = DeferTaskPlan {
+        mode: DeferMode::Normal,
+        requested_pending_until: Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap(),
+        effective_pending_until: None,
+        repetition_interval_days: None,
+    };
     assert_eq!(
         execute_defer_task_plan(
             &mut repository,
             task_id,
             NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
-            DeferMode::Normal,
+            &expected_plan,
         ),
         Err(ApplicationError::DeferPlanChanged {
             expected: DeferMode::Normal,
             actual: DeferMode::DeadlineLimited,
+        })
+    );
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+    assert_eq!(task.get_pending_until().unwrap(), original_pending_until);
+}
+
+#[test]
+fn execute_defer_task_planは同じmodeでも延期先変更時にtaskを変更しない() {
+    let task = crate::test_support::new_task_handle("延期先変更").unwrap();
+    let task_id = task.get_id().unwrap();
+    let original_pending_until = task.get_pending_until().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task.clone()], fixed_now());
+    let stale_plan = DeferTaskPlan {
+        mode: DeferMode::Normal,
+        requested_pending_until: Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap(),
+        effective_pending_until: None,
+        repetition_interval_days: None,
+    };
+
+    assert_eq!(
+        execute_defer_task_plan(
+            &mut repository,
+            task_id,
+            NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
+            &stale_plan,
+        ),
+        Err(ApplicationError::DeferPlanChanged {
+            expected: DeferMode::Normal,
+            actual: DeferMode::Normal,
         })
     );
     assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
@@ -926,11 +961,17 @@ fn execute_defer_task_planは余裕不足のルーチンを次周期へ送る() 
     let (task, mut repository) = routine_task_for_defer_policy(fixed_now(), original_deadline);
     task.set_estimated_work_seconds(15 * 60).unwrap();
 
+    let expected_plan = plan_defer_task(
+        &repository,
+        task.get_id().unwrap(),
+        NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
+    )
+    .unwrap();
     execute_defer_task_plan(
         &mut repository,
         task.get_id().unwrap(),
         NaiveDate::from_ymd_opt(2026, 8, 11).unwrap(),
-        DeferMode::RoutinePeriod,
+        &expected_plan,
     )
     .unwrap();
 

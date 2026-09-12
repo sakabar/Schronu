@@ -3,11 +3,20 @@ use schronu_web::client::state::{
     ServerActionInvocation, ServerFailure,
 };
 use schronu_web::{
-    web_error_codes, DeferMode, RecordSessionResult, RetryAdvice, WebError, WebSuccess,
+    web_error_codes, DeferMode, DeferPlan, RecordSessionResult, RetryAdvice, WebError, WebSuccess,
 };
 
 mod client_state_support;
 use client_state_support::*;
+
+fn normal_defer_plan() -> DeferPlan {
+    DeferPlan {
+        mode: DeferMode::Normal,
+        requested_pending_until_epoch_ms: 1_000,
+        effective_pending_until_epoch_ms: None,
+        repetition_interval_days: None,
+    }
+}
 
 #[test]
 fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取得する() {
@@ -25,11 +34,16 @@ fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取
         }),
     );
 
-    let (request_id, request) =
-        defer_effect(state.request_defer_task(&storage, TASK_ID, "2026-09-06", DeferMode::Normal));
+    let expected_plan = state.scheduled_rows()[0].defer_plan.clone();
+    let (request_id, request) = defer_effect(state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-06",
+        expected_plan.clone(),
+    ));
     assert_eq!(request.task_id, TASK_ID);
     assert_eq!(request.selected_logical_date, "2026-09-06");
-    assert_eq!(request.expected_mode, DeferMode::Normal);
+    assert_eq!(request.expected_plan, expected_plan);
     assert!(load_client_state(&storage, 0)
         .unwrap()
         .mutation_globally_blocked());
@@ -59,7 +73,7 @@ fn task先送りはsession中の対象とtransport不明後の再送信を拒否
     let storage = FakeStorage::default();
     let mut active = state_with_sessions(&storage, &[TASK_ID]);
     assert_eq!(
-        active.request_defer_task(&storage, TASK_ID, "2026-09-06", DeferMode::Normal),
+        active.request_defer_task(&storage, TASK_ID, "2026-09-06", normal_defer_plan()),
         ClientEffect::None
     );
 
@@ -69,7 +83,7 @@ fn task先送りはsession中の対象とtransport不明後の再送信を拒否
         &other_storage,
         TASK_ID,
         "2026-09-06",
-        DeferMode::Normal,
+        normal_defer_plan(),
     ));
     state.apply_defer_task_result(
         &other_storage,
@@ -79,7 +93,7 @@ fn task先送りはsession中の対象とtransport不明後の再送信を拒否
 
     assert!(state.mutation_globally_blocked());
     assert_eq!(
-        state.request_defer_task(&other_storage, TASK_ID, "2026-09-06", DeferMode::Normal,),
+        state.request_defer_task(&other_storage, TASK_ID, "2026-09-06", normal_defer_plan()),
         ClientEffect::None
     );
 }
@@ -88,8 +102,12 @@ fn task先送りはsession中の対象とtransport不明後の再送信を拒否
 fn task先送りはplan変更時にsafetyを解除して表示中一覧を再取得する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000).unwrap();
-    let (request_id, _) =
-        defer_effect(state.request_defer_task(&storage, TASK_ID, "2026-09-08", DeferMode::Normal));
+    let (request_id, _) = defer_effect(state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-08",
+        normal_defer_plan(),
+    ));
 
     let refresh = state.apply_defer_task_result(
         &storage,

@@ -111,7 +111,12 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         ComponentAction::AutoSession,
         ComponentAction::DeferTask {
             task_id: COMPLETE_ID.to_owned(),
-            expected_mode: crate::DeferMode::Normal,
+            expected_plan: crate::DeferPlan {
+                mode: crate::DeferMode::Normal,
+                requested_pending_until_epoch_ms: 1_000,
+                effective_pending_until_epoch_ms: None,
+                repetition_interval_days: None,
+            },
         },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),

@@ -59,7 +59,7 @@ fn root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
-            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events
                 .lock()
                 .unwrap()
                 .push(format!("defer:{task_id}")),
@@ -86,7 +86,7 @@ fn globally_blocked_root(props: RootProps) -> Element {
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| {},
             on_start_session: move |_| {},
-            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events
                 .lock()
                 .unwrap()
                 .push(format!("defer:{task_id}")),
@@ -231,7 +231,12 @@ fn named_row(
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
-        defer_mode: DeferMode::Normal,
+        defer_plan: crate::DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
         defer_confirmation: None,
     }
 }
@@ -242,7 +247,7 @@ fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewMo
         kind,
         detail_label: "9/12 05:59".to_owned(),
     });
-    row.defer_mode = match kind {
+    row.defer_plan.mode = match kind {
         DeferConfirmationKind::DeadlineLimited => DeferMode::DeadlineLimited,
         DeferConfirmationKind::RoutinePeriod => DeferMode::RoutinePeriod,
     };
@@ -621,7 +626,7 @@ fn ReplacingConfirmationRowsHarness(events: Rc<RefCell<Vec<String>>>) -> Element
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| {},
             on_start_session: move |_| {},
-            on_defer_task: move |(task_id, _): (String, DeferMode)| defer_events.borrow_mut().push(task_id),
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events.borrow_mut().push(task_id),
             on_filter_change: move |_| {},
         }
     }
