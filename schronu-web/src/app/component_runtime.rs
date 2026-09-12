@@ -234,6 +234,7 @@ impl ComponentOrchestrator {
         self.mounted = true;
         let loaded_view_state = load_view_state(storage);
         let warning = loaded_view_state.warning().map(str::to_owned);
+        let reload_after_bootstrap = warning.is_some();
         let restored_view_state = loaded_view_state.into_state();
         let (mut state, effect) = initialize_client(storage, wall_now_epoch_ms);
         if let Some(view_state) = restored_view_state {
@@ -242,6 +243,9 @@ impl ComponentOrchestrator {
             state.restore_view_state(&view_state);
         }
         state.set_view_state_warning(warning);
+        if reload_after_bootstrap {
+            state.require_list_after_bootstrap();
+        }
         self.state = Some(state);
         self.refresh_state = background_state_for_effect(&effect).unwrap_or(RefreshState::Failed);
         effect

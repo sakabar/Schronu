@@ -166,6 +166,7 @@ impl ClientState {
         }
         match result {
             Ok(snapshot) => {
+                let current_logical_date = snapshot.logical_date.clone();
                 let cached_logical_date = self
                     .read
                     .has_list
@@ -182,6 +183,10 @@ impl ClientState {
                 );
                 if let Some(logical_date) = cached_logical_date {
                     return self.request_list(&logical_date);
+                }
+                if self.refresh_list_after_bootstrap {
+                    self.refresh_list_after_bootstrap = false;
+                    return self.request_list(&current_logical_date);
                 }
             }
             Err(error) => self.record_server_failure(ServerActionInvocation::Bootstrap, error),

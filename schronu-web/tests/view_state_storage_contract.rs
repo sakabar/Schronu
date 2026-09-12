@@ -118,6 +118,23 @@ fn view_stateの構築不正はstorage失敗と区別する() {
     assert!(storage.value.borrow().is_none());
 }
 
+#[test]
+fn view_stateは希望日時以上の期限制限日時を拒否する() {
+    let storage = MemoryStorage::default();
+    let mut state = view_state(
+        "2026-09-09",
+        vec![row("00000000-0000-4000-8000-000000000001", "task")],
+    );
+    let plan = &mut state.list.as_mut().unwrap().rows[0].defer_plan;
+    plan.mode = schronu_web::DeferMode::DeadlineLimited;
+    plan.effective_pending_until_epoch_ms = Some(plan.requested_pending_until_epoch_ms);
+
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+}
+
 fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {
     ViewState {
         snapshot: ServerSnapshot {

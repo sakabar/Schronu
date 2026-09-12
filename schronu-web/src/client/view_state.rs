@@ -155,7 +155,10 @@ fn valid_row(row: &ScheduledTaskRow) -> bool {
             DeferMode::DeadlineLimited => {
                 row.defer_plan
                     .effective_pending_until_epoch_ms
-                    .is_some_and(valid_epoch)
+                    .is_some_and(|effective| {
+                        valid_epoch(effective)
+                            && effective < row.defer_plan.requested_pending_until_epoch_ms
+                    })
                     && row.defer_plan.repetition_interval_days.is_none()
             }
             DeferMode::RoutinePeriod => {

@@ -43,6 +43,7 @@ pub struct ClientState {
     carry_lock: CarryLockState,
     tick_now_epoch_ms: i64,
     view_state_warning: Option<String>,
+    refresh_list_after_bootstrap: bool,
 }
 
 impl ClientState {
@@ -60,6 +61,7 @@ impl ClientState {
             carry_lock,
             tick_now_epoch_ms,
             view_state_warning: None,
+            refresh_list_after_bootstrap: false,
         }
     }
 
@@ -163,6 +165,11 @@ impl ClientState {
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
     pub(crate) fn set_view_state_warning(&mut self, warning: Option<String>) {
         self.view_state_warning = warning;
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn require_list_after_bootstrap(&mut self) {
+        self.refresh_list_after_bootstrap = true;
     }
 
     pub fn display_error(&self) -> Option<&DisplayError> {

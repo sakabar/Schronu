@@ -286,6 +286,40 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
 }
 
 #[test]
+fn 古いview_stateを破棄した後はbootstrapの現在論理日を新規取得する() {
+    let storage = MemoryStorage::default();
+    storage
+        .set(
+            "schronu_web.view_state.v1",
+            r#"{"version":1,"snapshot":{"observed_at_epoch_ms":1789000000000,"logical_date":"2026-09-09","buffer_seconds":0},"list":null,"active_tab":"list","task_name_filter":"","date_input_text":""}"#,
+        )
+        .unwrap();
+    let mut orchestrator = ComponentOrchestrator::new();
+    assert_eq!(
+        orchestrator.mount(&storage, 1_789_000_100_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    );
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_100_000_000,
+                logical_date: "2026-09-10".to_owned(),
+                buffer_seconds: 30,
+            }),
+        },
+    );
+
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListTasks { request, .. }
+            if request.logical_date == "2026-09-10"
+    ));
+}
+
+#[test]
 fn bootstrap失敗でも前回一覧を維持し再試行を提供する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = ComponentOrchestrator::new();
