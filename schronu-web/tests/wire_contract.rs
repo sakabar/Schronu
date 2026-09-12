@@ -1,7 +1,7 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
+    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -27,6 +27,12 @@ fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() 
         deadline_label: "____-00:05".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: DeferPlan {
+            mode: DeferMode::DeadlineLimited,
+            requested_pending_until_epoch_ms: 1_788_650_400_000,
+            effective_pending_until_epoch_ms: Some(1_788_566_100_000),
+            repetition_interval_days: None,
+        },
     };
 
     assert_json_round_trip(
@@ -40,8 +46,14 @@ fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() 
     assert_json_round_trip(
         &DeferTaskRequest {
             task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+            selected_logical_date: "2026-09-05".to_owned(),
+            expected_mode: DeferMode::DeadlineLimited,
         },
-        json!({"task_id": "00000000-0000-0000-0000-000000000001"}),
+        json!({
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "selected_logical_date": "2026-09-05",
+            "expected_mode": "deadline_limited"
+        }),
     );
     assert_json_round_trip(
         &ListTasksRequest {
@@ -72,7 +84,12 @@ fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() 
                 "deadline_epoch_ms": 1_788_566_400_000_i64,
                 "deadline_label": "____-00:05",
                 "misses_deadline": false,
-                "is_leaf": true
+                "is_leaf": true,
+                "defer_plan": {
+                    "mode": "deadline_limited",
+                    "requested_pending_until_epoch_ms": 1_788_650_400_000_i64,
+                    "effective_pending_until_epoch_ms": 1_788_566_100_000_i64
+                }
             }]
         }),
     );
