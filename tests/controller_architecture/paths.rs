@@ -106,6 +106,10 @@ pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
     }
 }
 
+pub fn resolve_path(module: &str, file: &syn::File, path: &syn::Path) -> Result<String, String> {
+    Ok(References::new(module, file)?.path(path))
+}
+
 struct References<'a> {
     module: &'a str,
     bindings: BTreeMap<String, String>,

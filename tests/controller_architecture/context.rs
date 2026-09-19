@@ -28,6 +28,21 @@ fn delegation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             let syn::Item::Impl(implementation) = item else {
                 continue;
             };
+            let Some((_, trait_path, _)) = &implementation.trait_ else {
+                continue;
+            };
+            let trait_name = match super::paths::resolve_path(module, file, trait_path) {
+                Ok(path) => path,
+                Err(error) => {
+                    errors.push(error);
+                    continue;
+                }
+            };
+            if trait_name.rsplit("::").next() != Some("TaskTreeCommandContext")
+                || !super::paths::type_has(&implementation.self_ty, "RuntimeTaskTreeCommandContext")
+            {
+                continue;
+            }
             for item in &implementation.items {
                 let syn::ImplItem::Fn(method) = item else {
                     continue;
@@ -55,7 +70,7 @@ fn delegation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
 fn task_list_context_cannot_bypass_its_view_builder() {
     let modules = fixture_modules("mod view; mod command_context;", &[
         ("view.rs", "fn renamed(order: TaskListDisplayOrder) -> DisplayModel { todo!() }"),
-        ("command_context.rs", "impl TaskTreeCommandContext for Context { fn list(&mut self, order: TaskListOrder) -> DisplayModel { DisplayModel::empty() } }"),
+        ("command_context.rs", "impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext { fn list(&mut self, order: TaskListOrder) -> DisplayModel { DisplayModel::empty() } }"),
     ]);
     assert!(!delegation_violations(&modules).is_empty());
 }
@@ -77,7 +92,7 @@ fn renamed_task_list_builder_preserves_delegation_without_decoys() {
     ] {
         let modules = fixture_modules("mod view; mod command_context;", &[
             ("view.rs", "fn arbitrary_name(order: TaskListDisplayOrder) -> DisplayModel { todo!() }"),
-            ("command_context.rs", &format!("use super::view::arbitrary_name as build; impl TaskTreeCommandContext for Context {{ fn arbitrary_method(&mut self, order: TaskListOrder) -> DisplayModel {{ {body} }} }}")),
+            ("command_context.rs", &format!("use super::view::arbitrary_name as build; impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext {{ fn arbitrary_method(&mut self, order: TaskListOrder) -> DisplayModel {{ {body} }} }}")),
         ]);
         assert_eq!(delegation_violations(&modules).is_empty(), expected);
     }
@@ -219,4 +234,13 @@ fn renderer_writer_aliases_cannot_hide_output_capabilities() {
         ],
     );
     assert!(!violations(&modules).is_empty());
+}
+
+#[test]
+fn unrelated_impl_cannot_supply_the_product_contexts_builder_call() {
+    let modules = fixture_modules("mod view; mod command_context;", &[
+        ("view.rs", "fn renamed(order: TaskListDisplayOrder) -> DisplayModel { todo!() }"),
+        ("command_context.rs", "use super::view::renamed; impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext { fn list(&mut self, order: TaskListOrder) -> DisplayModel { DisplayModel::empty() } } impl Helper { fn decoy(&mut self, order: TaskListOrder) -> DisplayModel { renamed(order) } }"),
+    ]);
+    assert!(!delegation_violations(&modules).is_empty());
 }
