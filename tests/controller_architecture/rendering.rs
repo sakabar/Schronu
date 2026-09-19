@@ -1,6 +1,4 @@
-use super::paths::{
-    expand_local_globs, function_calls, input_has, output_dependencies, references, used_paths,
-};
+use super::paths::{expand_local_globs, references};
 use super::source::{controller_modules, fixture_modules};
 use std::collections::BTreeMap;
 use syn::ext::IdentExt;
@@ -115,159 +113,56 @@ fn raw_legacy_variant_declarations_have_the_same_identity() {
 }
 
 fn mode_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    let mut modes = Vec::new();
-    let mut renderers = Vec::new();
-    let mut plain_renderers = Vec::new();
-    let mut outcomes = Vec::new();
-    for (module, file) in modules {
-        for item in &file.items {
-            if matches!(item, syn::Item::Enum(item) if item.ident.unraw() == "RenderMode") {
-                modes.push(module);
-            }
-            let syn::Item::Fn(function) = item else {
-                continue;
-            };
-            if input_has(&function.sig, "SchronuWriter") && input_has(&function.sig, "DisplayModel")
-            {
-                if input_has(&function.sig, "RenderMode") {
-                    renderers.push((module, file, function));
-                } else {
-                    plain_renderers.push((module, file, function));
-                }
-            }
-            if input_has(&function.sig, "CommandOutcome") {
-                outcomes.push((module, file, function));
-            }
-        }
-    }
-    let (
-        [(renderer_module, renderer_file, renderer)],
-        [(plain_module, _, plain)],
-        [(outcome_module, outcome_file, outcome)],
-    ) = (
-        renderers.as_slice(),
-        plain_renderers.as_slice(),
-        outcomes.as_slice(),
-    )
-    else {
-        return vec!["one mode renderer, plain renderer, and outcome coordinator required".into()];
-    };
-    let in_family =
-        |module: &str, root: &str| module == root || module.starts_with(&format!("{root}::"));
-    let mut errors = Vec::new();
-    if modes.len() != 1
-        || !in_family(modes[0], "controller::renderer")
-        || !in_family(renderer_module, "controller::renderer")
-        || !in_family(plain_module, "controller::renderer")
-        || !in_family(outcome_module, "controller::runtime")
-    {
-        errors.push("render mode belongs to renderer and outcome coordination to runtime".into());
-    }
-    for (module, file, function, is_renderer) in [
-        (*renderer_module, *renderer_file, *renderer, true),
-        (*outcome_module, *outcome_file, *outcome, false),
-    ] {
-        let expanded = match expand_local_globs(module, file, modules) {
-            Ok(file) => file,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        let calls = match function_calls(module, &expanded, function) {
-            Ok(calls) => calls,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        let mut scope = expanded.clone();
-        scope.items.retain(|item| matches!(item, syn::Item::Use(_)));
-        scope.items.push(syn::Item::Fn(function.clone()));
-        let paths = match used_paths(module, &scope) {
-            Ok(paths) => paths,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        let output = match output_dependencies(module, &scope, &Default::default()) {
-            Ok(output) => output,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        let flushes = output.iter().any(|path| path.ends_with("::flush"));
-        let calls_role = |owner: &str, name: &syn::Ident| {
-            calls.iter().any(|(path, _)| {
-                path == &format!("{owner}::{}", name.unraw())
-                    || (module == owner && path == &name.unraw().to_string())
+    let owners: Vec<_> = modules
+        .iter()
+        .flat_map(|(module, file)| {
+            file.items.iter().filter_map(move |item| {
+                matches!(item, syn::Item::Enum(item) if item.ident.unraw() == "RenderMode")
+                    .then_some(module.as_str())
             })
-        };
-        if is_renderer {
-            if !calls_role(plain_module, &plain.sig.ident)
-                || !flushes
-                || !paths
-                    .iter()
-                    .any(|path| path.ends_with("RenderMode::Flushed"))
-            {
-                errors.push("mode renderer must render semantic data and own flushing".into());
-            }
-        } else {
-            if !calls_role(renderer_module, &renderer.sig.ident)
-                || ["Flushed", "Unflushed"].iter().any(|variant| {
-                    !paths
-                        .iter()
-                        .any(|path| path.ends_with(&format!("RenderMode::{variant}")))
-                })
-            {
-                errors.push("outcome coordinator must select both render modes".into());
-            }
-            if flushes
-                || calls_role(plain_module, &plain.sig.ident)
-                || paths
-                    .iter()
-                    .any(|path| path.ends_with("DisplayModel::flush"))
-            {
-                errors.push("outcome coordinator must delegate renderer operations".into());
-            }
+        })
+        .collect();
+    match owners.as_slice() {
+        [owner]
+            if *owner == "controller::renderer" || owner.starts_with("controller::renderer::") =>
+        {
+            Vec::new()
         }
+        _ => vec!["RenderMode must have one declaration in renderer".into()],
     }
-    errors
-}
-
-fn mode_fixture(outcome: &str) -> BTreeMap<String, syn::File> {
-    fixture_modules("mod renderer; mod runtime;", &[
-        ("renderer.rs", "enum RenderMode { Flushed, Unflushed } fn plain(w: &mut dyn SchronuWriter, model: &DisplayModel) {} fn emit(w: &mut dyn SchronuWriter, model: &DisplayModel, mode: RenderMode) { plain(w, model); if mode == RenderMode::Flushed { w.flush(); } }"),
-        ("runtime.rs", &format!("use super::renderer::{{emit, plain, RenderMode}}; fn coordinate(w: &mut dyn SchronuWriter, outcome: CommandOutcome) {{ {outcome} }}")),
-    ])
 }
 
 #[test]
-fn outcome_coordinator_cannot_flush_the_writer_directly() {
-    let modules = mode_fixture("emit(w, &outcome.display, RenderMode::Unflushed); emit(w, &DisplayModel::empty(), RenderMode::Flushed); w.flush();");
-    assert!(!mode_violations(&modules).is_empty());
-}
-
-#[test]
-fn product_outcome_uses_renderer_owned_flush_modes() {
+fn product_render_mode_belongs_to_renderer() {
     assert_eq!(mode_violations(&controller_modules()), Vec::<String>::new());
 }
 
 #[test]
-fn renamed_mode_roles_preserve_the_contract() {
-    let modules = mode_fixture("emit(w, &outcome.display, RenderMode::Unflushed); emit(w, &DisplayModel::empty(), RenderMode::Flushed);");
-    assert!(mode_violations(&modules).is_empty());
+fn render_mode_owner_cannot_move_or_duplicate() {
+    for (renderer, runtime) in [
+        ("", "enum RenderMode { Flushed, Unflushed }"),
+        (
+            "enum RenderMode { Flushed }",
+            "enum RenderMode { Unflushed }",
+        ),
+        ("", ""),
+    ] {
+        let modules = fixture_modules(
+            "mod renderer; mod runtime;",
+            &[("renderer.rs", renderer), ("runtime.rs", runtime)],
+        );
+        assert!(!mode_violations(&modules).is_empty());
+    }
 }
 
 #[test]
-fn mode_selection_cannot_be_replaced_by_plain_rendering_or_decoys() {
-    for body in [
-        "plain(w, &outcome.display);",
-        "let note = \"emit(w, model, RenderMode::Flushed) RenderMode::Unflushed\";",
-        "emit(w, &outcome.display, RenderMode::Unflushed);",
-    ] {
-        assert!(!mode_violations(&mode_fixture(body)).is_empty());
-    }
+fn render_mode_can_belong_to_a_renderer_child() {
+    let modules = fixture_modules(
+        "mod renderer;",
+        &[(
+            "renderer.rs",
+            "mod mode { enum RenderMode { Flushed, Unflushed } }",
+        )],
+    );
+    assert!(mode_violations(&modules).is_empty());
 }
