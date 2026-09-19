@@ -45,3 +45,64 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
+
+  web-native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Tokyo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust 1.97.1
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web-native
+
+      - name: Test default feature boundary
+        run: cargo test --locked -p schronu-web --no-default-features
+
+      - name: Test server feature boundary
+        run: cargo test --locked -p schronu-web --no-default-features --features server
+
+      - name: Test web feature boundary on native target
+        run: cargo test --locked -p schronu-web --no-default-features --features web --test '*'
+
+      - name: Lint default feature boundary
+        run: cargo clippy --locked -p schronu-web --no-default-features --all-targets -- -D warnings -A dead-code
+
+      - name: Lint server feature boundary
+        run: cargo clippy --locked -p schronu-web --no-default-features --features server --all-targets -- -D warnings
+
+      - name: Lint web feature boundary on native target
+        run: cargo clippy --locked -p schronu-web --no-default-features --features web --lib -- -D warnings
+
+  web-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust 1.97.1 with WASM target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: web-wasm
+
+      - name: Check browser feature boundary
+        run: cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown

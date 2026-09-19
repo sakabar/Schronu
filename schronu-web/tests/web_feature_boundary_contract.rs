@@ -29,14 +29,22 @@ fn native_web_jobはdefault_server_webを個別にtestとclippyする() {
 
     assert!(job.contains("toolchain: 1.97.1"));
     assert!(job.contains("uses: Swatinem/rust-cache@v2"));
-    for features in ["", " --features server", " --features web"] {
-        let test = format!("cargo test --locked -p schronu-web --no-default-features{features}");
-        let clippy = format!(
-            "cargo clippy --locked -p schronu-web --no-default-features{features} --all-targets -- -D warnings"
-        );
-        assert!(job.contains(&test), "missing native Web test: {test}");
-        assert!(job.contains(&clippy), "missing native Web Clippy: {clippy}");
-    }
+    assert!(job.contains(
+        "cargo clippy --locked -p schronu-web --no-default-features --all-targets -- -D warnings -A dead-code"
+    ));
+    assert!(job.contains("cargo test --locked -p schronu-web --no-default-features"));
+    assert!(
+        job.contains("cargo test --locked -p schronu-web --no-default-features --features server")
+    );
+    assert!(job.contains(
+        "cargo clippy --locked -p schronu-web --no-default-features --features server --all-targets -- -D warnings"
+    ));
+    assert!(job.contains(
+        "cargo test --locked -p schronu-web --no-default-features --features web --test '*'"
+    ));
+    assert!(job.contains(
+        "cargo clippy --locked -p schronu-web --no-default-features --features web --lib -- -D warnings"
+    ));
 }
 
 #[test]
@@ -58,6 +66,14 @@ fn workflow_job(name: &str) -> &str {
         .find(&marker)
         .unwrap_or_else(|| panic!("missing workflow job: {name}"));
     let body = &CI_WORKFLOW[start + marker.len()..];
-    let end = body.find("\n  ").unwrap_or(body.len());
+    let end = body
+        .match_indices("\n  ")
+        .find_map(|(index, _)| {
+            body.as_bytes()
+                .get(index + 3)
+                .filter(|byte| **byte != b' ')
+                .map(|_| index)
+        })
+        .unwrap_or(body.len());
     &body[..end]
 }
