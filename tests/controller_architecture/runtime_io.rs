@@ -248,7 +248,13 @@ fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                 }
             }
             for path in paths {
-                if path.starts_with("controller::handler::") && path.ends_with("CommandContext") {
+                if path
+                    .strip_prefix("controller::handler::")
+                    .is_some_and(|path| {
+                        path.split("::")
+                            .any(|part| part.ends_with("CommandContext"))
+                    })
+                {
                     errors.push(format!(
                         "runtime depends on handler context capability: {path}"
                     ));
@@ -296,6 +302,7 @@ fn mutation_boundary_rejects_ufcs_aliases_macro_calls_and_context_helpers() {
         "use crate::entity::task::TaskHandle as Task; fn renamed() { Task::make_appointment(task, now); }",
         "impl Helper { fn renamed() { format!(\"{:?}\", task.set_actual_work_seconds(1)); } }",
         "use super::super::handler::ProjectCommandContext as Context; fn renamed<C: Context>(context: &mut C) {}",
+        "fn renamed() { super::super::handler::FinishPlacementCommandContext::pack(context); }",
     ] {
         let mut modules = controller_modules();
         modules.insert("controller::runtime::helper".into(), product_file(source).unwrap());
