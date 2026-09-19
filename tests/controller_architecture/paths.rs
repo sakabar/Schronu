@@ -253,10 +253,19 @@ pub fn type_has(ty: &syn::Type, name: &str) -> bool {
     find.found
 }
 
-pub fn signature_has(signature: &syn::Signature, name: &str) -> bool {
-    let mut find = TypeName { name, found: false };
-    find.visit_signature(signature);
-    find.found
+pub fn signature_paths(
+    module: &str,
+    file: &syn::File,
+    signature: &syn::Signature,
+) -> Result<BTreeSet<String>, String> {
+    let mut facts = References::new(module, file)?;
+    facts.paths.clear();
+    facts.visit_signature(signature);
+    if facts.errors.is_empty() {
+        Ok(facts.paths)
+    } else {
+        Err(facts.errors.join("\n"))
+    }
 }
 
 pub fn input_has(signature: &syn::Signature, name: &str) -> bool {
@@ -386,14 +395,16 @@ impl<'ast> Visit<'ast> for Imports<'_> {
 pub fn output_functions(modules: &BTreeMap<String, syn::File>) -> BTreeSet<String> {
     super::source::module_family(modules, "controller::renderer")
         .flat_map(|(module, file)| {
-            file.items.iter().filter_map(move |item| match item {
-                syn::Item::Fn(function)
-                    if signature_has(&function.sig, "SchronuWriter")
-                        || signature_has(&function.sig, "Write") =>
-                {
-                    Some(format!("{module}::{}", function.sig.ident.unraw()))
-                }
-                _ => None,
+            file.items.iter().filter_map(move |item| {
+                let syn::Item::Fn(function) = item else {
+                    return None;
+                };
+                let paths = signature_paths(module, file, &function.sig)
+                    .expect("renderer signature dependencies must resolve");
+                paths
+                    .iter()
+                    .any(|path| writer_path(path))
+                    .then(|| format!("{module}::{}", function.sig.ident.unraw()))
             })
         })
         .collect()

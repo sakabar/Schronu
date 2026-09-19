@@ -120,3 +120,22 @@ fn context_rejects_fully_qualified_writer_operations() {
         assert!(!violations(&modules).is_empty());
     }
 }
+
+#[test]
+fn renderer_writer_aliases_cannot_hide_output_capabilities() {
+    let modules = fixture_modules(
+        "mod handler; mod command_context; mod renderer;",
+        &[
+            ("handler.rs", ""),
+            (
+                "command_context.rs",
+                "fn helper() { super::renderer::renamed(writer); }",
+            ),
+            (
+                "renderer.rs",
+                "use std::io::Write as Sink; pub(super) fn renamed<W: Sink>(writer: W) {}",
+            ),
+        ],
+    );
+    assert!(!violations(&modules).is_empty());
+}
