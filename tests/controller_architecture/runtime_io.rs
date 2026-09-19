@@ -79,3 +79,14 @@ fn runtime_may_coordinate_external_io_under_arbitrary_function_names() {
         });
     assert!(io_violations(&modules).is_empty());
 }
+
+#[test]
+fn relative_and_qualified_gateway_paths_have_the_same_boundary() {
+    let errors: Vec<_> = ["crate::adapter::gateway", "super::super::gateway"].into_iter().map(|path| {
+        let mut modules = controller_modules();
+        modules.get_mut("controller::renderer").unwrap().items.extend(product_file(&format!("use {path} as storage; fn renamed() {{ storage::task_repository::TaskRepository::new(); }}")).unwrap().items);
+        io_violations(&modules)
+    }).collect();
+    assert!(!errors[0].is_empty());
+    assert_eq!(errors[0], errors[1]);
+}

@@ -197,3 +197,17 @@ fn unresolved_glob_targets_remain_errors() {
     )
     .is_err());
 }
+
+#[test]
+fn relative_paths_keep_the_known_parents_of_controller() {
+    for (path, expected) in [
+        ("super::super::gateway", "crate::adapter::gateway"),
+        ("super::super::super::application", "crate::application"),
+        ("crate::adapter::controller", "controller"),
+    ] {
+        assert_eq!(
+            super::paths::qualify("controller::renderer", path),
+            expected
+        );
+    }
+}

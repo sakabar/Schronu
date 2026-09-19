@@ -488,6 +488,7 @@ pub fn qualify(module: &str, path: &str) -> String {
     let mut parts = path.split("::").peekable();
     let mut prefix = Vec::new();
     if matches!(parts.peek(), Some(&"self" | &"super")) {
+        prefix.extend(["crate", "adapter"]);
         prefix.extend(module.split("::"));
         while let Some(part) = parts.peek() {
             match *part {
@@ -504,6 +505,9 @@ pub fn qualify(module: &str, path: &str) -> String {
     }
     prefix.extend(parts);
     let result = prefix.join("::");
+    if result == "crate::adapter::controller" {
+        return "controller".into();
+    }
     if let Some(rest) = result.strip_prefix("crate::adapter::controller::") {
         format!("controller::{rest}")
     } else {
