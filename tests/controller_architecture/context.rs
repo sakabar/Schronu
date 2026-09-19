@@ -2,6 +2,17 @@ use super::paths::{output_dependencies, output_functions, references};
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
 
+fn delegation_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn task_list_context_cannot_bypass_its_view_builder() {
+    let modules = fixture_modules("mod view; mod command_context;", &[
+        ("view.rs", "fn renamed(order: TaskListDisplayOrder) -> DisplayModel { todo!() }"),
+        ("command_context.rs", "impl TaskTreeCommandContext for Context { fn list(&mut self, order: TaskListOrder) -> DisplayModel { DisplayModel::empty() } }"),
+    ]);
+    assert!(!delegation_violations(&modules).is_empty());
+}
+
 fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let renderers = output_functions(modules);
     let mut errors = Vec::new();
