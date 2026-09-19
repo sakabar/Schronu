@@ -20,6 +20,33 @@ fn local_globs_resolve_only_declared_visible_items() {
     assert!(paths.contains("controller::view::renamed"));
     assert!(!paths.contains("controller::view::private"));
 }
+
+#[test]
+fn local_globs_preserve_unions_and_reject_unhandled_exports() {
+    for (source, supported) in [
+        ("pub union Payload { pub value: u32 }", true),
+        ("unsafe extern \"C\" { pub fn imported(); }", false),
+    ] {
+        let modules = super::source::fixture_modules(
+            "mod runtime; mod view;",
+            &[("runtime.rs", "use super::view::*;"), ("view.rs", source)],
+        );
+        let result = super::paths::expand_local_globs(
+            "controller::runtime",
+            &modules["controller::runtime"],
+            &modules,
+        );
+        if supported {
+            assert!(
+                super::paths::references("controller::runtime", &result.unwrap())
+                    .unwrap()
+                    .contains("controller::view::Payload")
+            );
+        } else {
+            assert!(result.is_err());
+        }
+    }
+}
 use std::collections::BTreeMap;
 
 #[test]

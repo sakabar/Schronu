@@ -39,6 +39,7 @@ pub fn expand_local_globs(
                     let (visibility, ident) = match item {
                         syn::Item::Fn(item) => (&item.vis, &item.sig.ident),
                         syn::Item::Struct(item) => (&item.vis, &item.ident),
+                        syn::Item::Union(item) => (&item.vis, &item.ident),
                         syn::Item::Enum(item) => (&item.vis, &item.ident),
                         syn::Item::Trait(item) => (&item.vis, &item.ident),
                         syn::Item::Type(item) => (&item.vis, &item.ident),
@@ -55,7 +56,8 @@ pub fn expand_local_globs(
                                 "glob through macro needs explicit support: {target}"
                             ))
                         }
-                        _ => continue,
+                        syn::Item::Use(_) | syn::Item::Impl(_) => continue,
+                        _ => return Err(format!("unsupported glob export item: {target}")),
                     };
                     if !matches!(visibility, syn::Visibility::Inherited) {
                         items.push(UseTree::Name(syn::UseName {
