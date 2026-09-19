@@ -2711,3 +2711,15 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 - 互換性: 製品挙動、公開API、wire format、storage schema、error分類を変更していない。root、Apps Script、benchmarkingの既存CI commandを同じ`quality` jobに維持する。
 - 未検証・残存作業: GitHub Actionsの実CIはpush / PR公開後にだけ確認する。local成功を実CI成功として扱わない。Web製品code変更がないためWASM prewarmと`dx build`の必須条件には該当しない。Wave共有summaryは統合gate後の別leaseで追記する。
 - 依存commit: Wave 8内のhard dependencyはない。W8-A / W8-Bの未merge文書commitは取り込んでいない。
+
+### Wave 8共有統合summary
+
+- 統合状態: W8-A / TD-044、W8-B / TD-048、W8-C / TD-050を表記順に使い捨てintegration worktreeへ合成し、統合HEAD `1eb9efc2`で確認した。このrevisionは検証専用であり、各lane branchへ取り込まない。
+- conflict: 製品codeのconflictは0件だった。`backlog.md`は各laneの末尾追記を内容不変のままW8-A→W8-B→W8-Cの順に配置した。
+- root gate: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。root libraryは1,326件成功・1件ignoredで、MCPは23件成功した。
+- Apps Script / Spreadsheet gate: `node --test apps_script/main.test.mjs`は21件、`cargo test --locked --test spreadsheet_contract`は5件が成功した。実spreadsheetでの動作確認は未実施である。
+- benchmarking gate: `cargo test --locked --features benchmarking --test scheduling_benchmark_contract`は16件成功した。
+- Web gate: default test、default Clippy(`dead-code`だけを許可)、server test、server Clippy、web integration test、web library Clippy、`wasm32-unknown-unknown` checkに成功した。server testはlibrary 124件とmain 1件に加え、各integration testが成功した。
+- 互換性: 3 laneを合成した状態でもroot、Apps Script、benchmarking、Web native / WASMの既存契約を維持した。統合側だけの製品修正はない。
+- 公開・外部検証: push、PR作成、merge、GitHub Actionsの実CIは未実施であり、local / 統合gate成功を実CI成功として扱わない。実spreadsheet確認も未実施である。
+- merge順: 共有文書末尾の競合を避けるため、PRはW8-A→W8-B→W8-Cの順でmergeする。先行PRのmerge後、後続branchは最新`main`へrebaseし、先行laneの文書記録を維持したうえで関連gate、全gate、親review、最新HEADの実CIを再確認する。
