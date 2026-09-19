@@ -269,6 +269,8 @@ fn runtime_may_pass_operation_dates_to_io_and_return_unrelated_counts() {
 
 fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     // These are domain capabilities, not names of controller implementations.
+    // sync_clock also belongs to TaskRepositoryTrait: runtime coordinates that
+    // repository clock hook before dispatch, so the shared method name is allowed.
     let capabilities = [
         "make_appointment",
         "set_orig_status",
@@ -289,6 +291,12 @@ fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
         "set_end_time_opt",
         "set_atomic",
         "set_fixed_start",
+        "set_is_on_other_side",
+        "set_flexible_start_time",
+        "set_id",
+        "set_create_time",
+        "unset_deadline_time_opt",
+        "reparent_to",
     ];
     let mut errors = Vec::new();
     for (module, file) in module_family(modules, "controller::runtime") {
@@ -352,6 +360,11 @@ fn product_runtime_delegates_task_mutations() {
 #[test]
 fn mutation_boundary_rejects_ufcs_aliases_macro_calls_and_context_helpers() {
     for source in [
+        "fn renamed(task: TaskHandle) { task.set_is_on_other_side(true); }",
+        "fn renamed(task: TaskHandle) { task.set_flexible_start_time(now); }",
+        "fn renamed(task: TaskHandle) { task.reparent_to(parent); }",
+        "fn renamed(task: TaskHandle) { task.unset_deadline_time_opt(); }",
+        "fn renamed(task: TaskHandle) { task.set_id(id); task.set_create_time(now); }",
         "use crate::entity::task::TaskHandle as Task; fn renamed() { Task::make_appointment(task, now); }",
         "impl Helper { fn renamed() { format!(\"{:?}\", task.set_actual_work_seconds(1)); } }",
         "use super::handler::ProjectCommandContext as Context; fn renamed<C: Context>(context: &mut C) {}",
