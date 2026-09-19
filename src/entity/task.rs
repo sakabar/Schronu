@@ -1774,6 +1774,38 @@ mod checked_deadline_calculation_tests {
         assert_eq!(observed.get_fixed_start(), original.get_fixed_start());
         assert_eq!(task.get_persistent_mutation_revision().unwrap(), revision);
     }
+
+    #[test]
+    fn make_appointmentは日時加算範囲外をerrorにし属性とrevisionを変更しない() {
+        let now = Local::now();
+        let task_id = Uuid::new_v4();
+        let task = TaskHandle::with_identity("予約対象", task_id, now).unwrap();
+        task.set_estimated_work_seconds(60).unwrap();
+        let original = task.get_attr().unwrap();
+        let revision = task.get_persistent_mutation_revision().unwrap();
+        let appointment_start_time: DateTime<Local> = DateTime::<Local>::MAX_UTC.into();
+
+        let actual = task.make_appointment(appointment_start_time);
+
+        assert!(matches!(
+            actual,
+            Err(TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "appointment_start_time",
+                source,
+            }) if error_task_id == task_id
+                && source.operation() == "appointment_deadline"
+                && source.reason() == "datetime addition is outside the supported range"
+        ));
+        let observed = task.get_attr().unwrap();
+        assert_eq!(observed.get_start_time(), original.get_start_time());
+        assert_eq!(
+            observed.get_deadline_time_opt(),
+            original.get_deadline_time_opt()
+        );
+        assert_eq!(observed.get_fixed_start(), original.get_fixed_start());
+        assert_eq!(task.get_persistent_mutation_revision().unwrap(), revision);
+    }
 }
 
 #[cfg(test)]
