@@ -12,8 +12,6 @@ mod interactive;
 mod path_tests;
 #[path = "controller_architecture/paths.rs"]
 mod paths;
-#[path = "controller_architecture/progress.rs"]
-mod progress;
 #[path = "controller_architecture/rendering.rs"]
 mod rendering;
 #[path = "controller_architecture/runtime_io.rs"]
