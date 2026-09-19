@@ -257,3 +257,14 @@ fn runtime_may_pass_operation_dates_to_io_and_return_unrelated_counts() {
     modules.get_mut("controller::runtime").unwrap().items.extend(product_file("fn renamed(now: chrono::DateTime<Local>) { repository.reload(now); } fn io_count() -> i64 { 0 }").unwrap().items);
     assert!(datetime_violations(&modules).is_empty());
 }
+
+fn mutation_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn renamed_runtime_helper_cannot_mutate_task_domain_state() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
+        fn renamed(task: TaskHandle) { task.set_pending_until(now); }
+    });
+    assert!(!mutation_violations(&modules).is_empty());
+}
