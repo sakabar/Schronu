@@ -1,6 +1,7 @@
 use super::command::{
-    command_with_minimum_valid_arguments, parse_non_interactive_command_tokens, Command,
-    CommandAction, CommandKind, InteractiveShortcut, ParseMode,
+    command_with_minimum_valid_arguments, parse_interactive_command_with_maintenance_kind,
+    parse_non_interactive_command_tokens, Command, CommandAction, CommandKind, InteractiveShortcut,
+    ParseMode,
 };
 use super::command_test_support::parse_command;
 use uuid::Uuid;
@@ -649,7 +650,11 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
         Command::Noop
     );
     assert_eq!(
-        parse_command(" 0001 task", ParseMode::NonInteractive).unwrap(),
+        parse_non_interactive_command_tokens(&["0001".into(), "task".into()]).unwrap(),
+        Command::Noop
+    );
+    assert_eq!(
+        parse_command(" 0001 task", ParseMode::Interactive).unwrap(),
         Command::ShowAll {
             pattern: Some("0001".to_string()),
         }
@@ -659,6 +664,10 @@ fn parser_distinguishes_noop_search_fallback_and_interactive_shortcuts() {
         assert_eq!(
             parse_command(input, ParseMode::Interactive).unwrap(),
             Command::TuckAway
+        );
+        assert_eq!(
+            parse_interactive_command_with_maintenance_kind(input),
+            (Ok(Command::TuckAway), None)
         );
         let error = parse_command(input, ParseMode::NonInteractive).unwrap_err();
         assert_eq!(error.command(), "tuck");
@@ -857,8 +866,17 @@ fn arrange_accepts_only_the_explicit_all_flags() {
 }
 
 #[test]
-fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
-    let source = include_str!("runtime.rs");
-    assert!(source.contains("parse_non_interactive_command_tokens(command_tokens)"));
-    assert!(source.contains("parse_interactive_command(command)"));
+fn argv_parser_preserves_each_argument_without_text_retokenization() {
+    for name in ["alpha beta", "", "'quoted'", r"alpha\beta"] {
+        assert_eq!(
+            parse_non_interactive_command_tokens(&["new".into(), name.into(), "15".into(),])
+                .unwrap(),
+            Command::Action(CommandAction::NewProject {
+                kind: CommandKind::NewProject,
+                canonical_name: "新",
+                name: name.into(),
+                estimated_minutes: Some(15),
+            })
+        );
+    }
 }

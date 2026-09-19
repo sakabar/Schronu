@@ -1645,3 +1645,6 @@ include!("runtime_contract_tests.rs");
 
 #[cfg(test)]
 include!("interactive_io_contract_tests.rs");
+
+#[cfg(test)]
+include!("runtime_redraw_contract_tests.rs");

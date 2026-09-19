@@ -74,7 +74,7 @@
 | TD-033 | P1 | 完了 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
-| TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
+| TD-036 | P2 | 完了 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 完了 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
@@ -1496,8 +1496,55 @@
 - 分類: `技術的負債 / test保守性`
 - 優先度: `P2`
 - 概算規模: `L`
+- 状態: 完了。[PR #467](https://github.com/sakabar/Schronu/pull/467)へpush・PR本文更新済み。
 
-#### 現状と根拠
+#### W2-C schedule境界の既存証跡
+
+- `6f888bfa`で`get_schedule`を`fn(&dyn TaskRepositoryTrait) -> Result<Vec<ScheduledTaskView>, ApplicationError>`へ固定する型契約を追加し、`22315c98`で対応するschedule source scannerを除去済み。
+- `src/application/schedule_use_case_contract_tests.rs`の型契約と製品経路の挙動testは今回変更していない。Wave 2のschedule完了範囲を維持し、残っていたcontroller側だけをW7-Aで置換した。
+
+#### W7-A controller側5境界の最終的な保証分担
+
+独自Rust scannerを除去し、compilerと製品経路のbehavior testを主な保証とする。test用`syn`による`tests/controller_architecture.rs`は、具体的な禁止依存と宣言所有を検査する。製品挙動・公開API・出力契約は変更していない。簡素化による製品fileの差分は、再描画testを接続する`runtime.rs`の`cfg(test)` includeだけである。
+
+| 境界 | compiler・製品経路のbehavior test | 残すAST検査 |
+| --- | --- | --- |
+| parser | 実argvのtoken境界、3入口のmode、引用符・alias、typed field/error、maintenance errorの優先順 | handlerからcommand内のparser関数への依存を宣言に基づいて禁止し、typed validatorを許容 |
+| handler | typed contextのtrait整合、全command groupのoutcome・context呼び出し、finish値とplacementのalias非依存 | 外部I/O・writer依存禁止、contextの宣言所有 |
+| runtime | 両実行入口の状態更新・transaction traceと失敗経路、不正入力時のI/O不実行、Verify保存不実行、終了・保存・出力error。実runtime driverで表示/更新command後の葉描画、focus、flushを検証 | I/O調停・terminal操作の所有、handler context・domain更新capability・Naive系日時型への依存禁止 |
+| view | 実TaskTreeCommandContextの通常順/低優先度末尾順、対象行・typed model・metrics、focus表示 | writerfree、具体的な表示data型のruntime依存禁止、Focus sourceの宣言所有 |
+| renderer | 診断本文と末尾改行の完全一致、flush回数・部分出力・error情報、progressの秒数・境界・負値・未算定・超過表示 | semantic表示のlegacy禁止、RenderModeの宣言所有 |
+
+- AST policyは`tests/controller_architecture/`配下。`source.rs`が製品moduleとtest用cfg除外、`imports.rs`がimport/glob解決、`paths.rs`が参照・宣言・writer capabilityを扱う。alias・macro・nested helper・関数ポインタ・UFCSの回帰例を維持し、未対応構文は無視せずerrorにする。
+- `parser.rs`・`dispatch.rs`・`progress.rs`を削除し、「共有関数を直接1回呼ぶ」「引数が直接Call式」「callback内の実行を静的追跡する」という形状契約を製品挙動へ置換した。日時の戻り型、f64/float literalからの役割推測、型aliasの役割伝播、finish/placementの文字列・index構文禁止も除去した。Naive系と具体modelの依存禁止は残している。
+- call記録・scope追跡・callback whitelist・`and_then`特別扱い・member/index/signature蓄積を除去し、I/O依存規則を共通化した。新しい汎用解析器・fixture基盤・公開APIは追加していない。
+- 対象5 contract_test fileの自作scannerは除去済み。behavior testを補強してから対応するAST形状検査を別commitで削除し、既存testでmutationを検出できる契約にはtestを追加していない。legacy helperの非対話経路は実argv入口へ接続し、`0001`の文字列入力とargvで異なる既存仕様をそれぞれ固定した。
+
+#### W7-A簡素化後のlane検証
+
+- 検証対象code HEAD: `ca42f6e8`。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`はすべてexit 0。22 suites / 1,459 passed / 0 failed / 2 ignored、ASTは73 passed。ignoredは既存のまま。
+- 27種類の製品mutationを拒否した(compilerによるwriter付きtrait変更の拒否1件を含む)。診断への余分な出力、flush欠落・重複・error握り潰し、再描画の常時実行/常時省略、parser mode・token境界、dispatch・状態更新・保存、数値・model順序・禁止依存を確認し、mutationはすべて復元してcommitから除外した。
+- AST関連は簡素化終了時に4,360行から2,415行へ削減し、親reviewのraw module回帰修正後は2,470行(当初比1,890行減)。最大fileは334行、新規の`runtime_redraw_contract_tests.rs`は53行で既存runtime helperとterminal fixtureを再利用した。`syn`の`full`・`visit`・`visit-mut`は残すmodule/cfg・依存検査で使用する。
+- 内部reviewと累積reviewの指摘は解消済み。親の具体依存維持の指摘を`93184542`、内部reviewのcontext関連UFCS依存の指摘を`42cf09c1`で個別修正した。親独立reviewのraw module名による検査漏れは`ca42f6e8`で論理module名と暗黙pathを`unraw()`へ統一し、通常file・mod.rs・inline・`#[path]`とhandler関数ポインタ禁止を回帰検証した。親はscope・log・累積差分・実装差分を確認し、`ca42f6e8`で独立reviewのP2解消を確認済み。未解消P1/P2なしで保守性も受入れ済み。文書commit `976e61c8`もscope内として承認された。
+- 証跡: `/private/tmp/w7-simplification-record.md`にcommit対応とmutation一覧、`/private/tmp/w7-raw-module-{red,clippy,green}.log`に最終修正のRedとlane gateを記録した。
+
+#### 簡素化後の親再統合gate
+
+- `origin/main=10fba05d`から107commitを使い捨て統合worktreeへ適用した統合HEAD `95d793ce057e4d7dc9b1511e5a509566050b61ed`で通過した。tree `6609a01fbefd8cc1a04747971a8e18adf50e2fe7`はlane HEAD `976e61c8`と一致する。
+- `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`はすべてexit 0。22 suites / 1,459 passed / 0 failed / 2 ignored、AST 73 passed。
+- ログは`/private/tmp/wave7-simplified-integration-gate-{0..3}.log`、結果は`/private/tmp/wave7-simplified-integration-gate-results.json`。この証跡追記は文書のみで、検証対象の製品・test codeを変更しない。
+
+#### 簡素化前の親統合gate(過去証跡)
+
+- `origin/main=10fba05d`から当時の87commitを使い捨てworktreeへcherry-pickした統合HEAD `18b80583`でgateを通過した。tree `f61919dc2ffb951a8f49ac7345e6089b4ce5a6c6`は当時のlane HEAD `1a6add89`と一致する。
+- 当時の`git diff --check`、fmt、clippy、全testはexit 0。22 suites / 1,494 passed / 0 failed / 2 ignored、AST 111件で、CLI runtime・storage backup・Spreadsheetを含む。ログは`/private/tmp/wave7-integration-gate-{0..4}.log`。これは簡素化前の過去証跡であり、簡素化後の結果は上記の親再統合gateに記録した。
+
+#### 残存範囲・別契約
+
+- W2-CとW7-Aのsource scanner置換と簡素化は完了。親再統合gate通過済み。
+- `src/adapter/controller/mod.rs`の`binary_entrypoint_delegates_to_library_cli`は、binary入口がlibraryの`run_cli`だけへ委譲する薄いwrapperであることをsource一致で固定する別契約であり、今回の独自Rust scanner置換の対象外として維持した。
+
+#### 対応前の現状と根拠
 
 - `src/adapter/controller/schronu/interactive_contract_tests.rs:11-51`はcontroller配下のRust sourceをfilesystemから収集する。
 - 同ファイル`158`以降はcomment、string、raw string、`cfg(test)`、braceを独自scannerで除外し、関数・trait・implの領域を文字列として抽出する。

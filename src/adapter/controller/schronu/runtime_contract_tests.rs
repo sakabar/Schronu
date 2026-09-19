@@ -4186,7 +4186,7 @@ fn test_execute_today_今を絞る全経路で負荷指標を表示する() {
 }
 
 #[test]
-fn view_metricsは製品fixtureからtyped_sequenceと実値を返す() {
+fn task_list_contextは製品fixtureからtyped_sequenceと実値を返す() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for (pattern, expected_primary) in [("今", "task-list"), ("暦", "calendar"), ("帯", "band")]
@@ -4200,14 +4200,17 @@ fn view_metricsは製品fixtureからtyped_sequenceと実値を返す() {
         let mut free_time_manager = TestFreeTimeManager::with_free_minutes(10 * 60);
         let mut focused_task_id_opt = None;
 
-        let display = build_show_all_tasks_display_with_config(
-            &mut focused_task_id_opt,
-            &mut task_repository,
-            &mut free_time_manager,
-            &Some(pattern.to_string()),
-            TaskListDisplayOrder::ScheduledStartDesc,
-            &SchronuConfig::default(),
-        )
+        let mut next_id = || Uuid::nil();
+        let mut task_factory = TaskFactory::new(now, &mut next_id);
+        let config = SchronuConfig::default();
+        let display = RuntimeTaskTreeCommandContext {
+            task_repository: &mut task_repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: &config,
+        }
+        .show_task_list(Some(pattern), TaskListOrder::ScheduledStartDesc, false)
         .unwrap();
 
         let DisplayModel::Sequence(models) = display else {
@@ -4553,29 +4556,6 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
             ));
         }
         assert_eq!(output.flush_count, 1);
-    }
-
-    let runtime_source = include_str!("runtime.rs");
-    assert!(
-        !runtime_source.contains("\nfn execute_handler_outcome("),
-        "the superseded outcome coordinator must be removed"
-    );
-
-    for isolated_source in [
-        include_str!("handler.rs"),
-        include_str!("interactive.rs"),
-        include_str!("renderer.rs"),
-    ] {
-        for forbidden in [
-            "run_repository_transaction",
-            "webbrowser::open",
-            "process::Command",
-        ] {
-            assert!(
-                !isolated_source.contains(forbidden),
-                "external I/O and repository transactions must remain in runtime: {forbidden}"
-            );
-        }
     }
 }
 
@@ -5883,10 +5863,10 @@ fn test_report_run_result_load_errorを表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("Load"));
-    assert!(output.contains("/test/project.yaml"));
-    assert!(output.contains("broken YAML"));
+    assert_eq!(
+        output,
+        "[Error] repository Load failed: ParseProject failed for /test/project.yaml: broken YAML\n"
+    );
 }
 
 #[test]
@@ -5902,8 +5882,7 @@ fn test_report_run_result_input切断を表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("interactive input channel disconnected"));
+    assert_eq!(output, "[Error] interactive input channel disconnected\n");
 }
 
 #[test]
@@ -5914,8 +5893,7 @@ fn test_report_run_result_ctrl_cを表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("interactive input interrupted"));
+    assert_eq!(output, "[Error] interactive input interrupted\n");
 }
 
 #[test]
@@ -6119,6 +6097,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
         fail_output: Rc::clone(&fail_output),
         output: Rc::clone(&output),
         drop_count: Rc::clone(&drop_count),
+        flush_count: Rc::new(Cell::new(0)),
         error_kind: std::io::ErrorKind::PermissionDenied,
         fail_after_output_marker: Some(
             "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
@@ -6206,6 +6185,7 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
         fail_output: Rc::clone(&fail_output),
         output,
         drop_count: Rc::clone(&drop_count),
+        flush_count: Rc::new(Cell::new(0)),
         error_kind: std::io::ErrorKind::PermissionDenied,
         fail_after_output_marker: Some(
             "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
@@ -8770,4 +8750,42 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
         "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
     ));
     assert!(!output.contains("日          \t空          \t空差"));
+}
+
+#[test]
+fn task_list_contextは通常と低優先度末尾の行順と対象を保持する() {
+    use super::renderer::TaskListRow;
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for (order, expected_names) in [
+        (TaskListOrder::ScheduledStartDesc, ["root", "低", "高"]),
+        (TaskListOrder::LowPriorityTail, ["高", "低", "root"]),
+    ] {
+        let root = TaskHandle::with_identity("root", next_test_task_id(), now).unwrap();
+        root.set_estimated_work_seconds(0).unwrap();
+        for (name, priority) in [("高", 2), ("低", 1)] {
+            let task = root.create_as_last_child(TaskAttr::with_identity(name, next_test_task_id(), now));
+            task.set_priority(priority).unwrap();
+            task.set_estimated_work_seconds(1800).unwrap();
+        }
+        let mut repository = TestTaskRepository::new(root, now);
+        let mut free_time = TestFreeTimeManager::with_free_minutes(600);
+        let mut focus = None;
+        let mut next_id = || Uuid::nil();
+        let mut factory = TaskFactory::new(now, &mut next_id);
+        let display = RuntimeTaskTreeCommandContext {
+            task_repository: &mut repository,
+            free_time_manager: &mut free_time,
+            focused_task_id_opt: &mut focus,
+            task_factory: &mut factory,
+            config: active_config(),
+        }.show_task_list(Some("今"), order, false).unwrap();
+        let DisplayModel::Sequence(models) = display else { panic!("typed sequence expected") };
+        let DisplayModel::TaskList(list) = &models[0] else { panic!("task list expected") };
+        let rows = list.rows.iter().filter_map(|row| match row {
+            TaskListRow::Task(task) => Some(task), _ => None,
+        }).collect::<Vec<_>>();
+        assert_eq!(rows.iter().map(|row| row.task_name.as_str()).collect::<Vec<_>>(), expected_names);
+        assert!(rows.iter().all(|row| row.estimated_minutes == if row.task_name == "root" { 0 } else { 30 }));
+        assert_eq!(list.category_denominator_seconds, 600 * 60);
+    }
 }
