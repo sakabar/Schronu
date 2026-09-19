@@ -1183,13 +1183,24 @@ impl TaskHandle {
         }
         let mut updates = Vec::new();
         self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
-        self.apply_deadline_updates(updates)
+        self.apply_deadline_updates(updates, "deadline_time")
     }
 
     fn apply_deadline_updates(
         &self,
         updates: Vec<(Node<TaskAttr>, DateTime<Local>)>,
+        field: &'static str,
     ) -> Result<(), TaskTreeError> {
+        for (node, deadline) in &updates {
+            let task = Self { node: node.clone() };
+            let attr = node.try_borrow_data().map_err(|_| TaskTreeError::Borrow)?;
+            task.validate_deadline_calculations(
+                Some(*deadline),
+                attr.get_estimated_work_seconds(),
+                attr.get_actual_work_seconds(),
+                field,
+            )?;
+        }
         let root = self.root()?;
         root.node
             .try_borrow_data_mut()
@@ -1271,7 +1282,7 @@ impl TaskHandle {
                 &mut updates,
             )?;
         }
-        self.apply_deadline_updates(updates)
+        self.apply_deadline_updates(updates, "deadline_time")
     }
 
     pub fn get_deadline_time_opt(&self) -> Result<Option<DateTime<Local>>, TaskTreeError> {
