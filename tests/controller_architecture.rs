@@ -16,6 +16,8 @@ mod paths;
 mod progress;
 #[path = "controller_architecture/rendering.rs"]
 mod rendering;
+#[path = "controller_architecture/runtime_io.rs"]
+mod runtime_io;
 #[path = "controller_architecture/source.rs"]
 mod source;
 #[path = "controller_architecture/source_tests.rs"]
