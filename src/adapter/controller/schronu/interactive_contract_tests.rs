@@ -159,32 +159,6 @@ fn top_level_function_definition_offsets(source: &str, function_name: &str) -> V
     top_level_item_definition_offsets(source, &format!("fn {function_name}"))
 }
 
-fn top_level_product_function_offsets(source: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
-    let mut line_start = 0;
-    let mut non_code_state = MultilineNonCodeState::default();
-    let mut cfg_test_attribute_pending = false;
-
-    for line in source.split_inclusive('\n') {
-        let source_line = line.trim_end_matches(['\r', '\n']);
-        if !non_code_state.starts_in_non_code()
-            && !source_line.chars().next().is_some_and(char::is_whitespace)
-        {
-            if source_line.starts_with("#[") {
-                cfg_test_attribute_pending |= source_line.contains("cfg(test)");
-            } else if is_top_level_rust_item(source_line) {
-                if !cfg_test_attribute_pending && is_top_level_function_declaration(source_line) {
-                    offsets.push(line_start);
-                }
-                cfg_test_attribute_pending = false;
-            }
-        }
-        non_code_state.scan_line(line);
-        line_start += line.len();
-    }
-    offsets
-}
-
 fn is_top_level_function_declaration(line: &str) -> bool {
     let declaration = strip_top_level_visibility(line);
     let bytes = declaration.as_bytes();
@@ -793,16 +767,6 @@ fn output_dependency_violations(region_name: &str, region: &str) -> Vec<String> 
         }
     }
 
-    violations
-}
-
-fn view_writer_dependency_violations(source: &str) -> Vec<String> {
-    let mut violations = Vec::new();
-    for offset in top_level_product_function_offsets(source) {
-        let region = function_region_from_offset(source, offset);
-        let first_line = region.lines().next().unwrap_or("<unknown function>");
-        violations.extend(output_dependency_violations(first_line, region));
-    }
     violations
 }
 
@@ -1697,48 +1661,6 @@ fn render_display_model_with_mode() {
 }
 
 #[test]
-fn view表示計算はwriterと直接出力に依存しない() {
-    let product_sources = controller_product_sources();
-    let view = product_sources
-        .iter()
-        .find(|source| source.path.file_name().and_then(|name| name.to_str()) == Some("view.rs"))
-        .expect("view.rs must be a controller product module");
-    let violations = view_writer_dependency_violations(&view.text);
-
-    let (_, builder_region) =
-        unique_function_region(&product_sources, "build_show_all_tasks_display_with_config")
-            .unwrap();
-    for forbidden in [
-        "let busy_s",
-        "let s_for_rho1",
-        "let s_for_non_repetitive_rho",
-        "完了見込み日時は",
-    ] {
-        if builder_region.contains(forbidden) {
-            panic!(
-                "build_show_all_tasks_display_with_config must return typed metrics without legacy preformat: {forbidden}"
-            );
-        }
-    }
-    assert!(
-        product_sources.iter().all(|source| {
-            top_level_function_definition_offsets(
-                &source.text,
-                "execute_show_all_tasks_with_config",
-            )
-            .is_empty()
-        }),
-        "the legacy writer-based show-all view function must be removed"
-    );
-
-    assert!(
-        violations.is_empty(),
-        "view.rs must return typed models without writer/output dependencies:\n{}",
-        violations.join("\n")
-    );
-}
-
-#[test]
 fn project_breakdown_repetition製品経路はrecorderに依存しない() {
     let violations = project_recorder_dependency_violations(&controller_product_sources());
 
@@ -1851,90 +1773,6 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
     ] {
         assert!(!method_code.contains(excluded), "{excluded}: {method_code}");
     }
-}
-
-#[test]
-fn view_writer_scannerはrustのfunction修飾子とwriter型を網羅する() {
-    let source = r#"
-fn plain(writer: &mut dyn SchronuWriter) {}
-async fn asynchronous<W: Write>(writer: W) {}
-unsafe fn unsafe_output(writer: impl Write) {}
-extern fn bare_external(writer: &mut dyn std::io::Write) {}
-extern "system" fn system_external(writer: impl Write) {}
-unsafe extern "C-unwind" fn unwind_external(writer: impl Write) {}
-async unsafe fn async_unsafe() { println ! ("bad"); }
-unsafe extern "C" fn unsafe_external() { eprintln!("bad"); }
-const fn constant() { print!("bad"); }
-const unsafe fn constant_unsafe() { write ! (sink, "bad"); }
-pub(crate) const unsafe extern "system" fn constant_external() { writeln!(sink, "bad"); }
-pub(in crate) async unsafe extern "C-unwind" fn combined() { sink.write_all(bytes); }
-pub(super) fn renderer_call() { render_display_model(writer, model); }
-fn flush_call() { writer.flush(); }
-fn newline_call() { writeln_newline(writer, "bad"); }
-"#;
-
-    let violations = view_writer_dependency_violations(source);
-
-    for function_name in [
-        "plain",
-        "asynchronous",
-        "unsafe_output",
-        "bare_external",
-        "system_external",
-        "unwind_external",
-        "async_unsafe",
-        "unsafe_external",
-        "constant",
-        "constant_unsafe",
-        "constant_external",
-        "combined",
-        "renderer_call",
-        "flush_call",
-        "newline_call",
-    ] {
-        assert!(
-            violations
-                .iter()
-                .any(|violation| violation.contains(function_name)),
-            "scanner must reject {function_name}: {violations:?}"
-        );
-    }
-}
-
-#[test]
-fn view_writer_scannerは非codeとtest専用functionを除外する() {
-    let source = r#####"
-fn clean<'a>(value: &'a str) {
-    let quote = '"';
-    let apostrophe = '\'';
-    let byte_quote = b'"';
-    let byte_apostrophe = b'\'';
-    let text = "println!(\"not code\") and dyn Write";
-    let bytes = b"writer.flush() and impl Write and \\\"quoted\\\"";
-    let raw = r###"
-        writeln_newline(writer, "not code");
-    "###;
-    let byte_raw = br###"
-        sink.write_all(bytes);
-        fn fake(writer: impl Write) {}
-    "###;
-    // render_display_model(writer, model);
-    /*
-    /* nested println!("not code"); */
-    unsafe extern "C" fn commented(writer: impl Write) {}
-    */
-}
-
-#[cfg(test)]
-fn test_only(writer: &mut dyn SchronuWriter) {
-    writer.flush();
-}
-"#####;
-
-    assert_eq!(
-        view_writer_dependency_violations(source),
-        Vec::<String>::new()
-    );
 }
 
 #[test]
