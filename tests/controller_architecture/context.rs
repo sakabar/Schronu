@@ -1,8 +1,55 @@
-use super::paths::{output_dependencies, output_functions, references};
+use super::paths::{
+    block_calls, input_has, output_dependencies, output_functions, output_has, references,
+};
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
 
-fn delegation_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+fn delegation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    let builders: Vec<_> = module_family(modules, "controller::view")
+        .flat_map(|(module, file)| {
+            file.items.iter().filter_map(move |item| match item {
+                syn::Item::Fn(function)
+                    if input_has(&function.sig, "TaskListDisplayOrder")
+                        && output_has(&function.sig, "DisplayModel") =>
+                {
+                    Some(format!("{module}::{}", function.sig.ident))
+                }
+                _ => None,
+            })
+        })
+        .collect();
+    let [builder] = builders.as_slice() else {
+        return vec!["one typed task-list view builder required".into()];
+    };
+    let mut errors = Vec::new();
+    let mut calls = 0;
+    for (module, file) in module_family(modules, "controller::command_context") {
+        for item in &file.items {
+            let syn::Item::Impl(implementation) = item else {
+                continue;
+            };
+            for item in &implementation.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                if input_has(&method.sig, "TaskListOrder")
+                    && output_has(&method.sig, "DisplayModel")
+                {
+                    match block_calls(module, file, &method.block) {
+                        Ok(paths) => {
+                            calls += paths.iter().filter(|(path, _)| path == builder).count()
+                        }
+                        Err(error) => errors.push(error),
+                    }
+                }
+            }
+        }
+    }
+    if calls != 1 {
+        errors.push("task-list context must delegate directly to its view builder once".into());
+    }
+    errors
+}
 
 #[test]
 fn task_list_context_cannot_bypass_its_view_builder() {
@@ -11,6 +58,29 @@ fn task_list_context_cannot_bypass_its_view_builder() {
         ("command_context.rs", "impl TaskTreeCommandContext for Context { fn list(&mut self, order: TaskListOrder) -> DisplayModel { DisplayModel::empty() } }"),
     ]);
     assert!(!delegation_violations(&modules).is_empty());
+}
+
+#[test]
+fn product_task_list_context_delegates_to_view() {
+    assert_eq!(
+        delegation_violations(&controller_modules()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn renamed_task_list_builder_preserves_delegation_without_decoys() {
+    for (body, expected) in [
+        ("build(order)", true),
+        ("let unused = || build(order); DisplayModel::empty()", false),
+        ("let note = \"build(order)\"; DisplayModel::empty()", false),
+    ] {
+        let modules = fixture_modules("mod view; mod command_context;", &[
+            ("view.rs", "fn arbitrary_name(order: TaskListDisplayOrder) -> DisplayModel { todo!() }"),
+            ("command_context.rs", &format!("use super::view::arbitrary_name as build; impl TaskTreeCommandContext for Context {{ fn arbitrary_method(&mut self, order: TaskListOrder) -> DisplayModel {{ {body} }} }}")),
+        ]);
+        assert_eq!(delegation_violations(&modules).is_empty(), expected);
+    }
 }
 
 fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
