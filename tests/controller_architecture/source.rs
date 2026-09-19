@@ -98,6 +98,15 @@ impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
                     return Err("#[path] needs a string literal".into());
                 };
                 let path = attribute_base.join(value.value());
+                if path
+                    .components()
+                    .any(|component| component == std::path::Component::ParentDir)
+                {
+                    return Err(format!(
+                        "parent path needs explicit support: {}",
+                        path.display()
+                    ));
+                }
                 let text = (self.read)(&path)?;
                 (path, text)
             } else {

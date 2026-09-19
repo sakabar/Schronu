@@ -115,3 +115,18 @@ fn conditional_duplicate_modules_cannot_overwrite_product_candidates() {
         .err()
         .is_some_and(|error| error.contains("duplicate module")));
 }
+
+#[test]
+fn parent_path_recursion_is_rejected_before_repeated_reads() {
+    let mut reads = 0;
+    let result = load_modules(Path::new("src/mod.rs"), |_| {
+        reads += 1;
+        if reads > 2 {
+            return Err("read limit".into());
+        }
+        Ok("#[path=\"../src/mod.rs\"] mod again;".into())
+    });
+    assert!(result
+        .err()
+        .is_some_and(|error| error.contains("parent path")));
+}
