@@ -2489,3 +2489,160 @@ TD-048 / TD-049はNodeの`vm`で`apps_script/main.js`を実行し、`apps_script
 4. TD-054 / TD-056は計測と上限設定を先に行い、未測定の性能改善を目的に契約を緩めない。TD-055は機械的移動を独立させ、機能変更と同時に行わない。
 
 この順序は本節の追加項目だけを対象とし、既存Wave計画の更新ではない。各修正では製品経路の回帰test、期待した単一理由のRed、最小Green、品質gate、reviewを契約単位で実施する。旧挙動を肯定する既存testは検索し、維持・反転・置換の判断をcommit計画へ記録する。今回の追記自体は製品testや仕様を変更せず、修正完了を示すものではない。
+
+## 追加監査項目の並列開発計画(2026-09-19)
+
+対象は追加監査のTD-044〜TD-056、計画基準はrevision `10fba05d`とする。目的は、データ保全と障害時の契約を先に確定し、file所有権を分けて独立領域を並列開発することである。Rust本体、Dioxus / TokioによるWeb、Apps Script、GitHub Actionsを対象とする。既存のTD本文・完了状況・監査記録・Wave 0〜7は変更しない。本節は将来の実行計画であり、task作成、実装開始、修正完了の記録ではない。
+
+### 依存関係と実行単位
+
+- `H`: 契約上の依存。前提となる契約commitが`main`へmergeされるまで後続を実装しない。
+- `S`: 変更fileまたは契約の伝搬先の競合を避ける直列化。意味上の必須依存とは区別し、先行merge後に後続を最新`main`へ合わせる。
+- `G`: 品質gateの前提。Webの実装laneはTD-050のfeature別CIが`main`で利用できる状態から始める。
+- `I`: 両変更を合わせた状態で確認する境界横断契約。個別testの成功だけでは代替しない。
+
+```text
+TD-044 ─S─> TD-045 ─S─> TD-046 ─S─> TD-047
+TD-044 ─S─> TD-055
+TD-045 ─S─> TD-056
+TD-046 ─I─ TD-056
+
+TD-048 ─S─> TD-049
+
+TD-050 ─G─> TD-051 ─H─> TD-052 ─S─> TD-053 ─S─> TD-054
+                └─────────H────────> TD-053
+```
+
+TD-044は日時helperだけで閉じず、task setter、use case、YAML読込へのerror伝搬が必要になり得る。YAML系とschedulerの構造変更は、この伝搬先を確定してから始める。TD-045〜TD-047はloader / YAML / 回帰testの所有権、TD-048→TD-049は`apps_script/main.js`とtestの所有権による直列化である。TD-045→TD-056はrepositoryと保存・再読込testの変更範囲を整理するための直列化である。
+
+TD-051→TD-052は「未受付」と「受付後の結果不確実」を負荷制御に適用するための依存、TD-051→TD-053は同じ分類で診断を対応付けるための依存である。TD-052以降のWeb laneは共通のmodule配線、test、UI仕様を順番に所有する。TD-054に診断機能そのものの意味上の依存はないが、本計画では安全停止・待機方針が安定した後に性能改善する。
+
+各Wave内に`H` / `S` / `G`の待ち合わせは置かず、開始条件を満たしたlaneを並列実行する。最大並列数は4であり、少ない担当数ならlane単位で順番に実行できる。既存Waveの未完了表示だけを理由に待機したり、完了表示だけで前提充足を判断したりせず、特にTD-022 / TD-033の必要な契約が`main`にあることを確認する。
+
+### 共通の予約・開発規則
+
+1. 実行対象として明示されたWaveだけを扱う。実行時は保存済みproject内の別task・別worktree・`feature/<lane>-<short-name>`へ各laneを割り当てる。初回turnはread-only調査とcommit計画だけとし、編集、branch作成、commit、push、PR作成を行わない。親が依存とwrite予約を確認してから実装を開始する。
+2. 所有権はfile全体を単位にする。下表の予約は初期範囲であり、初回調査で実際の製品・test・fixture・文書fileを列挙して確定する。新規fileも所有laneを予約する。予約外の変更が必要なら該当範囲を止め、親が予約と依存を再確認する。行が異なることや別worktreeであることは同じfileの同時編集を許す理由にしない。
+3. `Cargo.toml`、`Cargo.lock`、`schronu-web/Cargo.toml`、`src/lib.rs`、`src/entity.rs`、`src/application.rs`、`src/adapter/gateway.rs`、共通test helperは暗黙の共有編集対象にしない。下記で明示された配線file以外は親が排他予約する。複数laneで必要と判明した場合は実装前に直列化する。並列化のためだけにhelperを複製しない。
+4. `README.md`、`apps_script/README.md`、`docs/design/schronu_web_ui_requirements.md`、`docs/design/schronu_web_ui_specification.md`は文書leaseで一度に1 laneだけが編集する。製品実装と同じPR内に必要な仕様変更を含め、文書commitは分ける。Web改修前には両UI文書を読み、error、待機、復旧、tickの利用者向け契約を同期する。
+5. `backlog.md`も排他leaseとし、現時点の指示では既存項目と本計画を更新しない。各laneの証跡は末尾の実行記録へ追記する。既存statusの変更は別途明示された場合だけ行う。共有のWave検証summaryは下記の担当laneが統合gate後に末尾へ追記し、他laneは重複して書かない。
+6. 各laneは契約単位でcommit message、責務・module、先行commit、対象test、想定する単一のRed理由、Green確認commandを計画する。原則としてRed test commit→最小Greenと全gate→Green commit→内部subagent review→指摘別修正commitと再検証の順にする。旧挙動を肯定するtestは維持・反転・置換の判断を記録する。fast pathは`AGENTS.md`の条件を実際に満たす場合だけ使う。
+7. 挙動を変えないmodule移動や計測準備は、無理にRedを作らず独立したGreen commitにする。API・error・保存形式の変更と機械的移動を混在させない。800行を超えるfileや巨大fixtureは行数だけで判断せず、所有状態・責務・変更容易性をreviewする。
+
+### Wave 8: 読込panic、同期中止通知、Web CIの基盤(最大3レーン)
+
+開始条件: 対象revision以後の`main`差分と関連契約を再確認し、各laneの予約を確定する。Wave 8内のlane間依存はない。
+
+| lane / 項目 | 予定branch | 製品・設定の初期write予約 | test・文書の初期予約 | 契約とcycle |
+| --- | --- | --- | --- | --- |
+| W8-A / TD-044 | `feature/w8-a-checked-deadlines` | `src/entity/datetime.rs`、`src/entity/task.rs`、`src/application/task_use_case.rs`、`src/application/flatten_use_case.rs`、`src/adapter/gateway/yaml.rs`。error伝搬先は初回調査で追加予約 | 同file内test、`src/application/task_use_case_tests.rs`、`src/adapter/gateway/yaml_tests.rs`、`tests/mcp_stdio.rs` | Duration生成の範囲外と日時演算の範囲外を別cycleで固定する。読込・更新ともpanicせず理由付きerrorを返し、失敗時の保存dataが不変である |
+| W8-B / TD-048 | `feature/w8-b-sheet-lock-feedback` | `apps_script/main.js` | `apps_script/main.test.mjs`、`apps_script/README.md` | lock取得失敗の通知を先に固定し、続いて明示的な再同期操作を追加する。再同期時は現在のidentityと値を再検証し、古い編集値を遅延適用しない |
+| W8-C / TD-050 | `feature/w8-c-web-ci-gates` | `.github/workflows/ci.yml`。必要なら専用Web workflowを新設 | workflow設定そのもの、`schronu-web/tests/web_feature_boundary_contract.rs`、必要なCI説明文書 | default / server / webを明示してtest・lintし、別jobでWASM checkする。rootの既存gateを残す。feature境界の失敗がCI失敗になることを確認する |
+
+- W8-Aの対象確認: `cargo test --locked entity::datetime`、`cargo test --locked entity::task`、`cargo test --locked --test mcp_stdio`。巨大な受理可能i64、日時境界、通常値を含め、単に値を丸めて通過させない。
+- W8-Bの対象確認: `node --test apps_script/main.test.mjs`と`cargo test --locked --test spreadsheet_contract`。lockを取得できないfakeと、再同期のidentity不一致を含める。
+- W8-Cの対象確認: 下記のWeb gateをworkflowの各jobへ対応付ける。実行環境に必要なtarget・toolchain・cacheを設定する。公開前はlocalで各commandとworkflow設定を検証し、push / PR後に実CI結果を記録する。設定追加やlocal成功だけでCI成功と扱わない。
+- 統合gate: root gate + Apps Script gate + Web feature / WASM gate。日時errorの伝搬がWeb server側のbuildを壊していないことも確認する。
+- PR merge / 文書lease順: W8-A→W8-B→W8-C。共有summary担当はW8-C。次段階は各前提が`main`へ入ってから着手する。
+
+### Wave 9: YAML文書数、部分同期、worker安全停止、scheduler分割(最大4レーン)
+
+開始条件: W9-A / W9-DはW8-A、W9-BはW8-B、W9-CはW8-Cが`main`へmerge済みであること。W9-CはW8-A後の日時error伝搬も取り込んでbuild可能であることを確認する。
+
+| lane / 項目 | 予定branch | 製品の初期write予約 | test・文書の初期予約 | 契約とcycle |
+| --- | --- | --- | --- | --- |
+| W9-A / TD-045 | `feature/w9-a-single-yaml-document` | `src/adapter/gateway/task_repository/load.rs`、必要な`src/adapter/gateway/task_repository.rs`のtest配線 | `src/adapter/gateway/task_repository_tests.rs`、新規`tests/yaml_document_contract.rs`、`tests/storage_snapshot_contract.rs` | 通常の複数文書と空の後続文書を読込段階で拒否する。CLI / MCP / snapshot入口の実製品経路で、error後に元bytesが不変である |
+| W9-B / TD-049 | `feature/w9-b-sheet-partial-recovery` | `apps_script/main.js` | `apps_script/main.test.mjs`、`apps_script/README.md` | 第n書込の例外と完了範囲の診断を固定し、W8-Bの再同期経路へ接続する。再編集での回復も維持し、競合編集を盲目的なrollbackで上書きしない |
+| W9-C / TD-051 | `feature/w9-c-worker-outcome-safety` | `schronu-web/src/web_worker.rs`、`schronu-web/src/controller_error.rs`、`schronu-web/src/wire.rs`、`schronu-web/src/client/state/session_state.rs`、`schronu-web/src/client/safety_state.rs`、`schronu-web/src/lib.rs`、`schronu-web/src/app.rs`、`schronu-web/src/app/environment_web_operations.rs` | `schronu-web/tests/web_worker_contract.rs`、`schronu-web/tests/wire_contract.rs`、`schronu-web/tests/client_state_response_contract.rs`、両UI文書 | enqueue前の停止と受付後の応答喪失を別cycleで固定する。mutation結果不確実ではsafety markerを保持し、確認・復旧まで変更を止める。無条件Retryを肯定する既存testを見直す |
+| W9-D / TD-055 | `feature/w9-d-scheduling-modules` | `src/application/scheduling_policy.rs`、新規`src/application/scheduling_policy/`配下、必要な`src/application.rs`の配線 | `src/application/scheduling_policy_tests.rs`、`tests/scheduling_benchmark_contract.rs`、`tests/scheduling_fixture_contract.rs`。`tests/support/scheduling_*`はまずread-only | frontier、slack index / tree、先読みの変更・復元、segment生成を状態所有者ごとの機械的移動commitに分ける。型・error・公開API・選択順を維持する |
+
+- W9-Aの対象確認: `cargo test --locked --test yaml_document_contract`、`cargo test --locked --test storage_snapshot_contract`。新規test fileは通常のCargo統合testとして自動検出させ、他laneのtest配線fileを借りない。
+- W9-Bの対象確認: Apps Script gate。最初・途中・最後の書込失敗、lock解放、通知、再実行、再同期までに別編集が入る場合を検証する。APIの一括置換は性能計測なしで含めない。
+- W9-Cの対象確認: `cargo test --locked -p schronu-web --features server --test web_worker_contract`とWeb gate。非受付、worker panic、処理完了後の応答喪失でmutationを重複実行しないことを確認する。
+- W9-Dの対象確認: `cargo test --locked --test scheduling_fixture_contract`、`cargo test --locked --features benchmarking --test scheduling_benchmark_contract`、`cargo test --locked --test capacity_integration_gate`。移動前後の出力・tie-break・counterを比較し、アルゴリズム改善は含めない。
+- 統合gate: root + Apps Script + Web + schedulingの各gate。W9-Aの読込errorをW9-CのWeb経路が安全に扱うこと、W8-A後のdeadline計算とW9-Dのschedule結果が整合することを確認する。
+- PR merge / 文書lease順: W9-A→W9-B→W9-C→W9-D。共有summary担当はW9-D。
+
+### Wave 10: 未知field、worker負荷制御、transaction保持量(最大3レーン)
+
+開始条件: W10-A / W10-CはW9-A、W10-BはW9-Cが`main`へmerge済みであること。W10-CではTD-022の全件preflight・roll-forward契約を確認する。
+
+| lane / 項目 | 予定branch | 製品の初期write予約 | test・文書の初期予約 | 契約とcycle |
+| --- | --- | --- | --- | --- |
+| W10-A / TD-046 | `feature/w10-a-yaml-field-validation` | `src/adapter/gateway/yaml.rs`、`src/adapter/gateway/task_repository/load.rs` | `src/adapter/gateway/yaml_tests.rs`、`src/adapter/gateway/task_name_yaml_contract_tests.rs`、新規`tests/yaml_unknown_field_contract.rs` | document root / project / task / childの許可キーと旧形式を整理し、未知キーを位置付きで拒否する。mapping境界ごとにRed / Greenを分け、既知fieldの読込互換を維持する |
+| W10-B / TD-052 | `feature/w10-b-worker-admission` | `schronu-web/src/web_worker.rs`、`schronu-web/src/controller_error.rs`、`schronu-web/src/wire.rs`、`schronu-web/src/client/state/session_state.rs`、`schronu-web/src/lib.rs`、`schronu-web/src/app.rs`、`schronu-web/Cargo.toml`、`Cargo.lock` | `schronu-web/tests/web_worker_contract.rs`、`schronu-web/tests/client_state_response_contract.rs`、両UI文書 | bounded受付とbusy拒否を先に固定し、次に待機期限を定義する。受付前拒否と受付後timeoutを混同せず、read取消とmutation結果不確実を分離する |
+| W10-C / TD-056 | `feature/w10-c-transaction-memory` | `src/adapter/gateway/storage_transaction.rs`、`src/adapter/gateway/storage_transaction/`配下、`src/adapter/gateway/task_repository.rs`。`task_repository/load.rs`は予約外 | `src/adapter/gateway/storage_transaction_tests.rs`と同名directory、`src/adapter/gateway/storage_transaction_test_support.rs`、`src/adapter/gateway/task_repository_tests/transaction/`配下、新規`tests/storage_transaction_memory_contract.rs` | 通常saveとrecoveryを計測してから保持量の目標を決める。immutableな検証対象の同一性、全件検証後の適用、旧transactionのrecovery互換を別cycleで固定する |
+
+- **Wave 10の排他境界**: W10-Aは`task_repository.rs`、`task_repository_tests.rs`、transaction配下を編集しない。W10-Cは`yaml.rs`、`yaml_tests.rs`、`task_repository/load.rs`、W10-Aの新規統合testを編集しない。既存testの登録や共通helperに両laneの変更が必要なら、そのfileを初回計画で直列化してから実装する。Web manifest / lockfileはW10-Bだけが所有し、W10-Cのdependency追加が必要なら同時編集を止めて再計画する。
+- W10-Aの対象確認: `cargo test --locked --test yaml_unknown_field_contract`とYAML単体test。位置診断、nested child、既知のlegacy field、未知キー拒否後の元bytes保持を確認する。
+- W10-Bの対象確認: Web gate。決定的にworkerを停止・待機させるtestで容量境界、受付順序、queue待機・実行中の期限、応答喪失、終了時の待機者を確認する。実時間sleepだけに依存する不安定なtestを避ける。
+- W10-Cの対象確認: `cargo test --locked storage_transaction`、`cargo test --locked --test storage_transaction_memory_contract`、`cargo test --locked --test storage_snapshot_contract`、`cargo test --locked --test storage_backup_cli_contract`。破損が末尾entryにある場合もlive dataを変更せず、部分適用済み状態からの再開を維持する。RSSと保持bytesは区別し、file数・総量・最大file sizeを記録する。
+- `I` / 統合gate: root + Web + storage gate。W10-Aの未知field拒否とW10-Cのsave / recoveryを合成する。未commitの通常load / saveでは未知field拒否による非更新を確認する。marker公開済みtransactionでは既存契約どおりintegrity検証・roll-forward・revision反映を先に行い、回復後のbytesをstrict loadが拒否する場合も回復処理を巻き戻さない。正常なprojectの保存・再読込、snapshot / restoreの整合性も確認する。検証用の追加testが必要なら新規`tests/yaml_transaction_integration_contract.rs`をW10-Cが所有し、W10-Aの予約を侵さない。
+- PR merge / 文書lease順: W10-A→W10-B→W10-C。共有summary担当はW10-C。
+
+### Wave 11: 日時の保存互換とWebの障害診断(最大2レーン)
+
+開始条件: W11-AはW10-A、W11-BはW9-C / W10-Bが`main`へmerge済みであること。W11-AはW10-C後の保存経路も取り込んだ状態で互換testを行う。
+
+| lane / 項目 | 予定branch | 製品の初期write予約 | test・文書の初期予約 | 契約とcycle |
+| --- | --- | --- | --- | --- |
+| W11-A / TD-047 | `feature/w11-a-persist-datetime-offset` | `src/adapter/gateway/yaml.rs`、必要な`src/entity/datetime.rs`とrepositoryの日時decode / encode呼出箇所 | `src/adapter/gateway/yaml_tests.rs`、`tests/mcp_stdio.rs`、`tests/storage_snapshot_contract.rs`、`tests/storage_backup_cli_contract.rs`、新規`tests/yaml_datetime_roundtrip_contract.rs`、保存形式の関連文書 | 旧形式とoffset付き形式を読むreaderを先にGreenにし、別cycleでoffsetを保持するwriterへ切り替える。全永続化日時の往復、端数秒、旧形式の曖昧時刻を勝手に選ばない方針を固定する |
+| W11-B / TD-053 | `feature/w11-b-web-error-diagnostics` | `schronu-web/src/controller_error.rs`、`schronu-web/src/app/environment_web_operations.rs`、`schronu-web/src/web_worker.rs`、`schronu-web/src/lib.rs`、`schronu-web/src/app.rs`、必要なWeb manifest / lockfile | Web server側test、新規`schronu-web/tests/server_diagnostics_contract.rs`、両UI文書 | 操作・phase・原因chainの対応をserver側に記録する。外向き表示を一般化したまま、相関情報で診断できる契約を固定する。秘密・task本文等の記録方針とsink失敗時の挙動を検証する |
+
+- W11-Aの対象確認: `cargo test --locked --test yaml_datetime_roundtrip_contract`、MCPとsnapshot / backupのtest。`TZ=America/New_York`のDST終了時の2つのoffset、通常日、旧形式、別TZ再読込を独立processで検証する。reader更新前の旧binaryへ戻す際の制約も文書化する。
+- W11-Bの対象確認: `cargo test --locked -p schronu-web --features server --test server_diagnostics_contract`とWeb gate。config / repository / workerの原因対応、未受付 / 結果不確実の分類、診断sink失敗が元errorを隠さないことを確認する。
+- 統合gate: root + Web + storage gate。日時読込拒否をWeb経路で発生させ、利用者への安全な表示とserver側の原因特定を両立する。W11-Bが境界横断testを所有し、日時fixtureの仕様をW11-Aと照合する。
+- PR merge / 文書lease順: W11-A→W11-B。共有summary担当はW11-B。
+
+### Wave 12: Web描画の計測と時計依存更新の分離(1レーン)
+
+開始条件: W11-Bが`main`へmerge済みであり、先行Web変更のclient安全状態とUI仕様が固定されていること。TD-047後の日時往復契約も統合検証に含める。
+
+| lane / 項目 | 予定branch | 製品の初期write予約 | test・文書の初期予約 | 契約とcycle |
+| --- | --- | --- | --- | --- |
+| W12-A / TD-054 | `feature/w12-a-clock-projection-cost` | `schronu-web/src/app/component/browser.rs`、`schronu-web/src/app/component_models.rs`、`schronu-web/src/app/component_runtime.rs`、`schronu-web/src/client/view_projection.rs`、`schronu-web/src/app.rs`、関連view module | `schronu-web/src/app/projection_boundary_tests.rs`、`schronu-web/src/app/component_tests*.rs`、`schronu-web/tests/view_projection_contract.rs`、必要なview fixture、両UI文書 | baseline計測を先に記録する。clockだけのtick、data受信、検索、tab切替を別々に測り、静的projectionの再利用と時計依存部分の更新を分離する |
+
+- 計測準備、不要な再計算の回帰test、最小の再計算制御、実browser比較を別cycleにする。毎秒tickを止めるだけの修正や、古い一覧・履歴を表示し続けるcacheは完了としない。
+- 対象確認: Web gate、`cargo test --locked -p schronu-web --features web --test view_projection_contract`、component / projectionの製品経路test。small / typical / stressについて件数、browser、build mode、計測回数、所要時間と再計算回数を記録する。
+- 統合gate: root + Web gateと実browser検証。進捗、buffer、carry lock期限、timezone、選択・一覧復元、操作失敗後の安全停止を確認し、変更時には一覧・履歴が更新されることを検証する。
+- PR / 文書lease / 共有summary担当はW12-A。完了後はTD-044〜TD-056の契約・検証証跡を一覧で追記し、未検証・残存作業を明記する。既存項目のstatusは変更しない。
+
+### 実行時の共通品質gate
+
+root gateは各実装の`AGENTS.md`に従うタイミングと、使い捨てintegration worktreeで実行する。
+
+```bash
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+git diff --check
+```
+
+Apps Script gate:
+
+```bash
+node --test apps_script/main.test.mjs
+cargo test --locked --test spreadsheet_contract
+```
+
+Web feature / WASM gate:
+
+```bash
+cargo test --locked -p schronu-web
+cargo test --locked -p schronu-web --no-default-features --features server
+cargo test --locked -p schronu-web --no-default-features --features web
+cargo clippy --locked -p schronu-web --all-targets --no-default-features -- -D warnings
+cargo clippy --locked -p schronu-web --all-targets --no-default-features --features server -- -D warnings
+cargo clippy --locked -p schronu-web --all-targets --no-default-features --features web -- -D warnings
+cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
+```
+
+Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmupとしてbackgroundで1回先行実行し、終了codeと出力を回収する。同じworktreeではその間に別Cargo commandを実行しない。変更後の最終gateは別途実行し、`~/.cargo/bin/dx build --locked --web --package schronu-web`を最終品質gateで1回行う。target / dxが未準備、browser未検証、CI未実行等は成功扱いせず、結果と未検証範囲を残す。
+
+### 統合・公開・実行記録
+
+各Waveの全laneが契約単位のreview、品質gate、親による`main...branch`の累積差分と履歴reviewを通過してから、現在の`main`を基点とする使い捨てintegration worktreeへ表記順で合成する。Wave内にhard dependencyがないため、未完了laneを残してWave全体の成功を宣言しない。semantic conflictは統合側だけで直さず、所有laneに戻して修正・再reviewし、統合状態を作り直す。
+
+各laneの実行記録にはtask / worktree / branch、基点と最終revision、予約file、Red / Green・review履歴、実行commandと結果、互換性、未検証・残存作業、依存commitを記載する。共有summary担当は統合結果だけを最後に追記する。文書追記後にも差分・文書検査と文書を入力とするgateを確認する。
+
+公開前の親reviewとlocal・統合gateの成功後にだけ、実行依頼の範囲内で通常pushと`main`向けPR作成へ進む。push / pull_requestで起動する実CIは公開後のgateとし、CI成功確認前にはmerge可能と報告しない。CI失敗は所有laneへ戻して修正・再検証する。mergeはユーザーが行う。先行PRのmergeで後続branchが古くなった場合はrebase、影響する検証と全gate、親review、最新headのCI確認を済ませてからmerge可能と報告する。共有`backlog.md`への追記も上記のmerge順で維持する。次Waveの開始条件は報告するが、実行を明示されていないWaveのtask、branch、実装、PRを先回りして作成しない。
