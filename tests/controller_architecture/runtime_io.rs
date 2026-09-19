@@ -40,6 +40,25 @@ fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             }
         }
     }
+    for (module, file) in module_family(modules, "controller::runtime") {
+        match expand_local_globs(module, file, modules).and_then(|file| references(module, &file)) {
+            Ok(paths) => errors.extend(
+                paths
+                    .into_iter()
+                    .filter(|path| {
+                        [
+                            "chrono::NaiveDate",
+                            "chrono::NaiveTime",
+                            "chrono::NaiveDateTime",
+                        ]
+                        .iter()
+                        .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}::")))
+                    })
+                    .map(|path| format!("runtime depends on calendar interpretation: {path}")),
+            ),
+            Err(error) => errors.push(error),
+        }
+    }
     errors
 }
 
@@ -293,4 +312,20 @@ fn runtime_may_read_tasks_and_manage_its_own_io_state() {
     let mut modules = controller_modules();
     modules.get_mut("controller::runtime").unwrap().items.extend(product_file("fn renamed(task: TaskHandle) { task.get_id(); task.get_status(); selection.set_explicit(true); repository.reload(); }").unwrap().items);
     assert!(mutation_violations(&modules).is_empty());
+}
+
+#[test]
+fn runtime_cannot_depend_on_naive_calendar_types() {
+    for body in [
+        "use chrono::NaiveDate as Day; fn f() { Day::from_ymd_opt(2026, 9, 19); }",
+        "fn f() { let _ = chrono::NaiveTime::from_hms_opt; }",
+        "fn f() { format!(\"{:?}\", { let value: Option<chrono::NaiveDateTime> = None; value }); }",
+    ] {
+        let mut modules = controller_modules();
+        modules.insert(
+            "controller::runtime::helper".into(),
+            product_file(body).unwrap(),
+        );
+        assert!(!io_violations(&modules).is_empty(), "{body}");
+    }
 }

@@ -1,6 +1,6 @@
 use super::paths::{
     definitions, expand_local_globs, output_dependencies, output_functions, references,
-    resolve_path, type_has,
+    resolve_path, type_has, used_paths,
 };
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
@@ -38,6 +38,40 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                         .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}::")))
                     })
                     .map(|path| format!("view depends on coordination: {path}")),
+            ),
+            Err(error) => errors.push(error),
+        }
+    }
+    for (module, file) in module_family(modules, "controller::runtime") {
+        match expand_local_globs(module, file, modules).and_then(|file| used_paths(module, &file)) {
+            Ok(paths) => errors.extend(
+                paths
+                    .into_iter()
+                    .filter(|path| {
+                        path.split("::").any(|part| {
+                            [
+                                "TreeDisplay",
+                                "TaskListDisplay",
+                                "TaskListMetricsDisplay",
+                                "CalendarDisplay",
+                                "BandDisplay",
+                                "PackDisplay",
+                                "FlattenDisplay",
+                                "FocusDisplay",
+                                "SnapshotDisplay",
+                                "TaskListTaskRow",
+                                "TaskListDisplayRow",
+                                "TaskCategoryWorkSeconds",
+                                "BandDurations",
+                                "CalendarDayRow",
+                                "BandDayRow",
+                                "RhoMetrics",
+                                "ProjectCategory",
+                            ]
+                            .contains(&part)
+                        })
+                    })
+                    .map(|path| format!("runtime depends on concrete view data: {path}")),
             ),
             Err(error) => errors.push(error),
         }
@@ -227,5 +261,18 @@ fn focus_source_ownership_rejects_nested_and_macro_duplicates() {
             super::source::product_file(source).unwrap(),
         );
         assert!(!focus_ownership_violations(&modules).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn runtime_cannot_depend_on_concrete_view_data() {
+    for body in [
+        "use super::super::renderer::TreeDisplay as Data; fn f(value: Data) {}",
+        "fn f() { format!(\"{:?}\", { let model: Option<super::super::renderer::TaskListDisplay> = None; model }); }",
+        "type Data = super::super::renderer::TaskListMetricsDisplay;",
+    ] {
+        let mut modules = controller_modules();
+        modules.insert("controller::runtime::helper".into(), super::source::product_file(body).unwrap());
+        assert!(!violations(&modules).is_empty(), "{body}");
     }
 }
