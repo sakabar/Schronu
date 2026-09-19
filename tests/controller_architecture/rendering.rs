@@ -272,16 +272,326 @@ fn mode_selection_cannot_be_replaced_by_plain_rendering_or_decoys() {
     }
 }
 
-fn diagnostic_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+fn diagnostic_roles(
+    modules: &BTreeMap<String, syn::File>,
+) -> Result<BTreeMap<&'static str, (String, syn::ItemFn)>, String> {
+    let mut roles: BTreeMap<_, Vec<_>> = BTreeMap::new();
+    for module in ["controller::runtime", "controller::renderer"] {
+        let file = modules
+            .get(module)
+            .ok_or_else(|| format!("missing diagnostic module: {module}"))?;
+        for item in &file.items {
+            let syn::Item::Fn(function) = item else {
+                continue;
+            };
+            let input = |name| input_has(&function.sig, name);
+            let output = |name| super::paths::output_has(&function.sig, name);
+            for (role, matches) in [
+                ("error_model", output("DisplayModel") && input("Display")),
+                (
+                    "verify_model",
+                    output("DisplayModel") && function.sig.inputs.is_empty(),
+                ),
+                (
+                    "mode_renderer",
+                    input("DisplayModel") && input("SchronuWriter") && input("RenderMode"),
+                ),
+                (
+                    "renderer",
+                    input("DisplayModel") && input("SchronuWriter") && !input("RenderMode"),
+                ),
+                ("plain_renderer", input("DisplayModel") && input("Write")),
+                (
+                    "report",
+                    input("Write") && input("RunError") && output("bool"),
+                ),
+                (
+                    "exit_save",
+                    input("SchronuWriter")
+                        && input("TaskRepositoryTrait")
+                        && output("bool")
+                        && !input("FreeTimeManagerTrait"),
+                ),
+                (
+                    "verify",
+                    input("SchronuWriter")
+                        && input("TaskRepositoryTrait")
+                        && input("DateTime")
+                        && output("RunError")
+                        && function.sig.inputs.len() == 3,
+                ),
+                (
+                    "argv",
+                    input("TaskRepositoryTrait")
+                        && input("String")
+                        && input("DateTime")
+                        && output("RunError"),
+                ),
+                (
+                    "interactive",
+                    input("str")
+                        && input("TaskRepositoryTrait")
+                        && output("InteractiveCommandExecution"),
+                ),
+            ] {
+                if matches {
+                    roles
+                        .entry(role)
+                        .or_default()
+                        .push((module.to_string(), function.clone()));
+                }
+            }
+        }
+    }
+    let mut result = BTreeMap::new();
+    for role in [
+        "error_model",
+        "verify_model",
+        "mode_renderer",
+        "renderer",
+        "plain_renderer",
+        "report",
+        "exit_save",
+        "verify",
+        "argv",
+        "interactive",
+    ] {
+        let mut candidates = roles.remove(role).unwrap_or_default();
+        if candidates.len() != 1 {
+            return Err(format!(
+                "one diagnostic role required: {role}, found {}",
+                candidates.len()
+            ));
+        }
+        result.insert(role, candidates.remove(0));
+    }
+    Ok(result)
+}
+
+fn diagnostic_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    let roles = match diagnostic_roles(modules) {
+        Ok(roles) => roles,
+        Err(error) => return vec![error],
+    };
+    let canonical = |module: &str, path: &str| {
+        if path.contains("::") {
+            path.to_string()
+        } else {
+            format!("{module}::{path}")
+        }
+    };
+    let role_path = |role| {
+        let (module, function) = &roles[role];
+        format!("{module}::{}", function.sig.ident.unraw())
+    };
+    let mut errors = Vec::new();
+    for (role, renderer, model, flushed) in [
+        ("verify", "mode_renderer", "verify_model", true),
+        ("exit_save", "mode_renderer", "error_model", true),
+        ("report", "plain_renderer", "error_model", false),
+        ("interactive", "renderer", "error_model", false),
+    ] {
+        let (module, function) = &roles[role];
+        let check = || -> Result<(), String> {
+            let file = expand_local_globs(module, &modules[module], modules)?;
+            let calls = function_calls(module, &file, function)?;
+            let renderer_calls: Vec<_> = calls
+                .iter()
+                .filter(|(path, _)| canonical(module, path) == role_path(renderer))
+                .collect();
+            if renderer_calls.len() != 1 {
+                return Err(format!("{role} must call semantic renderer once"));
+            }
+            let call = &renderer_calls[0].1;
+            let argument = call
+                .args
+                .iter()
+                .nth(1)
+                .ok_or_else(|| format!("{role} missing model argument"))?;
+            let block = syn::parse_quote!({ #argument; });
+            let model_calls = super::paths::block_calls(module, &file, &block)?;
+            if model_calls
+                .iter()
+                .filter(|(path, _)| canonical(module, path) == role_path(model))
+                .count()
+                != 1
+            {
+                return Err(format!("{role} must pass its semantic model to renderer"));
+            }
+            if flushed {
+                let Some(syn::Expr::Path(mode)) = call.args.iter().nth(2) else {
+                    return Err(format!("{role} missing flush mode"));
+                };
+                if super::paths::resolve_path(module, &file, &mode.path)?
+                    != "controller::renderer::RenderMode::Flushed"
+                {
+                    return Err(format!("{role} must request flushed rendering"));
+                }
+            }
+            Ok(())
+        };
+        if let Err(error) = check() {
+            errors.push(error);
+        }
+    }
+    for role in ["verify", "exit_save", "report", "argv", "interactive"] {
+        let (module, function) = &roles[role];
+        let check = || -> Result<(), String> {
+            let file = expand_local_globs(module, &modules[module], modules)?;
+            let calls = function_calls(module, &file, function)?;
+            let mut scope = file.clone();
+            scope.items.retain(|item| matches!(item, syn::Item::Use(_)));
+            scope.items.push(syn::Item::Fn(function.clone()));
+            for path in output_dependencies(module, &scope, &Default::default())? {
+                if [
+                    "flush",
+                    "write",
+                    "write_all",
+                    "writeln",
+                    "writeln_newline",
+                    "print",
+                    "println",
+                    "eprint",
+                    "eprintln",
+                ]
+                .contains(&path.rsplit("::").next().unwrap_or(&path))
+                {
+                    return Err(format!("{role} owns raw diagnostic output: {path}"));
+                }
+            }
+            if role == "argv" {
+                if calls
+                    .iter()
+                    .filter(|(path, _)| canonical(module, path) == role_path("verify"))
+                    .count()
+                    != 1
+                {
+                    return Err("argv must delegate Verify to its semantic boundary".into());
+                }
+                if used_paths(module, &scope)?.iter().any(|path| {
+                    ["verify_model", "renderer", "mode_renderer"]
+                        .iter()
+                        .any(|target| canonical(module, path) == role_path(target))
+                }) {
+                    return Err("argv must not own Verify presentation".into());
+                }
+            }
+            if role == "interactive" {
+                if used_paths(module, &scope)?
+                    .iter()
+                    .any(|path| canonical(module, path) == role_path("verify_model"))
+                {
+                    return Err("interactive Verify must not add a success body".into());
+                }
+                let mode_calls: Vec<_> = calls
+                    .iter()
+                    .filter(|(path, _)| canonical(module, path) == role_path("mode_renderer"))
+                    .collect();
+                if mode_calls.len() != 1 {
+                    return Err("interactive Verify must use mode renderer once".into());
+                }
+                let Some(syn::Expr::Path(mode)) = mode_calls[0].1.args.iter().nth(2) else {
+                    return Err("interactive Verify missing flush mode".into());
+                };
+                if super::paths::resolve_path(module, &file, &mode.path)?
+                    != "controller::renderer::RenderMode::Flushed"
+                {
+                    return Err("interactive Verify must request flushed rendering".into());
+                }
+            }
+            Ok(())
+        };
+        if let Err(error) = check() {
+            errors.push(error);
+        }
+    }
+    errors
+}
 
 #[test]
 fn exit_save_diagnostic_cannot_bypass_semantic_rendering() {
     let mut modules = controller_modules();
     let file = modules.get_mut("controller::runtime").unwrap();
-    let function = file.items.iter_mut().find_map(|item| match item {
-        syn::Item::Fn(function) if input_has(&function.sig, "SchronuWriter") && input_has(&function.sig, "TaskRepositoryTrait") && super::paths::output_has(&function.sig, "bool") && !input_has(&function.sig, "FreeTimeManagerTrait") => Some(function),
-        _ => None,
-    }).unwrap();
-    function.block = syn::parse_quote!({ writer.flush()?; Ok(false) });
+    let function = file
+        .items
+        .iter_mut()
+        .find_map(|item| match item {
+            syn::Item::Fn(function)
+                if input_has(&function.sig, "SchronuWriter")
+                    && input_has(&function.sig, "TaskRepositoryTrait")
+                    && super::paths::output_has(&function.sig, "bool")
+                    && !input_has(&function.sig, "FreeTimeManagerTrait") =>
+            {
+                Some(function)
+            }
+            _ => None,
+        })
+        .unwrap();
+    function.block = syn::parse_quote!({
+        writer.flush()?;
+        Ok(false)
+    });
+    assert!(!diagnostic_violations(&modules).is_empty());
+}
+
+#[test]
+fn product_diagnostics_use_semantic_renderer_boundaries() {
+    assert_eq!(
+        diagnostic_violations(&controller_modules()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn diagnostic_function_renames_preserve_typed_connections() {
+    use syn::visit_mut::{self, VisitMut};
+    struct Rename(BTreeMap<String, syn::Ident>);
+    impl VisitMut for Rename {
+        fn visit_ident_mut(&mut self, ident: &mut syn::Ident) {
+            if let Some(replacement) = self.0.get(&ident.unraw().to_string()) {
+                *ident = replacement.clone();
+            }
+            visit_mut::visit_ident_mut(self, ident);
+        }
+    }
+    let mut modules = controller_modules();
+    let roles = diagnostic_roles(&modules).unwrap();
+    let mut rename = Rename(
+        roles
+            .into_iter()
+            .enumerate()
+            .map(|(index, (_, (_, function)))| {
+                (
+                    function.sig.ident.unraw().to_string(),
+                    syn::Ident::new(&format!("renamed_{index}"), function.sig.ident.span()),
+                )
+            })
+            .collect(),
+    );
+    for file in modules.values_mut() {
+        rename.visit_file_mut(file);
+    }
+    assert!(diagnostic_violations(&modules).is_empty());
+}
+
+#[test]
+fn diagnostic_model_must_be_the_renderers_argument() {
+    let mut modules = controller_modules();
+    let roles = diagnostic_roles(&modules).unwrap();
+    let (module, role) = &roles["report"];
+    let file = modules.get_mut(module).unwrap();
+    let function = file
+        .items
+        .iter_mut()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == role.sig.ident => Some(function),
+            _ => None,
+        })
+        .unwrap();
+    function.block = syn::parse_quote!({
+        let ignored = error_display_model(&error);
+        render_plain_display_model(writer, &DisplayModel::empty());
+        false
+    });
     assert!(!diagnostic_violations(&modules).is_empty());
 }
