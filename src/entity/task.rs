@@ -1826,6 +1826,34 @@ mod checked_deadline_calculation_tests {
         assert_eq!(observed.get_fixed_start(), original.get_fixed_start());
         assert_eq!(task.get_persistent_mutation_revision().unwrap(), revision);
     }
+
+    #[test]
+    fn make_appointmentは計算不能な子孫を特定し全属性とrevisionを変更しない() {
+        let now = Local::now();
+        let parent_id = Uuid::new_v4();
+        let parent = TaskHandle::with_identity("親", parent_id, now).unwrap();
+        let child_id = Uuid::new_v4();
+        let mut child_attr = TaskAttr::with_identity("子", child_id, now);
+        child_attr.set_estimated_work_seconds(i64::MAX);
+        let child = parent.create_child(child_attr).unwrap();
+        let parent_original = parent.get_attr().unwrap();
+        let child_original = child.get_attr().unwrap();
+        let revision = parent.get_persistent_mutation_revision().unwrap();
+
+        let actual = parent.make_appointment(now);
+
+        assert!(matches!(
+            actual,
+            Err(TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "deadline_time",
+                source: DeadlineCalculationError::DurationOutOfRange { .. },
+            }) if error_task_id == child_id
+        ));
+        assert_eq!(parent.get_attr().unwrap(), parent_original);
+        assert_eq!(child.get_attr().unwrap(), child_original);
+        assert_eq!(parent.get_persistent_mutation_revision().unwrap(), revision);
+    }
 }
 
 #[cfg(test)]
