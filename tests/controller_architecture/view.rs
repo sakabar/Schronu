@@ -114,3 +114,17 @@ fn external_view_helpers_keep_the_same_writer_boundary() {
     );
     assert!(!violations(&modules).is_empty());
 }
+
+fn focus_ownership_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    Vec::new()
+}
+
+#[test]
+fn focus_display_source_cannot_move_into_runtime() {
+    let mut modules = controller_modules();
+    let view = modules.get_mut("controller::view").unwrap();
+    let index = view.items.iter().position(|item| matches!(item, syn::Item::Trait(item) if item.ident == "FocusDisplaySource")).unwrap();
+    let declaration = view.items.remove(index);
+    modules.get_mut("controller::runtime").unwrap().items.push(declaration);
+    assert!(!focus_ownership_violations(&modules).is_empty());
+}
