@@ -5860,10 +5860,10 @@ fn test_report_run_result_load_errorを表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("Load"));
-    assert!(output.contains("/test/project.yaml"));
-    assert!(output.contains("broken YAML"));
+    assert_eq!(
+        output,
+        "[Error] repository Load failed: ParseProject failed for /test/project.yaml: broken YAML\n"
+    );
 }
 
 #[test]
@@ -5879,8 +5879,7 @@ fn test_report_run_result_input切断を表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("interactive input channel disconnected"));
+    assert_eq!(output, "[Error] interactive input channel disconnected\n");
 }
 
 #[test]
@@ -5891,8 +5890,7 @@ fn test_report_run_result_ctrl_cを表示して失敗を返す() {
 
     assert!(!actual);
     let output = String::from_utf8(stderr).unwrap();
-    assert!(output.contains("[Error]"));
-    assert!(output.contains("interactive input interrupted"));
+    assert_eq!(output, "[Error] interactive input interrupted\n");
 }
 
 #[test]
