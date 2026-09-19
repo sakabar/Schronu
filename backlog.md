@@ -2693,3 +2693,45 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 各laneの実行記録にはtask / worktree / branch、基点と最終revision、予約file、Red / Green・review履歴、実行commandと結果、互換性、未検証・残存作業、依存commitを記載する。共有summary担当は統合結果だけを最後に追記する。文書追記後にも差分・文書検査と文書を入力とするgateを確認する。
 
 公開前の親reviewとlocal・統合gateの成功後にだけ、実行依頼の範囲内で通常pushと`main`向けPR作成へ進む。push / pull_requestで起動する実CIは公開後のgateとし、CI成功確認前にはmerge可能と報告しない。CI失敗は所有laneへ戻して修正・再検証する。mergeはユーザーが行う。先行PRのmergeで後続branchが古くなった場合はrebase、影響する検証と全gate、親review、最新headのCI確認を済ませてからmerge可能と報告する。共有`backlog.md`への追記も上記のmerge順で維持する。次Waveの開始条件は報告するが、実行を明示されていないWaveのtask、branch、実装、PRを先回りして作成しない。
+
+## 追加監査項目実行記録
+
+### W8-A / TD-044: checked deadline calculations
+
+- 状態: local実装・内部review・親review完了。未push、未PR、実CI未実行、未merge。
+- task / worktree / branch: W8-A / `/Users/sakakibaratakafumi/.codex/worktrees/9355/Schronu` / `feature/w8-a-checked-deadlines`。
+- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`、review修正を含む実装最終revision`d366fcb5ea242f6f8752952c800210431c520285`。
+- 予約file: `src/entity/datetime.rs`、`src/entity/task.rs`、`src/application/task_use_case.rs`、`src/application/flatten_use_case.rs`、`src/adapter/gateway/yaml.rs`、同file内test、`src/application/task_use_case_tests.rs`、`src/adapter/gateway/yaml_tests.rs`、`tests/mcp_stdio.rs`。親reviewの指摘対応として`tests/support/persistent_storage.rs`、`tests/cli_runtime_contract.rs`、`tests/task_name_cli_contract.rs`を追加予約した。
+
+#### 固定した契約
+
+- 受理済みの巨大な見積秒数について、chronoのDuration生成範囲外とDateTime加減算範囲外を別errorとして扱い、値を丸めたり黙って受理したりしない。
+- YAML読込、CLI / MCPの見積更新、予約、親から子孫へのdeadline伝搬はpanicせず、task ID、field、operation、失敗理由を保持したerrorを返す。
+- 失敗時はtask属性、persistent mutation revision、storage bytesを変更しない。MCPはerror後も同一processで後続requestへ応答する。
+- 予約による自己・子孫のdeadline候補は最初のwrite前に全件検証し、完了済みtaskを伝搬境界とする既存契約を維持する。
+- disk不変検証はstorage配下のregular fileを任意深度まで相対pathで収集し、process用のroot `.lock`だけを除外する。`.transactions/<id>/...`等の深い変更も検出する。
+
+#### Red / Green履歴
+
+- `f018c576`でDuration範囲外のYAML / MCP panicをRed化し、`eafef017`で理由付きerrorへ変更した。
+- `4c5d0728`でdeadline日時減算overflowをRed化し、`a2e56de5`でchecked subtractionへ変更した。
+- `020f5570`で親deadline伝搬時の未検証子孫をRed化し、`a74ea8ed`で全候補の事前検証へ変更した。
+- `847a29bd`でchrono Durationの受理境界、`50811c66`でCLIのDuration範囲外更新を固定した。
+- `5d8e2c69`で予約時のDuration panicをRed化し、`bc11e663`でDuration生成をchecked化した。
+- `21d484ec`で予約時のDateTime加算panicをRed化し、`2c99bec9`でchecked additionと自己・子孫の事前検証へ変更した。`6e2a886e`で子孫伝搬の失敗原子性を追加固定した。
+- 親reviewのP2指摘に対し、`d366fcb5`で3箇所に重複していたstorage snapshot helperを再帰的な共通helperへ集約し、深いtransaction階層を検出する回帰を追加した。
+
+#### Reviewと検証
+
+- 内部spec reviewで、子孫伝搬の事前検証、chrono境界、CLI経路を確認した。内部quality reviewの予約経路に関するP1を修正し、再reviewはblocking 0件、non-blocking 0件だった。
+- 親reviewのP2を修正後、共通helperの任意深度収集、相対pathの決定性、root `.lock`限定除外、既存before / after比較の維持を内部再reviewし、blocking 0件、non-blocking 0件だった。親branch reviewも通過した。
+- `cargo fmt --check`: 成功。
+- `cargo clippy --locked --all-targets -- -D warnings`: 成功。
+- `cargo test --locked`: 成功。root libraryは1326 passed、0 failed、1 ignored、`tests/mcp_stdio.rs`は23 passed。
+- `git diff --check main...HEAD`: 成功。最終確認時のworktreeはcleanだった。
+- TD-027 / TD-043の契約、既存TD一覧・status、Wave計画、共有Wave summaryは変更していない。
+
+#### 互換性と残存作業
+
+- 通常範囲のdeadline計算、既存YAML、CLI / MCPの成功経路、完了済みtaskの予約境界を維持する。新しいerrorは従来panicしていた範囲外入力だけを明示的に拒否する。
+- push、PR作成、push / pull_requestで起動する実CI、mainへのmerge、Wave 8統合gateは未実施。W8-B / W8-Cとの共有summaryは担当laneが統合後に記録する。
