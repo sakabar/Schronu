@@ -1,6 +1,6 @@
 use super::paths::{
     expand_local_globs, function_calls, function_calls_with_callbacks, input_has, output_has,
-    references, signature_paths,
+    references, signature_paths, used_paths,
 };
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::{BTreeMap, BTreeSet};
@@ -147,20 +147,22 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                 continue;
             }
         };
-        for function in functions(&file) {
-            match function_calls(module, &file, function) {
-                Ok(calls) => {
-                    for (path, _) in calls {
-                        if component_paths.contains(&path)
-                            || (path == unified
-                                && format!("{module}::{}", function.sig.ident) != dispatcher_path)
-                        {
-                            errors.push(format!("runtime bypasses unified dispatch: {path}"));
-                        }
-                    }
+        match used_paths(module, &file) {
+            Ok(paths) => {
+                for path in paths.intersection(&component_paths.iter().cloned().collect()) {
+                    errors.push(format!("runtime bypasses unified dispatch: {path}"));
                 }
-                Err(error) => errors.push(error),
             }
+            Err(error) => errors.push(error),
+        }
+        let mut outside_dispatcher = file.clone();
+        outside_dispatcher.items.retain(|item| !matches!(item, syn::Item::Fn(function) if format!("{module}::{}", function.sig.ident) == dispatcher_path));
+        match used_paths(module, &outside_dispatcher) {
+            Ok(paths) if paths.contains(&unified) => {
+                errors.push("only coordinator may depend on unified handler".into())
+            }
+            Err(error) => errors.push(error),
+            _ => {}
         }
     }
     let calls = function_calls("controller::runtime", &runtime, dispatcher).unwrap();
@@ -317,5 +319,19 @@ fn coordinator_cannot_inspect_or_replace_its_command() {
             .unwrap();
         *function.block = syn::parse_str(body).unwrap();
         assert!(!violations(&modules).is_empty());
+    }
+}
+
+#[test]
+fn runtime_impl_methods_cannot_bypass_the_shared_handler() {
+    for body in ["component(command);", "unified(command, context);"] {
+        let mut modules = fixture("coordinate(&command); Helper::bypass(&command);");
+        modules.get_mut("controller::runtime").unwrap().items.push(
+            syn::parse_str(&format!(
+                "impl Helper {{ fn bypass(command: &Command) {{ {body} }} }}"
+            ))
+            .unwrap(),
+        );
+        assert!(!violations(&modules).is_empty(), "{body}");
     }
 }

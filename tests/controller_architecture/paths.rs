@@ -95,6 +95,17 @@ pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
     }
 }
 
+pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
+    let mut collector = References::new(module, file)?;
+    collector.paths.clear();
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.paths)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 struct References<'a> {
     module: &'a str,
     bindings: BTreeMap<String, String>,
