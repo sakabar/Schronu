@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use syn::ext::IdentExt;
 use syn::punctuated::Punctuated;
 use syn::visit_mut::{self, VisitMut};
 use syn::{Attribute, Item, Meta, Token};
@@ -88,7 +89,8 @@ impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
     ) -> Result<(), String> {
         for item in items {
             let Item::Mod(module) = item else { continue };
-            let child_name = format!("{name}::{}", module.ident);
+            let identifier = module.ident.unraw().to_string();
+            let child_name = format!("{name}::{identifier}");
             if self.modules.contains_key(&child_name) {
                 return Err(format!("duplicate module candidate: {child_name}"));
             }
@@ -102,7 +104,7 @@ impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
                         "inline #[path] needs explicit support: {child_name}"
                     ));
                 }
-                let child_directory = directory.join(module.ident.to_string());
+                let child_directory = directory.join(&identifier);
                 self.items(&child_name, nested, &child_directory, &child_directory)?;
                 self.modules.insert(
                     child_name,
@@ -137,11 +139,11 @@ impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
                 let text = (self.read)(&path)?;
                 (path, text)
             } else {
-                let path = directory.join(format!("{}.rs", module.ident));
+                let path = directory.join(format!("{identifier}.rs"));
                 match (self.read)(&path) {
                     Ok(text) => (path, text),
                     Err(first) => {
-                        let path = directory.join(module.ident.to_string()).join("mod.rs");
+                        let path = directory.join(&identifier).join("mod.rs");
                         let text =
                             (self.read)(&path).map_err(|second| format!("{first}; {second}"))?;
                         (path, text)

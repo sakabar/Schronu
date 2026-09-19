@@ -141,3 +141,17 @@ fn handler_may_use_the_declared_typed_validator() {
         "pub(super) fn validate_command_input(value: &Command) -> Result<(), Error> { todo!() }",
     )).is_empty());
 }
+
+#[test]
+fn raw_handler_modules_cannot_hide_runtime_function_pointers() {
+    let body = "fn f() { let pointer = super::runtime::run; }";
+    let expected = violations(&fixture(body, ""));
+    assert!(!expected.is_empty());
+    for root in [
+        format!("mod r#handler {{ {body} }} mod command;"),
+        "#[path = \"handler.rs\"] mod r#handler; mod command;".to_string(),
+    ] {
+        let modules = fixture_modules(&root, &[("handler.rs", body), ("command.rs", "")]);
+        assert_eq!(violations(&modules), expected);
+    }
+}

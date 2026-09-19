@@ -130,3 +130,42 @@ fn parent_path_recursion_is_rejected_before_repeated_reads() {
         .err()
         .is_some_and(|error| error.contains("parent path")));
 }
+
+#[test]
+fn raw_module_names_share_the_normal_index_and_implicit_paths() {
+    for (root, files) in [
+        (
+            "mod r#handler;",
+            vec![("handler.rs", "mod r#child;"), ("handler/child.rs", "")],
+        ),
+        (
+            "mod r#handler;",
+            vec![
+                ("handler/mod.rs", "mod r#child;"),
+                ("handler/child/mod.rs", ""),
+            ],
+        ),
+        (
+            "mod r#handler { mod r#child; }",
+            vec![("handler/child.rs", "")],
+        ),
+        (
+            "#[path = \"custom.rs\"] mod r#handler;",
+            vec![("custom.rs", "mod r#child {}")],
+        ),
+    ] {
+        let modules = super::source::fixture_modules(root, &files);
+        assert_eq!(
+            modules.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "controller",
+                "controller::handler",
+                "controller::handler::child"
+            ]
+        );
+        assert_eq!(
+            super::source::module_family(&modules, "controller::handler").count(),
+            2
+        );
+    }
+}
