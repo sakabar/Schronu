@@ -96,7 +96,10 @@ fn alias_mediated_imports_are_not_returned_as_unresolved_paths() {
         "use super::runtime as driver; use driver::Transaction as T;",
         "use driver::Transaction as T; use super::runtime as driver;",
     ] {
-        assert!(imports("controller::handler", &product_file(text).unwrap()).is_err());
+        assert_eq!(
+            imports("controller::handler", &product_file(text).unwrap()).unwrap()["T"],
+            "controller::runtime::Transaction"
+        );
     }
 }
 
