@@ -374,6 +374,7 @@ struct SharedSignaledFailureWriter {
     fail_output: Rc<Cell<bool>>,
     output: Rc<RefCell<Vec<u8>>>,
     drop_count: Rc<Cell<usize>>,
+    flush_count: Rc<Cell<usize>>,
     error_kind: std::io::ErrorKind,
     fail_after_output_marker: Option<String>,
 }
@@ -406,6 +407,7 @@ impl Write for SharedSignaledFailureWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        self.flush_count.set(self.flush_count.get() + 1);
         if self.fail_output.get() {
             Err(std::io::Error::new(
                 self.error_kind,
@@ -440,6 +442,7 @@ struct SharedSignaledFailureTerminalFactory {
     fail_output: Rc<Cell<bool>>,
     output: Rc<RefCell<Vec<u8>>>,
     drop_count: Rc<Cell<usize>>,
+    flush_count: Rc<Cell<usize>>,
     error_kind: std::io::ErrorKind,
     fail_after_output_marker: Option<String>,
 }
@@ -451,6 +454,7 @@ impl interactive::TerminalFactory for SharedSignaledFailureTerminalFactory {
             fail_output: Rc::clone(&self.fail_output),
             output: Rc::clone(&self.output),
             drop_count: Rc::clone(&self.drop_count),
+            flush_count: Rc::clone(&self.flush_count),
             error_kind: self.error_kind,
             fail_after_output_marker: self.fail_after_output_marker.clone(),
         }))

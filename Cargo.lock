@@ -3129,6 +3129,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "syn 2.0.119",
  "termion",
  "unicode-width",
  "url",
