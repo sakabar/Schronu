@@ -103,3 +103,15 @@ fn missing_product_module_is_an_error() {
     });
     assert!(result.err().unwrap().contains("missing.rs"));
 }
+
+#[test]
+fn conditional_duplicate_modules_cannot_overwrite_product_candidates() {
+    let result = load_modules(Path::new("src/mod.rs"), |path| {
+        Ok(if path == Path::new("src/mod.rs") {
+            "#[cfg(unix)] #[path=\"unix.rs\"] mod platform; #[cfg(windows)] #[path=\"windows.rs\"] mod platform;"
+        } else { "fn product() {}" }.into())
+    });
+    assert!(result
+        .err()
+        .is_some_and(|error| error.contains("duplicate module")));
+}

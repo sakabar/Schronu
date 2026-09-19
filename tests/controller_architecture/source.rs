@@ -62,6 +62,9 @@ impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
         for item in items {
             let Item::Mod(module) = item else { continue };
             let child_name = format!("{name}::{}", module.ident);
+            if self.modules.contains_key(&child_name) {
+                return Err(format!("duplicate module candidate: {child_name}"));
+            }
             let explicit_path = module
                 .attrs
                 .iter()
