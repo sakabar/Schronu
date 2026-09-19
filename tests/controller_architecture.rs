@@ -12,3 +12,5 @@ mod paths;
 mod source;
 #[path = "controller_architecture/source_tests.rs"]
 mod source_tests;
+#[path = "controller_architecture/view.rs"]
+mod view;
