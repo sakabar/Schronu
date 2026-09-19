@@ -110,6 +110,16 @@ pub fn resolve_path(module: &str, file: &syn::File, path: &syn::Path) -> Result<
     Ok(References::new(module, file)?.path(path))
 }
 
+pub fn method_names(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.methods)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 struct References<'a> {
     module: &'a str,
     bindings: BTreeMap<String, String>,
