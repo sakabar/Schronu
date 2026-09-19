@@ -105,6 +105,31 @@ pub fn definitions(module: &str, file: &syn::File) -> Result<Vec<syn::Item>, Str
     }
 }
 
+pub fn signatures(module: &str, file: &syn::File) -> Result<Vec<syn::Signature>, String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.signatures)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
+pub fn return_paths(
+    module: &str,
+    file: &syn::File,
+    signature: &syn::Signature,
+) -> Result<BTreeSet<String>, String> {
+    let mut collector = References::new(module, file)?;
+    collector.paths.clear();
+    collector.visit_return_type(&signature.output);
+    if collector.errors.is_empty() {
+        Ok(collector.paths)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.paths.clear();
@@ -144,6 +169,7 @@ struct References<'a> {
     callbacks: BTreeSet<String>,
     scaling: bool,
     definitions: Vec<syn::Item>,
+    signatures: Vec<syn::Signature>,
 }
 
 impl<'a> References<'a> {
@@ -163,6 +189,7 @@ impl<'a> References<'a> {
             callbacks: BTreeSet::new(),
             scaling: false,
             definitions: Vec::new(),
+            signatures: Vec::new(),
         })
     }
 
@@ -186,6 +213,11 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_signature(&mut self, signature: &'ast syn::Signature) {
+        self.signatures.push(signature.clone());
+        visit::visit_signature(self, signature);
+    }
+
     fn visit_item(&mut self, item: &'ast syn::Item) {
         if matches!(
             item,
