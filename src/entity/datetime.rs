@@ -362,6 +362,21 @@ mod logical_date_time_policy_contract_tests {
     }
 
     #[test]
+    fn checked_deadline計算はduration範囲内の日時下限超過を別errorにする() {
+        let policy = LogicalDateTimePolicy::new(30);
+        let deadline: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
+
+        assert_eq!(
+            policy.try_deadline_pending_limit(deadline, 0),
+            Err(DeadlineCalculationError::DateTimeOutOfRange {
+                operation: "deadline_pending_limit",
+                datetime: deadline,
+                seconds: 0,
+            })
+        );
+    }
+
+    #[test]
     fn deadline_force_todo_after_start_thresholdはdeadlineから残作業時間と60分を引く() {
         let policy = LogicalDateTimePolicy::new(30);
         let deadline = local_datetime(2026, 8, 20, 12, 0);

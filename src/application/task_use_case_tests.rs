@@ -2421,6 +2421,42 @@ fn set_estimate_duration範囲外は属性とrevisionを変更しない() {
 }
 
 #[test]
+fn set_estimate_日時減算範囲外は属性とrevisionを変更しない() {
+    let task = crate::test_support::new_task_handle("更新対象").unwrap();
+    let task_id = task.get_id().unwrap();
+    task.set_deadline_time_opt(Some(fixed_now())).unwrap();
+    let revision = task.get_persistent_mutation_revision().unwrap();
+    let original_estimate = task.get_estimated_work_seconds().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+    let estimated_work_minutes = 10_000_000_000_000_i64 / 60;
+
+    let actual = set_estimate(&mut repository, task_id, estimated_work_minutes);
+
+    assert!(matches!(
+        actual,
+        Err(ApplicationError::TaskTree(
+            TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "estimated_work_seconds",
+                source: crate::entity::datetime::DeadlineCalculationError::DateTimeOutOfRange {
+                    operation: "deadline_pending_limit",
+                    ..
+                },
+            }
+        )) if error_task_id == task_id
+    ));
+    let observed = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(
+        observed.get_estimated_work_seconds().unwrap(),
+        original_estimate
+    );
+    assert_eq!(
+        observed.get_persistent_mutation_revision().unwrap(),
+        revision
+    );
+}
+
+#[test]
 fn write_use_cases_repositoryをsaveしない() {
     let root = crate::test_support::new_task_handle("親").unwrap();
     let root_id = root.get_id().unwrap();

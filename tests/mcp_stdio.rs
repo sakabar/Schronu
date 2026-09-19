@@ -446,6 +446,58 @@ fn mcp_stdio_duration範囲外の見積更新は保存内容を変えず後続re
 }
 
 #[test]
+fn mcp_stdio_日時減算範囲外の見積更新は保存内容を変えず後続requestへ応答する() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "datetime-update-create",
+        "create_task",
+        Some(json!({"name": "datetime update target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "datetime-update-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let project_yaml = fs::read_dir(storage.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let before = fs::read(&project_yaml).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("datetime-update");
+
+    let failed = mcp.call_tool(
+        "datetime-update",
+        "update_task",
+        json!({
+            "task_id": task_id,
+            "estimated_work_minutes": 10_000_000_000_000_i64 / 60
+        }),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(task_id));
+    assert!(message.contains("estimated_work_seconds"));
+    assert!(message.contains("datetime subtraction"));
+    assert_eq!(fs::read(&project_yaml).unwrap(), before);
+    let retried = mcp.call_tool("datetime-update-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
 fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更しない() {
     use std::os::unix::fs::symlink;
 

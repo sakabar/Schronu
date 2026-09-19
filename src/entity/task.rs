@@ -1661,4 +1661,38 @@ impl TaskHandle {
 }
 
 #[cfg(test)]
+mod checked_deadline_calculation_tests {
+    use super::*;
+
+    #[test]
+    fn set_deadline_time_optは日時下限超過時に属性とrevisionを変更しない() {
+        let now = Local::now();
+        let task_id = Uuid::new_v4();
+        let task = TaskHandle::with_identity("日時境界", task_id, now).unwrap();
+        let original_deadline = task.get_deadline_time_opt().unwrap();
+        let original_revision = task.get_persistent_mutation_revision().unwrap();
+        let deadline: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
+
+        let actual = task.set_deadline_time_opt(Some(deadline));
+
+        assert!(matches!(
+            actual,
+            Err(TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "deadline_time",
+                source: DeadlineCalculationError::DateTimeOutOfRange {
+                    operation: "deadline_pending_limit",
+                    ..
+                },
+            }) if error_task_id == task_id
+        ));
+        assert_eq!(task.get_deadline_time_opt().unwrap(), original_deadline);
+        assert_eq!(
+            task.get_persistent_mutation_revision().unwrap(),
+            original_revision
+        );
+    }
+}
+
+#[cfg(test)]
 include!("task_tests.rs");
