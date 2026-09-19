@@ -382,6 +382,25 @@ mod logical_date_time_policy_contract_tests {
     }
 
     #[test]
+    fn checked_deadline計算はchrono_durationの最大受理秒数と直後を区別する() {
+        let policy = LogicalDateTimePolicy::new(30);
+        let deadline: DateTime<Local> = DateTime::<Local>::MAX_UTC.into();
+        let maximum_duration_seconds = i64::MAX / 1_000;
+
+        assert!(matches!(
+            policy.try_deadline_pending_limit(deadline, maximum_duration_seconds),
+            Err(DeadlineCalculationError::DateTimeOutOfRange { .. })
+        ));
+        assert_eq!(
+            policy.try_deadline_pending_limit(deadline, maximum_duration_seconds + 1),
+            Err(DeadlineCalculationError::DurationOutOfRange {
+                operation: "deadline_pending_limit",
+                seconds: maximum_duration_seconds + 1,
+            })
+        );
+    }
+
+    #[test]
     fn checked_deadline計算はduration範囲内の日時下限超過を別errorにする() {
         let policy = LogicalDateTimePolicy::new(30);
         let deadline: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
