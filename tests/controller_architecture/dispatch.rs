@@ -1,8 +1,9 @@
 use super::paths::{
-    expand_local_globs, function_calls, input_has, output_has, references, signature_paths,
+    expand_local_globs, function_calls, function_calls_with_callbacks, input_has, output_has,
+    references, signature_paths,
 };
 use super::source::{controller_modules, fixture_modules, module_family};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::{self, Visit};
 
 fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
@@ -59,6 +60,7 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
         return vec!["one typed Command coordinator required".into()];
     };
     let dispatcher_path = format!("controller::runtime::{}", dispatcher.sig.ident);
+    let callbacks = transaction_callbacks(&runtime);
     let entries: Vec<_> = functions(&runtime)
         .filter(|f| {
             input_has(&f.sig, "TaskRepositoryTrait")
@@ -72,13 +74,15 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
         errors.push("two typed execution entries required".into());
     }
     for entry in entries {
-        let calls = match function_calls("controller::runtime", &runtime, entry) {
-            Ok(calls) => calls,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
+        let calls =
+            match function_calls_with_callbacks("controller::runtime", &runtime, entry, &callbacks)
+            {
+                Ok(calls) => calls,
+                Err(error) => {
+                    errors.push(error);
+                    continue;
+                }
+            };
         if calls
             .iter()
             .filter(|(path, _)| {
@@ -207,6 +211,46 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     errors
 }
 
+fn transaction_callbacks(file: &syn::File) -> BTreeSet<String> {
+    let transaction = "crate::application::repository_transaction::run_repository_transaction";
+    let mut callbacks = BTreeSet::new();
+    for function in functions(file)
+        .filter(|f| input_has(&f.sig, "FnOnce") && input_has(&f.sig, "TaskRepositoryTrait"))
+    {
+        let parameters: Vec<_> = function
+            .sig
+            .inputs
+            .iter()
+            .filter_map(|argument| match argument {
+                syn::FnArg::Typed(argument) if super::paths::type_has(&argument.ty, "FnOnce") => {
+                    match &*argument.pat {
+                        syn::Pat::Ident(name) => Some(name.ident.to_string()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+        let Ok(calls) = function_calls_with_callbacks(
+            "controller::runtime",
+            file,
+            function,
+            &BTreeSet::from([transaction.into()]),
+        ) else {
+            continue;
+        };
+        if let [parameter] = parameters.as_slice() {
+            if calls.iter().filter(|(path, _)| path == transaction).count() == 1
+                && calls.iter().filter(|(path, _)| path == parameter).count() == 1
+            {
+                callbacks.insert(function.sig.ident.to_string());
+                callbacks.insert(format!("controller::runtime::{}", function.sig.ident));
+            }
+        }
+    }
+    callbacks
+}
+
 fn functions(file: &syn::File) -> impl Iterator<Item = &syn::ItemFn> {
     file.items.iter().filter_map(|item| match item {
         syn::Item::Fn(f) => Some(f),
@@ -246,6 +290,7 @@ fn product_entries_share_parser_and_unified_handler() {
 #[test]
 fn typed_entry_rejects_missing_calls_and_nonmaintenance_branches() {
     for entry in [
+        "std::mem::drop(|| coordinate(&command));",
         "let unused = || coordinate(&command);",
         "coordinate(&command); if command.kind() == CommandKind::Focus {}",
         "unified(&command, context); coordinate(&command);",

@@ -106,6 +106,7 @@ struct References<'a> {
     methods: BTreeSet<String>,
     fields: BTreeSet<String>,
     block_depth: usize,
+    callbacks: BTreeSet<String>,
 }
 
 impl<'a> References<'a> {
@@ -122,6 +123,7 @@ impl<'a> References<'a> {
             methods: BTreeSet::new(),
             fields: BTreeSet::new(),
             block_depth: 0,
+            callbacks: BTreeSet::new(),
         })
     }
 
@@ -200,11 +202,13 @@ impl<'ast> Visit<'ast> for References<'_> {
         }
         if self.scoped_calls {
             self.visit_expr(&expression.func);
+            let executes_callback = matches!(function, syn::Expr::Path(path) if self.callbacks.contains(&self.path(&path.path)));
             for argument in &expression.args {
-                if let syn::Expr::Closure(closure) = argument {
-                    visit::visit_expr_closure(self, closure);
-                } else {
-                    self.visit_expr(argument);
+                match argument {
+                    syn::Expr::Closure(closure) if executes_callback => {
+                        visit::visit_expr_closure(self, closure)
+                    }
+                    argument => self.visit_expr(argument),
                 }
             }
         } else {
@@ -315,8 +319,18 @@ pub fn function_calls(
     file: &syn::File,
     function: &syn::ItemFn,
 ) -> Result<Vec<(String, syn::ExprCall)>, String> {
+    function_calls_with_callbacks(module, file, function, &BTreeSet::new())
+}
+
+pub fn function_calls_with_callbacks(
+    module: &str,
+    file: &syn::File,
+    function: &syn::ItemFn,
+    callbacks: &BTreeSet<String>,
+) -> Result<Vec<(String, syn::ExprCall)>, String> {
     let mut collector = References::new(module, file)?;
     collector.scoped_calls = true;
+    collector.callbacks = callbacks.clone();
     collector.visit_block(&function.block);
     if collector.errors.is_empty() {
         Ok(collector.calls)
