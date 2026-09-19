@@ -1,6 +1,6 @@
 use super::paths::{
-    definitions, expand_local_globs, expand_type_aliases, output_dependencies, output_functions,
-    references, resolve_path, type_alias_dependencies, type_has, used_paths,
+    definitions, expand_local_globs, expand_type_aliases, has_float_literal, output_dependencies,
+    output_functions, references, resolve_path, type_alias_dependencies, type_has, used_paths,
 };
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
@@ -259,8 +259,21 @@ fn calculation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> 
         "f64",
     ];
     for (module, file) in module_family(modules, "controller::runtime") {
-        let paths =
-            expand_local_globs(module, file, modules).and_then(|file| used_paths(module, &file));
+        let expanded = match expand_local_globs(module, file, modules) {
+            Ok(file) => file,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        match has_float_literal(module, &expanded) {
+            Ok(true) => errors.push(format!(
+                "runtime owns floating-point display calculation: {module}"
+            )),
+            Err(error) => errors.push(error),
+            Ok(false) => {}
+        }
+        let paths = used_paths(module, &expanded);
         match paths {
             Ok(paths) => {
                 for path in expand_type_aliases(module, paths, &aliases) {
@@ -299,6 +312,8 @@ fn product_runtime_uses_completed_view_models() {
 #[test]
 fn display_calculations_cannot_hide_in_aliases_or_nested_helpers() {
     for source in [
+        "fn renamed() -> String { let ratio = 1.0_f64 / 2.0; ratio.to_string() }",
+        "fn renamed() -> String { format!(\"{}\", 1.0 / 2.0) }",
         "use super::renderer::BandDurations as Value; fn renamed() -> Value { todo!() }",
         "type Ratio = f64; impl Helper { fn renamed(value: Ratio) -> Ratio { value / 2.0 } }",
         "fn renamed() { format!(\"{:?}\", super::renderer::TreeDisplay::Debug { rows: vec![] }); }",

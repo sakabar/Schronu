@@ -119,6 +119,16 @@ pub fn resolve_path(module: &str, file: &syn::File, path: &syn::Path) -> Result<
     Ok(References::new(module, file)?.path(path))
 }
 
+pub fn has_float_literal(module: &str, file: &syn::File) -> Result<bool, String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.float_literal)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 pub fn method_names(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
@@ -142,6 +152,7 @@ struct References<'a> {
     block_depth: usize,
     callbacks: BTreeSet<String>,
     scaling: bool,
+    float_literal: bool,
     definitions: Vec<syn::Item>,
     signatures: Vec<syn::Signature>,
 }
@@ -162,6 +173,7 @@ impl<'a> References<'a> {
             block_depth: 0,
             callbacks: BTreeSet::new(),
             scaling: false,
+            float_literal: false,
             definitions: Vec::new(),
             signatures: Vec::new(),
         })
@@ -187,6 +199,10 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_lit_float(&mut self, _literal: &'ast syn::LitFloat) {
+        self.float_literal = true;
+    }
+
     fn visit_signature(&mut self, signature: &'ast syn::Signature) {
         self.signatures.push(signature.clone());
         visit::visit_signature(self, signature);
