@@ -3,11 +3,19 @@ use super::source::product_file;
 
 #[test]
 fn local_globs_resolve_only_declared_visible_items() {
-    let modules = super::source::fixture_modules("mod runtime; mod view;", &[
-        ("runtime.rs", "use super::view::*; fn run() { renamed(); }"),
-        ("view.rs", "pub(super) fn renamed() {} fn private() {}"),
-    ]);
-    let file = super::paths::expand_local_globs("controller::runtime", &modules["controller::runtime"], &modules).unwrap();
+    let modules = super::source::fixture_modules(
+        "mod runtime; mod view;",
+        &[
+            ("runtime.rs", "use super::view::*; fn run() { renamed(); }"),
+            ("view.rs", "pub(super) fn renamed() {} fn private() {}"),
+        ],
+    );
+    let file = super::paths::expand_local_globs(
+        "controller::runtime",
+        &modules["controller::runtime"],
+        &modules,
+    )
+    .unwrap();
     let paths = super::paths::references("controller::runtime", &file).unwrap();
     assert!(paths.contains("controller::view::renamed"));
     assert!(!paths.contains("controller::view::private"));

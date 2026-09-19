@@ -5,11 +5,82 @@ use syn::visit::{self, Visit};
 use syn::UseTree;
 
 pub fn expand_local_globs(
-    _module: &str,
+    module: &str,
     file: &syn::File,
-    _modules: &BTreeMap<String, syn::File>,
+    modules: &BTreeMap<String, syn::File>,
 ) -> Result<syn::File, String> {
-    Ok(file.clone())
+    fn expand(
+        tree: &mut UseTree,
+        prefix: &str,
+        module: &str,
+        modules: &BTreeMap<String, syn::File>,
+    ) -> Result<(), String> {
+        match tree {
+            UseTree::Path(path) => {
+                let prefix = if prefix.is_empty() {
+                    path.ident.unraw().to_string()
+                } else {
+                    format!("{prefix}::{}", path.ident.unraw())
+                };
+                expand(&mut path.tree, &prefix, module, modules)?;
+            }
+            UseTree::Group(group) => {
+                for item in &mut group.items {
+                    expand(item, prefix, module, modules)?;
+                }
+            }
+            UseTree::Glob(_) => {
+                let target = qualify(module, prefix);
+                let file = modules
+                    .get(&target)
+                    .ok_or_else(|| format!("glob target is not a local module: {target}"))?;
+                let mut items = syn::punctuated::Punctuated::new();
+                for item in &file.items {
+                    let (visibility, ident) = match item {
+                        syn::Item::Fn(item) => (&item.vis, &item.sig.ident),
+                        syn::Item::Struct(item) => (&item.vis, &item.ident),
+                        syn::Item::Enum(item) => (&item.vis, &item.ident),
+                        syn::Item::Trait(item) => (&item.vis, &item.ident),
+                        syn::Item::Type(item) => (&item.vis, &item.ident),
+                        syn::Item::Const(item) => (&item.vis, &item.ident),
+                        syn::Item::Static(item) => (&item.vis, &item.ident),
+                        syn::Item::Mod(item) => (&item.vis, &item.ident),
+                        syn::Item::Use(item) if !matches!(item.vis, syn::Visibility::Inherited) => {
+                            return Err(format!(
+                                "glob through re-export needs explicit support: {target}"
+                            ))
+                        }
+                        syn::Item::Macro(_) => {
+                            return Err(format!(
+                                "glob through macro needs explicit support: {target}"
+                            ))
+                        }
+                        _ => continue,
+                    };
+                    if !matches!(visibility, syn::Visibility::Inherited) {
+                        items.push(UseTree::Name(syn::UseName {
+                            ident: ident.clone(),
+                        }));
+                    }
+                }
+                *tree = UseTree::Group(syn::UseGroup {
+                    brace_token: Default::default(),
+                    items,
+                });
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+    let mut file = file.clone();
+    for item in &mut file.items {
+        if let syn::Item::Use(item) = item {
+            expand(&mut item.tree, "", module, modules)?;
+        }
+    }
+    // Nested globs remain unsupported, so they fail rather than lose edges.
+    imports(module, &file)?;
+    Ok(file)
 }
 
 pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
