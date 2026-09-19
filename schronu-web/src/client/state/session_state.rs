@@ -403,7 +403,7 @@ impl ClientState {
                     invocation,
                     Some(success.data.actual_work_seconds),
                 );
-                self.finish_mutation_safety(storage, false);
+                let _ = self.finish_mutation_safety(storage, false);
                 return follow_up;
             }
             Err(error) => {
@@ -414,7 +414,7 @@ impl ClientState {
                         .insert(task_id.clone(), ended_at_epoch_ms);
                 }
                 self.finish_failed_mutation(&task_id, invocation, error);
-                self.finish_mutation_safety(storage, keep_safety);
+                let _ = self.finish_mutation_safety(storage, keep_safety);
             }
         }
         ClientEffect::None
@@ -444,7 +444,7 @@ impl ClientState {
                 self.clear_superseded_completion_error(&task_id);
                 let follow_up = self.apply_mutation_snapshot_and_request_list(snapshot);
                 self.finish_committed_mutation(storage, &task_id, invocation, None);
-                self.finish_mutation_safety(storage, false);
+                let _ = self.finish_mutation_safety(storage, false);
                 return follow_up;
             }
             Err(error) => {
@@ -467,7 +467,7 @@ impl ClientState {
                     self.sessions.completion_conflicts.remove(&task_id);
                     self.finish_failed_mutation(&task_id, invocation, error);
                 }
-                self.finish_mutation_safety(storage, keep_safety);
+                let _ = self.finish_mutation_safety(storage, keep_safety);
             }
         }
         ClientEffect::None
@@ -612,7 +612,7 @@ impl ClientState {
         );
     }
 
-    fn finish_failed_mutation(
+    pub(super) fn finish_failed_mutation(
         &mut self,
         task_id: &str,
         invocation: ServerActionInvocation,
@@ -642,22 +642,28 @@ impl ClientState {
         self.record_server_failure(invocation, error);
     }
 
-    fn finish_mutation_safety<S: KeyValueStorage>(&mut self, storage: &S, keep_armed: bool) {
+    pub(super) fn finish_mutation_safety<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        keep_armed: bool,
+    ) -> bool {
         if keep_armed
             || !self.sessions.pending_mutations.is_empty()
             || self.sessions.mutation_globally_blocked
         {
-            return;
+            return false;
         }
         if !self.sessions.committed_blocked_task_ids.is_empty() {
             self.sessions.mutation_globally_blocked = true;
-            return;
+            return false;
         }
         if self.sessions.mutation_safety.disarm(storage).is_err()
             && self.sessions.committed_blocked_task_ids.is_empty()
         {
             self.record_local_result(None, false);
+            return false;
         }
+        true
     }
 
     fn finish_committed_mutation<S: KeyValueStorage>(
@@ -732,7 +738,7 @@ fn completion_conflict_actual(error: &ServerFailure) -> Option<i64> {
     }
 }
 
-fn keeps_safety_marker(error: &ServerFailure) -> bool {
+pub(super) fn keeps_safety_marker(error: &ServerFailure) -> bool {
     matches!(error, ServerFailure::Transport(_))
         || matches!(
             error,

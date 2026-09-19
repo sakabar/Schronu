@@ -1,6 +1,7 @@
+use super::session_state::keeps_safety_marker;
 use super::*;
 use crate::client::date_buttons::logical_date_buttons;
-use crate::{ListTasksRequest, SessionTask, WebSuccess};
+use crate::{DeferPlan, DeferTaskRequest, ListTasksRequest, SessionTask, WebSuccess};
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
@@ -14,6 +15,7 @@ pub(super) struct ReadState {
     pub(super) latest_bootstrap_request_id: Option<u64>,
     pub(super) latest_list_request_id: Option<u64>,
     pub(super) latest_auto_request_id: Option<u64>,
+    pub(super) pending_defer_task: Option<(u64, DeferTaskRequest)>,
 }
 
 impl ReadState {
@@ -30,6 +32,7 @@ impl ReadState {
             latest_bootstrap_request_id: None,
             latest_list_request_id: None,
             latest_auto_request_id: None,
+            pending_defer_task: None,
         }
     }
 }
@@ -68,6 +71,90 @@ impl ClientState {
         ClientEffect::AutoSession { request_id }
     }
 
+    pub fn request_defer_task<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+        selected_logical_date: &str,
+        expected_plan: DeferPlan,
+    ) -> ClientEffect {
+        if self.sessions.mutation_globally_blocked
+            || !self.sessions.pending_mutations.is_empty()
+            || self.read.pending_defer_task.is_some()
+            || self
+                .sessions()
+                .iter()
+                .any(|session| session.task_id == task_id)
+        {
+            return ClientEffect::None;
+        }
+        let Some(request_id) = self.allocate_read_request_id() else {
+            return ClientEffect::None;
+        };
+        if self.sessions.mutation_safety.arm(storage).is_err() {
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
+        }
+        let request = DeferTaskRequest {
+            task_id: task_id.to_owned(),
+            selected_logical_date: selected_logical_date.to_owned(),
+            expected_plan,
+        };
+        self.read.pending_defer_task = Some((request_id, request.clone()));
+        ClientEffect::DeferTask {
+            request_id,
+            request,
+        }
+    }
+
+    pub fn apply_defer_task_result<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        request_id: u64,
+        result: Result<ServerSnapshot, ServerFailure>,
+    ) -> ClientEffect {
+        let Some((expected_request_id, request)) = self.read.pending_defer_task.take() else {
+            return ClientEffect::None;
+        };
+        let task_id = request.task_id.clone();
+        let invocation = ServerActionInvocation::DeferTask(request.clone());
+        if expected_request_id != request_id {
+            self.read.pending_defer_task = Some((expected_request_id, request));
+            self.record_stale_response(invocation, result.is_ok());
+            return ClientEffect::None;
+        }
+        match result {
+            Ok(snapshot) => {
+                self.record_server(invocation, Outcome::Success, "タスクを先送りしました。");
+                self.read
+                    .scheduled_rows
+                    .retain(|row| row.task.task_id != task_id);
+                if !self.finish_mutation_safety(storage, false) {
+                    self.sessions.mutation_globally_blocked = true;
+                }
+                self.apply_mutation_snapshot_and_request_list(snapshot)
+            }
+            Err(error) => {
+                let defer_plan_changed = matches!(
+                    &error,
+                    ServerFailure::Operation(WebError { code, .. })
+                        if code == crate::web_error_codes::DEFER_PLAN_CHANGED
+                );
+                let selected_logical_date = request.selected_logical_date.clone();
+                let keep_safety = keeps_safety_marker(&error);
+                self.finish_failed_mutation(&task_id, invocation, error);
+                if !self.finish_mutation_safety(storage, keep_safety) && !keep_safety {
+                    self.sessions.mutation_globally_blocked = true;
+                }
+                if defer_plan_changed && !self.sessions.mutation_globally_blocked {
+                    self.request_list(&selected_logical_date)
+                } else {
+                    ClientEffect::None
+                }
+            }
+        }
+    }
+
     pub fn apply_bootstrap_result(
         &mut self,
         request_id: u64,
@@ -79,6 +166,7 @@ impl ClientState {
         }
         match result {
             Ok(snapshot) => {
+                let current_logical_date = snapshot.logical_date.clone();
                 let cached_logical_date = self
                     .read
                     .has_list
@@ -95,6 +183,10 @@ impl ClientState {
                 );
                 if let Some(logical_date) = cached_logical_date {
                     return self.request_list(&logical_date);
+                }
+                if self.refresh_list_after_bootstrap {
+                    self.refresh_list_after_bootstrap = false;
+                    return self.request_list(&current_logical_date);
                 }
             }
             Err(error) => self.record_server_failure(ServerActionInvocation::Bootstrap, error),

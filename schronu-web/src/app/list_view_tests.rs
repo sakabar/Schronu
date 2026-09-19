@@ -9,13 +9,16 @@ use std::{
 use super::component_runtime::{
     component_action_from_date_button, component_action_from_date_input, ComponentAction,
 };
-use super::list_view::{DateButtonViewModel, ListRowViewModel, ListView};
+use super::list_view::{
+    DateButtonViewModel, DeferConfirmationKind, DeferConfirmationViewModel, ListRowViewModel,
+    ListView,
+};
 use super::view_test_support::{
     dispatch_click, dispatch_platform_event, rebuild_with_click_listeners,
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::client::date_input::DateInputState;
-use crate::SessionTask;
+use crate::{DeferMode, SessionTask};
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
 
@@ -33,6 +36,7 @@ fn root(props: RootProps) -> Element {
     let date_input_events = Arc::clone(&props.events);
     let date_submit_events = Arc::clone(&props.events);
     let task_events = Arc::clone(&props.events);
+    let defer_events = Arc::clone(&props.events);
     rsx! {
         ListView {
             dates: props.dates,
@@ -55,6 +59,10 @@ fn root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("task:{}:{}:{is_leaf}", task.task_id, task.task_name)),
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events
+                .lock()
+                .unwrap()
+                .push(format!("defer:{task_id}")),
             on_filter_change: move |filter: String| props.events
                 .lock()
                 .unwrap()
@@ -63,8 +71,54 @@ fn root(props: RootProps) -> Element {
     }
 }
 
+fn globally_blocked_root(props: RootProps) -> Element {
+    let defer_events = Arc::clone(&props.events);
+    rsx! {
+        ListView {
+            dates: props.dates,
+            rows: props.rows,
+            active_task_ids: props.active_task_ids,
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: props.filter_text,
+            mutation_globally_blocked: true,
+            on_select_date: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events
+                .lock()
+                .unwrap()
+                .push(format!("defer:{task_id}")),
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
 #[test]
-fn carry_lockはsession追加だけを無効化し日付選択は維持する() {
+fn mutation_safety全体停止は先送りbuttonを無効化する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        globally_blocked_root,
+        RootProps {
+            dates: Vec::new(),
+            rows: vec![row("task-id", false, true)],
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        },
+    );
+    let listeners = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("class=\"session-start\" disabled"), "{html}");
+    assert!(html.contains("先送り\" disabled=true"), "{html}");
+
+    dispatch_click(&dom, listeners[1]);
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn carry_lockはsession追加と先送りを無効化し日付選択は維持する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         root,
@@ -83,6 +137,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
     dom.rebuild_in_place();
     let unlocked = dioxus::ssr::render(&dom);
     assert!(!unlocked.contains("class=\"session-start\" disabled"));
+    assert!(!unlocked.contains("先送り\" disabled=true"));
 
     fn locked_root(props: RootProps) -> Element {
         let date_events = Arc::clone(&props.events);
@@ -103,6 +158,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
                     .lock()
                     .unwrap()
                     .push(format!("task:{}:{is_leaf}", task.task_id)),
+                on_defer_task: move |_| {},
                 on_filter_change: move |filter: String| props.events
                     .lock()
                     .unwrap()
@@ -131,6 +187,7 @@ fn carry_lockはsession追加だけを無効化し日付選択は維持する() 
         html.contains("class=\"session-start\"") && html.contains("disabled=true"),
         "{html}"
     );
+    assert!(html.contains("先送り\" disabled=true"), "{html}");
     for id in ids {
         dispatch_click(&locked, id);
     }
@@ -168,12 +225,33 @@ fn named_row(
     is_leaf: bool,
 ) -> ListRowViewModel {
     ListRowViewModel {
+        row_key: format!("row:{task_id}"),
         task: task(task_id, task_name),
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
+        defer_plan: crate::DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
+        defer_confirmation: None,
     }
+}
+
+fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
+    let mut row = named_row(task_id, &format!("task {task_id}"), false, true);
+    row.defer_confirmation = Some(DeferConfirmationViewModel {
+        kind,
+        detail_label: "9/12 05:59".to_owned(),
+    });
+    row.defer_plan.mode = match kind {
+        DeferConfirmationKind::DeadlineLimited => DeferMode::DeadlineLimited,
+        DeferConfirmationKind::RoutinePeriod => DeferMode::RoutinePeriod,
+    };
+    row
 }
 
 fn eight_dates() -> Vec<DateButtonViewModel> {
@@ -222,6 +300,12 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
         "{html}"
     );
     assert!(html.contains(">セッション</span>"), "{html}");
+    assert!(html.contains("aria-label=\"task leaf: 先送り\""), "{html}");
+    assert!(html.contains("先送り</span>"), "{html}");
+    assert!(
+        html.contains("class=\"task-defer-compact-label\" aria-hidden=\"true\">→</span>"),
+        "{html}"
+    );
     assert!(
         !html.contains("aria-label=\"task late: セッションに追加\""),
         "{html}"
@@ -304,7 +388,7 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         ".task-table {\n        display: block;\n        min-width: 0;",
         ".task-table thead {\n        display: block;",
         ".task-table thead tr,\n    .task-row {\n        display: grid;",
-        "grid-template-columns: 44px 5.75rem 5.5rem minmax(0, 1fr);",
+        "grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);",
         "grid-template-areas: \"action schedule deadline task\";",
         ".task-row {\n        min-height: 32px;",
         ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
@@ -314,7 +398,7 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         ".task-name {\n        overflow: hidden;\n        font-size: 0.75rem;",
         ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: hidden;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",
-        ".session-cell .session-start {\n        width: 44px;\n        min-height: 32px;",
+        ".session-cell .session-start,\n    .session-cell .task-defer {\n        width: 44px;\n        min-height: 32px;",
     ] {
         assert!(mobile_list_layout.contains(required), "missing: {required}");
     }
@@ -410,6 +494,11 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
     assert_eq!(html.matches(">✓</span>").count(), 2, "{html}");
     assert_eq!(html.matches(">＋</span>").count(), 1, "{html}");
     assert_eq!(html.matches("セッション追加済み").count(), 2, "{html}");
+    assert_eq!(
+        html.matches(": 先送り\" disabled=true").count(),
+        2,
+        "{html}"
+    );
 }
 
 #[test]
@@ -452,6 +541,117 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
     });
     dispatch_click(&task_dom, task_listeners[0]);
     assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
+
+    events.lock().unwrap().clear();
+    dispatch_click(&task_dom, task_listeners[1]);
+    assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
+}
+
+#[test]
+fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルできる() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (mut cancel_dom, initial_ids) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![confirmation_row(
+            "due-today",
+            DeferConfirmationKind::DeadlineLimited,
+        )],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::clone(&events),
+    });
+    dispatch_click(&cancel_dom, initial_ids[1]);
+    let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
+    let html = dioxus::ssr::render(&cancel_dom);
+    assert!(events.lock().unwrap().is_empty());
+    assert!(html.contains("締切までの余裕がありません"), "{html}");
+    assert!(html.contains("9/12 05:59"), "{html}");
+    assert!(html.contains("tabindex=\"-1\""), "{html}");
+    assert!(html.contains("aria-live=\"assertive\""), "{html}");
+    assert!(html.contains("キャンセル"), "{html}");
+    assert!(html.contains("先送りする"), "{html}");
+    dispatch_click(&cancel_dom, confirmation_ids[0]);
+    cancel_dom.render_immediate_to_vec();
+    assert!(events.lock().unwrap().is_empty());
+    assert!(!dioxus::ssr::render(&cancel_dom).contains("締切までの余裕がありません"));
+
+    let (mut confirm_dom, initial_ids) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![confirmation_row(
+            "routine",
+            DeferConfirmationKind::RoutinePeriod,
+        )],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::clone(&events),
+    });
+    dispatch_click(&confirm_dom, initial_ids[1]);
+    let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
+    let html = dioxus::ssr::render(&confirm_dom);
+    assert!(html.contains("次の周期へ送ります"), "{html}");
+    dispatch_click(&confirm_dom, confirmation_ids[1]);
+    assert_eq!(*events.lock().unwrap(), ["defer:routine"]);
+}
+
+#[component]
+fn ReplacingConfirmationRowsHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+    let mut show_first = use_signal(|| true);
+    let rows = if show_first() {
+        vec![
+            confirmation_row("first", DeferConfirmationKind::DeadlineLimited),
+            confirmation_row("second", DeferConfirmationKind::DeadlineLimited),
+        ]
+    } else {
+        vec![confirmation_row(
+            "second",
+            DeferConfirmationKind::DeadlineLimited,
+        )]
+    };
+    let defer_events = Rc::clone(&events);
+    rsx! {
+        button {
+            r#type: "button",
+            aria_label: "先頭rowを除去",
+            onclick: move |_| show_first.set(false),
+            "先頭rowを除去"
+        }
+        ListView {
+            dates: Vec::new(),
+            rows,
+            active_task_ids: Vec::new(),
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: String::new(),
+            on_select_date: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_defer_task: move |(task_id, _): (String, crate::DeferPlan)| defer_events.borrow_mut().push(task_id),
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn row差替えで先送り確認stateを別taskへ継承しない() {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        ReplacingConfirmationRowsHarness,
+        ReplacingConfirmationRowsHarnessProps {
+            events: Rc::clone(&events),
+        },
+    );
+    let initial_ids = rebuild_with_click_listeners(&mut dom);
+    dispatch_click(&dom, initial_ids[2]);
+    dom.render_immediate_to_vec();
+    assert!(dioxus::ssr::render(&dom).contains("task firstは締切までの余裕がありません"));
+
+    dispatch_click(&dom, initial_ids[0]);
+    dom.render_immediate_to_vec();
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("先送りしますか?"), "{html}");
+    assert!(html.contains("task second"), "{html}");
+    assert!(events.borrow().is_empty());
 }
 
 #[test]
@@ -507,7 +707,7 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("週次 Planning").count(), 4, "{html}");
+    assert_eq!(html.matches("週次 Planning").count(), 6, "{html}");
     assert!(!html.contains("実装"), "{html}");
 
     let (japanese_dom, _) = build(RootProps {
@@ -868,6 +1068,7 @@ fn 日付入力は正規化後もtab往復で保持され日付buttonでclearさ
 #[component]
 fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
     let date_events = Rc::clone(&events);
+    let defer_events = Rc::clone(&events);
     rsx! {
         ListView {
             dates: vec![DateButtonViewModel {
@@ -875,7 +1076,7 @@ fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                 label: "木".to_owned(),
                 selected: false,
             }],
-            rows: Vec::new(),
+            rows: vec![row("defer", false, true)],
             active_task_ids: Vec::new(),
             date_input_text: "9/17".to_owned(),
             date_input_error: None,
@@ -885,6 +1086,7 @@ fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
             on_date_input_change: move |_| {},
             on_submit_date_input: move |_| events.borrow_mut().push("submit".to_owned()),
             on_start_session: move |_| {},
+            on_defer_task: move |_| defer_events.borrow_mut().push("defer".to_owned()),
             on_filter_change: move |_| {},
         }
     }
@@ -901,7 +1103,7 @@ fn background更新中は日付buttonとenter送信をuiで拒否する() {
     );
     let listeners = rebuild_with_named_event_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
-    assert_eq!(html.matches("disabled").count(), 2, "{html}");
+    assert_eq!(html.matches("disabled").count(), 3, "{html}");
 
     let submit_id = listeners
         .iter()

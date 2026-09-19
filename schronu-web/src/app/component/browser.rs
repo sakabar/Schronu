@@ -164,6 +164,7 @@ pub(super) fn BrowserApp() -> Element {
                     date_input_error,
                     filter_text,
                     mutations_locked,
+                    mutation_globally_blocked: global_blocked,
                     server_actions_blocked,
                     on_select_date: move |date| {
                         client.write().clear_date_input(&BrowserLocalStorage);
@@ -186,6 +187,12 @@ pub(super) fn BrowserApp() -> Element {
                             is_leaf,
                         );
                         dispatch_action_effect(client, effect);
+                    },
+                    on_defer_task: move |(task_id, expected_plan)| {
+                        dispatch_action(client, ComponentAction::DeferTask {
+                            task_id,
+                            expected_plan,
+                        });
                     },
                     on_filter_change: move |filter| {
                         client.write().edit_task_name_filter(&BrowserLocalStorage, filter);

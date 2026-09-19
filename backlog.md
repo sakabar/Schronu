@@ -81,6 +81,7 @@
 | TD-040 | P0 | 完了 | S | 小数秒付き現在時刻でslack indexとschedulerの論理時刻が乖離する |
 | TD-041 | P2 | 未着手 | L | task treeとscheduleの再帰処理が大規模storageでlarge stackを必要とする |
 | TD-042 | P2 | 未着手 | S | Schronu Webのcomponent testがpart1/part2という無意味な単位で分割されている |
+| TD-043 | P1 | 未着手 | M | Pending期限上限が実施済み時間を考慮せず見積全体から計算される |
 
 ## 詳細
 
@@ -1753,6 +1754,46 @@
 - 現在進行中のview state復元変更と同じtest fileを触るため、その変更をGreenで確定した後に独立着手する。
 - 完了済みの`TD-015`は再openせず、その後に導入されたSchronu Web固有の残存負債として扱う。
 - test moduleの機械的移動と、製品挙動・storage schema・UI契約の変更を同じcommitへ含めない。
+
+### TD-043: Pending期限上限が実施済み時間を考慮せず見積全体から計算される
+
+- 分類: `正確性 / domain logic`
+- 優先度: `P1`
+- 概算規模: `M`
+
+#### 現状と根拠
+
+- `LogicalDateTimePolicy::deadline_pending_limit`は、deadlineから見積全体と5分のbufferを引いてPending期限上限を算出する。
+- `TaskAttr::set_orig_status`は実績時間を参照せず、この上限で`pending_until`を短縮する。また、deadline接近時のstatus判定にも同じ見積全体ベースの上限を使う。
+- `flatten_use_case`も見積全体ベースの同じhelperで実効`pending_until`を制限する。
+- WebとCLIの`d`相当は共通の`defer_task`を経由して`TaskAttr::set_orig_status(Status::Pending)`を呼ぶため、両方がこの影響を受ける。
+- 一方、scheduleは実績を考慮した残作業時間を使っており、見積超過時の補正と算術overflowを扱う別の計算がapplication内に存在する。
+
+#### 影響
+
+- 作業済みのtaskほど実際の残作業より大きな時間がdeadline前に必要だと判定され、必要以上に早くPendingを解除される。
+- Web・CLIの延期、直接のPending変更、flatten、scheduleで残作業の解釈が一致せず、同じtaskでも操作経路によりdeadline余裕の判断が変わる。
+- 先送り可否をdeadline余裕で分岐する機能が既存helperを利用すると、この過剰に保守的な判定を引き継ぐ。
+
+#### 推奨する改善方針
+
+- Pending期限上限を`deadline - 残作業時間 - 5分`へ変更する。
+- 残作業時間を単純な減算として重複実装せず、scheduleで使われている見積超過時の補正規則とoverflow処理を共通domain logicへ集約する。
+- deadline接近によるTodo化、Pending期限上限、flatten、Web・CLIの延期が同じ残作業契約を利用するよう統一する。
+- 5分のbufferと、既存errorが保持するtask ID・見積秒・実績秒の情報量を維持する。
+
+#### 完了条件
+
+- 実績0、見積未満、見積と同値、見積超過の各ケースで、共通の残作業規則からPending期限上限が算出される。
+- WebとCLIの`d`、直接のPending変更、deadline接近によるstatus判定、flatten、scheduleで残作業の解釈が一致する。
+- 5分のbufferが維持され、上限と要求時刻が同値の場合を含む境界testがある。
+- 合法な大値入力でもpanicやwraparoundを起こさず、overflow時の型付きerror情報を失わない。
+- 既存のWeb、CLI、flatten、schedule契約testとroot品質gateがGreenになる。
+
+#### 依存関係
+
+- 現在のWeb先送り機能では既存計算を共通利用し、本項目の修正を同じcommitへ混ぜない。
+- `TD-027`で導入した残作業補正のoverflow契約を維持し、共通化に伴うerror型や公開APIの変更は独立したRed/Green cycleで固定する。
 
 ## 推奨着手順
 

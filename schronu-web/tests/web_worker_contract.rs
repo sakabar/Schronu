@@ -1,7 +1,7 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは5操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは6操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -72,6 +72,21 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             worker.complete_session(complete_request).await,
             Ok(snapshot(5))
         );
+        assert_eq!(
+            worker
+                .defer_task(DeferTaskRequest {
+                    task_id: "task-1".to_owned(),
+                    selected_logical_date: "2026-09-05".to_owned(),
+                    expected_plan: schronu_web::DeferPlan {
+                        mode: schronu_web::DeferMode::Normal,
+                        requested_pending_until_epoch_ms: 1_000,
+                        effective_pending_until_epoch_ms: None,
+                        repetition_interval_days: None,
+                    },
+                })
+                .await,
+            Ok(snapshot(6))
+        );
     });
 
     let events = events.lock().expect("event log must be readable");
@@ -84,6 +99,7 @@ fn workerは5操作を送信順に専用threadで実行してpayloadを保持す
             Event::Auto,
             Event::Record(123, 456),
             Event::Complete(123, 456, false),
+            Event::Defer("task-1".to_owned()),
         ]
     );
 }
@@ -135,6 +151,7 @@ enum Event {
     Bootstrap,
     List(String),
     Auto,
+    Defer(String),
     Record(i64, i64),
     Complete(i64, i64, bool),
 }
@@ -162,6 +179,13 @@ impl WebOperations for StackWorkloadOperations {
     }
 
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn defer_task(
+        &mut self,
+        _request: schronu_web::DeferTaskRequest,
+    ) -> Result<ServerSnapshot, WebError> {
         unreachable!()
     }
 
@@ -193,6 +217,13 @@ impl WebOperations for PanickingOperations {
     }
 
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn defer_task(
+        &mut self,
+        _request: schronu_web::DeferTaskRequest,
+    ) -> Result<ServerSnapshot, WebError> {
         unreachable!()
     }
 
@@ -237,6 +268,17 @@ impl WebOperations for RecordingOperations {
             snapshot: snapshot(3),
             data: Some(task()),
         })
+    }
+
+    fn defer_task(
+        &mut self,
+        request: schronu_web::DeferTaskRequest,
+    ) -> Result<ServerSnapshot, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::Defer(request.task_id));
+        Ok(snapshot(6))
     }
 
     fn record_session(

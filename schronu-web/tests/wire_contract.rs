@@ -1,13 +1,13 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
+    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
 
 #[test]
-fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
+fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
     let snapshot = ServerSnapshot {
         observed_at_epoch_ms: 1_788_565_500_123,
         logical_date: "2026-09-05".to_owned(),
@@ -27,6 +27,12 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
         deadline_label: "____-00:05".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: DeferPlan {
+            mode: DeferMode::DeadlineLimited,
+            requested_pending_until_epoch_ms: 1_788_650_400_000,
+            effective_pending_until_epoch_ms: Some(1_788_566_100_000),
+            repetition_interval_days: None,
+        },
     };
 
     assert_json_round_trip(
@@ -35,6 +41,27 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
             "observed_at_epoch_ms": 1_788_565_500_123_i64,
             "logical_date": "2026-09-05",
             "buffer_seconds": -61
+        }),
+    );
+    assert_json_round_trip(
+        &DeferTaskRequest {
+            task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+            selected_logical_date: "2026-09-05".to_owned(),
+            expected_plan: DeferPlan {
+                mode: DeferMode::DeadlineLimited,
+                requested_pending_until_epoch_ms: 1_788_600_000_000_i64,
+                effective_pending_until_epoch_ms: Some(1_788_599_000_000_i64),
+                repetition_interval_days: None,
+            },
+        },
+        json!({
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "selected_logical_date": "2026-09-05",
+            "expected_plan": {
+                "mode": "deadline_limited",
+                "requested_pending_until_epoch_ms": 1_788_600_000_000_i64,
+                "effective_pending_until_epoch_ms": 1_788_599_000_000_i64
+            }
         }),
     );
     assert_json_round_trip(
@@ -66,7 +93,12 @@ fn five_operationsのrequestとsuccessは仕様どおりのjson形式を持つ()
                 "deadline_epoch_ms": 1_788_566_400_000_i64,
                 "deadline_label": "____-00:05",
                 "misses_deadline": false,
-                "is_leaf": true
+                "is_leaf": true,
+                "defer_plan": {
+                    "mode": "deadline_limited",
+                    "requested_pending_until_epoch_ms": 1_788_650_400_000_i64,
+                    "effective_pending_until_epoch_ms": 1_788_566_100_000_i64
+                }
             }]
         }),
     );
@@ -176,6 +208,7 @@ fn error_codeとretry_adviceはsnake_case文字列として往復する() {
         web_error_codes::TASK_NOT_FOUND,
         web_error_codes::TASK_ALREADY_COMPLETED,
         web_error_codes::ACTUAL_WORK_CONFLICT,
+        web_error_codes::DEFER_PLAN_CHANGED,
         web_error_codes::ARITHMETIC_OVERFLOW,
         web_error_codes::TASK_NOT_COMPLETABLE,
         web_error_codes::CONFIGURATION_ERROR,

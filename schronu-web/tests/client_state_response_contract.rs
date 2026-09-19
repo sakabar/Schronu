@@ -2,10 +2,130 @@ use schronu_web::client::state::{
     load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Operation, Outcome,
     ServerActionInvocation, ServerFailure,
 };
-use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, WebSuccess};
+use schronu_web::{
+    web_error_codes, DeferMode, DeferPlan, RecordSessionResult, RetryAdvice, WebError, WebSuccess,
+};
 
 mod client_state_support;
 use client_state_support::*;
+
+fn normal_defer_plan() -> DeferPlan {
+    DeferPlan {
+        mode: DeferMode::Normal,
+        requested_pending_until_epoch_ms: 1_000,
+        effective_pending_until_epoch_ms: None,
+        repetition_interval_days: None,
+    }
+}
+
+#[test]
+fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
+    let (list_id, list_request) = list_effect(state.request_list("2026-09-06"));
+    state.apply_list_result(
+        list_id,
+        &list_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 2),
+            data: vec![row(TASK_ID, 0), row(TASK_ID, 1), row(OTHER_TASK_ID, 2)],
+        }),
+    );
+
+    let expected_plan = state.scheduled_rows()[0].defer_plan.clone();
+    let (request_id, request) = defer_effect(state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-06",
+        expected_plan.clone(),
+    ));
+    assert_eq!(request.task_id, TASK_ID);
+    assert_eq!(request.selected_logical_date, "2026-09-06");
+    assert_eq!(request.expected_plan, expected_plan);
+    assert!(load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+
+    let follow_up =
+        state.apply_defer_task_result(&storage, request_id, Ok(snapshot("2026-09-05", 3)));
+    let (refresh_id, refresh) = list_effect(follow_up);
+    assert_eq!(refresh.logical_date, "2026-09-06");
+    assert_eq!(state.scheduled_rows(), &[row(OTHER_TASK_ID, 2)]);
+    assert_eq!(
+        state.history().back().unwrap().invocation,
+        ServerActionInvocation::DeferTask(request)
+    );
+    state.apply_list_result(
+        refresh_id,
+        &refresh.logical_date,
+        Err(ServerFailure::Transport("refresh failed".to_owned())),
+    );
+    assert_eq!(state.scheduled_rows(), &[row(OTHER_TASK_ID, 2)]);
+    assert!(!load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+}
+
+#[test]
+fn task先送りはsession中の対象とtransport不明後の再送信を拒否する() {
+    let storage = FakeStorage::default();
+    let mut active = state_with_sessions(&storage, &[TASK_ID]);
+    assert_eq!(
+        active.request_defer_task(&storage, TASK_ID, "2026-09-06", normal_defer_plan()),
+        ClientEffect::None
+    );
+
+    let other_storage = FakeStorage::default();
+    let mut state = load_client_state(&other_storage, 0).unwrap();
+    let (request_id, _) = defer_effect(state.request_defer_task(
+        &other_storage,
+        TASK_ID,
+        "2026-09-06",
+        normal_defer_plan(),
+    ));
+    state.apply_defer_task_result(
+        &other_storage,
+        request_id,
+        Err(ServerFailure::Transport("disconnected".to_owned())),
+    );
+
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.request_defer_task(&other_storage, TASK_ID, "2026-09-06", normal_defer_plan()),
+        ClientEffect::None
+    );
+}
+
+#[test]
+fn task先送りはplan変更時にsafetyを解除して表示中一覧を再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 1_000).unwrap();
+    let (request_id, _) = defer_effect(state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-08",
+        normal_defer_plan(),
+    ));
+
+    let refresh = state.apply_defer_task_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Operation(WebError {
+            code: web_error_codes::DEFER_PLAN_CHANGED.to_owned(),
+            message: "先送り条件が変わりました。".to_owned(),
+            retry_advice: RetryAdvice::Retry,
+            current_actual_work_seconds: None,
+        })),
+    );
+
+    let (_, request) = list_effect(refresh);
+    assert_eq!(request.logical_date, "2026-09-08");
+    assert!(!load_client_state(&storage, 0)
+        .unwrap()
+        .mutation_globally_blocked());
+}
 
 #[test]
 fn server発火履歴は実actionと送信時の全引数を保持する() {

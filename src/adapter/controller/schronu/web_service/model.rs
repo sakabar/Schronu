@@ -1,5 +1,23 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferModeDto {
+    Normal,
+    DeadlineLimited,
+    RoutinePeriod,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferPlanDto {
+    pub mode: DeferModeDto,
+    pub requested_pending_until_epoch_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_pending_until_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repetition_interval_days: Option<i64>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ServerSnapshot {
     pub observed_at_epoch_ms: i64,
@@ -24,6 +42,7 @@ pub struct ScheduledTaskRowDto {
     pub deadline_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
+    pub defer_plan: DeferPlanDto,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

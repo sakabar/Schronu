@@ -1,8 +1,10 @@
 use schronu_web::client::state::load_client_state;
 use schronu_web::client::view_projection::{
-    format_local_hh_mm, project_list_rows, project_session_cards,
+    format_local_hh_mm, project_list_rows, project_session_cards, DeferConfirmationKind,
 };
-use schronu_web::{RecordSessionResult, ScheduledTaskRow, SessionTask, WebSuccess};
+use schronu_web::{
+    DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask, WebSuccess,
+};
 
 mod client_state_support;
 use client_state_support::*;
@@ -113,6 +115,12 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
         deadline_label: "server deadline label".to_owned(),
         misses_deadline: true,
         is_leaf: true,
+        defer_plan: DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     state.apply_list_result(
         request_id,
@@ -135,6 +143,50 @@ fn invalid_epochとoffsetはplaceholderへ安全に退避する() {
     assert_eq!(format_local_hh_mm(START_EPOCH_MS, i32::MAX), "--:--");
 }
 
+#[test]
+fn listの先送り確認はserverのplanだけから生成する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", START_EPOCH_MS - 1)));
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    let mut limited = session_row();
+    limited.defer_plan = DeferPlan {
+        mode: DeferMode::DeadlineLimited,
+        requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
+        effective_pending_until_epoch_ms: Some(START_EPOCH_MS + 3_600_000),
+        repetition_interval_days: None,
+    };
+    let mut routine = session_row();
+    routine.task.task_id = OTHER_TASK_ID.to_owned();
+    routine.defer_plan = DeferPlan {
+        mode: DeferMode::RoutinePeriod,
+        requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
+        effective_pending_until_epoch_ms: None,
+        repetition_interval_days: Some(7),
+    };
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+            data: vec![limited, routine],
+        }),
+    );
+
+    let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
+    assert_eq!(rows[0].defer_plan.mode, DeferMode::DeadlineLimited);
+    assert_eq!(
+        rows[0].defer_confirmation.as_ref().unwrap().kind,
+        DeferConfirmationKind::DeadlineLimited
+    );
+    assert_eq!(rows[1].defer_plan.mode, DeferMode::RoutinePeriod);
+    assert_eq!(
+        rows[1].defer_confirmation.as_ref().unwrap().detail_label,
+        "7日"
+    );
+}
+
 fn session_row() -> ScheduledTaskRow {
     ScheduledTaskRow {
         task: SessionTask {
@@ -149,5 +201,11 @@ fn session_row() -> ScheduledTaskRow {
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     }
 }

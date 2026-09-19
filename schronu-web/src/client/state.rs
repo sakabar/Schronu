@@ -43,6 +43,7 @@ pub struct ClientState {
     carry_lock: CarryLockState,
     tick_now_epoch_ms: i64,
     view_state_warning: Option<String>,
+    refresh_list_after_bootstrap: bool,
 }
 
 impl ClientState {
@@ -60,6 +61,7 @@ impl ClientState {
             carry_lock,
             tick_now_epoch_ms,
             view_state_warning: None,
+            refresh_list_after_bootstrap: false,
         }
     }
 
@@ -165,6 +167,11 @@ impl ClientState {
         self.view_state_warning = warning;
     }
 
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn require_list_after_bootstrap(&mut self) {
+        self.refresh_list_after_bootstrap = true;
+    }
+
     pub fn display_error(&self) -> Option<&DisplayError> {
         self.diagnostics.display_error.as_ref()
     }
@@ -231,9 +238,9 @@ impl ClientState {
     }
 
     pub fn mutation_safety_warning(&self) -> Option<&'static str> {
-        self.sessions.mutation_globally_blocked.then_some(
-            "repositoryの状態を手動確認するまで、セッションの記録と完了は停止されています。",
-        )
+        self.sessions
+            .mutation_globally_blocked
+            .then_some("repositoryの状態を手動確認するまで、変更操作は停止されています。")
     }
 
     pub fn can_confirm_repository_checked(&self) -> bool {

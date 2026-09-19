@@ -5,15 +5,15 @@ use super::effect_dispatcher::{
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 use std::cell::RefCell;
 
 #[test]
-fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
+fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
     let gateway = FakeGateway::default();
     let request = RecordSessionRequest {
         task_id: "task".to_owned(),
@@ -44,8 +44,25 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
             execute_effect(&gateway, ClientEffect::AutoSession { request_id: 12 }).await,
             execute_effect(
                 &gateway,
-                ClientEffect::RecordSession {
+                ClientEffect::DeferTask {
                     request_id: 13,
+                    request: DeferTaskRequest {
+                        task_id: "task".to_owned(),
+                        selected_logical_date: "2026-09-05".to_owned(),
+                        expected_plan: crate::DeferPlan {
+                            mode: crate::DeferMode::Normal,
+                            requested_pending_until_epoch_ms: 1_000,
+                            effective_pending_until_epoch_ms: None,
+                            repetition_interval_days: None,
+                        },
+                    },
+                },
+            )
+            .await,
+            execute_effect(
+                &gateway,
+                ClientEffect::RecordSession {
+                    request_id: 14,
                     request: request.clone(),
                 },
             )
@@ -53,7 +70,7 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
             execute_effect(
                 &gateway,
                 ClientEffect::CompleteSession {
-                    request_id: 14,
+                    request_id: 15,
                     request: complete_request,
                 },
             )
@@ -76,11 +93,15 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
     ));
     assert!(matches!(
         responses[3],
-        Some(ClientResponse::RecordSession { request_id: 13, .. })
+        Some(ClientResponse::DeferTask { request_id: 13, .. })
     ));
     assert!(matches!(
         responses[4],
-        Some(ClientResponse::CompleteSession { request_id: 14, .. })
+        Some(ClientResponse::RecordSession { request_id: 14, .. })
+    ));
+    assert!(matches!(
+        responses[5],
+        Some(ClientResponse::CompleteSession { request_id: 15, .. })
     ));
     assert_eq!(
         gateway.calls.borrow().as_slice(),
@@ -88,6 +109,7 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
             "bootstrap",
             "list:2026-09-05",
             "auto",
+            "defer:task",
             "record:task",
             "complete:task:true"
         ]
@@ -96,7 +118,7 @@ fn 五effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         futures::executor::block_on(execute_effect(&gateway, ClientEffect::None)),
         None
     );
-    assert_eq!(gateway.calls.borrow().len(), 5);
+    assert_eq!(gateway.calls.borrow().len(), 6);
 }
 
 #[test]
@@ -216,6 +238,13 @@ impl WebGateway for BootstrapGateway {
         unreachable!("bootstrap test gateway")
     }
 
+    async fn defer_task(
+        &self,
+        _request: crate::DeferTaskRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
     async fn record_session(
         &self,
         _request: RecordSessionRequest,
@@ -263,6 +292,16 @@ impl WebGateway for FakeGateway {
             snapshot: snapshot(),
             data: None,
         }))
+    }
+
+    async fn defer_task(
+        &self,
+        request: crate::DeferTaskRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("defer:{}", request.task_id));
+        Ok(Ok(snapshot()))
     }
 
     async fn record_session(

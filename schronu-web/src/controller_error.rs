@@ -54,6 +54,10 @@ fn map_application_error(error: ApplicationError) -> WebError {
             retry_advice: RetryAdvice::ManualCheck,
             current_actual_work_seconds: Some(actual_work_seconds),
         },
+        ApplicationError::DeferPlanChanged { .. } => retry(
+            web_error_codes::DEFER_PLAN_CHANGED,
+            "先送り条件が変わりました。最新の一覧を取得してください。",
+        ),
         ApplicationError::InvalidInput { .. }
         | ApplicationError::AmbiguousLocalDateTime { .. }
         | ApplicationError::NonexistentLocalDateTime { .. }
@@ -184,6 +188,20 @@ mod tests {
             },
         ));
 
+        assert_eq!(mapped.current_actual_work_seconds, None);
+    }
+
+    #[test]
+    fn 先送りplan変更は一覧再取得可能なerrorへ分類する() {
+        let mapped = crate::WebError::from(WebReadError::Application(
+            ApplicationError::DeferPlanChanged {
+                expected: schronu::application::task_use_case::DeferMode::Normal,
+                actual: schronu::application::task_use_case::DeferMode::RoutinePeriod,
+            },
+        ));
+
+        assert_eq!(mapped.code, web_error_codes::DEFER_PLAN_CHANGED);
+        assert_eq!(mapped.retry_advice, RetryAdvice::Retry);
         assert_eq!(mapped.current_actual_work_seconds, None);
     }
 

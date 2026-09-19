@@ -1,15 +1,19 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
+    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
+    WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
-    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
-    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
+    DeferModeDto, DeferPlanRequest as CoreDeferPlanRequest,
+    DeferTaskRequest as CoreDeferTaskRequest, RecordSessionRequest as CoreRecordSessionRequest,
+    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
+    WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
+use schronu::application::task_use_case::DeferMode as CoreDeferMode;
 use std::env;
 use std::ffi::OsString;
 
@@ -102,6 +106,14 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .defer_task_at(operation_now, request.into())
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
     fn record_session(
         &mut self,
         request: RecordSessionRequest,
@@ -156,6 +168,16 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
             deadline_label: row.deadline_label,
             misses_deadline: row.misses_deadline,
             is_leaf: row.is_leaf,
+            defer_plan: DeferPlan {
+                mode: match row.defer_plan.mode {
+                    DeferModeDto::Normal => DeferMode::Normal,
+                    DeferModeDto::DeadlineLimited => DeferMode::DeadlineLimited,
+                    DeferModeDto::RoutinePeriod => DeferMode::RoutinePeriod,
+                },
+                requested_pending_until_epoch_ms: row.defer_plan.requested_pending_until_epoch_ms,
+                effective_pending_until_epoch_ms: row.defer_plan.effective_pending_until_epoch_ms,
+                repetition_interval_days: row.defer_plan.repetition_interval_days,
+            },
         }
     }
 }
@@ -167,6 +189,29 @@ impl From<RecordSessionRequest> for CoreRecordSessionRequest {
             started_at_epoch_ms: request.started_at_epoch_ms,
             ended_at_epoch_ms: request.ended_at_epoch_ms,
             expected_actual_work_seconds: request.expected_actual_work_seconds,
+        }
+    }
+}
+
+impl From<DeferTaskRequest> for CoreDeferTaskRequest {
+    fn from(request: DeferTaskRequest) -> Self {
+        Self {
+            task_id: request.task_id,
+            selected_logical_date: request.selected_logical_date,
+            expected_plan: CoreDeferPlanRequest {
+                mode: match request.expected_plan.mode {
+                    DeferMode::Normal => CoreDeferMode::Normal,
+                    DeferMode::DeadlineLimited => CoreDeferMode::DeadlineLimited,
+                    DeferMode::RoutinePeriod => CoreDeferMode::RoutinePeriod,
+                },
+                requested_pending_until_epoch_ms: request
+                    .expected_plan
+                    .requested_pending_until_epoch_ms,
+                effective_pending_until_epoch_ms: request
+                    .expected_plan
+                    .effective_pending_until_epoch_ms,
+                repetition_interval_days: request.expected_plan.repetition_interval_days,
+            },
         }
     }
 }
@@ -243,8 +288,8 @@ fn configuration_error() -> WebError {
 mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
-        web_error_codes, CompleteSessionRequest, ListTasksRequest, RecordSessionRequest,
-        WebOperations,
+        web_error_codes, CompleteSessionRequest, DeferMode, DeferPlan, DeferTaskRequest,
+        ListTasksRequest, RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use std::fs;
@@ -253,7 +298,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 五操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
+    fn 六操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
         let fixture = Fixture::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -295,6 +340,22 @@ mod tests {
         };
         assert_eq!(
             operations
+                .defer_task(DeferTaskRequest {
+                    task_id: "invalid".to_owned(),
+                    selected_logical_date: "2026-09-05".to_owned(),
+                    expected_plan: DeferPlan {
+                        mode: DeferMode::Normal,
+                        requested_pending_until_epoch_ms: now.timestamp_millis(),
+                        effective_pending_until_epoch_ms: None,
+                        repetition_interval_days: None,
+                    },
+                })
+                .unwrap_err()
+                .code,
+            web_error_codes::INVALID_INPUT
+        );
+        assert_eq!(
+            operations
                 .record_session(invalid_request.clone())
                 .unwrap_err()
                 .code,
@@ -307,7 +368,7 @@ mod tests {
                 .code,
             web_error_codes::INVALID_INPUT
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 5);
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
     }
 
     #[test]

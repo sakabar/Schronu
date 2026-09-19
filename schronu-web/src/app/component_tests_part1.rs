@@ -233,7 +233,7 @@ fn 初期化はstorage失敗時もbootstrapを一度だけ要求する() {
 }
 
 #[test]
-fn component_actionは仕様の五操作だけをserver_effectへ変換する() {
+fn component_actionは仕様の六操作だけをserver_effectへ変換する() {
     let storage = MemoryStorage::default();
     let (mut state, bootstrap) = initialize_client(&storage, 1_000);
     assert!(matches!(bootstrap, ClientEffect::Bootstrap { .. }));
@@ -269,6 +269,39 @@ fn component_actionは仕様の五操作だけをserver_effectへ変換する() 
     assert!(matches!(
         reduce_component_action_at(&mut state, &storage, 2_000, ComponentAction::AutoSession),
         ClientEffect::AutoSession { .. }
+    ));
+
+    let defer_storage = MemoryStorage::default();
+    let (mut defer_state, _) = initialize_client(&defer_storage, 1_000);
+    defer_state.restore_view_state(&ViewState {
+        snapshot: snapshot(1_000),
+        list: Some(StoredListView {
+            logical_date: "2026-09-05".to_owned(),
+            rows: Vec::new(),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
+    assert!(matches!(
+        reduce_component_action_at(
+            &mut defer_state,
+            &defer_storage,
+            2_000,
+            ComponentAction::DeferTask {
+                task_id: RECORD_ID.to_owned(),
+                expected_plan: crate::DeferPlan {
+                    mode: crate::DeferMode::Normal,
+                    requested_pending_until_epoch_ms: 1_000,
+                    effective_pending_until_epoch_ms: None,
+                    repetition_interval_days: None,
+                },
+            }
+        ),
+        ClientEffect::DeferTask { request, .. }
+            if request.task_id == RECORD_ID
+                && request.selected_logical_date == "2026-09-05"
+                && request.expected_plan.mode == crate::DeferMode::Normal
     ));
 
     assert_eq!(

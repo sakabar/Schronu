@@ -1,7 +1,7 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::SessionTask;
-use chrono::{DateTime, FixedOffset, Utc};
+use crate::{DeferMode, DeferPlan, SessionTask};
+use chrono::{DateTime, Datelike, FixedOffset, Utc};
 
 const INVALID_TIME: &str = "--:--";
 
@@ -31,11 +31,26 @@ pub struct CompletionConflictViewModel {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListRowViewModel {
+    pub row_key: String,
     pub task: SessionTask,
     pub deadline_label: String,
     pub schedule_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
+    pub defer_plan: DeferPlan,
+    pub defer_confirmation: Option<DeferConfirmationViewModel>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeferConfirmationKind {
+    DeadlineLimited,
+    RoutinePeriod,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeferConfirmationViewModel {
+    pub kind: DeferConfirmationKind,
+    pub detail_label: String,
 }
 
 pub fn project_session_cards(
@@ -146,18 +161,61 @@ fn project_list_rows_with(
     state
         .scheduled_rows()
         .iter()
-        .map(|row| ListRowViewModel {
-            task: row.task.clone(),
-            deadline_label: row.deadline_label.clone(),
-            schedule_label: format!(
-                "{}-{}",
-                format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
-                format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
-            ),
-            misses_deadline: row.misses_deadline,
-            is_leaf: row.is_leaf,
+        .map(|row| {
+            let defer_confirmation = match row.defer_plan.mode {
+                DeferMode::Normal => None,
+                DeferMode::DeadlineLimited => Some(DeferConfirmationViewModel {
+                    kind: DeferConfirmationKind::DeadlineLimited,
+                    detail_label: row
+                        .defer_plan
+                        .effective_pending_until_epoch_ms
+                        .and_then(|epoch_ms| {
+                            offset_at(epoch_ms)
+                                .map(|offset| format_local_month_day_hh_mm(epoch_ms, offset))
+                        })
+                        .unwrap_or_else(|| INVALID_TIME.to_owned()),
+                }),
+                DeferMode::RoutinePeriod => Some(DeferConfirmationViewModel {
+                    kind: DeferConfirmationKind::RoutinePeriod,
+                    detail_label: row
+                        .defer_plan
+                        .repetition_interval_days
+                        .map(|days| format!("{days}日"))
+                        .unwrap_or_else(|| INVALID_TIME.to_owned()),
+                }),
+            };
+            ListRowViewModel {
+                row_key: format!(
+                    "{}:{}:{}",
+                    row.task.task_id, row.schedule_start_epoch_ms, row.schedule_end_epoch_ms
+                ),
+                task: row.task.clone(),
+                deadline_label: row.deadline_label.clone(),
+                schedule_label: format!(
+                    "{}-{}",
+                    format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
+                    format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
+                ),
+                misses_deadline: row.misses_deadline,
+                is_leaf: row.is_leaf,
+                defer_plan: row.defer_plan.clone(),
+                defer_confirmation,
+            }
         })
         .collect()
+}
+
+fn format_local_month_day_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
+    local_datetime(epoch_ms, utc_offset_minutes)
+        .map(|datetime| {
+            format!(
+                "{}/{} {}",
+                datetime.month(),
+                datetime.day(),
+                datetime.format("%H:%M")
+            )
+        })
+        .unwrap_or_else(|| INVALID_TIME.to_owned())
 }
 
 fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option<i32>) -> String {

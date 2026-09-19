@@ -4,7 +4,9 @@ use schronu_web::client::state::{load_client_state, ClientEffect, ClientState};
 use schronu_web::client::work_sessions::{
     load_work_sessions, KeyValueStorage, StorageError, WorkSession, WORK_SESSIONS_STORAGE_KEY,
 };
-use schronu_web::{RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError};
+use schronu_web::{
+    DeferTaskRequest, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+};
 use std::cell::{Cell, RefCell};
 
 pub const TASK_ID: &str = "00000000-0000-4000-8000-000000000001";
@@ -111,6 +113,22 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: schronu_web::DeferPlan {
+            mode: schronu_web::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_788_652_800_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
+    }
+}
+
+pub fn defer_effect(effect: ClientEffect) -> (u64, DeferTaskRequest) {
+    match effect {
+        ClientEffect::DeferTask {
+            request_id,
+            request,
+        } => (request_id, request),
+        other => panic!("defer effect expected: {other:?}"),
     }
 }
 

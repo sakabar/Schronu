@@ -1,4 +1,6 @@
-use crate::application::daily_capacity::{try_local_date_and_time, try_next_logical_date_start};
+use crate::application::daily_capacity::{
+    try_local_date_and_time, try_logical_date, try_next_logical_date_start,
+};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 pub use crate::application::task_list::{
     list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
@@ -6,17 +8,35 @@ pub use crate::application::task_list::{
 };
 use crate::application::task_name;
 pub use crate::application::task_view::TaskView;
+use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Timelike,
 };
+use serde::{Deserialize, Serialize};
 use std::cmp::{max, Ordering};
 use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeferMode {
+    Normal,
+    DeadlineLimited,
+    RoutinePeriod,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeferTaskPlan {
+    pub mode: DeferMode,
+    pub requested_pending_until: DateTime<Local>,
+    pub effective_pending_until: Option<DateTime<Local>>,
+    pub repetition_interval_days: Option<i64>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ApplicationError {
@@ -62,6 +82,10 @@ pub enum ApplicationError {
         task_id: Uuid,
         estimated_work_seconds: i64,
         actual_work_seconds: i64,
+    },
+    DeferPlanChanged {
+        expected: DeferMode,
+        actual: DeferMode,
     },
 }
 
@@ -132,6 +156,10 @@ impl fmt::Display for ApplicationError {
             } => write!(
                 formatter,
                 "remaining work calculation overflow: task_id={task_id}, estimated_work_seconds={estimated_work_seconds}, actual_work_seconds={actual_work_seconds}"
+            ),
+            Self::DeferPlanChanged { expected, actual } => write!(
+                formatter,
+                "defer plan changed: expected={expected:?}, actual={actual:?}"
             ),
         }
     }
@@ -337,6 +365,131 @@ pub fn defer_task(
     task.set_orig_status(Status::Pending)
         .map_err(ApplicationError::TaskTree)?;
     Ok(())
+}
+
+pub fn plan_defer_task(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    selected_logical_date: NaiveDate,
+) -> Result<DeferTaskPlan, ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    let current_logical_date = try_logical_date(repository.get_last_synced_time())?;
+    let base_date = max(selected_logical_date, current_logical_date);
+    let target_date = base_date
+        .succ_opt()
+        .ok_or(ApplicationError::LogicalDateStartOutOfRange { date: base_date })?;
+    let requested_pending_until =
+        crate::application::daily_capacity::try_logical_date_start(target_date)?;
+    let deadline = task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let repetition_interval_days = task
+        .parent()
+        .map_err(ApplicationError::TaskTree)?
+        .map(|parent| {
+            parent
+                .get_repetition_interval_days_opt()
+                .map_err(ApplicationError::TaskTree)
+        })
+        .transpose()?
+        .flatten();
+
+    let Some(deadline) = deadline else {
+        return Ok(DeferTaskPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until,
+            effective_pending_until: None,
+            repetition_interval_days: None,
+        });
+    };
+    let estimated_work_seconds = task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let deadline_limit = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
+        .deadline_pending_limit(deadline, estimated_work_seconds);
+    if requested_pending_until <= deadline_limit {
+        return Ok(DeferTaskPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until,
+            effective_pending_until: None,
+            repetition_interval_days: None,
+        });
+    }
+    if let Some(repetition_interval_days) = repetition_interval_days {
+        return Ok(DeferTaskPlan {
+            mode: DeferMode::RoutinePeriod,
+            requested_pending_until,
+            effective_pending_until: None,
+            repetition_interval_days: Some(repetition_interval_days),
+        });
+    }
+    Ok(DeferTaskPlan {
+        mode: DeferMode::DeadlineLimited,
+        requested_pending_until,
+        effective_pending_until: Some(deadline_limit),
+        repetition_interval_days: None,
+    })
+}
+
+pub fn execute_defer_task_plan(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    selected_logical_date: NaiveDate,
+    expected_plan: &DeferTaskPlan,
+) -> Result<(), ApplicationError> {
+    let plan = plan_defer_task(repository, task_id, selected_logical_date)?;
+    if &plan != expected_plan {
+        return Err(ApplicationError::DeferPlanChanged {
+            expected: expected_plan.mode,
+            actual: plan.mode,
+        });
+    }
+    match plan.mode {
+        DeferMode::Normal => defer_task(repository, task_id, plan.requested_pending_until),
+        DeferMode::DeadlineLimited => defer_task(
+            repository,
+            task_id,
+            plan.effective_pending_until
+                .expect("deadline-limited plans always have an effective pending time"),
+        ),
+        DeferMode::RoutinePeriod => defer_routine_task(repository, task_id),
+    }
+}
+
+pub fn defer_task_by_policy(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    normal_pending_until: DateTime<Local>,
+) -> Result<(), ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    let deadline = task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let has_routine_parent =
+        if let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? {
+            parent
+                .get_repetition_interval_days_opt()
+                .map_err(ApplicationError::TaskTree)?
+                .is_some()
+        } else {
+            false
+        };
+
+    let should_defer_routine = if has_routine_parent {
+        if let Some(deadline) = deadline {
+            try_logical_date(deadline)? <= try_logical_date(repository.get_last_synced_time())?
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if should_defer_routine {
+        defer_routine_task(repository, task_id)
+    } else {
+        defer_task(repository, task_id, normal_pending_until)
+    }
 }
 
 fn validate_additional_actual_work_seconds(

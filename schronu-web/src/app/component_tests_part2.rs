@@ -32,6 +32,12 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_086_000_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     store_view_state(
         &storage,
@@ -103,6 +109,15 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
     for blocked in [
         ComponentAction::SelectDate("2026-09-13".to_owned()),
         ComponentAction::AutoSession,
+        ComponentAction::DeferTask {
+            task_id: COMPLETE_ID.to_owned(),
+            expected_plan: crate::DeferPlan {
+                mode: crate::DeferMode::Normal,
+                requested_pending_until_epoch_ms: 1_000,
+                effective_pending_until_epoch_ms: None,
+                repetition_interval_days: None,
+            },
+        },
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
         ComponentAction::RecordSession(RECORD_ID.to_owned()),
         ComponentAction::CompleteSession(RECORD_ID.to_owned()),
@@ -155,6 +170,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_086_000_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     store_view_state(
         &storage,
@@ -231,6 +252,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
         is_leaf: true,
+        defer_plan: crate::DeferPlan {
+            mode: crate::DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_789_386_400_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
     };
     orchestrator.apply_response(
         &storage,
@@ -256,6 +283,40 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     assert!(!orchestrator.server_actions_blocked());
     let stored = load_view_state(&storage).into_state().unwrap();
     assert_eq!(stored.list.unwrap().rows, [refreshed_row]);
+}
+
+#[test]
+fn 古いview_stateを破棄した後はbootstrapの現在論理日を新規取得する() {
+    let storage = MemoryStorage::default();
+    storage
+        .set(
+            "schronu_web.view_state.v1",
+            r#"{"version":1,"snapshot":{"observed_at_epoch_ms":1789000000000,"logical_date":"2026-09-09","buffer_seconds":0},"list":null,"active_tab":"list","task_name_filter":"","date_input_text":""}"#,
+        )
+        .unwrap();
+    let mut orchestrator = ComponentOrchestrator::new();
+    assert_eq!(
+        orchestrator.mount(&storage, 1_789_000_100_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    );
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_100_000_000,
+                logical_date: "2026-09-10".to_owned(),
+                buffer_seconds: 30,
+            }),
+        },
+    );
+
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListTasks { request, .. }
+            if request.logical_date == "2026-09-10"
+    ));
 }
 
 #[test]

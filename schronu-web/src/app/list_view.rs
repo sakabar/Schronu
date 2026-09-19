@@ -1,8 +1,10 @@
 use dioxus::prelude::*;
 use std::rc::Rc;
 
-pub(crate) use crate::client::view_projection::ListRowViewModel;
-use crate::SessionTask;
+#[cfg(test)]
+pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
+pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
+use crate::{DeferPlan, SessionTask};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DateButtonViewModel {
@@ -20,11 +22,13 @@ pub fn ListView(
     date_input_error: Option<String>,
     filter_text: String,
     #[props(default)] mutations_locked: bool,
+    #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
+    #[props(default)] on_defer_task: EventHandler<(String, DeferPlan)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
@@ -113,7 +117,7 @@ pub fn ListView(
                     table { class: "task-table",
                         thead {
                             tr {
-                                th { class: "session-heading", aria_label: "セッション操作", "" }
+                                th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
                                 th { class: "deadline-heading", "締切" }
                                 th { class: "task-heading", "タスク" }
@@ -122,10 +126,14 @@ pub fn ListView(
                         tbody {
                             for row in filtered_rows {
                                 TaskRow {
+                                    key: "{row.row_key}",
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                     row,
                                     mutations_locked,
+                                    mutation_globally_blocked,
+                                    server_actions_blocked,
                                     on_start_session,
+                                    on_defer_task,
                                 }
                             }
                         }
@@ -168,8 +176,12 @@ fn TaskRow(
     row: ListRowViewModel,
     active: bool,
     mutations_locked: bool,
+    mutation_globally_blocked: bool,
+    server_actions_blocked: bool,
     on_start_session: EventHandler<(SessionTask, bool)>,
+    on_defer_task: EventHandler<(String, DeferPlan)>,
 ) -> Element {
+    let mut confirming_defer = use_signal(|| false);
     let deadline_class = if row.misses_deadline {
         "deadline is-overdue"
     } else {
@@ -188,6 +200,21 @@ fn TaskRow(
     };
     let button_text = if active { "✓" } else { "＋" };
     let task = row.task.clone();
+    let defer_task_id = row.task.task_id.clone();
+    let defer_task_id_on_confirm = defer_task_id.clone();
+    let defer_plan = row.defer_plan.clone();
+    let defer_plan_on_confirm = defer_plan.clone();
+    let defer_confirmation = row.defer_confirmation.clone();
+    let confirmation_message = defer_confirmation.as_ref().map(|confirmation| {
+        let status = match confirmation.kind {
+            DeferConfirmationKind::DeadlineLimited => "締切までの余裕がありません",
+            DeferConfirmationKind::RoutinePeriod => "次の周期へ送ります",
+        };
+        format!(
+            "{}は{}({})。先送りしますか?",
+            row.task.task_name, status, confirmation.detail_label
+        )
+    });
     let is_leaf = row.is_leaf;
 
     rsx! {
@@ -207,6 +234,23 @@ fn TaskRow(
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
                     }
+                    button {
+                        class: "task-defer",
+                        r#type: "button",
+                        aria_label: format!("{}: 先送り", row.task.task_name),
+                        disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
+                        onclick: move |_| {
+                            if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
+                                if defer_confirmation.is_some() {
+                                    confirming_defer.set(true);
+                                } else {
+                                    on_defer_task.call((defer_task_id.clone(), defer_plan.clone()));
+                                }
+                            }
+                        },
+                        span { class: "task-defer-full-label", "先送り" }
+                        span { class: "task-defer-compact-label", aria_hidden: "true", "→" }
+                    }
                 }
             }
             td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
@@ -216,6 +260,42 @@ fn TaskRow(
                     class: "task-name-scroll",
                     tabindex: 0,
                     "{row.task.task_name}"
+                }
+            }
+        }
+        if confirming_defer() {
+            tr { class: "task-defer-confirmation-row",
+                td { colspan: "4",
+                    div {
+                        class: "task-defer-confirmation",
+                        role: "group",
+                        tabindex: "-1",
+                        aria_live: "assertive",
+                        aria_label: format!("{}: 先送りの確認", row.task.task_name),
+                        onmounted: move |element| async move {
+                            let _ = element.data().set_focus(true).await;
+                        },
+                        p { "{confirmation_message.as_deref().unwrap_or_default()}" }
+                        div { class: "task-defer-confirmation-actions",
+                            button {
+                                r#type: "button",
+                                onclick: move |_| confirming_defer.set(false),
+                                "キャンセル"
+                            }
+                            button {
+                                class: "task-defer-confirm",
+                                r#type: "button",
+                                disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
+                                onclick: move |_| {
+                                    if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
+                                        confirming_defer.set(false);
+                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_plan_on_confirm.clone()));
+                                    }
+                                },
+                                "先送りする"
+                            }
+                        }
+                    }
                 }
             }
         }

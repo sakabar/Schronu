@@ -2,8 +2,9 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -18,6 +19,11 @@ pub(crate) trait WebGateway {
     async fn auto_session(
         &self,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError>;
+
+    async fn defer_task(
+        &self,
+        request: DeferTaskRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError>;
 
     async fn record_session(
         &self,
@@ -52,6 +58,13 @@ impl WebGateway for ServerFunctionGateway {
         super::auto_session().await
     }
 
+    async fn defer_task(
+        &self,
+        request: DeferTaskRequest,
+    ) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
+        super::defer_task(request).await
+    }
+
     async fn record_session(
         &self,
         request: RecordSessionRequest,
@@ -81,6 +94,10 @@ pub(crate) enum ClientResponse {
     AutoSession {
         request_id: u64,
         result: Result<WebSuccess<Option<SessionTask>>, ServerFailure>,
+    },
+    DeferTask {
+        request_id: u64,
+        result: Result<ServerSnapshot, ServerFailure>,
     },
     RecordSession {
         request_id: u64,
@@ -116,6 +133,13 @@ pub(crate) async fn execute_effect<G: WebGateway>(
         ClientEffect::AutoSession { request_id } => Some(ClientResponse::AutoSession {
             request_id,
             result: normalize_endpoint_result(gateway.auto_session().await),
+        }),
+        ClientEffect::DeferTask {
+            request_id,
+            request,
+        } => Some(ClientResponse::DeferTask {
+            request_id,
+            result: normalize_endpoint_result(gateway.defer_task(request).await),
         }),
         ClientEffect::RecordSession {
             request_id,
@@ -176,6 +200,9 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
         }
         ClientResponse::AutoSession { request_id, result } => {
             state.apply_auto_session_result(storage, request_id, result)
+        }
+        ClientResponse::DeferTask { request_id, result } => {
+            state.apply_defer_task_result(storage, request_id, result)
         }
         ClientResponse::RecordSession { request_id, result } => {
             state.apply_record_result(storage, request_id, result)

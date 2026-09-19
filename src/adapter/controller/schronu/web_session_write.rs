@@ -1,5 +1,7 @@
-use crate::application::task_use_case::{AddActualWorkInput, CompleteTaskInput};
-use chrono::{DateTime, Local, Utc};
+use crate::application::task_use_case::{
+    AddActualWorkInput, CompleteTaskInput, DeferMode, DeferTaskPlan,
+};
+use chrono::{DateTime, Local, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -11,6 +13,27 @@ pub struct RecordSessionRequest {
     pub started_at_epoch_ms: i64,
     pub ended_at_epoch_ms: Option<i64>,
     pub expected_actual_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferTaskRequest {
+    pub task_id: String,
+    pub selected_logical_date: String,
+    pub expected_plan: DeferPlanRequest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DeferPlanRequest {
+    pub mode: DeferMode,
+    pub requested_pending_until_epoch_ms: i64,
+    pub effective_pending_until_epoch_ms: Option<i64>,
+    pub repetition_interval_days: Option<i64>,
+}
+
+pub(super) struct PreparedDeferTaskInput {
+    pub task_id: Uuid,
+    pub selected_logical_date: NaiveDate,
+    pub expected_plan: DeferTaskPlan,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -33,6 +56,8 @@ pub enum WebSessionInputError {
         task_id: String,
         reason: String,
     },
+    InvalidSelectedLogicalDate(String),
+    InvalidDeferPlan(String),
     FutureStartedAt {
         started_at_epoch_ms: i64,
         observed_at_epoch_ms: i64,
@@ -56,6 +81,10 @@ impl fmt::Display for WebSessionInputError {
             Self::InvalidTaskId { task_id, reason } => {
                 write!(formatter, "invalid task_id {task_id:?}: {reason}")
             }
+            Self::InvalidSelectedLogicalDate(value) => {
+                write!(formatter, "invalid selected_logical_date: {value:?}")
+            }
+            Self::InvalidDeferPlan(reason) => write!(formatter, "invalid defer plan: {reason}"),
             Self::FutureStartedAt {
                 started_at_epoch_ms,
                 observed_at_epoch_ms,
@@ -112,6 +141,64 @@ pub(super) fn prepare_add_actual_work_input(
     })
 }
 
+pub(super) fn prepare_defer_task_input(
+    request: DeferTaskRequest,
+) -> Result<PreparedDeferTaskInput, WebSessionInputError> {
+    let expected_plan = prepare_defer_plan(request.expected_plan)?;
+    Ok(PreparedDeferTaskInput {
+        task_id: parse_task_id(&request.task_id)?,
+        selected_logical_date: NaiveDate::parse_from_str(
+            &request.selected_logical_date,
+            "%Y-%m-%d",
+        )
+        .map_err(|_| {
+            WebSessionInputError::InvalidSelectedLogicalDate(request.selected_logical_date)
+        })?,
+        expected_plan,
+    })
+}
+
+fn prepare_defer_plan(plan: DeferPlanRequest) -> Result<DeferTaskPlan, WebSessionInputError> {
+    let requested_pending_until = parse_defer_epoch(
+        "requested_pending_until_epoch_ms",
+        plan.requested_pending_until_epoch_ms,
+    )?;
+    let effective_pending_until = plan
+        .effective_pending_until_epoch_ms
+        .map(|value| parse_defer_epoch("effective_pending_until_epoch_ms", value))
+        .transpose()?;
+    let valid_shape = match plan.mode {
+        DeferMode::Normal => {
+            effective_pending_until.is_none() && plan.repetition_interval_days.is_none()
+        }
+        DeferMode::DeadlineLimited => {
+            effective_pending_until.is_some_and(|effective| effective < requested_pending_until)
+                && plan.repetition_interval_days.is_none()
+        }
+        DeferMode::RoutinePeriod => {
+            effective_pending_until.is_none()
+                && plan.repetition_interval_days.is_some_and(|days| days > 0)
+        }
+    };
+    if !valid_shape {
+        return Err(WebSessionInputError::InvalidDeferPlan(
+            "fields do not match mode".to_owned(),
+        ));
+    }
+    Ok(DeferTaskPlan {
+        mode: plan.mode,
+        requested_pending_until,
+        effective_pending_until,
+        repetition_interval_days: plan.repetition_interval_days,
+    })
+}
+
+fn parse_defer_epoch(field: &str, value: i64) -> Result<DateTime<Local>, WebSessionInputError> {
+    DateTime::<Utc>::from_timestamp_millis(value)
+        .map(|date_time| date_time.with_timezone(&Local))
+        .ok_or_else(|| WebSessionInputError::InvalidDeferPlan(format!("{field} is out of range")))
+}
+
 pub(super) fn prepare_complete_task_input(
     request: CompleteSessionRequest,
     operation_now: DateTime<Local>,
@@ -139,17 +226,20 @@ fn validate_task_and_expected_actual_work(
     task_id: &str,
     expected_actual_work_seconds: i64,
 ) -> Result<Uuid, WebSessionInputError> {
-    let task_id =
-        Uuid::parse_str(task_id).map_err(|error| WebSessionInputError::InvalidTaskId {
-            task_id: task_id.to_owned(),
-            reason: error.to_string(),
-        })?;
+    let task_id = parse_task_id(task_id)?;
     if expected_actual_work_seconds < 0 {
         return Err(WebSessionInputError::NegativeExpectedActualWorkSeconds(
             expected_actual_work_seconds,
         ));
     }
     Ok(task_id)
+}
+
+fn parse_task_id(task_id: &str) -> Result<Uuid, WebSessionInputError> {
+    Uuid::parse_str(task_id).map_err(|error| WebSessionInputError::InvalidTaskId {
+        task_id: task_id.to_owned(),
+        reason: error.to_string(),
+    })
 }
 
 fn calculate_elapsed_seconds(
