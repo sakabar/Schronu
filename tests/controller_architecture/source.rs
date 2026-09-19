@@ -26,6 +26,33 @@ pub fn controller_modules() -> BTreeMap<String, syn::File> {
     .expect("controller module tree must parse")
 }
 
+pub fn module_family<'a>(
+    modules: &'a BTreeMap<String, syn::File>,
+    root: &'a str,
+) -> impl Iterator<Item = (&'a str, &'a syn::File)> {
+    modules
+        .iter()
+        .filter(move |(name, _)| name.as_str() == root || name.starts_with(&format!("{root}::")))
+        .map(|(name, file)| (name.as_str(), file))
+}
+
+pub fn fixture_modules(root: &str, files: &[(&str, &str)]) -> BTreeMap<String, syn::File> {
+    load_modules(Path::new("fixture/mod.rs"), |path| {
+        if path == Path::new("fixture/mod.rs") {
+            return Ok(root.into());
+        }
+        let relative = path
+            .strip_prefix("fixture")
+            .map_err(|error| error.to_string())?;
+        files
+            .iter()
+            .find(|(name, _)| Path::new(name) == relative)
+            .map(|(_, text)| text.to_string())
+            .ok_or_else(|| format!("missing fixture: {}", path.display()))
+    })
+    .expect("fixture module tree must parse")
+}
+
 struct ModuleLoader<R> {
     read: R,
     modules: BTreeMap<String, syn::File>,
