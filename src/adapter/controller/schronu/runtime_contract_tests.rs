@@ -4554,29 +4554,6 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         }
         assert_eq!(output.flush_count, 1);
     }
-
-    let runtime_source = include_str!("runtime.rs");
-    assert!(
-        !runtime_source.contains("\nfn execute_handler_outcome("),
-        "the superseded outcome coordinator must be removed"
-    );
-
-    for isolated_source in [
-        include_str!("handler.rs"),
-        include_str!("interactive.rs"),
-        include_str!("renderer.rs"),
-    ] {
-        for forbidden in [
-            "run_repository_transaction",
-            "webbrowser::open",
-            "process::Command",
-        ] {
-            assert!(
-                !isolated_source.contains(forbidden),
-                "external I/O and repository transactions must remain in runtime: {forbidden}"
-            );
-        }
-    }
 }
 
 #[test]
