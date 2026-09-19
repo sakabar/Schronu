@@ -5,7 +5,9 @@ use std::cmp::{max, min};
 use std::fmt;
 use uuid::Uuid;
 
-use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+use crate::entity::datetime::{
+    DeadlineCalculationError, LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES,
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize)]
 pub enum Status {
@@ -557,6 +559,11 @@ pub enum TaskTreeError {
     Insert,
     /// The hidden dummy root no longer has exactly one task child, or this handle is outside it.
     MissingDummyRootChild,
+    DeadlineCalculation {
+        task_id: Uuid,
+        field: &'static str,
+        source: DeadlineCalculationError,
+    },
 }
 
 impl fmt::Display for TaskTreeError {
@@ -571,6 +578,17 @@ impl fmt::Display for TaskTreeError {
             Self::MissingDummyRootChild => {
                 "task tree dummy root must have exactly one task child containing this handle"
             }
+            Self::DeadlineCalculation {
+                task_id,
+                field,
+                source,
+            } => {
+                return write!(
+                    formatter,
+                    "deadline calculation failed: task_id={task_id}, field={field}, operation={}: {source}",
+                    source.operation()
+                )
+            }
         };
         formatter.write_str(reason)
     }
@@ -579,6 +597,54 @@ impl fmt::Display for TaskTreeError {
 impl std::error::Error for TaskTreeError {}
 
 impl TaskHandle {
+    fn validate_deadline_calculations(
+        &self,
+        deadline_time_opt: Option<DateTime<Local>>,
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+        field: &'static str,
+    ) -> Result<(), TaskTreeError> {
+        let Some(deadline) = deadline_time_opt else {
+            return Ok(());
+        };
+        let task_id = self.get_id()?;
+        let policy = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
+        policy
+            .try_deadline_pending_limit(deadline, estimated_work_seconds)
+            .map_err(|source| TaskTreeError::DeadlineCalculation {
+                task_id,
+                field,
+                source,
+            })?;
+        policy
+            .try_deadline_force_todo_after_start_threshold(
+                deadline,
+                max(0, estimated_work_seconds - actual_work_seconds),
+            )
+            .map_err(|source| TaskTreeError::DeadlineCalculation {
+                task_id,
+                field,
+                source,
+            })?;
+        Ok(())
+    }
+
+    fn validate_current_deadline_calculations(
+        &self,
+        field: &'static str,
+    ) -> Result<(), TaskTreeError> {
+        let attr = self
+            .node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        self.validate_deadline_calculations(
+            *attr.get_deadline_time_opt(),
+            attr.get_estimated_work_seconds(),
+            attr.get_actual_work_seconds(),
+            field,
+        )
+    }
+
     // dendron::Node::try_detach_insert_subtree()は木そのものを消滅させることができない仕様のようなので、
     // ダミーのルートノードを用意することで、使いたいノードが全て子ノードになるようにする
     pub fn with_identity(
@@ -895,6 +961,7 @@ impl TaskHandle {
     }
 
     pub fn set_orig_status(&self, orig_status: Status) -> Result<(), TaskTreeError> {
+        self.validate_current_deadline_calculations("status")?;
         self.update(|attr| {
             let before = (*attr.get_orig_status(), *attr.get_pending_until());
             attr.set_orig_status(orig_status);
@@ -964,6 +1031,7 @@ impl TaskHandle {
     }
 
     pub fn set_pending_until(&self, pending_until: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.validate_current_deadline_calculations("pending_until")?;
         self.update(|attr| {
             let before = *attr.get_pending_until();
             attr.set_pending_until(pending_until);
@@ -979,6 +1047,7 @@ impl TaskHandle {
     }
 
     pub fn sync_clock(&self, now: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.validate_current_deadline_calculations("last_synced_time")?;
         self.update(|attr| {
             let before = *attr.get_pending_until();
             attr.sync_clock(now);
@@ -1032,6 +1101,7 @@ impl TaskHandle {
     }
 
     pub fn set_start_time(&self, start_time: DateTime<Local>) -> Result<(), TaskTreeError> {
+        self.validate_current_deadline_calculations("start_time")?;
         self.update(|attr| {
             let before = (*attr.get_start_time(), *attr.get_pending_until());
             attr.set_start_time(start_time);
@@ -1099,6 +1169,18 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
+        if let Some(deadline) = deadline_time_opt {
+            let attr = self
+                .node
+                .try_borrow_data()
+                .map_err(|_| TaskTreeError::Borrow)?;
+            self.validate_deadline_calculations(
+                Some(deadline),
+                attr.get_estimated_work_seconds(),
+                attr.get_actual_work_seconds(),
+                "deadline_time",
+            )?;
+        }
         let mut updates = Vec::new();
         self.collect_deadline_updates(deadline_time_opt, None, &mut updates)?;
         self.apply_deadline_updates(updates)
@@ -1203,6 +1285,17 @@ impl TaskHandle {
         &self,
         estimated_work_seconds: i64,
     ) -> Result<(), TaskTreeError> {
+        let attr = self
+            .node
+            .try_borrow_data()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        self.validate_deadline_calculations(
+            *attr.get_deadline_time_opt(),
+            estimated_work_seconds,
+            attr.get_actual_work_seconds(),
+            "estimated_work_seconds",
+        )?;
+        drop(attr);
         self.update(|attr| {
             if attr.get_estimated_work_seconds() == estimated_work_seconds {
                 false

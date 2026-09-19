@@ -2,11 +2,64 @@ use chrono::{
     DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, ParseError, TimeZone,
     Timelike,
 };
+use std::fmt;
 
 const LOGICAL_DATE_START_HOUR: u32 = 6;
 const DEADLINE_PENDING_BUFFER_MINUTES: i64 = 5;
 const DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES: i64 = 60;
 pub const DEFAULT_END_OF_DAY_OFFSET_MINUTES: i64 = 30;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DeadlineCalculationError {
+    DurationOutOfRange {
+        operation: &'static str,
+        seconds: i64,
+    },
+    DateTimeOutOfRange {
+        operation: &'static str,
+        datetime: DateTime<Local>,
+        seconds: i64,
+    },
+}
+
+impl DeadlineCalculationError {
+    pub fn operation(&self) -> &'static str {
+        match self {
+            Self::DurationOutOfRange { operation, .. }
+            | Self::DateTimeOutOfRange { operation, .. } => operation,
+        }
+    }
+
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::DurationOutOfRange { .. } => "duration is outside the supported range",
+            Self::DateTimeOutOfRange { .. } => {
+                "datetime subtraction is outside the supported range"
+            }
+        }
+    }
+}
+
+impl fmt::Display for DeadlineCalculationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DurationOutOfRange { operation, seconds } => write!(
+                formatter,
+                "{operation} duration is outside the supported range: seconds={seconds}"
+            ),
+            Self::DateTimeOutOfRange {
+                operation,
+                datetime,
+                seconds,
+            } => write!(
+                formatter,
+                "{operation} datetime subtraction is outside the supported range: datetime={datetime}, seconds={seconds}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DeadlineCalculationError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LogicalDateTimePolicy {
@@ -61,6 +114,20 @@ impl LogicalDateTimePolicy {
             - Duration::minutes(DEADLINE_PENDING_BUFFER_MINUTES)
     }
 
+    pub fn try_deadline_pending_limit(
+        &self,
+        deadline: DateTime<Local>,
+        estimated_work_seconds: i64,
+    ) -> Result<DateTime<Local>, DeadlineCalculationError> {
+        let duration = Duration::try_seconds(estimated_work_seconds).ok_or(
+            DeadlineCalculationError::DurationOutOfRange {
+                operation: "deadline_pending_limit",
+                seconds: estimated_work_seconds,
+            },
+        )?;
+        Ok(deadline - duration - Duration::minutes(DEADLINE_PENDING_BUFFER_MINUTES))
+    }
+
     pub fn deadline_force_todo_after_start_threshold(
         &self,
         deadline: DateTime<Local>,
@@ -69,6 +136,20 @@ impl LogicalDateTimePolicy {
         deadline
             - Duration::seconds(remaining_work_seconds)
             - Duration::minutes(DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES)
+    }
+
+    pub fn try_deadline_force_todo_after_start_threshold(
+        &self,
+        deadline: DateTime<Local>,
+        remaining_work_seconds: i64,
+    ) -> Result<DateTime<Local>, DeadlineCalculationError> {
+        let duration = Duration::try_seconds(remaining_work_seconds).ok_or(
+            DeadlineCalculationError::DurationOutOfRange {
+                operation: "deadline_force_todo_after_start_threshold",
+                seconds: remaining_work_seconds,
+            },
+        )?;
+        Ok(deadline - duration - Duration::minutes(DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES))
     }
 
     pub(crate) fn logical_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
@@ -244,6 +325,39 @@ mod logical_date_time_policy_contract_tests {
         assert_eq!(
             policy.deadline_pending_limit(deadline, 30 * 60),
             local_datetime(2026, 8, 20, 11, 25)
+        );
+    }
+
+    #[test]
+    fn checked_deadline計算は通常値と巨大な受理可能秒数を保持する() {
+        let policy = LogicalDateTimePolicy::new(30);
+        let deadline = local_datetime(200_000, 1, 1, 0, 0);
+
+        assert_eq!(
+            policy
+                .try_deadline_pending_limit(deadline, 30 * 60)
+                .unwrap(),
+            deadline - Duration::minutes(35)
+        );
+        assert_eq!(
+            policy
+                .try_deadline_pending_limit(deadline, 1_000_000_000_000)
+                .unwrap(),
+            deadline - Duration::seconds(1_000_000_000_000) - Duration::minutes(5)
+        );
+    }
+
+    #[test]
+    fn checked_deadline計算はduration範囲外を演算名付きerrorにする() {
+        let policy = LogicalDateTimePolicy::new(30);
+        let deadline = local_datetime(2026, 8, 20, 12, 0);
+
+        assert_eq!(
+            policy.try_deadline_pending_limit(deadline, i64::MAX),
+            Err(DeadlineCalculationError::DurationOutOfRange {
+                operation: "deadline_pending_limit",
+                seconds: i64::MAX,
+            })
         );
     }
 

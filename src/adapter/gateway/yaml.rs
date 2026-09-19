@@ -236,6 +236,21 @@ fn map_task_tree_error(error: TaskTreeError) -> YamlConversionError {
     YamlConversionError::new(error.to_string())
 }
 
+fn map_task_field_error(
+    path: &str,
+    field: &'static str,
+    error: TaskTreeError,
+) -> YamlConversionError {
+    match error {
+        TaskTreeError::DeadlineCalculation { source, .. } => strict_error(
+            path,
+            field,
+            &format!("{} {}", source.operation(), source.reason()),
+        ),
+        other => map_task_tree_error(other),
+    }
+}
+
 fn yaml_field<'a>(yaml: &'a Yaml, key: &str) -> Option<&'a Yaml> {
     yaml.as_hash()?.get(&Yaml::String(key.to_string()))
 }
@@ -426,7 +441,7 @@ fn yaml_to_task_strict(
     task.set_deadline_time_opt(optional_datetime("deadline_time")?)
         .map_err(map_task_tree_error)?;
     task.set_estimated_work_seconds(nonnegative("estimated_work_seconds", 900)?)
-        .map_err(map_task_tree_error)?;
+        .map_err(|error| map_task_field_error(path, "estimated_work_seconds", error))?;
     let fixed_start = match yaml_field(yaml, "fixed_start") {
         Some(value) => value
             .as_bool()

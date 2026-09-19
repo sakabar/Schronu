@@ -397,6 +397,55 @@ fn mcp_stdio_duration範囲外の見積秒数は読込errorとなり修復後に
 }
 
 #[test]
+fn mcp_stdio_duration範囲外の見積更新は保存内容を変えず後続requestへ応答する() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "duration-update-create",
+        "create_task",
+        Some(json!({"name": "duration update target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "duration-update-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let project_yaml = fs::read_dir(storage.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let before = fs::read(&project_yaml).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("duration-update");
+
+    let failed = mcp.call_tool(
+        "duration-update",
+        "update_task",
+        json!({"task_id": task_id, "estimated_work_minutes": i64::MAX / 60}),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(task_id));
+    assert!(message.contains("estimated_work_seconds"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(fs::read(&project_yaml).unwrap(), before);
+    let retried = mcp.call_tool("duration-update-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
 fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更しない() {
     use std::os::unix::fs::symlink;
 
