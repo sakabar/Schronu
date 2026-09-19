@@ -74,7 +74,7 @@
 | TD-033 | P1 | 完了 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
-| TD-036 | P2 | 未着手 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
+| TD-036 | P2 | 開発完了(未merge) | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 完了 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
@@ -1496,8 +1496,41 @@
 - 分類: `技術的負債 / test保守性`
 - 優先度: `P2`
 - 概算規模: `L`
+- 状態: 開発完了(未merge)。親統合gateとmergeを待ち、push・PRは未実施。
 
-#### 現状と根拠
+#### W2-C schedule境界の既存証跡
+
+- `6f888bfa`で`get_schedule`を`fn(&dyn TaskRepositoryTrait) -> Result<Vec<ScheduledTaskView>, ApplicationError>`へ固定する型契約を追加し、`22315c98`で対応するschedule source scannerを除去済み。
+- `src/application/schedule_use_case_contract_tests.rs`の型契約と製品経路の挙動testは今回変更していない。Wave 2のschedule完了範囲を維持し、残っていたcontroller側だけをW7-Aで置換した。
+
+#### W7-A controller側5境界の対応
+
+正式なRust ASTを扱うtest用`syn`を導入し、`tests/controller_architecture.rs`から次の契約を検証する。製品code・公開API・出力契約は変更していない。
+
+| 境界 | 新しいarchitecture test | 維持したcompiled behavior test |
+| --- | --- | --- |
+| parser | `parser.rs`、`dispatch.rs`: 3入口とtyped core、共通handlerへのdispatch | `command_contract_tests.rs`のparse結果・typed field |
+| handler | `handler.rs`、`context.rs`: 外部依存・writer禁止、typed context、finish/placementのraw token再構成禁止 | `handler_contract_tests.rs`のoutcome・context呼び出し |
+| runtime | `dispatch.rs`、`runtime_io.rs`、`interactive.rs`: I/O調停、context・日時解釈・domain更新の所有、terminal操作とtyped eventのdriver委譲 | `runtime_contract_tests.rs`の終了・保存・error挙動と`interactive_contract_tests.rs`の再描画3件 |
+| view | `view.rs`、`context.rs`: writerfree、表示計算・Focus sourceの所有、task-list builder委譲 | typed view/model、metrics、focus表示の既存test |
+| renderer | `rendering.rs`、`progress.rs`: semantic model、legacy除去、flush所有、Verify・終了時保存・reportのmodel接続とraw出力禁止、progress計算委譲 | `renderer_contract_tests.rs`と`runtime_contract_tests.rs`の本文・数値・flush回数・出力error |
+
+- 上表の新test fileは`tests/controller_architecture/`配下。製品moduleの追跡とtest用cfg除外は`source.rs`、import/glob解決は`imports.rs`、AST参照・型・出力操作の収集は`paths.rs`へ分け、alias・macro・nested helper・non-codeのfixtureで検証する。未対応構文を無視せずerrorとして扱う。
+- 各契約のRed/Greenとreview修正を分け、置換後に対応する旧source scannerを削除した。`0b56a016`のimport/glob分離は意味変更なしの独立commitとし、前後の全gate、実装本文一致、test件数維持を確認した。外部I/O policyも`95deee81`で共通化した。
+- 対象5 contract_test fileの自作scannerとsource文字列による実装検査は除去済み。最後の削除ではinteractiveの挙動3testとruntimeの他の挙動検証本文が削除前とbyte一致することを確認した。
+
+#### W7-A検証
+
+- 検証対象code HEAD: `8a916594`。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -q`、`git diff --check`はいずれもexit 0。全testは1,494 passed / 0 failed / 2 ignored、architectureは111 passed。ignoredは既存のまま。
+- `7d1eae3f`はfinish/placementの未置換契約をRed確認後に補完した。`8a916594`はsemantic描画を残したraw writer出力のRedを確認し、method・trait UFCS・dyn Write UFCSの9経路を共通操作一覧で拒否するよう修正した。
+- 内部review、親の累積差分・履歴・予約範囲review、親の独立reviewを実施し、未解消P1/P2なしを確認した。最終新規fileの最大は`rendering.rs`の696行で、800行の再検討閾値未満。
+
+#### 残存範囲・別契約
+
+- W2-CとW7-Aで予定したTD-036のsource scanner置換は開発完了。親統合gateとmergeは未実施のため、統合完了とは扱わない。
+- `src/adapter/controller/mod.rs`の`binary_entrypoint_delegates_to_library_cli`は、binary入口がlibraryの`run_cli`だけへ委譲する薄いwrapperであることをsource一致で固定する別契約であり、今回の独自Rust scanner置換の対象外として維持した。
+
+#### 対応前の現状と根拠
 
 - `src/adapter/controller/schronu/interactive_contract_tests.rs:11-51`はcontroller配下のRust sourceをfilesystemから収集する。
 - 同ファイル`158`以降はcomment、string、raw string、`cfg(test)`、braceを独自scannerで除外し、関数・trait・implの領域を文字列として抽出する。
