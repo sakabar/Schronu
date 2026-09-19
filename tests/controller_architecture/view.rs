@@ -229,3 +229,14 @@ fn focus_source_ownership_rejects_nested_and_macro_duplicates() {
         assert!(!focus_ownership_violations(&modules).is_empty(), "{source}");
     }
 }
+
+fn calculation_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn renamed_runtime_helper_cannot_build_task_display_data() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
+        fn renamed() -> super::renderer::TreeDisplay { todo!() }
+    });
+    assert!(!calculation_violations(&modules).is_empty());
+}
