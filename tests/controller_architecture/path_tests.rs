@@ -116,3 +116,14 @@ fn raw_import_targets_and_aliases_have_the_same_identity() {
             .contains("controller::runtime::invoke"));
     }
 }
+
+#[test]
+fn block_local_modules_cannot_escape_the_module_index() {
+    for source in [
+        "fn f() { mod hidden { fn g() { std::fs::write(\"x\", \"y\"); } } }",
+        "fn f() { format!(\"{:?}\", { mod hidden { fn g() { std::fs::write(\"x\", \"y\"); } } 1 }); }",
+    ] {
+        let file = product_file(source).unwrap();
+        assert!(super::paths::references("controller::handler", &file).is_err());
+    }
+}
