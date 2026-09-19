@@ -100,3 +100,23 @@ fn handler_helpers_cannot_hide_renderer_calls() {
     );
     assert!(!violations(&modules).is_empty());
 }
+
+#[test]
+fn context_rejects_fully_qualified_writer_operations() {
+    for operation in [
+        "std::io::Write::flush(&mut std::io::stdout())",
+        "std::io::Write::write_all(&mut std::io::stdout(), b\"x\")",
+        "super::renderer::SchronuWriter::writeln_newline(writer, \"x\")",
+    ] {
+        let source = format!("fn helper() {{ {operation}.unwrap(); }}");
+        let modules = fixture_modules(
+            "mod handler; mod command_context; mod renderer;",
+            &[
+                ("handler.rs", ""),
+                ("command_context.rs", &source),
+                ("renderer.rs", ""),
+            ],
+        );
+        assert!(!violations(&modules).is_empty());
+    }
+}

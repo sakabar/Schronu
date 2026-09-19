@@ -413,7 +413,7 @@ pub fn output_dependencies(
         .paths
         .into_iter()
         .filter(|path| {
-            path == "std::io::Write"
+            writer_path(path)
                 || output_functions.contains(path)
                 || [
                     "SchronuWriter",
@@ -445,4 +445,10 @@ pub fn output_dependencies(
         output.insert("field::supports_ansi_color".into());
     }
     Ok(output)
+}
+
+fn writer_path(path: &str) -> bool {
+    path == "std::io::Write"
+        || path.starts_with("std::io::Write::")
+        || path.split("::").any(|part| part == "SchronuWriter")
 }
