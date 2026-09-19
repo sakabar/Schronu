@@ -1,6 +1,8 @@
-use super::paths::references;
+use super::paths::{expand_local_globs, references, resolve_path};
 use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
+use syn::ext::IdentExt;
+use syn::visit::{self, Visit};
 
 fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let mut errors = Vec::new();
@@ -91,15 +93,92 @@ fn relative_and_qualified_gateway_paths_have_the_same_boundary() {
     assert_eq!(errors[0], errors[1]);
 }
 
-fn ownership_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    Vec::new()
+fn ownership_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    struct Contexts<'a> {
+        module: &'a str,
+        file: &'a syn::File,
+        errors: Vec<String>,
+    }
+    impl<'ast> Visit<'ast> for Contexts<'_> {
+        fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {}
+        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
+            if item.ident.unraw().to_string().ends_with("Context") {
+                self.errors
+                    .push(format!("runtime owns context: {}", item.ident));
+            }
+            visit::visit_item_struct(self, item);
+        }
+        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
+            if let Some((_, path, _)) = &item.trait_ {
+                match resolve_path(self.module, self.file, path) {
+                    Ok(path) if path.ends_with("CommandContext") => {
+                        self.errors
+                            .push(format!("runtime implements command context: {path}"));
+                    }
+                    Err(error) => self.errors.push(error),
+                    _ => {}
+                }
+            }
+            visit::visit_item_impl(self, item);
+        }
+    }
+    let mut errors = Vec::new();
+    for (module, file) in module_family(modules, "controller::runtime") {
+        match expand_local_globs(module, file, modules) {
+            Ok(file) => {
+                let mut visitor = Contexts {
+                    module,
+                    file: &file,
+                    errors: Vec::new(),
+                };
+                visitor.visit_file(&file);
+                errors.extend(visitor.errors);
+            }
+            Err(error) => errors.push(error),
+        }
+    }
+    errors
 }
 
 #[test]
 fn runtime_cannot_define_command_contexts_under_new_names() {
     let mut modules = controller_modules();
-    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
-        struct RenamedContext;
-    });
+    modules
+        .get_mut("controller::runtime")
+        .unwrap()
+        .items
+        .push(syn::parse_quote! {
+            struct RenamedContext;
+        });
     assert!(!ownership_violations(&modules).is_empty());
+}
+
+#[test]
+fn product_runtime_does_not_implement_command_contexts() {
+    assert_eq!(
+        ownership_violations(&controller_modules()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn nested_and_aliased_context_implementations_remain_outside_runtime() {
+    for source in [
+        "struct r#RenamedContext;",
+        "use super::super::handler::ProjectCommandContext as Capability; impl Capability for Adapter {}",
+        "fn outer() { struct LocalContext; }",
+    ] {
+        let mut modules = controller_modules();
+        modules.insert("controller::runtime::nested".into(), product_file(source).unwrap());
+        assert!(!ownership_violations(&modules).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn runtime_context_text_is_not_a_definition() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
+        fn renamed() { let _example = "struct ExampleContext; impl CommandContext for Adapter {}"; }
+    });
+    assert!(ownership_violations(&modules).is_empty());
 }
