@@ -13,6 +13,7 @@ function onOpen(e) {
   SpreadsheetApp.getUi()
     .createMenu('ユーザー関数')
     .addItem('時刻形式を再適用', 'applyTimeFormat')
+    .addItem('選択範囲を再同期', 'resyncSelectedRange')
     .addToUi();
 
   applyTimeFormat();
@@ -61,14 +62,42 @@ function onEdit(e) {
     return;
   }
 
+  syncRangeWithLock_(e.source, sheet, range);
+}
+
+function resyncSelectedRange() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const range = spreadsheet.getActiveRange();
+
+  if (!range) {
+    spreadsheet.toast('再同期する範囲を選択してください。', 'Schronu同期エラー');
+    return;
+  }
+
+  const sheet = range.getSheet();
+  if (!SCHRONU_CONFIG.sheetNames.includes(sheet.getName())
+    || !rangeTouchesDataRows_(range)
+    || isCommandOutputPaste_(range)
+    || !rangeTouchesSyncCols_(range)) {
+    spreadsheet.toast(
+      '対象sheetの3行目以降にあるL/N/P/R列を選択してください。',
+      'Schronu同期エラー',
+    );
+    return;
+  }
+
+  syncRangeWithLock_(spreadsheet, sheet, range);
+}
+
+function syncRangeWithLock_(spreadsheet, sheet, range) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(1000)) {
-    notifyLockContention_(e.source, sheet, range);
+    notifyLockContention_(spreadsheet, sheet, range);
     return;
   }
 
   try {
-    syncEditedManualCols_(e.source, sheet, range);
+    syncEditedManualCols_(spreadsheet, sheet, range);
   } finally {
     lock.releaseLock();
   }
