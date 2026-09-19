@@ -2693,3 +2693,21 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 各laneの実行記録にはtask / worktree / branch、基点と最終revision、予約file、Red / Green・review履歴、実行commandと結果、互換性、未検証・残存作業、依存commitを記載する。共有summary担当は統合結果だけを最後に追記する。文書追記後にも差分・文書検査と文書を入力とするgateを確認する。
 
 公開前の親reviewとlocal・統合gateの成功後にだけ、実行依頼の範囲内で通常pushと`main`向けPR作成へ進む。push / pull_requestで起動する実CIは公開後のgateとし、CI成功確認前にはmerge可能と報告しない。CI失敗は所有laneへ戻して修正・再検証する。mergeはユーザーが行う。先行PRのmergeで後続branchが古くなった場合はrebase、影響する検証と全gate、親review、最新headのCI確認を済ませてからmerge可能と報告する。共有`backlog.md`への追記も上記のmerge順で維持する。次Waveの開始条件は報告するが、実行を明示されていないWaveのtask、branch、実装、PRを先回りして作成しない。
+
+## 追加監査項目の実行記録
+
+### W8-C / TD-050: Web CI feature gate
+
+- 状態: 実装、内部review修正、親review、local gateまで完了。push、PR作成、実CI、Wave統合gateは未実施。
+- task / worktree / branch: `W8-C / TD-050` / `/Users/sakakibaratakafumi/.codex/worktrees/a5c6/Schronu` / `feature/w8-c-web-ci-gates`。
+- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`。設定・test・READMEの最終revisionは`2184cf9483958a2c3a92ae560accc0ee8b2086ce`。
+- 予約file: `.github/workflows/ci.yml`、`schronu-web/tests/web_feature_boundary_contract.rs`、`README.md`。製品code、共有manifest、UI文書は変更していない。
+- 契約: 既存のroot / Apps Script / benchmarking gateを維持したまま、`schronu-web`のdefault / server / web featureをnative targetで個別にtest・Clippyする。browser専用moduleは別jobの`wasm32-unknown-unknown` checkで検証し、native all-featuresで代替しない。Rust 1.97.1、WASM target、job別cacheを明示する。
+- Red / Green: commit `6e659cbb`でworkflow契約4件のうち既存2件だけが成功し、`web-native` / `web-wasm` job不在という同じ理由で新規2件がRedになった。commit `7da61197`で2jobとREADMEを追加してGreenにした。
+- 内部review: active commandのraw部分一致ではroot testとdefault Web testの欠落を別commandのprefixで見逃すP2を検出した。commit `2184cf94`でjobごとのactiveな`run:`を抽出し、完全一致で検証するよう修正した。修正後のP1 / P2 / P3残存指摘はない。
+- 親review: `main...branch`の3fileの累積差分、Red / Green履歴、予約範囲、製品挙動を変更しない責務分離を確認し、lane専用の`backlog.md`文書leaseを取得した。
+- Web local gate: default test、既知のfeature限定未使用codeだけを許可するdefault Clippy、server test / Clippy、web全integration test、web製品library Clippy、WASM checkに成功した。server featureではendpoint unit test 2件を含む124件、feature boundary contractは4件が成功した。
+- 既存・全体local gate: YAML parse、`node --test apps_script/main.test.mjs`(16件)、`cargo test --locked --features benchmarking --test scheduling_benchmark_contract`(16件)、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。
+- 互換性: 製品挙動、公開API、wire format、storage schema、error分類を変更していない。root、Apps Script、benchmarkingの既存CI commandを同じ`quality` jobに維持する。
+- 未検証・残存作業: GitHub Actionsの実CIはpush / PR公開後にだけ確認する。local成功を実CI成功として扱わない。Web製品code変更がないためWASM prewarmと`dx build`の必須条件には該当しない。Wave共有summaryは統合gate後の別leaseで追記する。
+- 依存commit: Wave 8内のhard dependencyはない。W8-A / W8-Bの未merge文書commitは取り込んでいない。
