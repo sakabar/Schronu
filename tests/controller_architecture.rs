@@ -1,3 +1,5 @@
+#[path = "controller_architecture/context.rs"]
+mod context;
 #[path = "controller_architecture/handler.rs"]
 mod handler;
 #[path = "controller_architecture/parser.rs"]
