@@ -116,7 +116,7 @@ class FakeSheet {
   }
 }
 
-export function loadAppsScript(sheetRows) {
+export function loadAppsScript(sheetRows, { lockResults = [true] } = {}) {
   const writes = [];
   const toasts = [];
   const sheets = new Map(
@@ -130,11 +130,19 @@ export function loadAppsScript(sheetRows) {
       toasts.push({ message, title });
     },
   };
+  const lockState = {
+    attempts: 0,
+    releases: 0,
+  };
   const lock = {
     tryLock() {
-      return true;
+      const result = lockResults[Math.min(lockState.attempts, lockResults.length - 1)];
+      lockState.attempts += 1;
+      return result;
     },
-    releaseLock() {},
+    releaseLock() {
+      lockState.releases += 1;
+    },
   };
   const context = vm.createContext({
     LockService: { getDocumentLock: () => lock },
@@ -173,5 +181,6 @@ export function loadAppsScript(sheetRows) {
     },
     writes,
     toasts,
+    lockState,
   };
 }

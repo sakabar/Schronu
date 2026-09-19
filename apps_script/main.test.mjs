@@ -6,6 +6,24 @@ import { COL, loadAppsScript, taskRow } from './test_support/fake_spreadsheet.mj
 const TASK_ID = '11111111-1111-1111-1111-111111111111';
 const OTHER_TASK_ID = '22222222-2222-2222-2222-222222222222';
 
+test('lock競合時はsegmentを書き込まず対象と手動再同期方法を通知する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  }, { lockResults: [false] });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.lockState.attempts, 1);
+  assert.equal(appsScript.lockState.releases, 0);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /実ログ.*3行/);
+  assert.match(appsScript.toasts[0].message, /A=0000.*B=11111111/);
+  assert.match(appsScript.toasts[0].message, /segment/);
+  assert.match(appsScript.toasts[0].message, /選択範囲を再同期/);
+});
+
 for (const [name, column] of [
   ['L列', COL.startTime],
   ['P列', COL.finishTime],
