@@ -111,3 +111,18 @@ fn raw_legacy_variant_declarations_have_the_same_identity() {
     );
     assert!(!legacy_violations(&modules).is_empty());
 }
+
+fn mode_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+fn mode_fixture(outcome: &str) -> BTreeMap<String, syn::File> {
+    fixture_modules("mod renderer; mod runtime;", &[
+        ("renderer.rs", "enum RenderMode { Flushed, Unflushed } fn plain(w: &mut dyn SchronuWriter, model: &DisplayModel) {} fn emit(w: &mut dyn SchronuWriter, model: &DisplayModel, mode: RenderMode) { plain(w, model); if mode == RenderMode::Flushed { w.flush(); } }"),
+        ("runtime.rs", &format!("use super::renderer::{{emit, plain, RenderMode}}; fn coordinate(w: &mut dyn SchronuWriter, outcome: CommandOutcome) {{ {outcome} }}")),
+    ])
+}
+
+#[test]
+fn outcome_coordinator_cannot_flush_the_writer_directly() {
+    let modules = mode_fixture("emit(w, &outcome.display, RenderMode::Unflushed); emit(w, &DisplayModel::empty(), RenderMode::Flushed); w.flush();");
+    assert!(!mode_violations(&modules).is_empty());
+}
