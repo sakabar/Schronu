@@ -95,3 +95,11 @@ fn unknown_macros_are_errors_instead_of_invisible_dependencies() {
         .unwrap_err()
         .contains("unhandled macro"));
 }
+
+#[test]
+fn macro_local_imports_cannot_hide_dependencies() {
+    let file =
+        product_file("fn f() { format!(\"{}\", { use super::runtime as rt; rt::invoke() }); }")
+            .unwrap();
+    assert!(super::paths::references("controller::handler", &file).is_err());
+}

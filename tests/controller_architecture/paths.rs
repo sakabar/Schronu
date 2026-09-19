@@ -11,6 +11,7 @@ pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
         paths: bindings.values().cloned().collect(),
         bindings,
         errors: Vec::new(),
+        in_macro: false,
     };
     collector.visit_file(file);
     if collector.errors.is_empty() {
@@ -25,6 +26,7 @@ struct References<'a> {
     bindings: BTreeMap<String, String>,
     paths: BTreeSet<String>,
     errors: Vec<String>,
+    in_macro: bool,
 }
 
 impl References<'_> {
@@ -48,6 +50,12 @@ impl References<'_> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {
+        if self.in_macro {
+            self.errors
+                .push("macro-local import needs explicit support".into());
+        }
+    }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         self.paths.insert(self.path(path));
         visit::visit_path(self, path);
@@ -120,12 +128,14 @@ impl<'ast> Visit<'ast> for References<'_> {
         };
         match parser.parse2(invocation.tokens.clone()) {
             Ok((expressions, pattern)) => {
+                let previous = std::mem::replace(&mut self.in_macro, true);
                 for expression in &expressions {
                     self.visit_expr(expression);
                 }
                 if let Some(pattern) = pattern {
                     self.visit_pat(&pattern);
                 }
+                self.in_macro = previous;
             }
             Err(error) => self
                 .errors
