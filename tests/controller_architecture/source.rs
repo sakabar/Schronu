@@ -81,6 +81,9 @@ struct ProductItems;
 
 impl VisitMut for ProductItems {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
+        if !product_attributes(&file.attrs) {
+            file.items.clear();
+        }
         file.items.retain(product_item);
         visit_mut::visit_file_mut(self, file);
     }

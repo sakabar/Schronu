@@ -28,3 +28,18 @@ fn product_items_exclude_test_configuration_without_scanning_literals() {
 fn invalid_rust_is_an_error_instead_of_an_empty_product_file() {
     assert!(product_file("fn broken(").is_err());
 }
+
+#[test]
+fn inner_file_configuration_excludes_the_entire_test_file() {
+    assert!(product_file("#![cfg(test)] fn helper() {}")
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(
+        product_file("#![cfg(not(test))] fn product() {}")
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}
