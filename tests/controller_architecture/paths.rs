@@ -12,6 +12,7 @@ pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
         bindings,
         errors: Vec::new(),
         in_macro: false,
+        calls: Vec::new(),
     };
     collector.visit_file(file);
     if collector.errors.is_empty() {
@@ -27,6 +28,7 @@ struct References<'a> {
     paths: BTreeSet<String>,
     errors: Vec<String>,
     in_macro: bool,
+    calls: Vec<(String, syn::ExprCall)>,
 }
 
 impl References<'_> {
@@ -50,6 +52,20 @@ impl References<'_> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
+        let mut function = expression.func.as_ref();
+        loop {
+            function = match function {
+                syn::Expr::Paren(group) => &group.expr,
+                syn::Expr::Group(group) => &group.expr,
+                _ => break,
+            };
+        }
+        if let syn::Expr::Path(path) = function {
+            self.calls.push((self.path(&path.path), expression.clone()));
+        }
+        visit::visit_expr_call(self, expression);
+    }
     fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {
         if self.in_macro {
             self.errors
@@ -142,6 +158,56 @@ impl<'ast> Visit<'ast> for References<'_> {
                 .push(format!("unhandled {name}! arguments: {error}")),
         }
     }
+}
+
+pub fn function_calls(
+    module: &str,
+    file: &syn::File,
+    function: &syn::ItemFn,
+) -> Result<Vec<(String, syn::ExprCall)>, String> {
+    let mut collector = References {
+        module,
+        bindings: imports(module, file)?,
+        paths: BTreeSet::new(),
+        errors: Vec::new(),
+        in_macro: false,
+        calls: Vec::new(),
+    };
+    collector.visit_block(&function.block);
+    if collector.errors.is_empty() {
+        Ok(collector.calls)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
+pub fn type_has(ty: &syn::Type, name: &str) -> bool {
+    struct Find<'a> {
+        name: &'a str,
+        found: bool,
+    }
+    impl<'ast> Visit<'ast> for Find<'_> {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.found |= path
+                .segments
+                .last()
+                .is_some_and(|segment| segment.ident.unraw() == self.name);
+            visit::visit_path(self, path);
+        }
+    }
+    let mut find = Find { name, found: false };
+    find.visit_type(ty);
+    find.found
+}
+
+pub fn input_has(signature: &syn::Signature, name: &str) -> bool {
+    signature.inputs.iter().any(
+        |argument| matches!(argument, syn::FnArg::Typed(argument) if type_has(&argument.ty, name)),
+    )
+}
+
+pub fn output_has(signature: &syn::Signature, name: &str) -> bool {
+    matches!(&signature.output, syn::ReturnType::Type(_, ty) if type_has(ty, name))
 }
 
 pub fn imports(module: &str, file: &syn::File) -> Result<BTreeMap<String, String>, String> {
