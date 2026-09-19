@@ -412,31 +412,6 @@ impl<'ast> Visit<'ast> for References<'_> {
     }
 }
 
-pub fn block_calls(
-    module: &str,
-    file: &syn::File,
-    block: &syn::Block,
-) -> Result<Vec<(String, syn::ExprCall)>, String> {
-    block_calls_with_callbacks(module, file, block, &BTreeSet::new())
-}
-
-fn block_calls_with_callbacks(
-    module: &str,
-    file: &syn::File,
-    block: &syn::Block,
-    callbacks: &BTreeSet<String>,
-) -> Result<Vec<(String, syn::ExprCall)>, String> {
-    let mut collector = References::new(module, file)?;
-    collector.scoped_calls = true;
-    collector.callbacks = callbacks.clone();
-    collector.visit_block(block);
-    if collector.errors.is_empty() {
-        Ok(collector.calls)
-    } else {
-        Err(collector.errors.join("\n"))
-    }
-}
-
 struct TypeName<'a> {
     name: &'a str,
     found: bool,
