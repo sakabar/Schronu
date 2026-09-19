@@ -4,6 +4,14 @@ use syn::parse::Parser;
 use syn::visit::{self, Visit};
 use syn::UseTree;
 
+pub fn expand_local_globs(
+    _module: &str,
+    file: &syn::File,
+    _modules: &BTreeMap<String, syn::File>,
+) -> Result<syn::File, String> {
+    Ok(file.clone())
+}
+
 pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
