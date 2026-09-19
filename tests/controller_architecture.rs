@@ -10,6 +10,8 @@ mod parser;
 mod path_tests;
 #[path = "controller_architecture/paths.rs"]
 mod paths;
+#[path = "controller_architecture/progress.rs"]
+mod progress;
 #[path = "controller_architecture/source.rs"]
 mod source;
 #[path = "controller_architecture/source_tests.rs"]
