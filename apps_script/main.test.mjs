@@ -24,6 +24,23 @@ test('lock競合時はsegmentを書き込まず対象と手動再同期方法を
   assert.match(appsScript.toasts[0].message, /選択範囲を再同期/);
 });
 
+test('lock競合時はtaskを書き込まずtask_idと手動再同期方法を通知する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  }, { lockResults: [false] });
+
+  appsScript.edit('実ログ', 3, COL.finishFlag, 'F');
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.lockState.attempts, 1);
+  assert.equal(appsScript.lockState.releases, 0);
+  assert.equal(appsScript.toasts.length, 1);
+  assert.match(appsScript.toasts[0].message, /実ログ.*3行.*task/);
+  assert.match(appsScript.toasts[0].message, /B=11111111/);
+  assert.match(appsScript.toasts[0].message, /選択範囲を再同期/);
+});
+
 test('同期成功時は取得したlockを解放する', () => {
   const appsScript = loadAppsScript({
     '実ログ': [taskRow('0000', TASK_ID)],
