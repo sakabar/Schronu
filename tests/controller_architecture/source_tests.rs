@@ -74,3 +74,32 @@ fn module_index_follows_product_declarations_and_path_attributes() {
         ]
     );
 }
+
+#[test]
+fn real_controller_modules_include_storage_maintenance_and_exclude_tests() {
+    let modules = super::source::controller_modules();
+    assert!(modules.contains_key("controller::runtime::storage_maintenance"));
+    for module in [
+        "command",
+        "handler",
+        "command_context",
+        "view",
+        "renderer",
+        "interactive",
+    ] {
+        assert!(modules.contains_key(&format!("controller::{module}")));
+    }
+    assert!(!modules.keys().any(|name| name.ends_with("_contract_tests")));
+}
+
+#[test]
+fn missing_product_module_is_an_error() {
+    let result = load_modules(Path::new("src/mod.rs"), |path| {
+        if path == Path::new("src/mod.rs") {
+            Ok("mod missing;".into())
+        } else {
+            Err(format!("missing {}", path.display()))
+        }
+    });
+    assert!(result.err().unwrap().contains("missing.rs"));
+}

@@ -1,5 +1,5 @@
-use std::collections::BTreeMap;
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use syn::punctuated::Punctuated;
 use syn::visit_mut::{self, VisitMut};
 use syn::{Attribute, Item, Meta, Token};
@@ -8,8 +8,111 @@ pub fn load_modules(
     root: &Path,
     mut read: impl FnMut(&Path) -> Result<String, String>,
 ) -> Result<BTreeMap<String, syn::File>, String> {
-    let file = product_file(&read(root)?).map_err(|error| error.to_string())?;
-    Ok(BTreeMap::from([("controller".into(), file)]))
+    let text = read(root)?;
+    let mut loader = ModuleLoader {
+        read,
+        modules: BTreeMap::new(),
+        active: BTreeSet::new(),
+    };
+    loader.file("controller", root, &text)?;
+    Ok(loader.modules)
+}
+
+pub fn controller_modules() -> BTreeMap<String, syn::File> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/adapter/controller/mod.rs");
+    load_modules(&root, |path| {
+        std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))
+    })
+    .expect("controller module tree must parse")
+}
+
+struct ModuleLoader<R> {
+    read: R,
+    modules: BTreeMap<String, syn::File>,
+    active: BTreeSet<PathBuf>,
+}
+
+impl<R: FnMut(&Path) -> Result<String, String>> ModuleLoader<R> {
+    fn file(&mut self, name: &str, path: &Path, text: &str) -> Result<(), String> {
+        if !self.active.insert(path.to_path_buf()) {
+            return Err(format!("recursive module source: {}", path.display()));
+        }
+        let file = product_file(text).map_err(|error| format!("{}: {error}", path.display()))?;
+        let parent = path
+            .parent()
+            .ok_or("module source needs a parent directory")?;
+        let directory = if path.file_name().is_some_and(|file| file == "mod.rs") {
+            parent.to_path_buf()
+        } else {
+            parent.join(path.file_stem().ok_or("module source needs a file name")?)
+        };
+        self.items(name, &file.items, &directory, parent)?;
+        self.modules.insert(name.into(), file);
+        self.active.remove(path);
+        Ok(())
+    }
+
+    fn items(
+        &mut self,
+        name: &str,
+        items: &[Item],
+        directory: &Path,
+        attribute_base: &Path,
+    ) -> Result<(), String> {
+        for item in items {
+            let Item::Mod(module) = item else { continue };
+            let child_name = format!("{name}::{}", module.ident);
+            let explicit_path = module
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("path"));
+            if let Some((_, nested)) = &module.content {
+                if explicit_path.is_some() {
+                    return Err(format!(
+                        "inline #[path] needs explicit support: {child_name}"
+                    ));
+                }
+                let child_directory = directory.join(module.ident.to_string());
+                self.items(&child_name, nested, &child_directory, &child_directory)?;
+                self.modules.insert(
+                    child_name,
+                    syn::File {
+                        shebang: None,
+                        attrs: module.attrs.clone(),
+                        items: nested.clone(),
+                    },
+                );
+                continue;
+            }
+            let (path, text) = if let Some(attribute) = explicit_path {
+                let Meta::NameValue(value) = &attribute.meta else {
+                    return Err("#[path] needs a string".into());
+                };
+                let syn::Expr::Lit(value) = &value.value else {
+                    return Err("#[path] needs a string literal".into());
+                };
+                let syn::Lit::Str(value) = &value.lit else {
+                    return Err("#[path] needs a string literal".into());
+                };
+                let path = attribute_base.join(value.value());
+                let text = (self.read)(&path)?;
+                (path, text)
+            } else {
+                let path = directory.join(format!("{}.rs", module.ident));
+                match (self.read)(&path) {
+                    Ok(text) => (path, text),
+                    Err(first) => {
+                        let path = directory.join(module.ident.to_string()).join("mod.rs");
+                        let text =
+                            (self.read)(&path).map_err(|second| format!("{first}; {second}"))?;
+                        (path, text)
+                    }
+                }
+            };
+            self.file(&child_name, &path, &text)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn product_file(text: &str) -> syn::Result<syn::File> {
