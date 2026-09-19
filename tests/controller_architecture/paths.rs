@@ -105,6 +105,61 @@ pub fn definitions(module: &str, file: &syn::File) -> Result<Vec<syn::Item>, Str
     }
 }
 
+pub fn type_alias_dependencies(
+    modules: &BTreeMap<String, syn::File>,
+) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
+    let mut aliases = BTreeMap::new();
+    for (module, file) in modules {
+        let file = expand_local_globs(module, file, modules)?;
+        for item in definitions(module, &file)? {
+            if let syn::Item::Type(alias) = item {
+                let mut scope = file.clone();
+                scope.items.retain(|item| matches!(item, syn::Item::Use(_)));
+                let key = format!("{module}::{}", alias.ident.unraw());
+                scope.items.push(syn::Item::Type(alias));
+                if aliases
+                    .insert(key.clone(), used_paths(module, &scope)?)
+                    .is_some()
+                {
+                    return Err(format!("ambiguous type alias: {key}"));
+                }
+            }
+        }
+    }
+    Ok(aliases)
+}
+
+pub fn expand_type_aliases(
+    module: &str,
+    paths: BTreeSet<String>,
+    aliases: &BTreeMap<String, BTreeSet<String>>,
+) -> BTreeSet<String> {
+    let mut result = paths.clone();
+    let mut pending: Vec<_> = paths
+        .into_iter()
+        .map(|path| (module.to_string(), path))
+        .collect();
+    let mut visited = BTreeSet::new();
+    while let Some((owner, path)) = pending.pop() {
+        let key = if aliases.contains_key(&path) {
+            path
+        } else {
+            format!("{owner}::{path}")
+        };
+        if !visited.insert(key.clone()) {
+            continue;
+        }
+        if let Some(dependencies) = aliases.get(&key) {
+            let owner = key.rsplit_once("::").unwrap().0;
+            for dependency in dependencies {
+                result.insert(dependency.clone());
+                pending.push((owner.to_string(), dependency.clone()));
+            }
+        }
+    }
+    result
+}
+
 pub fn signatures(module: &str, file: &syn::File) -> Result<Vec<syn::Signature>, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
@@ -221,7 +276,7 @@ impl<'ast> Visit<'ast> for References<'_> {
     fn visit_item(&mut self, item: &'ast syn::Item) {
         if matches!(
             item,
-            syn::Item::Struct(_) | syn::Item::Trait(_) | syn::Item::Impl(_)
+            syn::Item::Struct(_) | syn::Item::Trait(_) | syn::Item::Impl(_) | syn::Item::Type(_)
         ) {
             self.definitions.push(item.clone());
         }
