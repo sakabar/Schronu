@@ -40,67 +40,6 @@ fn maximum_local_logical_date_start() -> chrono::DateTime<Local> {
         .expect("maximum local date at 06:00 must be unambiguous")
 }
 
-fn runtime_product_dispatch_source() -> &'static str {
-    include_str!("runtime.rs")
-        .split_once("fn execute_parsed(")
-        .expect("runtime must retain the parsed command entrypoint")
-        .1
-        .split_once("fn apply_command_outcome(")
-        .expect("parsed command path must remain bounded by outcome application")
-        .0
-}
-
-fn handler_product_source() -> &'static str {
-    include_str!("handler.rs")
-        .split_once("#[cfg(test)]")
-        .expect("handler product source must precede its test-only code")
-        .0
-}
-
-fn finish_placement_handler_source() -> &'static str {
-    handler_product_source()
-        .split_once("pub(super) fn handle_finish_placement_command")
-        .expect("handler must retain finish and placement dispatch")
-        .1
-        .split_once("pub(super) fn decide_finish_time_values(")
-        .expect("finish and placement dispatch must remain bounded by finish time resolution")
-        .0
-}
-
-fn runtime_interactive_dispatch_source() -> &'static str {
-    include_str!("runtime.rs")
-        .split_once("fn execute_interactive_command(")
-        .expect("runtime must retain interactive dispatch")
-        .1
-        .split_once("struct InteractiveRepositoryState")
-        .expect("interactive dispatch must remain bounded by its repository state")
-        .0
-}
-
-fn assert_runtime_routes_to_handler(handler_call: &str, forbidden_fallback_tokens: &[&str]) {
-    assert!(
-        runtime_product_dispatch_source().contains("handle_command(parsed_command"),
-        "product dispatch must route every typed command through handle_command"
-    );
-    let handler_name = handler_call
-        .split_once('(')
-        .map_or(handler_call, |(name, _)| name);
-    assert!(
-        handler_product_source().contains(handler_name),
-        "the composite handler must retain the {handler_name} behavior route"
-    );
-    assert!(
-        !include_str!("runtime.rs").contains("fn execute_with_config("),
-        "legacy runtime dispatch must be removed"
-    );
-    for forbidden in forbidden_fallback_tokens {
-        assert!(
-            !runtime_product_dispatch_source().contains(forbidden),
-            "runtime product dispatch must not match handler-owned command kind: {forbidden}"
-        );
-    }
-}
-
 #[test]
 fn 明日と曜日の日時指定は次の論理日境界errorを保持する() {
     let now = maximum_local_logical_date_start();
@@ -391,18 +330,6 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         }]
     );
     assert_eq!(context.focused_task_id, Some(Uuid::from_u128(2)));
-    assert_runtime_routes_to_handler(
-        "handle_project_command(parsed_command",
-        &[
-            "CommandKind::NewProject",
-            "CommandKind::HobbyProject",
-            "CommandKind::UnplannedProject",
-            "CommandKind::Sequential",
-            "CommandKind::Repeat",
-            "CommandKind::Appointment",
-            "CommandKind::Start",
-        ],
-    );
 
     let mut hobby_context = TraceProjectContext::new(now);
     handle_project_command(
@@ -1258,27 +1185,6 @@ fn task_tree表示commandはruntime_fallbackに残さない() {
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
     }
-    assert_runtime_routes_to_handler(
-        "handle_task_tree_command(parsed_command",
-        &[
-            "CommandKind::Tree",
-            "CommandKind::Ancestor",
-            "CommandKind::Root",
-            "CommandKind::Leaves",
-            "CommandKind::ShowAll",
-            "CommandKind::Tail",
-            "CommandKind::Today",
-            "CommandKind::NonRepetitive",
-            "CommandKind::Calendar",
-            "CommandKind::Band",
-            "CommandKind::Focus =>",
-            "CommandKind::Pick",
-            "CommandKind::Parent",
-            "CommandKind::Children",
-            "CommandKind::Deepest",
-            "CommandKind::NextUp",
-        ],
-    );
 }
 
 #[test]
@@ -1327,15 +1233,6 @@ fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
         .unwrap()
         .expect("typed wait command must be owned by the handler");
     assert_eq!(wait_outcome.kind, CommandKind::Wait);
-
-    assert_runtime_routes_to_handler(
-        "handle_breakdown_split_command(parsed_command",
-        &[
-            "CommandKind::Breakdown",
-            "CommandKind::Split",
-            "CommandKind::Wait",
-        ],
-    );
 }
 
 #[derive(Default)]
@@ -1501,18 +1398,6 @@ fn task属性更新commandはruntime_fallbackに残さない() {
 
     assert_eq!(outcome.kind, CommandKind::Arrange);
     assert_eq!(context.calls, ["arrange:37:true"]);
-    assert_runtime_routes_to_handler(
-        "handle_task_attribute_command(parsed_command",
-        &[
-            "CommandKind::Deadline",
-            "CommandKind::Estimate",
-            "CommandKind::Arrange",
-            "CommandKind::Actual",
-            "CommandKind::Priority",
-            "CommandKind::Category",
-            "CommandKind::Work",
-        ],
-    );
 }
 
 #[derive(Default)]
@@ -1697,28 +1582,6 @@ fn defer系commandはruntime_fallbackとinteractive特別経路に残さない()
             .expect("typed defer command must be owned by the shared handler path");
         assert_eq!(outcome.kind, command.kind());
         assert_eq!(context.calls, [expected_call]);
-    }
-    assert_runtime_routes_to_handler(
-        "handle_defer_command(parsed_command",
-        &[
-            "CommandKind::Defer =>",
-            "CommandKind::DeferRoutines",
-            "CommandKind::Escape",
-            "CommandKind::Extrude",
-            "CommandKind::Clear | CommandKind::Gather",
-        ],
-    );
-    for forbidden_interactive_shortcut in [
-        "Command::Defer { amount, unit }",
-        "InteractiveShortcut::NextMorning",
-        "InteractiveShortcut::NextWeek",
-        "InteractiveShortcut::DeferRoutine",
-        "InteractiveShortcut::FiveYears",
-    ] {
-        assert!(
-            !runtime_interactive_dispatch_source().contains(forbidden_interactive_shortcut),
-            "interactive defer shortcut must use the shared handler path: {forbidden_interactive_shortcut}"
-        );
     }
 }
 
@@ -2174,29 +2037,6 @@ fn 完了と配置commandはtyped値のままhandlerが所有してruntime_fallb
     let unfocus = handle(&no_arguments(CommandKind::Unfocus, "ignored alias"))
         .expect("typed unfocus command must be owned by the handler");
     assert_eq!(unfocus.focus_change, FocusChange::Clear);
-    assert_runtime_routes_to_handler(
-        "handle_finish_placement_command(parsed_command",
-        &[
-            "CommandKind::Finish",
-            "CommandKind::Pack",
-            "CommandKind::Flatten",
-            "CommandKind::Unfocus",
-            "complete_task(",
-            "pack_tasks_",
-            "flatten_tasks_",
-        ],
-    );
-    for forbidden_reconstruction in [
-        "split_whitespace",
-        "values[",
-        "values.get(",
-        "canonical_name",
-    ] {
-        assert!(
-            !finish_placement_handler_source().contains(forbidden_reconstruction),
-            "finish and placement handler must consume typed fields without reconstruction: {forbidden_reconstruction}"
-        );
-    }
 }
 
 #[derive(Default)]

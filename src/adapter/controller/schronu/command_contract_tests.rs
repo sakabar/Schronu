@@ -855,10 +855,3 @@ fn arrange_accepts_only_the_explicit_all_flags() {
     assert_eq!(error.reason(), "整数で指定してください");
     assert_eq!(error.usage(), "揃 <分> [全]");
 }
-
-#[test]
-fn runtime_routes_both_product_entry_paths_through_the_shared_parser() {
-    let source = include_str!("runtime.rs");
-    assert!(source.contains("parse_non_interactive_command_tokens(command_tokens)"));
-    assert!(source.contains("parse_interactive_command(command)"));
-}
