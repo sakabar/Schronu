@@ -119,6 +119,16 @@ pub fn resolve_path(module: &str, file: &syn::File, path: &syn::Path) -> Result<
     Ok(References::new(module, file)?.path(path))
 }
 
+pub fn data_accesses(module: &str, file: &syn::File) -> Result<(BTreeSet<String>, bool), String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok((collector.members, collector.indexed))
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 pub fn has_float_literal(module: &str, file: &syn::File) -> Result<bool, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
@@ -149,6 +159,8 @@ struct References<'a> {
     scoped_calls: bool,
     methods: BTreeSet<String>,
     fields: BTreeSet<String>,
+    members: BTreeSet<String>,
+    indexed: bool,
     block_depth: usize,
     callbacks: BTreeSet<String>,
     scaling: bool,
@@ -170,6 +182,8 @@ impl<'a> References<'a> {
             scoped_calls: false,
             methods: BTreeSet::new(),
             fields: BTreeSet::new(),
+            members: BTreeSet::new(),
+            indexed: false,
             block_depth: 0,
             callbacks: BTreeSet::new(),
             scaling: false,
@@ -199,6 +213,17 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_member(&mut self, member: &'ast syn::Member) {
+        if let syn::Member::Named(ident) = member {
+            self.members.insert(ident.unraw().to_string());
+        }
+        visit::visit_member(self, member);
+    }
+    fn visit_expr_index(&mut self, expression: &'ast syn::ExprIndex) {
+        self.indexed = true;
+        visit::visit_expr_index(self, expression);
+    }
+
     fn visit_lit_float(&mut self, _literal: &'ast syn::LitFloat) {
         self.float_literal = true;
     }
