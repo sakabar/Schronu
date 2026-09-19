@@ -271,3 +271,17 @@ fn mode_selection_cannot_be_replaced_by_plain_rendering_or_decoys() {
         assert!(!mode_violations(&mode_fixture(body)).is_empty());
     }
 }
+
+fn diagnostic_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn exit_save_diagnostic_cannot_bypass_semantic_rendering() {
+    let mut modules = controller_modules();
+    let file = modules.get_mut("controller::runtime").unwrap();
+    let function = file.items.iter_mut().find_map(|item| match item {
+        syn::Item::Fn(function) if input_has(&function.sig, "SchronuWriter") && input_has(&function.sig, "TaskRepositoryTrait") && super::paths::output_has(&function.sig, "bool") && !input_has(&function.sig, "FreeTimeManagerTrait") => Some(function),
+        _ => None,
+    }).unwrap();
+    function.block = syn::parse_quote!({ writer.flush()?; Ok(false) });
+    assert!(!diagnostic_violations(&modules).is_empty());
+}
