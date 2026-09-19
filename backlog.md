@@ -1496,7 +1496,7 @@
 - 分類: `技術的負債 / test保守性`
 - 優先度: `P2`
 - 概算規模: `L`
-- 状態: 開発完了(未merge)。親統合gateとmergeを待ち、push・PRは未実施。
+- 状態: 開発完了・親統合gate通過(未merge)。現時点でpush・PRは未実施。
 
 #### W2-C schedule境界の既存証跡
 
@@ -1524,10 +1524,11 @@
 - 検証対象code HEAD: `8a916594`。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked -q`、`git diff --check`はいずれもexit 0。全testは1,494 passed / 0 failed / 2 ignored、architectureは111 passed。ignoredは既存のまま。
 - `7d1eae3f`はfinish/placementの未置換契約をRed確認後に補完した。`8a916594`はsemantic描画を残したraw writer出力のRedを確認し、method・trait UFCS・dyn Write UFCSの9経路を共通操作一覧で拒否するよう修正した。
 - 内部review、親の累積差分・履歴・予約範囲review、親の独立reviewを実施し、未解消P1/P2なしを確認した。最終新規fileの最大は`rendering.rs`の696行で、800行の再検討閾値未満。
+- 親統合gate: `origin/main=10fba05d`から全87commitを使い捨てworktreeへcherry-pickした統合HEAD `18b80583`で通過した。tree `f61919dc2ffb951a8f49ac7345e6089b4ce5a6c6`はlane HEAD `1a6add89`と完全一致する。`git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`はすべてexit 0。22 suites / 1,494 passed / 0 failed / 2 ignored、architecture 111件に加えCLI runtime・storage backup・Spreadsheetを含む。親検証ログは`/private/tmp/wave7-integration-gate-{0..4}.log`。
 
 #### 残存範囲・別契約
 
-- W2-CとW7-Aで予定したTD-036のsource scanner置換は開発完了。親統合gateとmergeは未実施のため、統合完了とは扱わない。
+- W2-CとW7-Aで予定したTD-036のsource scanner置換は開発完了。親統合gateは通過済み。現時点でmerge・push・PRは未実施のため、merge完了とは扱わない。
 - `src/adapter/controller/mod.rs`の`binary_entrypoint_delegates_to_library_cli`は、binary入口がlibraryの`run_cli`だけへ委譲する薄いwrapperであることをsource一致で固定する別契約であり、今回の独自Rust scanner置換の対象外として維持した。
 
 #### 対応前の現状と根拠
