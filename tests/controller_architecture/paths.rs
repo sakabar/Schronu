@@ -55,16 +55,10 @@ struct References<'a> {
     paths: BTreeSet<String>,
     errors: Vec<String>,
     in_macro: bool,
-    calls: Vec<(String, syn::ExprCall)>,
-    scoped_calls: bool,
     methods: BTreeSet<String>,
     fields: BTreeSet<String>,
-    members: BTreeSet<String>,
-    indexed: bool,
     block_depth: usize,
-    callbacks: BTreeSet<String>,
     definitions: Vec<syn::Item>,
-    signatures: Vec<syn::Signature>,
 }
 
 impl<'a> References<'a> {
@@ -76,16 +70,10 @@ impl<'a> References<'a> {
             bindings,
             errors: Vec::new(),
             in_macro: false,
-            calls: Vec::new(),
-            scoped_calls: false,
             methods: BTreeSet::new(),
             fields: BTreeSet::new(),
-            members: BTreeSet::new(),
-            indexed: false,
             block_depth: 0,
-            callbacks: BTreeSet::new(),
             definitions: Vec::new(),
-            signatures: Vec::new(),
         })
     }
 
@@ -109,30 +97,10 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
-    fn visit_member(&mut self, member: &'ast syn::Member) {
-        if let syn::Member::Named(ident) = member {
-            self.members.insert(ident.unraw().to_string());
-        }
-        visit::visit_member(self, member);
-    }
-    fn visit_expr_index(&mut self, expression: &'ast syn::ExprIndex) {
-        self.indexed = true;
-        visit::visit_expr_index(self, expression);
-    }
-
-    fn visit_signature(&mut self, signature: &'ast syn::Signature) {
-        self.signatures.push(signature.clone());
-        visit::visit_signature(self, signature);
-    }
-
     fn visit_item(&mut self, item: &'ast syn::Item) {
         if matches!(
             item,
-            syn::Item::Struct(_)
-                | syn::Item::Enum(_)
-                | syn::Item::Trait(_)
-                | syn::Item::Impl(_)
-                | syn::Item::Type(_)
+            syn::Item::Struct(_) | syn::Item::Enum(_) | syn::Item::Trait(_) | syn::Item::Impl(_)
         ) {
             self.definitions.push(item.clone());
         }
@@ -151,61 +119,9 @@ impl<'ast> Visit<'ast> for References<'_> {
         visit::visit_field(self, field);
     }
 
-    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
-        if !self.scoped_calls {
-            visit::visit_item_fn(self, item);
-        }
-    }
-
-    fn visit_expr_closure(&mut self, expression: &'ast syn::ExprClosure) {
-        if !self.scoped_calls {
-            visit::visit_expr_closure(self, expression);
-        }
-    }
-
     fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
         self.methods.insert(expression.method.unraw().to_string());
-        if self.scoped_calls && expression.method == "and_then" {
-            // The maintenance parser's Result::and_then executes its inline
-            // closure. Merely declaring another closure is not a direct call.
-            self.visit_expr(&expression.receiver);
-            for argument in &expression.args {
-                if let syn::Expr::Closure(closure) = argument {
-                    visit::visit_expr_closure(self, closure);
-                } else {
-                    self.visit_expr(argument);
-                }
-            }
-        } else {
-            visit::visit_expr_method_call(self, expression);
-        }
-    }
-    fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
-        let mut function = expression.func.as_ref();
-        loop {
-            function = match function {
-                syn::Expr::Paren(group) => &group.expr,
-                syn::Expr::Group(group) => &group.expr,
-                _ => break,
-            };
-        }
-        if let syn::Expr::Path(path) = function {
-            self.calls.push((self.path(&path.path), expression.clone()));
-        }
-        if self.scoped_calls {
-            self.visit_expr(&expression.func);
-            let executes_callback = matches!(function, syn::Expr::Path(path) if self.callbacks.contains(&self.path(&path.path)));
-            for argument in &expression.args {
-                match argument {
-                    syn::Expr::Closure(closure) if executes_callback => {
-                        visit::visit_expr_closure(self, closure)
-                    }
-                    argument => self.visit_expr(argument),
-                }
-            }
-        } else {
-            visit::visit_expr_call(self, expression);
-        }
+        visit::visit_expr_method_call(self, expression);
     }
     fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {
         if self.in_macro {
