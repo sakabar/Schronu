@@ -2007,3 +2007,485 @@ TD-036はparser、handler、runtime、renderer/viewの各契約を別commitに�
 
 backlog.mdのWave 1、W1-A〜W1-Jを統括してください。各laneは内部subagentではなく、サイドバーから個別に確認できる新しいCodex taskとして現在のproject内に作成し、それぞれ別branch・別worktreeで実装してください。親taskは各taskの進捗を監視し、backlog記載のwrite範囲と依存関係を管理してください。各laneでは契約単位のRed/Green commit、各Green後のsubagent review、品質ゲート、履歴reviewを実施してください。親taskでも各branchのmain...branch差分とcommit履歴を個別reviewし、問題があれば該当taskへ修正を依頼してください。Wave 2は実装せず、残存作業として報告してください。
 各lane taskの初回turnでは、ファイル編集・実装・commitを一切行わず、backlog.md、write範囲、依存関係を調査し、契約単位のRed/Green commit計画のみを提示して終了してください。親taskから計画承認と実装開始の指示を受けるまで待機してください。
+
+## 追加監査(2026-09-19)
+
+- 監査日: 2026-09-19
+- 対象revision: `10fba05df60c04f7fde888874a747ceff0c66c65` (`10fba05d`)
+- 更新範囲: 本節の追記だけ。TD-001〜TD-043の完了状況、本文、過去の検証記録、着手順、Wave計画は変更していない。
+- 評価基準: 本文冒頭のP0〜P3とS〜XLを引き継ぐ。コードの行数や`unwrap`の存在だけで不具合と判定せず、到達する入力、失敗後の状態、変更時の責務境界、検証の欠落を根拠にする。
+- 証拠の区分: `再現済み`は一時storageの製品MCP経路または製品Apps Scriptへの障害注入で観測した結果、`静的確認`はコード・設定・既存testの照合結果を指す。性能劣化、OOM、実Google Sheets上の障害発生を実測したとは扱わない。
+
+### 調査範囲と限界
+
+| 領域 | 調査した境界 | 今回の扱い |
+| --- | --- | --- |
+| entity / application | task状態・日時・残作業時間、反復、schedule / pack / flatten、一覧・pagination、transaction調停 | 日時演算とschedulerの責務集中を追加。再帰処理、Pending期限計算はTD-041 / TD-043を参照 |
+| gateway | YAML decode / encode、repository load / save / revision、transaction prepare / commit / recovery、snapshot / restore、lock、busy time / config | 保存前後の情報保持、日時の再読込、transactionの保持bytesを追加 |
+| CLI / MCP | 入力解析、handler・runtime・viewの分担、JSON-RPC lifecycle、入力型、エラー変換、保存経路 | 一時storageでMCPからの読込・更新・再起動を確認。既存のCLI責務・source scanner問題は重複登録しない |
+| Web | worker・endpoint、server adapter、clientのrequest / response・mutation safety・localStorage、表示projection、毎秒tick、UI仕様 | workerの障害分類・負荷制御、診断、表示再計算の検証不足を追加 |
+| shell / Apps Script | export / import、列定義、task名と日時、segment / task同期、lockと書込 | 実scriptと既存fakeで同期失敗を確認。列契約・日時検証等の既存項目は重複登録しない |
+| test / 設定 / CI / 文書 | Cargo featureとworkspace、toolchain、workflow、fixture・contract test、READMEとWeb両仕様 | WebのCI漏れを追加。巨大test、独自source解析、part1 / part2分割はTD-015 / TD-036 / TD-042との重複を避ける |
+
+本監査は上記の境界ごとの静的確認、既存test、限定した異常系再現を組み合わせたものであり、全入力・全分岐の網羅証明ではない。依存crateの最新脆弱性DB照合、fuzzing、実Google Sheetsのquota・通信障害、実browserの描画時間・端末別挙動、Linux上の今回の再実行、release性能・ピークRSS計測、`dx build`は実施していない。外部公開・認証・端末間同期・browser tab間の即時同期など、Web要件が明示的に対象外とする機能は欠陥として登録しない。実運用storageは変更していない。
+
+### 今回の検証結果
+
+過去の監査表とは別の実行記録である。環境はmacOS arm64、repository指定のRust 1.97.1。依存解決は`--locked --offline`を用いた。通常testがGreenでも、後述の異常系を保証するものではない。
+
+| 検証コマンド | 結果 | 確認範囲 |
+| --- | --- | --- |
+| `cargo test --locked --offline -q` | 成功 | 合計1,416 passed / 2 ignored / 失敗0。libraryは1,343 passed / 1 ignored、scheduling fixtureに別途1件ignoredあり |
+| `cargo test --locked --offline -q -p schronu-web --features server` | 成功 | 合計276 passed / 失敗0、うちlibrary 124 passed |
+| `node --test apps_script/main.test.mjs` | 成功 | 16 passed、失敗0 |
+| `cargo fmt --check` | 成功 | format差分なし |
+| `cargo clippy --locked --offline --all-targets -- -D warnings` | 成功 | rootの既定packageを検証 |
+| `cargo clippy --locked --offline -q -p schronu-web --all-targets --features server -- -D warnings` | 成功 | Web server featureを明示して検証 |
+| `cargo check --locked --offline -q -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown` | 成功 | browser専用のWASMコンパイル境界を確認。実browser実行ではない |
+
+#### 異常系再現の共通条件
+
+TD-044〜TD-047は`cargo build --locked --offline --bin schronu-mcp`で用意できる製品binaryを使う。各case専用の空の一時directoryを`SCHRONU_STORAGE_DIR`へ設定し、その下の`project/project.yaml`へ記載のfixtureを置く。`SCHRONU_CONFIG_PATH`は未指定にし、TD-044〜TD-046は`TZ=Asia/Tokyo`、TD-047は`TZ=America/New_York`で実行する。MCPへ次の2行を送って初期化した後、各項目の`tools/call`を1行JSONとして送り、stdinを閉じてstdout、stderr、終了code、保存fileを確認する。
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+```
+
+各caseの基本fixtureは次のとおり。項目ごとの追加フィールドは`project`の直下へ同じindentで置く。再起動とは、同じ一時storageを指定して新しいMCP processを起動し、同じ初期化を行うことを指す。
+
+```yaml
+project:
+  name: audit-task
+  id: 00000000-0000-4000-8000-000000000001
+```
+
+TD-048 / TD-049はNodeの`vm`で`apps_script/main.js`を実行し、`apps_script/test_support/fake_spreadsheet.mjs`と同じSpreadsheet / LockService境界へ失敗を注入した。Google API自体のtransaction保証や障害頻度の実測ではない。
+
+### 新規負債一覧
+
+| ID | 優先度 | 完了状況 | 概算 | 証拠 | 項目 |
+| --- | --- | --- | --- | --- | --- |
+| TD-044 | P1 | 未着手 | M | 再現済み | 締切計算が受理済みの大きな見積秒数でpanicする |
+| TD-045 | P1 | 未着手 | S | 再現済み | 複数文書のproject YAMLを受理し、更新保存で後続文書を消失させる |
+| TD-046 | P1 | 未着手 | M | 再現済み | 未知のYAMLフィールドを無視し、更新保存で消失させる |
+| TD-047 | P1 | 未着手 | L | 再現済み | 日時保存でoffsetを失い、夏時間終了時の日時を再読込できない |
+| TD-048 | P1 | 未着手 | S | 障害注入で再現済み | Apps Scriptがlock競合時の同期中止を通知しない |
+| TD-049 | P1 | 未着手 | M | 障害注入で再現済み | Apps Scriptの書込例外で部分同期が残り、失敗範囲の診断と明示的な復旧案内がない |
+| TD-050 | P1 | 未着手 | M | 静的確認 | CIがWebのfeature別test・clippy・WASM境界を検証しない |
+| TD-051 | P1 | 未着手 | M | 静的確認・既存test | Web workerが未実行と結果不確実を同じretry可能errorにする |
+| TD-052 | P2 | 未着手 | M | 静的確認 | Web workerのqueue容量と待機時間が無制限である |
+| TD-053 | P2 | 未着手 | M | 静的確認 | Webの一般化されたエラーからserver側の原因を追跡できない |
+| TD-054 | P2 | 未着手 | M | 静的確認・性能未計測 | Webの毎秒tickで非表示画面のmodelも再構築し、性能基準がない |
+| TD-055 | P2 | 未着手 | L | 静的確認 | scheduling policyに複数の状態管理責務が集中している |
+| TD-056 | P2 | 未着手 | L | 静的確認・RSS未計測 | transaction preflightが適用待ちの全write bytesを保持する |
+
+### TD-044: 締切計算が受理済みの大きな見積秒数でpanicする
+
+- 分類: `バグ / プロセス継続性`
+- 優先度: `P1`
+- 概算規模: `M`
+- 証拠: `再現済み`
+
+#### 現状と根拠・再現条件
+
+- `src/entity/datetime.rs:54-71`は`Duration::seconds`と日時の減算operatorを直接使う。整数として表現可能でもchronoのduration / datetime範囲に収まる保証がない。
+- `src/adapter/gateway/yaml.rs:330-336,428`は見積秒数の非負だけを検査し、`src/entity/task.rs:323-359`のstatus再計算が締切計算を呼ぶ。
+- 基本fixtureへ`estimated_work_seconds: 9223372036854775807`、`start_time: 2026/01/01 00:00:00`、`deadline_time: 2026/12/31 23:59:59`を追加して`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_tasks","arguments":{}}}`を実行した。終了codeは101、stderrは`TimeDelta::seconds out of bounds`であり、tool error応答を返さない。
+
+#### 影響
+
+- 形式検証を通る1taskがrepository全体の読込を中断する。Webでも同じdomain処理を使うため、worker停止へ波及する可能性がある。
+
+#### 推奨する改善方針
+
+- duration生成と加減算をchecked化し、task / field / 演算の情報を持つerrorとしてloadとapplication境界へ伝搬する。巨大値を丸めて受理しない。
+- duration範囲内でも日時範囲外になるケースを別途扱う。setterの後段で失敗する場合は変更前に検証し、部分状態を残さない。
+
+#### 完了条件
+
+- 上記fixture、duration境界、日時の上下限、CLI / MCPからの見積・締切更新がpanicせず、対象を特定できるerrorを返す。
+- 失敗後のtask属性・revision・diskを変更せず、同一MCP processが後続requestへ応答できる。
+
+#### 依存関係
+
+- TD-027の残作業時間の整数演算、TD-043のPending上限の計算式とは別契約。修正を一括りにしない。TD-051は停止原因を直しても必要なworker側の防御である。
+
+### TD-045: 複数文書のproject YAMLを受理し、更新保存で後続文書を消失させる
+
+- 分類: `バグ / データ保全`
+- 優先度: `P1`
+- 概算規模: `S`
+- 証拠: `再現済み`
+
+#### 現状と根拠・再現条件
+
+- `src/adapter/gateway/task_repository/load.rs:139-166`は全YAML文書をparseした後、`docs.first()`だけを採用する。文書数を検証しない。
+- 基本fixtureの末尾へ、indentなしの`---`に続けて別の`project` mappingを追加する。2件目の名前は`second-document`、UUIDは`00000000-0000-4000-8000-000000000002`とする。`list_tasks`は成功して先頭の1件だけを返す。
+- 先頭taskへ`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"update_task","arguments":{"task_id":"00000000-0000-4000-8000-000000000001","estimated_work_minutes":20}}}`を実行すると成功するが、保存fileから2文書目が消える。`src/adapter/gateway/task_repository.rs:396,472-489`は読み込んだprojectだけを再serializeする。
+
+#### 影響
+
+- 読込成功が保存時の情報保持を保証せず、手動結合等で混入した別projectを更新時に消失させる。
+
+#### 推奨する改善方針
+
+- project fileは1文書という契約をload時に検証し、余分な文書をfile pathと文書位置付きで拒否する。空文書も黙って無視しない。
+- 複数projectの自動分割やmigrationはこの修正へ混ぜず、元fileを保持したまま修復を案内する。
+
+#### 完了条件
+
+- 1文書は従来どおり読め、複数文書・末尾の空文書はread / 検証 / backupのstrict検証で一貫して拒否される。
+- load失敗でmemoryや元fileを変更せず、更新commandが保存へ進まない。
+
+#### 依存関係
+
+- TD-003の既知fieldの値検証、TD-021の読込済みtaskのUUID一意性とは別の文書構造契約。TD-046と同じYAML周辺を触るが、Red理由とcommitを分離する。
+
+### TD-046: 未知のYAMLフィールドを無視し、更新保存で消失させる
+
+- 分類: `バグ / データ保全・schema境界`
+- 優先度: `P1`
+- 概算規模: `M`
+- 証拠: `再現済み`
+
+#### 現状と根拠・再現条件
+
+- `src/adapter/gateway/yaml.rs:291-459`のstrict decodeは既知キーを個別に読むが、mapping全体の未知キーを検査しない。`task_snapshot_to_yaml_recursive`は既知属性だけを出力する。
+- 基本fixtureのproject直下へ`custom_metadata: keep-me`を追加する。`list_tasks`は成功し、TD-045と同じ`update_task`で見積を20分にすると、保存fileから`custom_metadata`が消える。
+
+#### 影響
+
+- field名のtypoや将来形式のdataを読めたように見せ、次の無関係な更新で失う。現在のserializerが扱えないdataを黙って受理している。
+
+#### 推奨する改善方針
+
+- document rootとtask mappingの許可キーを明示し、未知キーと非文字列キーをfile / task path付きで拒否する。既存の省略可能field・legacy形状を誤って拒否しないようinventoryを先に固定する。
+- 現在未定義の拡張fieldを黙って保持・解釈する仕組みは追加せず、読み取れない形式は保存前に止める。既存fileの検査と修復案内を用意する。
+
+#### 完了条件
+
+- root / childの未知キー、typo、非文字列キーを検出し、元fileのbytesを保持する。
+- 既存の正常・legacy fixtureが通り、CLI検証、MCP load、snapshotのstrict検証が同じ規則を使う。
+
+#### 依存関係
+
+- TD-003 / TD-037は既知fieldの値とlenient APIの問題であり、本項目はmappingの受理範囲を扱う。TD-045とは文書数とfield集合の別cycleにする。
+
+### TD-047: 日時保存でoffsetを失い、夏時間終了時の日時を再読込できない
+
+- 分類: `バグ / 永続化round-trip`
+- 優先度: `P1`
+- 概算規模: `L`
+- 証拠: `再現済み`
+
+#### 現状と根拠・再現条件
+
+- `src/adapter/gateway/yaml.rs:78,103-127`は各日時をoffsetも小数秒もない`%Y/%m/%d %H:%M:%S`へ変換する。`strict_datetime`(`257-289`)はローカル日時変換の`LocalResult::Single`だけを受理する。
+- `TZ=America/New_York`で基本fixtureへ`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"update_task","arguments":{"task_id":"00000000-0000-4000-8000-000000000001","deadline_time":"2026-11-01T01:30:00-04:00"}}}`を実行すると成功する。
+- 同じstorage・TZで再起動して`list_tasks`を呼ぶと、`project.deadline_time: must be a valid local datetime`を含む`repository_load_failed`になる。保存値`2026/11/01 01:30:00`からは夏時間終了前後のどちらかを復元できない。
+
+#### 影響
+
+- 公開APIが受理した正しい日時を保存するだけで、そのprojectを含むrepositoryが次回から読込不能になる。運用timezone変更時にもoffsetを失った形式の解釈が変わる。
+
+#### 推奨する改善方針
+
+- RFC 3339等のoffsetと必要な精度を保持する表現を読み書きへ導入する。新形式のdecodeを先に追加し、旧形式の一意に解釈できる値の読込互換を維持した後にwriterを切り替える。
+- 曖昧な旧値を勝手に早い方・遅い方へ丸めない。file / fieldと修復に必要な情報を返し、schema互換・backup / restore・運用手順を同時に文書化する。
+
+#### 完了条件
+
+- 上記offsetと同日の`-05:00`を、それぞれ別のinstantとしてsave / reloadできる。各永続日時fieldと小数秒の保持方針もtestで固定する。
+- 旧形式の正常fileは読み込め、曖昧・存在しないローカル時刻は理由を保ったerrorになる。MCP製品経路とbackup / restoreで同じ結果になる。
+
+#### 依存関係
+
+- TD-035は反復の日付移動で壁時計時刻を保つ契約。本項目は保存表現の情報保持であり別件。TD-044〜TD-046とYAML周辺の変更順を調整するが、契約とcommitは分ける。
+
+### TD-048: Apps Scriptがlock競合時の同期中止を通知しない
+
+- 分類: `バグ / 同期の信頼性`
+- 優先度: `P1`
+- 概算規模: `S`
+- 証拠: `障害注入で再現済み`
+
+#### 現状と根拠・再現条件
+
+- `apps_script/main.js:60-63`は`tryLock(1000)`がfalseなら即returnし、通知・再試行・未同期記録を行わない。元sheetの手動編集は既に行われている。
+- `vm`へ対象sheet名`実ログ`、row 3・1行のrangeを渡し、DocumentLockの`tryLock`をfalseにした。`onEdit`は例外なく終了し、toast呼出は0回だった。既存fakeの`tryLock`(`apps_script/test_support/fake_spreadsheet.mjs:133-138`)は常にtrueで、この境界を検証しない。
+
+#### 影響
+
+- 編集が短時間に重なると両sheetが不一致のまま残り、利用者にはどちらの値が同期済みか分からない。
+
+#### 推奨する改善方針
+
+- 同期対象の競合時に未同期を通知し、対象task / segmentと手動再同期の方法を示す。再同期は最新のidentityと値を再検証し、古い編集内容を無条件に再送しない。
+- lock待ちを無制限に延長せず、未同期時の扱いをApps Scriptの運用文書へ記載する。
+
+#### 完了条件
+
+- lock失敗時に同期先へ書き込まず、利用者が対象と復旧手順を確認できる。
+- 成功・失敗・再同期のtestを実`onEdit`経路で固定し、lock解放を保証する。
+
+#### 依存関係
+
+- TD-014の速度最適化ではなく、同項目が別課題としたlock競合の正確性を扱う。TD-033のidentity規則を維持し、TD-049の途中書込失敗とは分ける。
+
+### TD-049: Apps Scriptの書込例外で部分同期が残り、失敗範囲の診断と明示的な復旧案内がない
+
+- 分類: `技術的負債 / 同期の障害回復性`
+- 優先度: `P1`
+- 概算規模: `M`
+- 証拠: `障害注入で再現済み`
+
+#### 現状と根拠・再現条件
+
+- `apps_script/main.js:181-188`はidentityの事前検証後、計画した各cellへ順に`setValue`する。外側の`finally`はlockだけを解放し、書込失敗の分類や再同期の状態を保持しない。
+- 両sheetに同一taskのind `0000` / `0001`を置き、実ログのrow 3のR列を`W`へ編集する。既存fakeを読み込み、`優先度低い順`の`writeCell`を例外へ差し替えると、実ログrow 4のR列だけが先に更新された状態で例外となり、toastは0回だった。
+- 障害を除去して元cellを再編集すれば既存経路でも全segmentを同期できることを確認した。再同期が不可能なのではなく、失敗範囲の診断と復旧案内がないことが本項目の対象である。
+
+#### 影響
+
+- task単位で一致すべきN / R列やsegment単位の値が部分反映される。入力検証が成功しても同期の完了は保証されず、再試行の対象も分からない。
+
+#### 推奨する改善方針
+
+- 同期計画、書込実行、結果診断を分け、例外時は失敗位置と反映確認が必要な範囲を提示する。I/O例外だけから未反映と断定しない。
+- 最新値を読み直して未同期を確認できる再同期経路を用意する。他の手動編集を上書きする無条件rollbackは避け、再実行時もidentityと競合を検証する。
+
+#### 完了条件
+
+- 最初・途中・最後のwriteと結果不明の失敗を注入し、全件成功と部分反映を区別できる。
+- 再同期で意図した全segmentが揃い、途中の別編集やidentity変更は診断される。失敗時もlockが解放される。
+
+#### 依存関係
+
+- TD-033の複合keyとtask / segment列の契約を使う。TD-048と復旧UIを共有できるが、lock未取得と書込途中の失敗は別cycleにする。TD-014の実測を覆す根拠なしにbatch化を速度改善として導入しない。
+
+### TD-050: CIがWebのfeature別test・clippy・WASM境界を検証しない
+
+- 分類: `技術的負債 / 検証漏れ`
+- 優先度: `P1`
+- 概算規模: `M`
+- 証拠: `静的確認`
+
+#### 現状と根拠
+
+- `Cargo.toml:6-9`はworkspaceへWebを含める一方、`default-members = ["."]`とする。`.github/workflows/ci.yml:37-47`のtest / clippyはpackageもworkspaceも指定しない。
+- `schronu-web/Cargo.toml`のdefault featureは空で、`server` / `web`を明示しなければ両方の製品境界を検証できない。`schronu-web/src/app.rs`にはWASM targetでのみ有効なbrowser moduleもある。
+- 今回のWeb server test・clippy・WASM checkは明示的に追加実行して成功したが、これらは現在の通常CIにない。
+
+#### 影響
+
+- root CIがGreenでもWebのコンパイル・挙動の回帰をmerge前に検出できない。
+
+#### 推奨する改善方針
+
+- root gateを維持し、Webのdefault / server / webのfeature境界に対応したtest・clippyと`wasm32-unknown-unknown`のcheckを明示する。nativeの`--all-features`だけでbrowser専用コードを検証したことにしない。
+- WASM targetと必要なtool versionを固定し、既存の`dx build`最終gateをCIへ置く場合はcheckとの役割を明示して重複実行を避ける。実browserのsmoke確認はコンパイルとは別に扱う。
+
+#### 完了条件
+
+- WebだけのPRも対象になり、server endpoint testとbrowser専用moduleのコンパイル失敗がCI失敗になる。
+- root・Apps Script・benchmarkingの既存gateを維持し、feature間の依存混入を検知できる。
+
+#### 依存関係
+
+- TD-008のroot品質gate整備後に増えたWeb packageの検証範囲を扱う。新規Web修正より先行でき、製品の挙動変更を伴わない。
+
+### TD-051: Web workerが未実行と結果不確実を同じretry可能errorにする
+
+- 分類: `技術的負債 / 障害分類・再送安全性`
+- 優先度: `P1`
+- 概算規模: `M`
+- 証拠: `静的確認・既存test`。commit後のpanicによる実データの二重更新は今回再現していない。
+
+#### 現状と根拠
+
+- `schronu-web/src/web_worker.rs:75-129`はcommand送信失敗と、送信後のresponse channel切断の双方を同じ`unavailable_error`にする。同file`158-164`は常に`RetryAdvice::Retry`を返す。
+- workerは`spawn`時に一度生成されるだけで、停止したthreadを同じhandleから復旧する経路はない。`schronu-web/tests/web_worker_contract.rs:108-115`はpanicしたworkerからretry可能errorを返すことを固定している。
+- `schronu-web/src/client/state/session_state.rs:741-748`で安全markerを残すのはtransport失敗と`repository_state_uncertain`であり、workerの応答喪失はその分類へ入らない。受理後にworkerが消えたことだけではmutation未実行を保証できない。
+
+#### 影響
+
+- 時間をおいても回復しない障害に再試行を案内する。mutationの結果が不明なケースを安全に再送できるケースと区別できない。
+
+#### 推奨する改善方針
+
+- queueへ送れなかった未実行と、受理後に結果が得られない状態を区別する。後者のmutationでは既存の安全markerを維持し、自動再送しない。
+- 停止したworkerにはserver再起動とrepository確認を含む復旧手順を返す。安易なcatch / 再spawnで途中の変更状態を継続しない。
+- 現在のretryを肯定する既存testは、未実行と結果不確実の2契約へ置換する。Webのerror契約とUI両文書も同じ変更で揃える。
+
+#### 完了条件
+
+- 送信前停止、受理後停止、mutation後の応答喪失、read失敗を別々に固定する。
+- 不確実なmutationではreload後もmarkerが残り、明示確認まで再送されない。恒久停止に単なる待機再試行を案内しない。
+
+#### 依存関係
+
+- TD-041はstack消費の根本原因、本項目は停止時の契約。TD-044でpanic原因を減らしても独立して必要。TD-052の待機期限設計に先行する。
+
+### TD-052: Web workerのqueue容量と待機時間が無制限である
+
+- 分類: `技術的負債 / 資源制御`
+- 優先度: `P2`
+- 概算規模: `M`
+- 証拠: `静的確認`。負荷によるOOMや待機時間超過は未計測。
+
+#### 現状と根拠
+
+- `schronu-web/src/web_worker.rs:66`は無制限の`std::sync::mpsc::channel`を使う。同file`75-129`の各要求はresponseを期限なしで待つ。
+- `run_worker`(`133-155`)は全操作を1本のthreadで逐次処理し、呼出元が応答待ちを中止してもqueue内のcommandの破棄方針を持たない。
+
+#### 影響
+
+- 重いscheduleやI/Oが1件停滞すると後続のread / mutationも待ち続ける。複数接続や連続requestで受付済み要求を制限できない。
+
+#### 推奨する改善方針
+
+- 代表負荷でqueue容量と待機時間の基準を定め、async handlerのthreadをblockingさせずに有界queueへ受付する。満杯時は未受付と分かるerrorを返す。
+- queued readの取消と、受付済みmutationの継続・結果照会を分ける。timeoutをrollbackや未実行の証拠として扱わず、順序と既存の直列化を維持する。
+
+#### 完了条件
+
+- 停滞するfake operationと連続送信でqueue上限・受付拒否・順序・取消を決定論的に検証する。
+- mutation待機切れを安全に再送可能と誤分類せず、後続操作の復旧条件を説明できる。
+
+#### 依存関係
+
+- TD-051の成否分類を先に固定する。stack上限のTD-041、画面再計算のTD-054とは別の資源を扱う。
+
+### TD-053: Webの一般化されたエラーからserver側の原因を追跡できない
+
+- 分類: `技術的負債 / 障害診断`
+- 優先度: `P2`
+- 概算規模: `M`
+- 証拠: `静的確認`
+
+#### 現状と根拠
+
+- `schronu-web/src/app/environment_web_operations.rs:67-75`は設定読込とstorage path解決のerrorを捨て、同じ一般的な設定errorへ変換する。
+- `schronu-web/src/controller_error.rs:5-33`もbusy time、path、lock、repository、save等の詳細を公開用messageへ変換するが、その境界に元のsource chainを保存する処理がない。
+- 利用者へprivate pathを公開しない既存testは妥当である一方、server側の原因記録を保証するtestはない。
+
+#### 影響
+
+- permission、壊れたYAML、一時的なlock競合などの区別が表示から失われ、利用者へ同じ再試行を案内する。障害時に操作と原因を突き合わせられない。
+
+#### 推奨する改善方針
+
+- adapter境界で操作名・追跡ID・失敗phase・原因をserverの診断sinkへ記録し、その後に公開errorへ変換する。wireへ詳細を直接露出することで解決しない。
+- task名・payload・private path等の出力方針を定め、必要な情報だけを記録する。診断sink失敗で元のerrorを上書きしない。
+
+#### 完了条件
+
+- 設定不正、load、lock、保存前失敗、状態不確実の各ケースをfake sinkで識別でき、公開応答へprivate detailが漏れない。
+- 1操作の記録を対応付けられ、sink失敗時にも本来のerrorとretry分類を維持する。
+
+#### 依存関係
+
+- TD-051とerror分類を揃えるが、診断導入とmutation安全性は別cycle。CLI / MCPの公開error形式を同時に変更しない。
+
+### TD-054: Webの毎秒tickで非表示画面のmodelも再構築し、性能基準がない
+
+- 分類: `技術的負債 / 表示性能・検証容易性`
+- 優先度: `P2`
+- 概算規模: `M`
+- 証拠: `静的確認・性能未計測`
+
+#### 現状と根拠
+
+- `schronu-web/src/app/component/browser.rs:22,37-53`は毎秒stateを更新し、`BrowserPageModel::from_state_at`を構築する。表示するtabの分岐はmodel構築後にある。
+- `schronu-web/src/app/component_models.rs:34-64`はactive tabによらずsession、全一覧row、日付、履歴をprojectする。`schronu-web/src/client/view_projection.rs:157-205`は取得済みrowを走査し、表示用文字列等を生成する。
+- rootのscheduling benchmarkはbrowserでのprojection、DOM更新、localStorageの保存費用を対象にしない。
+
+#### 影響
+
+- row数や履歴量による再構築費用が毎秒発生する。現時点で利用者が体感する遅延や具体的な許容上限は未計測であり、最適化の優先度を判断できない。
+
+#### 推奨する改善方針
+
+- small / typical / stressの表示fixtureで、clockだけの更新、一覧受信、検索、tab切替の費用を分けて測る。
+- 時計依存の進捗・bufferと静的な一覧・履歴を分離し、該当dataが変わった時だけ後者を再構築する。最適化前に再計算回数と実browserの所要時間の基準を記録する。
+
+#### 完了条件
+
+- clockだけのtickでは一覧・履歴を不要に再projectせず、data変更時は確実に更新することを製品経路のtestで固定する。
+- 進捗、buffer、carry lock期限、timezone表示、選択状態、一覧復元を維持し、実browser測定条件と結果を残す。
+
+#### 依存関係
+
+- TD-012はserver側のschedule / pack / flatten費用であり対象が異なる。TD-042のtest配置変更とは独立させる。TD-050のCI整備を先行すると回帰を検知しやすい。
+
+### TD-055: scheduling policyに複数の状態管理責務が集中している
+
+- 分類: `技術的負債 / 保守性・責務境界`
+- 優先度: `P2`
+- 概算規模: `L`
+- 証拠: `静的確認`
+
+#### 現状と根拠
+
+- `src/application/scheduling_policy.rs`は対象revisionで2,570行ある。行数だけでなく、`SchedulerFrontier`(`331`)、`SlackDemandIndex`(`371`)、`SlackRangeTree`(`397`)が別々の状態管理を同居させている。
+- 同fileの候補選択(`2000`)、先読み選択(`2083`)、`PolicyState`(`2123`)、segment生成(`2431`)までが同一moduleにあり、privateな状態の変更範囲が広い。引数数のlint抑制も残る。
+
+#### 影響
+
+- 区間木の更新、先読みの一時変更と復元、業務上の選択規則を同時に追う必要があり、局所的な修正でもreview範囲が広がる。
+
+#### 推奨する改善方針
+
+- interval / slack index、frontier、先読みの変更・復元、policy orchestrationを責務別のprivate moduleへ分ける。機械的移動では型・error・公開API・選択順を変更しない。
+- 同型のhelperやfixtureを複製せず、状態更新を所有する側へ閉じ込める。アルゴリズム変更や高速化は移動後の別cycleにする。
+
+#### 完了条件
+
+- 同時刻のtie-break、deadline、atomic / fixed task、分割segment、先読みの復元が移動前後で一致する。
+- 通常testとbenchmarkingのcounter / 同値性契約がGreenであり、各moduleの所有状態と依存方向を説明できる。行数だけを減らすtest削除は行わない。
+
+#### 依存関係
+
+- TD-018はCLI orchestration、TD-019は計測境界、TD-041は再帰stackの問題。本項目は現在のscheduler内部の責務分離であり、それらの完了状況を変更しない。
+
+### TD-056: transaction preflightが適用待ちの全write bytesを保持する
+
+- 分類: `技術的負債 / 永続化の資源制御`
+- 優先度: `P2`
+- 概算規模: `L`
+- 証拠: `静的確認・RSS未計測`
+
+#### 現状と根拠
+
+- `src/adapter/gateway/storage_transaction/commit.rs:177-303`は各staged fileを読み、`PreflightEntry::Write { bytes: Vec<u8>, ... }`として全件をcollectしてから適用する。検証途中にはlive targetのbytesも読む。
+- `src/adapter/gateway/task_repository.rs:483-548`のsave経路はserialize済みの全変更projectも`prepared_writes`に保持する。通常saveと再起動recoveryでは保持物が異なるため、別々の計測が必要である。
+- TD-022の残存非対象に記載された「全staged bytesを保持するpreflightのmemory最適化」を、独立して着手できる詳細項目として具体化した。TD-022の内容・完了状況は変更しない。
+
+#### 影響
+
+- 保存対象総量に比例した追加memoryを必要とする。大規模restore / recoveryでのピークRSSと許容範囲は今回未計測であり、OOMを再現済みとは扱わない。
+
+#### 推奨する改善方針
+
+- 通常save、未適用transactionのrecovery、部分適用済みrecoveryを分け、file数・総bytes・最大file sizeに対する保持量を計測する。
+- 全entryのintegrity検証が完了する前にlive dataを変更しない契約を維持する。immutable staged materialの同一性を保証した二段階処理等で保持量を抑え、適用時に別bytesへ差し替わる問題を持ち込まない。
+- 受付上限を設ける場合はmarker公開前に検証する。既にcommit済みのtransactionを新上限だけで回復不能にせず、旧transactionのrecovery互換も設計する。
+
+#### 完了条件
+
+- aggregate sizeに対する保持bytes / RSSを測定し、設計した上限または最大単一file等に基づく保持量を検証できる。
+- 全件preflight、checksum不一致、適用済みtarget、staged欠落、permission、revision後置、crash後のidempotentなroll-forwardの既存契約を維持する。
+
+#### 依存関係
+
+- TD-022のtransaction protocolを前提とする。TD-039のsnapshot固有resource limitとは別境界であり、TD-041のstack消費とも分ける。既存failure injectionを再利用する。
+
+### 追加項目の推奨着手順と検証方針
+
+1. TD-044〜TD-047のデータ保全・再読込可能性を優先する。YAMLに集中するが、日時演算、文書数、field集合、保存形式を別々のRed / Green cycleにする。
+2. TD-048 / TD-049を同期失敗の契約として個別に進める。TD-050は独立して先行し、TD-051のWeb安全停止をCIで検証できるようにする。
+3. TD-051の未実行 / 結果不確実の分類を固定してからTD-052の負荷制御へ進む。TD-053の診断は同じ分類に対応付ける。
+4. TD-054 / TD-056は計測と上限設定を先に行い、未測定の性能改善を目的に契約を緩めない。TD-055は機械的移動を独立させ、機能変更と同時に行わない。
+
+この順序は本節の追加項目だけを対象とし、既存Wave計画の更新ではない。各修正では製品経路の回帰test、期待した単一理由のRed、最小Green、品質gate、reviewを契約単位で実施する。旧挙動を肯定する既存testは検索し、維持・反転・置換の判断をcommit計画へ記録する。今回の追記自体は製品testや仕様を変更せず、修正完了を示すものではない。
