@@ -198,7 +198,18 @@ impl<'ast> Visit<'ast> for References<'_> {
         if let syn::Expr::Path(path) = function {
             self.calls.push((self.path(&path.path), expression.clone()));
         }
-        visit::visit_expr_call(self, expression);
+        if self.scoped_calls {
+            self.visit_expr(&expression.func);
+            for argument in &expression.args {
+                if let syn::Expr::Closure(closure) = argument {
+                    visit::visit_expr_closure(self, closure);
+                } else {
+                    self.visit_expr(argument);
+                }
+            }
+        } else {
+            visit::visit_expr_call(self, expression);
+        }
     }
     fn visit_item_use(&mut self, _item: &'ast syn::ItemUse) {
         if self.in_macro {
