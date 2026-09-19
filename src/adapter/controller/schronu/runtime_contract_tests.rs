@@ -6094,6 +6094,7 @@ fn test_interactiveのfinish実績overflow診断後のterminal_failureで状態�
         fail_output: Rc::clone(&fail_output),
         output: Rc::clone(&output),
         drop_count: Rc::clone(&drop_count),
+        flush_count: Rc::new(Cell::new(0)),
         error_kind: std::io::ErrorKind::PermissionDenied,
         fail_after_output_marker: Some(
             "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
@@ -6181,6 +6182,7 @@ fn test_interactiveのflatten余分argumentはparse_fatalでもterminal_guardを
         fail_output: Rc::clone(&fail_output),
         output,
         drop_count: Rc::clone(&drop_count),
+        flush_count: Rc::new(Cell::new(0)),
         error_kind: std::io::ErrorKind::PermissionDenied,
         fail_after_output_marker: Some(
             "[Error] 操作エラー: invalid input for additional_actual_work_seconds: actual work seconds overflow\n"
