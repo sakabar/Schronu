@@ -42,3 +42,13 @@ fn qualified_imports_and_nested_modules_do_not_change_identity() {
         "controller::runtime"
     );
 }
+
+#[test]
+fn alias_mediated_imports_are_not_returned_as_unresolved_paths() {
+    for text in [
+        "use super::runtime as driver; use driver::Transaction as T;",
+        "use driver::Transaction as T; use super::runtime as driver;",
+    ] {
+        assert!(imports("controller::handler", &product_file(text).unwrap()).is_err());
+    }
+}

@@ -9,6 +9,14 @@ pub fn imports(module: &str, file: &syn::File) -> Result<BTreeMap<String, String
         errors: Vec::new(),
     };
     collector.visit_file(file);
+    for (alias, path) in &collector.bindings {
+        let first = path.split("::").next().unwrap_or(path);
+        if collector.bindings.contains_key(first) && first != path {
+            collector.errors.push(format!(
+                "alias-mediated import needs explicit support: {alias} = {path}"
+            ));
+        }
+    }
     if collector.errors.is_empty() {
         Ok(collector.bindings)
     } else {
