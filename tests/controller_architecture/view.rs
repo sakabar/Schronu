@@ -23,19 +23,16 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                 paths
                     .into_iter()
                     .filter(|path| {
-                        [
-                            "controller::runtime",
-                            "controller::interactive",
-                            "controller::handler",
-                            "controller::command_context",
-                            "std::fs",
-                            "std::process",
-                            "std::env",
-                            "webbrowser",
-                            "crate::application::repository_transaction",
-                        ]
-                        .iter()
-                        .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}::")))
+                        super::runtime_io::coordination_dependency(path)
+                            || [
+                                "controller::interactive",
+                                "controller::handler",
+                                "controller::command_context",
+                            ]
+                            .iter()
+                            .any(|prefix| {
+                                path == prefix || path.starts_with(&format!("{prefix}::"))
+                            })
                     })
                     .map(|path| format!("view depends on coordination: {path}")),
             ),

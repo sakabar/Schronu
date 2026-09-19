@@ -24,16 +24,6 @@ pub fn definitions(module: &str, file: &syn::File) -> Result<Vec<syn::Item>, Str
     }
 }
 
-pub fn signatures(module: &str, file: &syn::File) -> Result<Vec<syn::Signature>, String> {
-    let mut collector = References::new(module, file)?;
-    collector.visit_file(file);
-    if collector.errors.is_empty() {
-        Ok(collector.signatures)
-    } else {
-        Err(collector.errors.join("\n"))
-    }
-}
-
 pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.paths.clear();
@@ -47,16 +37,6 @@ pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
 
 pub fn resolve_path(module: &str, file: &syn::File, path: &syn::Path) -> Result<String, String> {
     Ok(References::new(module, file)?.path(path))
-}
-
-pub fn data_accesses(module: &str, file: &syn::File) -> Result<(BTreeSet<String>, bool), String> {
-    let mut collector = References::new(module, file)?;
-    collector.visit_file(file);
-    if collector.errors.is_empty() {
-        Ok((collector.members, collector.indexed))
-    } else {
-        Err(collector.errors.join("\n"))
-    }
 }
 
 pub fn method_names(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
@@ -359,16 +339,6 @@ pub fn signature_paths(
     } else {
         Err(facts.errors.join("\n"))
     }
-}
-
-pub fn input_has(signature: &syn::Signature, name: &str) -> bool {
-    signature.inputs.iter().any(
-        |argument| matches!(argument, syn::FnArg::Typed(argument) if type_has(&argument.ty, name)),
-    )
-}
-
-pub fn output_has(signature: &syn::Signature, name: &str) -> bool {
-    matches!(&signature.output, syn::ReturnType::Type(_, ty) if type_has(ty, name))
 }
 
 pub fn output_functions(modules: &BTreeMap<String, syn::File>) -> BTreeSet<String> {

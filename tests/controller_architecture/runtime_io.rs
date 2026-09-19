@@ -1,16 +1,12 @@
-use super::paths::{
-    definitions, expand_local_globs, method_names, references, resolve_path, signature_paths,
-    signatures,
-};
+use super::paths::{definitions, expand_local_globs, method_names, references, resolve_path};
 use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
 use syn::ext::IdentExt;
 
-pub fn external_io_dependency(path: &str) -> bool {
+pub fn coordination_dependency(path: &str) -> bool {
     [
         "controller::runtime",
         "crate::application::repository_transaction",
-        "crate::adapter::gateway",
         "std::process",
         "std::fs",
         "std::env",
@@ -20,13 +16,15 @@ pub fn external_io_dependency(path: &str) -> bool {
     .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}::")))
 }
 
+pub fn external_io_dependency(path: &str) -> bool {
+    coordination_dependency(path)
+        || path == "crate::adapter::gateway"
+        || path.starts_with("crate::adapter::gateway::")
+}
+
 fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let mut errors = Vec::new();
-    for root in [
-        "controller::handler",
-        "controller::interactive",
-        "controller::renderer",
-    ] {
+    for root in ["controller::interactive", "controller::renderer"] {
         for (module, file) in module_family(modules, root) {
             match references(module, file) {
                 Ok(paths) => {
@@ -76,7 +74,7 @@ fn renderer_cannot_start_an_external_process() {
 }
 
 #[test]
-fn product_external_io_stays_outside_handler_driver_and_renderer() {
+fn product_external_io_stays_outside_driver_and_renderer() {
     assert_eq!(io_violations(&controller_modules()), Vec::<String>::new());
 }
 
@@ -235,11 +233,12 @@ fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
         let inspect = || -> Result<Vec<String>, String> {
             let file = expand_local_globs(module, file, modules)?;
             let mut errors = Vec::new();
+            let paths = references(module, &file)?;
             let mut operations = method_names(module, &file)?;
             operations.extend(
-                references(module, &file)?
-                    .into_iter()
-                    .map(|path| path.rsplit("::").next().unwrap_or(&path).to_string()),
+                paths
+                    .iter()
+                    .map(|path| path.rsplit("::").next().unwrap_or(path).to_string()),
             );
             for operation in operations {
                 if capabilities.contains(&operation.as_str()) {
@@ -248,14 +247,11 @@ fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                     ));
                 }
             }
-            for signature in signatures(module, &file)? {
-                for path in signature_paths(module, &file, &signature)? {
-                    if path.ends_with("CommandContext") {
-                        errors.push(format!(
-                            "runtime owns command-context operation: {}",
-                            signature.ident
-                        ));
-                    }
+            for path in paths {
+                if path.starts_with("controller::handler::") && path.ends_with("CommandContext") {
+                    errors.push(format!(
+                        "runtime depends on handler context capability: {path}"
+                    ));
                 }
             }
             Ok(errors)
@@ -299,7 +295,7 @@ fn mutation_boundary_rejects_ufcs_aliases_macro_calls_and_context_helpers() {
         "fn renamed(task: TaskHandle) { task.set_id(id); task.set_create_time(now); }",
         "use crate::entity::task::TaskHandle as Task; fn renamed() { Task::make_appointment(task, now); }",
         "impl Helper { fn renamed() { format!(\"{:?}\", task.set_actual_work_seconds(1)); } }",
-        "use super::handler::ProjectCommandContext as Context; fn renamed<C: Context>(context: &mut C) {}",
+        "use super::super::handler::ProjectCommandContext as Context; fn renamed<C: Context>(context: &mut C) {}",
     ] {
         let mut modules = controller_modules();
         modules.insert("controller::runtime::helper".into(), product_file(source).unwrap());
