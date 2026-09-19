@@ -44,6 +44,10 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                     ]
                     .iter()
                     .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}::")))
+                        || matches!(
+                            path.rsplit("::").next(),
+                            Some("recv_timeout" | "keys" | "into_raw_mode")
+                        )
                     {
                         errors.push(format!("runtime owns terminal dependency: {path}"));
                     }
@@ -75,7 +79,11 @@ fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
         }
     }
     for required in ["recv_timeout", "keys", "into_raw_mode"] {
-        if !driver_methods.contains(required) {
+        if !driver_methods.contains(required)
+            && !driver_paths
+                .iter()
+                .any(|path| path.rsplit("::").next() == Some(required))
+        {
             errors.push(format!("interactive driver must perform {required}"));
         }
     }
@@ -103,6 +111,7 @@ fn product_terminal_operations_belong_to_interactive_driver() {
 #[test]
 fn aliases_macros_and_nested_helpers_cannot_hide_terminal_operations() {
     for source in [
+        "fn renamed() { std::sync::mpsc::Receiver::recv_timeout(&receiver, timeout); }",
         "use termion::cursor as position; fn renamed() { position::Goto(1, 2); }",
         "fn renamed() { format!(\"{}\", termion::clear::All); }",
         "impl Helper { fn renamed(&self) { input.recv_timeout(timeout); } }",
