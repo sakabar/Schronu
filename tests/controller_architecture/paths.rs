@@ -1,9 +1,137 @@
 use std::collections::{BTreeMap, BTreeSet};
-use syn::visit::Visit;
+use syn::ext::IdentExt;
+use syn::parse::Parser;
+use syn::visit::{self, Visit};
 use syn::UseTree;
 
 pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
-    Ok(imports(module, file)?.into_values().collect())
+    let bindings = imports(module, file)?;
+    let mut collector = References {
+        module,
+        paths: bindings.values().cloned().collect(),
+        bindings,
+        errors: Vec::new(),
+    };
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.paths)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
+struct References<'a> {
+    module: &'a str,
+    bindings: BTreeMap<String, String>,
+    paths: BTreeSet<String>,
+    errors: Vec<String>,
+}
+
+impl References<'_> {
+    fn path(&self, path: &syn::Path) -> String {
+        let parts: Vec<_> = path
+            .segments
+            .iter()
+            .map(|segment| segment.ident.unraw().to_string())
+            .collect();
+        let raw = parts.join("::");
+        if let Some(target) = parts.first().and_then(|first| self.bindings.get(first)) {
+            if parts.len() == 1 {
+                target.clone()
+            } else {
+                format!("{target}::{}", parts[1..].join("::"))
+            }
+        } else {
+            qualify(self.module, &raw)
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.paths.insert(self.path(path));
+        visit::visit_path(self, path);
+    }
+
+    fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {}
+
+    fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
+        let name = self.path(&invocation.path);
+        self.paths.insert(name.clone());
+        let builtin = name.strip_prefix("std::").unwrap_or(&name);
+        if !matches!(
+            builtin,
+            "format"
+                | "format_args"
+                | "vec"
+                | "matches"
+                | "write"
+                | "writeln"
+                | "print"
+                | "println"
+                | "eprint"
+                | "eprintln"
+                | "panic"
+                | "unreachable"
+                | "assert"
+                | "assert_eq"
+                | "assert_ne"
+                | "debug_assert"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+                | "todo"
+                | "unimplemented"
+                | "include_str"
+                | "include_bytes"
+                | "env"
+                | "option_env"
+        ) {
+            self.errors.push(format!("unhandled macro: {name}"));
+            return;
+        }
+        let parser = |input: syn::parse::ParseStream<'_>| {
+            let mut expressions = Vec::new();
+            let mut pattern = None;
+            if builtin == "matches" {
+                expressions.push(input.parse::<syn::Expr>()?);
+                input.parse::<syn::Token![,]>()?;
+                pattern = Some(input.call(syn::Pat::parse_multi)?);
+                if input.peek(syn::Token![if]) {
+                    input.parse::<syn::Token![if]>()?;
+                    expressions.push(input.parse()?);
+                }
+                if input.peek(syn::Token![,]) {
+                    input.parse::<syn::Token![,]>()?;
+                }
+            } else {
+                while !input.is_empty() {
+                    expressions.push(input.parse::<syn::Expr>()?);
+                    if input.is_empty() {
+                        break;
+                    }
+                    if builtin == "vec" && input.peek(syn::Token![;]) {
+                        input.parse::<syn::Token![;]>()?;
+                    } else {
+                        input.parse::<syn::Token![,]>()?;
+                    }
+                }
+            }
+            Ok((expressions, pattern))
+        };
+        match parser.parse2(invocation.tokens.clone()) {
+            Ok((expressions, pattern)) => {
+                for expression in &expressions {
+                    self.visit_expr(expression);
+                }
+                if let Some(pattern) = pattern {
+                    self.visit_pat(&pattern);
+                }
+            }
+            Err(error) => self
+                .errors
+                .push(format!("unhandled {name}! arguments: {error}")),
+        }
+    }
 }
 
 pub fn imports(module: &str, file: &syn::File) -> Result<BTreeMap<String, String>, String> {
