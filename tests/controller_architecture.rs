@@ -4,6 +4,8 @@ mod context;
 mod dispatch;
 #[path = "controller_architecture/handler.rs"]
 mod handler;
+#[path = "controller_architecture/interactive.rs"]
+mod interactive;
 #[path = "controller_architecture/parser.rs"]
 mod parser;
 #[path = "controller_architecture/path_tests.rs"]
