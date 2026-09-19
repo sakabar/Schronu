@@ -2698,9 +2698,9 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 
 ### W8-A / TD-044: checked deadline calculations
 
-- 状態: local実装・内部review・親review完了。未push、未PR、実CI未実行、未merge。
+- 状態: local実装・内部review・親review完了。PR #470は作成済み。CI修正commitは未push、最新CI未実行、未merge。
 - task / worktree / branch: W8-A / `/Users/sakakibaratakafumi/.codex/worktrees/9355/Schronu` / `feature/w8-a-checked-deadlines`。
-- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`、review修正を含む実装最終revision`d366fcb5ea242f6f8752952c800210431c520285`。
+- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`、CI修正を含む実装最終revision`a9544c9c`。
 - 予約file: `src/entity/datetime.rs`、`src/entity/task.rs`、`src/application/task_use_case.rs`、`src/application/flatten_use_case.rs`、`src/adapter/gateway/yaml.rs`、同file内test、`src/application/task_use_case_tests.rs`、`src/adapter/gateway/yaml_tests.rs`、`tests/mcp_stdio.rs`。親reviewの指摘対応として`tests/support/persistent_storage.rs`、`tests/cli_runtime_contract.rs`、`tests/task_name_cli_contract.rs`を追加予約した。
 
 #### 固定した契約
@@ -2720,11 +2720,13 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 - `5d8e2c69`で予約時のDuration panicをRed化し、`bc11e663`でDuration生成をchecked化した。
 - `21d484ec`で予約時のDateTime加算panicをRed化し、`2c99bec9`でchecked additionと自己・子孫の事前検証へ変更した。`6e2a886e`で子孫伝搬の失敗原子性を追加固定した。
 - 親reviewのP2指摘に対し、`d366fcb5`で3箇所に重複していたstorage snapshot helperを再帰的な共通helperへ集約し、深いtransaction階層を検出する回帰を追加した。
+- PR #470の初回CI run `35456014875`では、`tests/mcp_stdio.rs`の新規CLI test 4件がLinuxで失敗した。CLI子processが`SCHRONU_CONFIG_PATH`を指定せず、localのprivate busy-time fileへ暗黙依存していたことを、欠損busy fileを指すconfigの継承で4件ともRedとして再現した。`a9544c9c`で専用configと7曜日の空busy-time fixtureを用意し、CLI子processへ明示して環境依存を除去した。
 
 #### Reviewと検証
 
 - 内部spec reviewで、子孫伝搬の事前検証、chrono境界、CLI経路を確認した。内部quality reviewの予約経路に関するP1を修正し、再reviewはblocking 0件、non-blocking 0件だった。
 - 親reviewのP2を修正後、共通helperの任意深度収集、相対pathの決定性、root `.lock`限定除外、既存before / after比較の維持を内部再reviewし、blocking 0件、non-blocking 0件だった。親branch reviewも通過した。
+- `a9544c9c`は空の専用`CARGO_TARGET_DIR`と欠損busy fileを指す外部configの継承条件でbuildから再検証し、対象CLI testは4 passedだった。同じ外部config条件の`tests/mcp_stdio.rs`は23 passedだった。修正後の内部reviewと親reviewはいずれも追加P1 / P2なしだった。
 - `cargo fmt --check`: 成功。
 - `cargo clippy --locked --all-targets -- -D warnings`: 成功。
 - `cargo test --locked`: 成功。root libraryは1326 passed、0 failed、1 ignored、`tests/mcp_stdio.rs`は23 passed。
@@ -2734,4 +2736,4 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 #### 互換性と残存作業
 
 - 通常範囲のdeadline計算、既存YAML、CLI / MCPの成功経路、完了済みtaskの予約境界を維持する。新しいerrorは従来panicしていた範囲外入力だけを明示的に拒否する。
-- push、PR作成、push / pull_requestで起動する実CI、mainへのmerge、Wave 8統合gateは未実施。W8-B / W8-Cとの共有summaryは担当laneが統合後に記録する。
+- Wave 8統合gateと共有summary後の文書gateは成功済みであり、初回branch pushとPR #470作成まで実施した。`a9544c9c`と本記録commitの外部push、それらを含む最新CI再実行、mainへのmergeは未実施。
