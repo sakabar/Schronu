@@ -1,7 +1,7 @@
-#[path = "controller_architecture/parser.rs"]
-mod parser;
 #[path = "controller_architecture/handler.rs"]
 mod handler;
+#[path = "controller_architecture/parser.rs"]
+mod parser;
 #[path = "controller_architecture/path_tests.rs"]
 mod path_tests;
 #[path = "controller_architecture/paths.rs"]
