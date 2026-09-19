@@ -640,6 +640,22 @@ children:
 }
 
 #[test]
+fn test_yaml_to_task_duration範囲外の見積秒数は子のpathと演算付きerrorを返す() {
+    let docs = YamlLoader::load_from_str(&format!(
+        "name: 親\nchildren:\n  - name: 子\n    status: pending\n    deadline_time: '2026/12/31 23:59:59'\n    estimated_work_seconds: {}\n",
+        i64::MAX
+    ))
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], yaml_test_now()).unwrap_err();
+
+    assert_eq!(
+        actual.to_string(),
+        "cannot convert project YAML to task: project.children[0].estimated_work_seconds: deadline_pending_limit duration is outside the supported range"
+    );
+}
+
+#[test]
 fn test_yaml_to_task_存在する型違いと不正enumはerrorを返す() {
     for (yaml, expected) in [
         (

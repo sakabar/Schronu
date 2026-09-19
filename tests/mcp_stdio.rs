@@ -362,6 +362,41 @@ fn mcp_stdio_壊れたrepositoryはcallでerrorとなり修復後に同一sessio
 }
 
 #[test]
+fn mcp_stdio_duration範囲外の見積秒数は読込errorとなり修復後に同一sessionで再試行できる() {
+    let storage = TestStorageDirectory::new();
+    let project_directory = storage.path().join("oversized-estimate");
+    fs::create_dir(&project_directory).unwrap();
+    let project_yaml = project_directory.join("project.yaml");
+    let original = format!(
+        "project:\n  name: audit-task\n  id: 00000000-0000-4000-8000-000000000001\n  status: pending\n  deadline_time: '2026/12/31 23:59:59'\n  estimated_work_seconds: {}\n",
+        i64::MAX
+    );
+    fs::write(&project_yaml, &original).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("duration-out-of-range");
+
+    let failed = mcp.call_tool("duration-out-of-range", "list_tasks", json!({}));
+
+    assert_structured_tool_error(
+        &failed,
+        "duration-out-of-range",
+        "repository_load_failed",
+        "repair_repository",
+    );
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains("project.estimated_work_seconds"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(fs::read_to_string(&project_yaml).unwrap(), original);
+
+    fs::remove_dir_all(&project_directory).unwrap();
+    let retried = mcp.call_tool("duration-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
 fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更しない() {
     use std::os::unix::fs::symlink;
 
