@@ -1732,6 +1732,38 @@ mod checked_deadline_calculation_tests {
         assert_eq!(child.get_deadline_time_opt().unwrap(), None);
         assert_eq!(parent.get_persistent_mutation_revision().unwrap(), revision);
     }
+
+    #[test]
+    fn make_appointmentはduration範囲外の受理済み見積をerrorにし属性とrevisionを変更しない() {
+        let now = Local::now();
+        let task_id = Uuid::new_v4();
+        let task = TaskHandle::with_identity("予約対象", task_id, now).unwrap();
+        task.set_estimated_work_seconds(i64::MAX).unwrap();
+        let original = task.get_attr().unwrap();
+        let revision = task.get_persistent_mutation_revision().unwrap();
+
+        let actual = task.make_appointment(now);
+
+        assert!(matches!(
+            actual,
+            Err(TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "estimated_work_seconds",
+                source: DeadlineCalculationError::DurationOutOfRange {
+                    operation: "appointment_deadline",
+                    ..
+                },
+            }) if error_task_id == task_id
+        ));
+        let observed = task.get_attr().unwrap();
+        assert_eq!(observed.get_start_time(), original.get_start_time());
+        assert_eq!(
+            observed.get_deadline_time_opt(),
+            original.get_deadline_time_opt()
+        );
+        assert_eq!(observed.get_fixed_start(), original.get_fixed_start());
+        assert_eq!(task.get_persistent_mutation_revision().unwrap(), revision);
+    }
 }
 
 #[cfg(test)]
