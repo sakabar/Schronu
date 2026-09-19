@@ -16,7 +16,9 @@ fn legacy_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             }
         }
         fn visit_item_enum(&mut self, item: &'ast syn::ItemEnum) {
-            if item.ident == "DisplayModel" && item.variants.iter().any(|v| v.ident == "Legacy") {
+            if item.ident.unraw() == "DisplayModel"
+                && item.variants.iter().any(|v| v.ident.unraw() == "Legacy")
+            {
                 self.0.push("legacy DisplayModel variant".into());
             }
             visit::visit_item_enum(self, item);
@@ -99,4 +101,13 @@ fn semantic_display_ignores_comments_literals_and_test_only_items() {
         )],
     );
     assert!(legacy_violations(&modules).is_empty());
+}
+
+#[test]
+fn raw_legacy_variant_declarations_have_the_same_identity() {
+    let modules = fixture_modules(
+        "mod renderer;",
+        &[("renderer.rs", "enum r#DisplayModel { r#Legacy }")],
+    );
+    assert!(!legacy_violations(&modules).is_empty());
 }
