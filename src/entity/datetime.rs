@@ -125,7 +125,16 @@ impl LogicalDateTimePolicy {
                 seconds: estimated_work_seconds,
             },
         )?;
-        Ok(deadline - duration - Duration::minutes(DEADLINE_PENDING_BUFFER_MINUTES))
+        deadline
+            .checked_sub_signed(duration)
+            .and_then(|datetime| {
+                datetime.checked_sub_signed(Duration::minutes(DEADLINE_PENDING_BUFFER_MINUTES))
+            })
+            .ok_or(DeadlineCalculationError::DateTimeOutOfRange {
+                operation: "deadline_pending_limit",
+                datetime: deadline,
+                seconds: estimated_work_seconds,
+            })
     }
 
     pub fn deadline_force_todo_after_start_threshold(
@@ -149,7 +158,18 @@ impl LogicalDateTimePolicy {
                 seconds: remaining_work_seconds,
             },
         )?;
-        Ok(deadline - duration - Duration::minutes(DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES))
+        deadline
+            .checked_sub_signed(duration)
+            .and_then(|datetime| {
+                datetime.checked_sub_signed(Duration::minutes(
+                    DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES,
+                ))
+            })
+            .ok_or(DeadlineCalculationError::DateTimeOutOfRange {
+                operation: "deadline_force_todo_after_start_threshold",
+                datetime: deadline,
+                seconds: remaining_work_seconds,
+            })
     }
 
     pub(crate) fn logical_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
@@ -373,6 +393,12 @@ mod logical_date_time_policy_contract_tests {
                 datetime: deadline,
                 seconds: 0,
             })
+        );
+
+        let upper: DateTime<Local> = DateTime::<Local>::MAX_UTC.into();
+        assert_eq!(
+            policy.try_deadline_pending_limit(upper, 0).unwrap(),
+            upper - Duration::minutes(5)
         );
     }
 

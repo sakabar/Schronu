@@ -656,6 +656,21 @@ fn test_yaml_to_task_duration範囲外の見積秒数は子のpathと演算付�
 }
 
 #[test]
+fn test_yaml_to_task_日時減算範囲外の見積秒数はpathと演算付きerrorを返す() {
+    let docs = YamlLoader::load_from_str(
+        "name: 日時境界\nstatus: pending\ndeadline_time: '0000/01/01 00:00:00'\nestimated_work_seconds: 10000000000000\n",
+    )
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], yaml_test_now()).unwrap_err();
+
+    assert_eq!(actual.path, "project");
+    assert_eq!(actual.field, "estimated_work_seconds");
+    assert!(actual.reason.contains("deadline_pending_limit"));
+    assert!(actual.reason.contains("datetime subtraction"));
+}
+
+#[test]
 fn test_yaml_to_task_存在する型違いと不正enumはerrorを返す() {
     for (yaml, expected) in [
         (

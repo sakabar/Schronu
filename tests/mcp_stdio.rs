@@ -498,6 +498,69 @@ fn mcp_stdio_日時減算範囲外の見積更新は保存内容を変えず後�
 }
 
 #[test]
+fn cli_日時減算範囲外の見積更新はerrorとなり保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-datetime-create",
+        "create_task",
+        Some(json!({"name": "cli datetime target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "cli-datetime-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+        .args(["予", &(10_000_000_000_000_i64 / 60).to_string()])
+        .env("SCHRONU_STORAGE_DIR", storage.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id));
+    assert!(stderr.contains("estimated_work_seconds"));
+    assert!(stderr.contains("datetime subtraction"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+fn persistent_storage_bytes(storage: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = fs::read_dir(storage)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
+        .filter(|entry| entry.file_name() != ".lock")
+        .map(|entry| (entry.path(), fs::read(entry.path()).unwrap()))
+        .collect::<Vec<_>>();
+    for directory in fs::read_dir(storage).unwrap().filter_map(Result::ok) {
+        if directory
+            .file_type()
+            .is_ok_and(|file_type| file_type.is_dir())
+        {
+            files.extend(
+                fs::read_dir(directory.path())
+                    .unwrap()
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
+                    .map(|entry| (entry.path(), fs::read(entry.path()).unwrap())),
+            );
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
+}
+
+#[test]
 fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更しない() {
     use std::os::unix::fs::symlink;
 
