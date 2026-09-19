@@ -1,6 +1,10 @@
-use super::paths::{output_dependencies, output_functions, references};
+use super::paths::{
+    definitions, expand_local_globs, output_dependencies, output_functions, references,
+    resolve_path, type_has,
+};
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
+use syn::ext::IdentExt;
 
 fn violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let renderers = output_functions(modules);
@@ -115,16 +119,113 @@ fn external_view_helpers_keep_the_same_writer_boundary() {
     assert!(!violations(&modules).is_empty());
 }
 
-fn focus_ownership_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    Vec::new()
+fn focus_ownership_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    let mut owners: [Vec<String>; 3] = Default::default();
+    let mut errors = Vec::new();
+    for (module, file) in modules {
+        let expanded = match expand_local_globs(module, file, modules) {
+            Ok(file) => file,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        let items = match definitions(module, &expanded) {
+            Ok(items) => items,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        for item in items {
+            let role = match item {
+                syn::Item::Trait(item) if item.ident.unraw() == "FocusDisplaySource" => Some(0),
+                syn::Item::Struct(item) if item.ident.unraw() == "TaskFocusDisplaySource" => {
+                    Some(1)
+                }
+                syn::Item::Impl(item) if type_has(&item.self_ty, "TaskFocusDisplaySource") => {
+                    match item
+                        .trait_
+                        .map(|(_, path, _)| resolve_path(module, &expanded, &path))
+                        .transpose()
+                    {
+                        Ok(Some(path))
+                            if path.ends_with("::FocusDisplaySource")
+                                || path == "FocusDisplaySource" =>
+                        {
+                            Some(2)
+                        }
+                        Err(error) => {
+                            errors.push(error);
+                            None
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(role) = role {
+                owners[role].push(module.clone());
+            }
+        }
+    }
+    for (role, owners) in ["trait", "source", "implementation"]
+        .into_iter()
+        .zip(owners)
+    {
+        if owners.len() != 1
+            || !owners
+                .iter()
+                .all(|owner| owner == "controller::view" || owner.starts_with("controller::view::"))
+        {
+            errors.push(format!(
+                "focus {role} must belong exactly once to view: {owners:?}"
+            ));
+        }
+    }
+    errors
 }
 
 #[test]
 fn focus_display_source_cannot_move_into_runtime() {
     let mut modules = controller_modules();
     let view = modules.get_mut("controller::view").unwrap();
-    let index = view.items.iter().position(|item| matches!(item, syn::Item::Trait(item) if item.ident == "FocusDisplaySource")).unwrap();
+    let index = view
+        .items
+        .iter()
+        .position(
+            |item| matches!(item, syn::Item::Trait(item) if item.ident == "FocusDisplaySource"),
+        )
+        .unwrap();
     let declaration = view.items.remove(index);
-    modules.get_mut("controller::runtime").unwrap().items.push(declaration);
+    modules
+        .get_mut("controller::runtime")
+        .unwrap()
+        .items
+        .push(declaration);
     assert!(!focus_ownership_violations(&modules).is_empty());
+}
+
+#[test]
+fn product_focus_source_is_owned_by_view() {
+    assert_eq!(
+        focus_ownership_violations(&controller_modules()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn focus_source_ownership_rejects_nested_and_macro_duplicates() {
+    for source in [
+        "struct TaskFocusDisplaySource;",
+        "fn renamed() { format!(\"{}\", { struct TaskFocusDisplaySource; 0 }); }",
+        "use super::view::FocusDisplaySource as Source; impl Source for TaskFocusDisplaySource {}",
+    ] {
+        let mut modules = controller_modules();
+        modules.insert(
+            "controller::runtime::helper".into(),
+            super::source::product_file(source).unwrap(),
+        );
+        assert!(!focus_ownership_violations(&modules).is_empty(), "{source}");
+    }
 }

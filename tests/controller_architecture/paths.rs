@@ -95,6 +95,16 @@ pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
     }
 }
 
+pub fn definitions(module: &str, file: &syn::File) -> Result<Vec<syn::Item>, String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_file(file);
+    if collector.errors.is_empty() {
+        Ok(collector.definitions)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
+}
+
 pub fn used_paths(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.paths.clear();
@@ -133,6 +143,7 @@ struct References<'a> {
     block_depth: usize,
     callbacks: BTreeSet<String>,
     scaling: bool,
+    definitions: Vec<syn::Item>,
 }
 
 impl<'a> References<'a> {
@@ -151,6 +162,7 @@ impl<'a> References<'a> {
             block_depth: 0,
             callbacks: BTreeSet::new(),
             scaling: false,
+            definitions: Vec::new(),
         })
     }
 
@@ -174,6 +186,16 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        if matches!(
+            item,
+            syn::Item::Struct(_) | syn::Item::Trait(_) | syn::Item::Impl(_)
+        ) {
+            self.definitions.push(item.clone());
+        }
+        visit::visit_item(self, item);
+    }
+
     fn visit_expr_binary(&mut self, expression: &'ast syn::ExprBinary) {
         self.scaling |= matches!(expression.op, syn::BinOp::Mul(_) | syn::BinOp::Div(_));
         visit::visit_expr_binary(self, expression);
