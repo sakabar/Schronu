@@ -52,3 +52,20 @@ fn alias_mediated_imports_are_not_returned_as_unresolved_paths() {
         assert!(imports("controller::handler", &product_file(text).unwrap()).is_err());
     }
 }
+
+#[test]
+fn expression_references_inside_macros_keep_their_module_identity() {
+    for body in [
+        "super::runtime::invoke();",
+        "format!(\"{}\", super::runtime::invoke());",
+        "vec![super::runtime::invoke(); 2];",
+        "matches!(super::runtime::invoke(), Some(_));",
+    ] {
+        let file = product_file(&format!("fn renamed() {{ {body} }}")).unwrap();
+        let paths = super::paths::references("controller::handler", &file).unwrap();
+        assert!(
+            paths.contains("controller::runtime::invoke"),
+            "missing dependency in {body}"
+        );
+    }
+}

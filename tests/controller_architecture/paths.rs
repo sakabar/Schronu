@@ -1,6 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use syn::visit::Visit;
 use syn::UseTree;
+
+pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
+    Ok(imports(module, file)?.into_values().collect())
+}
 
 pub fn imports(module: &str, file: &syn::File) -> Result<BTreeMap<String, String>, String> {
     let mut collector = Imports {
