@@ -137,3 +137,15 @@ fn terminal_operation_comments_and_literals_are_not_dependencies() {
         });
     assert!(violations(&modules).is_empty());
 }
+
+fn event_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn typed_driver_event_cannot_bypass_the_redraw_classifier() {
+    let mut modules = controller_modules();
+    let event = modules.get_mut("controller::runtime").unwrap().items.iter_mut().find_map(|item| match item {
+        syn::Item::Fn(function) if super::paths::input_has(&function.sig, "DriverEvent") && super::paths::output_has(&function.sig, "DriverOutcome") => Some(function), _ => None,
+    }).unwrap();
+    *event.block = syn::parse_quote!({ interactive::DriverOutcome::Continue });
+    assert!(!event_violations(&modules).is_empty());
+}
