@@ -36,6 +36,48 @@ test('同期成功時は取得したlockを解放する', () => {
   assert.equal(appsScript.lockState.releases, 1);
 });
 
+test('明示的な再同期は現在の選択範囲と最新値を読み直す', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  }, { lockResults: [false, true] });
+
+  appsScript.open();
+  assert.deepEqual(appsScript.menuItems, [
+    { label: '時刻形式を再適用', functionName: 'applyTimeFormat' },
+    { label: '選択範囲を再同期', functionName: 'resyncSelectedRange' },
+  ]);
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+  appsScript.userEdit('実ログ', 3, COL.startTime, '13:45');
+  appsScript.selectRange('実ログ', 3, COL.startTime);
+  appsScript.resyncSelection();
+
+  assert.deepEqual(appsScript.writes, [
+    { sheet: '優先度低い順', row: 3, column: COL.startTime, value: '13:45' },
+  ]);
+  assert.equal(appsScript.lockState.attempts, 2);
+  assert.equal(appsScript.lockState.releases, 1);
+});
+
+test('明示的な再同期は現在のidentity不一致を診断してlockを解放する', () => {
+  const appsScript = loadAppsScript({
+    '実ログ': [taskRow('0000', TASK_ID)],
+    '優先度低い順': [taskRow('0000', TASK_ID)],
+  }, { lockResults: [false, true] });
+
+  appsScript.edit('実ログ', 3, COL.startTime, '12:34');
+  appsScript.userEdit('実ログ', 3, COL.ind, '0001');
+  appsScript.selectRange('実ログ', 3, COL.startTime);
+  appsScript.resyncSelection();
+
+  assert.deepEqual(appsScript.writes, []);
+  assert.equal(appsScript.toasts.length, 2);
+  assert.match(appsScript.toasts[1].message, /優先度低い順.*0001.*対応segment/);
+  assert.equal(appsScript.lockState.attempts, 2);
+  assert.equal(appsScript.lockState.releases, 1);
+});
+
 for (const [name, column] of [
   ['L列', COL.startTime],
   ['P列', COL.finishTime],
