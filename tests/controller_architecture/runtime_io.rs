@@ -1,6 +1,6 @@
 use super::paths::{
-    definitions, expand_local_globs, references, resolve_path, return_paths, signature_paths,
-    signatures,
+    definitions, expand_local_globs, method_names, references, resolve_path, return_paths,
+    signature_paths, signatures,
 };
 use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
@@ -258,13 +258,104 @@ fn runtime_may_pass_operation_dates_to_io_and_return_unrelated_counts() {
     assert!(datetime_violations(&modules).is_empty());
 }
 
-fn mutation_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    // These are domain capabilities, not names of controller implementations.
+    let capabilities = [
+        "make_appointment",
+        "set_orig_status",
+        "set_pending_until",
+        "set_priority",
+        "set_deadline_time_opt",
+        "set_estimated_work_seconds",
+        "set_actual_work_seconds",
+        "create_child",
+        "create_parent",
+        "create_sequential_children",
+        "create_task_attr",
+        "set_repetition_interval_days_opt",
+        "set_repetition_anchor",
+        "set_days_in_advance",
+        "set_project_category_opt",
+        "set_start_time",
+        "set_end_time_opt",
+        "set_atomic",
+        "set_fixed_start",
+    ];
+    let mut errors = Vec::new();
+    for (module, file) in module_family(modules, "controller::runtime") {
+        let inspect = || -> Result<Vec<String>, String> {
+            let file = expand_local_globs(module, file, modules)?;
+            let mut errors = Vec::new();
+            let mut operations = method_names(module, &file)?;
+            operations.extend(
+                references(module, &file)?
+                    .into_iter()
+                    .map(|path| path.rsplit("::").next().unwrap_or(&path).to_string()),
+            );
+            for operation in operations {
+                if capabilities.contains(&operation.as_str()) {
+                    errors.push(format!(
+                        "runtime invokes task mutation capability: {operation}"
+                    ));
+                }
+            }
+            for signature in signatures(module, &file)? {
+                for path in signature_paths(module, &file, &signature)? {
+                    if path.ends_with("CommandContext") {
+                        errors.push(format!(
+                            "runtime owns command-context operation: {}",
+                            signature.ident
+                        ));
+                    }
+                }
+            }
+            Ok(errors)
+        };
+        match inspect() {
+            Ok(found) => errors.extend(found),
+            Err(error) => errors.push(error),
+        }
+    }
+    errors
+}
 
 #[test]
 fn renamed_runtime_helper_cannot_mutate_task_domain_state() {
     let mut modules = controller_modules();
-    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
-        fn renamed(task: TaskHandle) { task.set_pending_until(now); }
-    });
+    modules
+        .get_mut("controller::runtime")
+        .unwrap()
+        .items
+        .push(syn::parse_quote! {
+            fn renamed(task: TaskHandle) { task.set_pending_until(now); }
+        });
     assert!(!mutation_violations(&modules).is_empty());
+}
+
+#[test]
+fn product_runtime_delegates_task_mutations() {
+    assert_eq!(
+        mutation_violations(&controller_modules()),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn mutation_boundary_rejects_ufcs_aliases_macro_calls_and_context_helpers() {
+    for source in [
+        "use crate::entity::task::TaskHandle as Task; fn renamed() { Task::make_appointment(task, now); }",
+        "impl Helper { fn renamed() { format!(\"{:?}\", task.set_actual_work_seconds(1)); } }",
+        "use super::handler::ProjectCommandContext as Context; fn renamed<C: Context>(context: &mut C) {}",
+    ] {
+        let mut modules = controller_modules();
+        modules.insert("controller::runtime::helper".into(), product_file(source).unwrap());
+        assert!(!mutation_violations(&modules).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn runtime_may_read_tasks_and_manage_its_own_io_state() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.extend(product_file("fn renamed(task: TaskHandle) { task.get_id(); task.get_status(); selection.set_explicit(true); repository.reload(); }").unwrap().items);
+    assert!(mutation_violations(&modules).is_empty());
 }
