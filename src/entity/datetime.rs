@@ -20,13 +20,19 @@ pub enum DeadlineCalculationError {
         datetime: DateTime<Local>,
         seconds: i64,
     },
+    DateTimeAdditionOutOfRange {
+        operation: &'static str,
+        datetime: DateTime<Local>,
+        seconds: i64,
+    },
 }
 
 impl DeadlineCalculationError {
     pub fn operation(&self) -> &'static str {
         match self {
             Self::DurationOutOfRange { operation, .. }
-            | Self::DateTimeOutOfRange { operation, .. } => operation,
+            | Self::DateTimeOutOfRange { operation, .. }
+            | Self::DateTimeAdditionOutOfRange { operation, .. } => operation,
         }
     }
 
@@ -35,6 +41,9 @@ impl DeadlineCalculationError {
             Self::DurationOutOfRange { .. } => "duration is outside the supported range",
             Self::DateTimeOutOfRange { .. } => {
                 "datetime subtraction is outside the supported range"
+            }
+            Self::DateTimeAdditionOutOfRange { .. } => {
+                "datetime addition is outside the supported range"
             }
         }
     }
@@ -55,6 +64,14 @@ impl fmt::Display for DeadlineCalculationError {
                 formatter,
                 "{operation} datetime subtraction is outside the supported range: datetime={datetime}, seconds={seconds}"
             ),
+            Self::DateTimeAdditionOutOfRange {
+                operation,
+                datetime,
+                seconds,
+            } => write!(
+                formatter,
+                "{operation} datetime addition is outside the supported range: datetime={datetime}, seconds={seconds}"
+            ),
         }
     }
 }
@@ -67,6 +84,20 @@ pub(crate) fn try_appointment_duration(
     Duration::try_seconds(estimated_work_seconds).ok_or(
         DeadlineCalculationError::DurationOutOfRange {
             operation: "appointment_deadline",
+            seconds: estimated_work_seconds,
+        },
+    )
+}
+
+pub(crate) fn try_appointment_deadline(
+    appointment_start_time: DateTime<Local>,
+    estimated_work_seconds: i64,
+) -> Result<DateTime<Local>, DeadlineCalculationError> {
+    let duration = try_appointment_duration(estimated_work_seconds)?;
+    appointment_start_time.checked_add_signed(duration).ok_or(
+        DeadlineCalculationError::DateTimeAdditionOutOfRange {
+            operation: "appointment_deadline",
+            datetime: appointment_start_time,
             seconds: estimated_work_seconds,
         },
     )

@@ -6,7 +6,7 @@ use std::fmt;
 use uuid::Uuid;
 
 use crate::entity::datetime::{
-    try_appointment_duration, DeadlineCalculationError, LogicalDateTimePolicy,
+    try_appointment_deadline, DeadlineCalculationError, LogicalDateTimePolicy,
     DEFAULT_END_OF_DAY_OFFSET_MINUTES,
 };
 
@@ -1192,16 +1192,7 @@ impl TaskHandle {
         updates: Vec<(Node<TaskAttr>, DateTime<Local>)>,
         field: &'static str,
     ) -> Result<(), TaskTreeError> {
-        for (node, deadline) in &updates {
-            let task = Self { node: node.clone() };
-            let attr = node.try_borrow_data().map_err(|_| TaskTreeError::Borrow)?;
-            task.validate_deadline_calculations(
-                Some(*deadline),
-                attr.get_estimated_work_seconds(),
-                attr.get_actual_work_seconds(),
-                field,
-            )?;
-        }
+        self.validate_deadline_updates(&updates, field)?;
         let root = self.root()?;
         root.node
             .try_borrow_data_mut()
@@ -1217,6 +1208,24 @@ impl TaskHandle {
         }
         if !updates.is_empty() {
             root.mark_persistent_mutation()?;
+        }
+        Ok(())
+    }
+
+    fn validate_deadline_updates(
+        &self,
+        updates: &[(Node<TaskAttr>, DateTime<Local>)],
+        field: &'static str,
+    ) -> Result<(), TaskTreeError> {
+        for (node, deadline) in updates {
+            let task = Self { node: node.clone() };
+            let attr = node.try_borrow_data().map_err(|_| TaskTreeError::Borrow)?;
+            task.validate_deadline_calculations(
+                Some(*deadline),
+                attr.get_estimated_work_seconds(),
+                attr.get_actual_work_seconds(),
+                field,
+            )?;
         }
         Ok(())
     }
@@ -1445,21 +1454,31 @@ impl TaskHandle {
     ) -> Result<(), TaskTreeError> {
         let task_id = self.get_id()?;
         let estimated_work_seconds = self.get_estimated_work_seconds()?;
-        let appointment_duration =
-            try_appointment_duration(estimated_work_seconds).map_err(|source| {
-                TaskTreeError::DeadlineCalculation {
-                    task_id,
-                    field: "estimated_work_seconds",
-                    source,
-                }
-            })?;
-        let deadline_time = appointment_start_time + appointment_duration;
+        let deadline_time = try_appointment_deadline(
+            appointment_start_time,
+            estimated_work_seconds,
+        )
+        .map_err(|source| TaskTreeError::DeadlineCalculation {
+            task_id,
+            field: match source {
+                DeadlineCalculationError::DurationOutOfRange { .. } => "estimated_work_seconds",
+                DeadlineCalculationError::DateTimeAdditionOutOfRange { .. }
+                | DeadlineCalculationError::DateTimeOutOfRange { .. } => "appointment_start_time",
+            },
+            source,
+        })?;
 
         let root = self.root()?;
         let is_done = self.get_status()? == Status::Done;
         let mut deadline_updates = Vec::new();
         // 完了済みtaskを境界としてdeadline伝搬を止める既存の不変条件を守る。
         if !is_done {
+            self.validate_deadline_calculations(
+                Some(deadline_time),
+                estimated_work_seconds,
+                self.get_actual_work_seconds()?,
+                "appointment_start_time",
+            )?;
             for child in self.node.children() {
                 Self { node: child }.collect_deadline_updates(
                     Some(deadline_time),
@@ -1467,6 +1486,7 @@ impl TaskHandle {
                     &mut deadline_updates,
                 )?;
             }
+            self.validate_deadline_updates(&deadline_updates, "deadline_time")?;
         }
 
         // Every borrow is checked before the first write. This makes the appointment
