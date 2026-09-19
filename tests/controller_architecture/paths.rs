@@ -533,6 +533,15 @@ pub fn output_functions(modules: &BTreeMap<String, syn::File>) -> BTreeSet<Strin
         .collect()
 }
 
+pub const WRITER_OUTPUT_OPERATIONS: &[&str] = &[
+    "flush",
+    "write",
+    "write_all",
+    "write_fmt",
+    "write_vectored",
+    "writeln_newline",
+];
+
 pub fn output_dependencies(
     module: &str,
     file: &syn::File,
@@ -549,6 +558,7 @@ pub fn output_dependencies(
         .filter(|path| {
             writer_path(path)
                 || output_functions.contains(path)
+                || WRITER_OUTPUT_OPERATIONS.contains(&path.rsplit("::").next().unwrap_or(path))
                 || [
                     "SchronuWriter",
                     "DisplayRecorder",
@@ -564,14 +574,7 @@ pub fn output_dependencies(
         })
         .collect();
     for method in facts.methods {
-        if [
-            "flush",
-            "write_all",
-            "writeln_newline",
-            "supports_ansi_color",
-        ]
-        .contains(&method.as_str())
-        {
+        if WRITER_OUTPUT_OPERATIONS.contains(&method.as_str()) || method == "supports_ansi_color" {
             output.insert(format!("method::{method}"));
         }
     }

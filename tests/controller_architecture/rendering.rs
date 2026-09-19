@@ -455,19 +455,12 @@ fn diagnostic_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             let mut scope = file.clone();
             scope.items.retain(|item| matches!(item, syn::Item::Use(_)));
             scope.items.push(syn::Item::Fn(function.clone()));
+            let used = used_paths(module, &scope)?;
             for path in output_dependencies(module, &scope, &Default::default())? {
-                if [
-                    "flush",
-                    "write",
-                    "write_all",
-                    "writeln",
-                    "writeln_newline",
-                    "print",
-                    "println",
-                    "eprint",
-                    "eprintln",
-                ]
-                .contains(&path.rsplit("::").next().unwrap_or(&path))
+                let operation = path.rsplit("::").next().unwrap_or(&path);
+                if (super::paths::WRITER_OUTPUT_OPERATIONS.contains(&operation)
+                    || ["writeln", "print", "println", "eprint", "eprintln"].contains(&operation))
+                    && (path.starts_with("method::") || used.contains(&path))
                 {
                     return Err(format!("{role} owns raw diagnostic output: {path}"));
                 }
@@ -481,7 +474,7 @@ fn diagnostic_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                 {
                     return Err("argv must delegate Verify to its semantic boundary".into());
                 }
-                if used_paths(module, &scope)?.iter().any(|path| {
+                if used.iter().any(|path| {
                     ["verify_model", "renderer", "mode_renderer"]
                         .iter()
                         .any(|target| canonical(module, path) == role_path(target))
@@ -638,4 +631,66 @@ fn diagnostic_model_cannot_be_discarded_inside_the_argument() {
         .unwrap();
     function.block = syn::parse_quote!({ #renderer(writer, &((#error_model)(error))); false });
     assert!(diagnostic_violations(&modules).is_empty());
+}
+
+#[test]
+fn diagnostics_cannot_add_raw_writer_calls_beside_semantic_rendering() {
+    for operation in 0..9 {
+        let mut modules = controller_modules();
+        let roles = diagnostic_roles(&modules).unwrap();
+        let (module, role) = &roles["report"];
+        let function = modules
+            .get_mut(module)
+            .unwrap()
+            .items
+            .iter_mut()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) if function.sig.ident == role.sig.ident => Some(function),
+                _ => None,
+            })
+            .unwrap();
+        let writer = function
+            .sig
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                syn::FnArg::Typed(input) if super::paths::type_has(&input.ty, "Write") => {
+                    match input.pat.as_ref() {
+                        syn::Pat::Ident(binding) => Some(binding.ident.clone()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .unwrap();
+        let raw = match operation {
+            0 => syn::parse_quote! { #writer.write(b"raw").unwrap(); },
+            1 => syn::parse_quote! { #writer.write_fmt(format_args!("raw")).unwrap(); },
+            2 => {
+                syn::parse_quote! { #writer.write_vectored(&[std::io::IoSlice::new(b"raw")]).unwrap(); }
+            }
+            3 => syn::parse_quote! { std::io::Write::write(#writer, b"raw").unwrap(); },
+            4 => {
+                syn::parse_quote! { std::io::Write::write_fmt(#writer, format_args!("raw")).unwrap(); }
+            }
+            5 => {
+                syn::parse_quote! { std::io::Write::write_vectored(#writer, &[std::io::IoSlice::new(b"raw")]).unwrap(); }
+            }
+            6 => syn::parse_quote! { <dyn std::io::Write>::write(#writer, b"raw").unwrap(); },
+            7 => {
+                syn::parse_quote! { <dyn std::io::Write>::write_fmt(#writer, format_args!("raw")).unwrap(); }
+            }
+            _ => {
+                syn::parse_quote! { <dyn std::io::Write>::write_vectored(#writer, &[std::io::IoSlice::new(b"raw")]).unwrap(); }
+            }
+        };
+        function.block.stmts.insert(0, raw);
+        let errors = diagnostic_violations(&modules);
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("report owns raw diagnostic output")),
+            "operation {operation}: {errors:?}"
+        );
+    }
 }
