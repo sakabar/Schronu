@@ -1496,7 +1496,7 @@
 - 分類: `技術的負債 / test保守性`
 - 優先度: `P2`
 - 概算規模: `L`
-- 状態: 簡素化実装完了・親再統合gate待ち(未merge)。[PR #467](https://github.com/sakabar/Schronu/pull/467)は作成済みでOPEN・non-draft。簡素化後の追加commitは未push、PR更新も保留。
+- 状態: 簡素化実装完了・親再統合gate通過(未merge)。[PR #467](https://github.com/sakabar/Schronu/pull/467)は作成済みでOPEN・non-draft。簡素化後の追加commitは未push、PR更新も保留。
 
 #### W2-C schedule境界の既存証跡
 
@@ -1525,17 +1525,23 @@
 - 検証対象code HEAD: `ca42f6e8`。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`はすべてexit 0。22 suites / 1,459 passed / 0 failed / 2 ignored、ASTは73 passed。ignoredは既存のまま。
 - 27種類の製品mutationを拒否した(compilerによるwriter付きtrait変更の拒否1件を含む)。診断への余分な出力、flush欠落・重複・error握り潰し、再描画の常時実行/常時省略、parser mode・token境界、dispatch・状態更新・保存、数値・model順序・禁止依存を確認し、mutationはすべて復元してcommitから除外した。
 - AST関連は簡素化終了時に4,360行から2,415行へ削減し、親reviewのraw module回帰修正後は2,470行(当初比1,890行減)。最大fileは334行、新規の`runtime_redraw_contract_tests.rs`は53行で既存runtime helperとterminal fixtureを再利用した。`syn`の`full`・`visit`・`visit-mut`は残すmodule/cfg・依存検査で使用する。
-- 内部reviewと累積reviewの指摘は解消済み。親の具体依存維持の指摘を`93184542`、内部reviewのcontext関連UFCS依存の指摘を`42cf09c1`で個別修正した。親独立reviewのraw module名による検査漏れは`ca42f6e8`で論理module名と暗黙pathを`unraw()`へ統一し、通常file・mod.rs・inline・`#[path]`とhandler関数ポインタ禁止を回帰検証した。親は`b0c02583`のscope・log・累積差分・実装差分を確認済みで、簡素化後の親再統合gateは未実施。
+- 内部reviewと累積reviewの指摘は解消済み。親の具体依存維持の指摘を`93184542`、内部reviewのcontext関連UFCS依存の指摘を`42cf09c1`で個別修正した。親独立reviewのraw module名による検査漏れは`ca42f6e8`で論理module名と暗黙pathを`unraw()`へ統一し、通常file・mod.rs・inline・`#[path]`とhandler関数ポインタ禁止を回帰検証した。親はscope・log・累積差分・実装差分を確認し、`ca42f6e8`で独立reviewのP2解消を確認済み。未解消P1/P2なしで保守性も受入れ済み。文書commit `976e61c8`もscope内として承認された。
 - 証跡: `/private/tmp/w7-simplification-record.md`にcommit対応とmutation一覧、`/private/tmp/w7-raw-module-{red,clippy,green}.log`に最終修正のRedとlane gateを記録した。
+
+#### 簡素化後の親再統合gate
+
+- `origin/main=10fba05d`から107commitを使い捨て統合worktreeへ適用した統合HEAD `95d793ce057e4d7dc9b1511e5a509566050b61ed`で通過した。tree `6609a01fbefd8cc1a04747971a8e18adf50e2fe7`はlane HEAD `976e61c8`と一致する。
+- `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`はすべてexit 0。22 suites / 1,459 passed / 0 failed / 2 ignored、AST 73 passed。
+- ログは`/private/tmp/wave7-simplified-integration-gate-{0..3}.log`、結果は`/private/tmp/wave7-simplified-integration-gate-results.json`。この証跡追記は文書のみで、検証対象の製品・test codeを変更しない。
 
 #### 簡素化前の親統合gate(過去証跡)
 
 - `origin/main=10fba05d`から当時の87commitを使い捨てworktreeへcherry-pickした統合HEAD `18b80583`でgateを通過した。tree `f61919dc2ffb951a8f49ac7345e6089b4ce5a6c6`は当時のlane HEAD `1a6add89`と一致する。
-- 当時の`git diff --check`、fmt、clippy、全testはexit 0。22 suites / 1,494 passed / 0 failed / 2 ignored、AST 111件で、CLI runtime・storage backup・Spreadsheetを含む。ログは`/private/tmp/wave7-integration-gate-{0..4}.log`。この過去結果は簡素化・review修正後の`ca42f6e8`の再統合gate成功を意味しない。
+- 当時の`git diff --check`、fmt、clippy、全testはexit 0。22 suites / 1,494 passed / 0 failed / 2 ignored、AST 111件で、CLI runtime・storage backup・Spreadsheetを含む。ログは`/private/tmp/wave7-integration-gate-{0..4}.log`。これは簡素化前の過去証跡であり、簡素化後の結果は上記の親再統合gateに記録した。
 
 #### 残存範囲・別契約
 
-- W2-CとW7-Aのsource scanner置換と簡素化はlane実装完了。PR #467はOPEN・non-draft・未mergeであり、親再統合gate後の追加commit push・PR更新を待つ。
+- W2-CとW7-Aのsource scanner置換と簡素化は開発完了・親再統合gate通過済み。PR #467はOPEN・non-draft・未mergeであり、追加commitの通常push・PR本文更新は親の承認待ち。
 - `src/adapter/controller/mod.rs`の`binary_entrypoint_delegates_to_library_cli`は、binary入口がlibraryの`run_cli`だけへ委譲する薄いwrapperであることをsource一致で固定する別契約であり、今回の独自Rust scanner置換の対象外として維持した。
 
 #### 対応前の現状と根拠
