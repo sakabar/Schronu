@@ -24,6 +24,7 @@ struct References<'a> {
     scoped_calls: bool,
     methods: BTreeSet<String>,
     fields: BTreeSet<String>,
+    block_depth: usize,
 }
 
 impl<'a> References<'a> {
@@ -39,6 +40,7 @@ impl<'a> References<'a> {
             scoped_calls: false,
             methods: BTreeSet::new(),
             fields: BTreeSet::new(),
+            block_depth: 0,
         })
     }
 
@@ -62,6 +64,11 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.block_depth += 1;
+        visit::visit_block(self, block);
+        self.block_depth -= 1;
+    }
     fn visit_field(&mut self, field: &'ast syn::Field) {
         if let Some(ident) = &field.ident {
             self.fields.insert(ident.unraw().to_string());
@@ -123,7 +130,12 @@ impl<'ast> Visit<'ast> for References<'_> {
         visit::visit_path(self, path);
     }
 
-    fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {}
+    fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {
+        if self.block_depth > 0 {
+            self.errors
+                .push("block-local module needs explicit support".into());
+        }
+    }
 
     fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
         let name = self.path(&invocation.path);
