@@ -366,12 +366,28 @@ pub fn imports(module: &str, file: &syn::File) -> Result<BTreeMap<String, String
         errors: Vec::new(),
     };
     collector.visit_file(file);
-    for (alias, path) in &collector.bindings {
-        let first = path.split("::").next().unwrap_or(path);
-        if collector.bindings.contains_key(first) && first != path {
-            collector.errors.push(format!(
-                "alias-mediated import needs explicit support: {alias} = {path}"
-            ));
+    let original = collector.bindings.clone();
+    for (alias, path) in &mut collector.bindings {
+        let mut seen = BTreeSet::from([alias.clone()]);
+        loop {
+            let (first, suffix) = path.split_once("::").unwrap_or((path.as_str(), ""));
+            let Some(target) = original.get(first) else {
+                break;
+            };
+            if first == target {
+                break;
+            }
+            if !seen.insert(first.to_string()) {
+                collector
+                    .errors
+                    .push(format!("cyclic import alias: {alias}"));
+                break;
+            }
+            *path = if suffix.is_empty() {
+                target.clone()
+            } else {
+                format!("{target}::{suffix}")
+            };
         }
     }
     if collector.errors.is_empty() {

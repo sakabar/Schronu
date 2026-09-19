@@ -177,3 +177,23 @@ fn block_local_modules_cannot_escape_the_module_index() {
         assert!(super::paths::references("controller::handler", &file).is_err());
     }
 }
+
+#[test]
+fn cyclic_import_aliases_fail_explicitly() {
+    let file = product_file("use b::item as a; use a::item as b;").unwrap();
+    assert!(imports("controller::runtime", &file)
+        .unwrap_err()
+        .contains("cyclic"));
+}
+
+#[test]
+fn unresolved_glob_targets_remain_errors() {
+    let modules =
+        super::source::fixture_modules("mod runtime;", &[("runtime.rs", "use super::missing::*;")]);
+    assert!(super::paths::expand_local_globs(
+        "controller::runtime",
+        &modules["controller::runtime"],
+        &modules
+    )
+    .is_err());
+}
