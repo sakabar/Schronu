@@ -5,16 +5,7 @@ use syn::visit::{self, Visit};
 use syn::UseTree;
 
 pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
-    let bindings = imports(module, file)?;
-    let mut collector = References {
-        module,
-        paths: bindings.values().cloned().collect(),
-        bindings,
-        errors: Vec::new(),
-        in_macro: false,
-        calls: Vec::new(),
-        scoped_calls: false,
-    };
+    let mut collector = References::new(module, file)?;
     collector.visit_file(file);
     if collector.errors.is_empty() {
         Ok(collector.paths)
@@ -31,9 +22,26 @@ struct References<'a> {
     in_macro: bool,
     calls: Vec<(String, syn::ExprCall)>,
     scoped_calls: bool,
+    methods: BTreeSet<String>,
+    fields: BTreeSet<String>,
 }
 
-impl References<'_> {
+impl<'a> References<'a> {
+    fn new(module: &'a str, file: &syn::File) -> Result<Self, String> {
+        let bindings = imports(module, file)?;
+        Ok(Self {
+            module,
+            paths: bindings.values().cloned().collect(),
+            bindings,
+            errors: Vec::new(),
+            in_macro: false,
+            calls: Vec::new(),
+            scoped_calls: false,
+            methods: BTreeSet::new(),
+            fields: BTreeSet::new(),
+        })
+    }
+
     fn path(&self, path: &syn::Path) -> String {
         let parts: Vec<_> = path
             .segments
@@ -54,6 +62,13 @@ impl References<'_> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_field(&mut self, field: &'ast syn::Field) {
+        if let Some(ident) = &field.ident {
+            self.fields.insert(ident.unraw().to_string());
+        }
+        visit::visit_field(self, field);
+    }
+
     fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
         if !self.scoped_calls {
             visit::visit_item_fn(self, item);
@@ -67,6 +82,7 @@ impl<'ast> Visit<'ast> for References<'_> {
     }
 
     fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
+        self.methods.insert(expression.method.unraw().to_string());
         if self.scoped_calls && expression.method == "and_then" {
             // The maintenance parser's Result::and_then executes its inline
             // closure. Merely declaring another closure is not a direct call.
@@ -195,15 +211,8 @@ pub fn function_calls(
     file: &syn::File,
     function: &syn::ItemFn,
 ) -> Result<Vec<(String, syn::ExprCall)>, String> {
-    let mut collector = References {
-        module,
-        bindings: imports(module, file)?,
-        paths: BTreeSet::new(),
-        errors: Vec::new(),
-        in_macro: false,
-        calls: Vec::new(),
-        scoped_calls: true,
-    };
+    let mut collector = References::new(module, file)?;
+    collector.scoped_calls = true;
     collector.visit_block(&function.block);
     if collector.errors.is_empty() {
         Ok(collector.calls)
@@ -212,22 +221,29 @@ pub fn function_calls(
     }
 }
 
+struct TypeName<'a> {
+    name: &'a str,
+    found: bool,
+}
+impl<'ast> Visit<'ast> for TypeName<'_> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.found |= path
+            .segments
+            .last()
+            .is_some_and(|segment| segment.ident.unraw() == self.name);
+        visit::visit_path(self, path);
+    }
+}
+
 pub fn type_has(ty: &syn::Type, name: &str) -> bool {
-    struct Find<'a> {
-        name: &'a str,
-        found: bool,
-    }
-    impl<'ast> Visit<'ast> for Find<'_> {
-        fn visit_path(&mut self, path: &'ast syn::Path) {
-            self.found |= path
-                .segments
-                .last()
-                .is_some_and(|segment| segment.ident.unraw() == self.name);
-            visit::visit_path(self, path);
-        }
-    }
-    let mut find = Find { name, found: false };
+    let mut find = TypeName { name, found: false };
     find.visit_type(ty);
+    find.found
+}
+
+pub fn signature_has(signature: &syn::Signature, name: &str) -> bool {
+    let mut find = TypeName { name, found: false };
+    find.visit_signature(signature);
     find.found
 }
 
@@ -353,4 +369,68 @@ impl<'ast> Visit<'ast> for Imports<'_> {
     }
     // Inline modules have separate entries in the product module index.
     fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {}
+}
+
+pub fn output_functions(modules: &BTreeMap<String, syn::File>) -> BTreeSet<String> {
+    super::source::module_family(modules, "controller::renderer")
+        .flat_map(|(module, file)| {
+            file.items.iter().filter_map(move |item| match item {
+                syn::Item::Fn(function)
+                    if signature_has(&function.sig, "SchronuWriter")
+                        || signature_has(&function.sig, "Write") =>
+                {
+                    Some(format!("{module}::{}", function.sig.ident.unraw()))
+                }
+                _ => None,
+            })
+        })
+        .collect()
+}
+
+pub fn output_dependencies(
+    module: &str,
+    file: &syn::File,
+    output_functions: &BTreeSet<String>,
+) -> Result<BTreeSet<String>, String> {
+    let mut facts = References::new(module, file)?;
+    facts.visit_file(file);
+    if !facts.errors.is_empty() {
+        return Err(facts.errors.join("\n"));
+    }
+    let mut output: BTreeSet<_> = facts
+        .paths
+        .into_iter()
+        .filter(|path| {
+            path == "std::io::Write"
+                || output_functions.contains(path)
+                || [
+                    "SchronuWriter",
+                    "DisplayRecorder",
+                    "DisplayFragment",
+                    "print",
+                    "println",
+                    "eprint",
+                    "eprintln",
+                    "write",
+                    "writeln",
+                ]
+                .contains(&path.rsplit("::").next().unwrap_or(path))
+        })
+        .collect();
+    for method in facts.methods {
+        if [
+            "flush",
+            "write_all",
+            "writeln_newline",
+            "supports_ansi_color",
+        ]
+        .contains(&method.as_str())
+        {
+            output.insert(format!("method::{method}"));
+        }
+    }
+    if facts.fields.contains("supports_ansi_color") {
+        output.insert("field::supports_ansi_color".into());
+    }
+    Ok(output)
 }
