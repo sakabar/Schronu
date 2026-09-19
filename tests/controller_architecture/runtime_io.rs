@@ -1,8 +1,7 @@
-use super::paths::{expand_local_globs, references, resolve_path};
+use super::paths::{definitions, expand_local_globs, references, resolve_path};
 use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
 use syn::ext::IdentExt;
-use syn::visit::{self, Visit};
 
 fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let mut errors = Vec::new();
@@ -94,46 +93,36 @@ fn relative_and_qualified_gateway_paths_have_the_same_boundary() {
 }
 
 fn ownership_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    struct Contexts<'a> {
-        module: &'a str,
-        file: &'a syn::File,
-        errors: Vec<String>,
-    }
-    impl<'ast> Visit<'ast> for Contexts<'_> {
-        fn visit_item_mod(&mut self, _item: &'ast syn::ItemMod) {}
-        fn visit_item_struct(&mut self, item: &'ast syn::ItemStruct) {
-            if item.ident.unraw().to_string().ends_with("Context") {
-                self.errors
-                    .push(format!("runtime owns context: {}", item.ident));
-            }
-            visit::visit_item_struct(self, item);
-        }
-        fn visit_item_impl(&mut self, item: &'ast syn::ItemImpl) {
-            if let Some((_, path, _)) = &item.trait_ {
-                match resolve_path(self.module, self.file, path) {
-                    Ok(path) if path.ends_with("CommandContext") => {
-                        self.errors
-                            .push(format!("runtime implements command context: {path}"));
-                    }
-                    Err(error) => self.errors.push(error),
-                    _ => {}
-                }
-            }
-            visit::visit_item_impl(self, item);
-        }
-    }
     let mut errors = Vec::new();
     for (module, file) in module_family(modules, "controller::runtime") {
         match expand_local_globs(module, file, modules) {
-            Ok(file) => {
-                let mut visitor = Contexts {
-                    module,
-                    file: &file,
-                    errors: Vec::new(),
-                };
-                visitor.visit_file(&file);
-                errors.extend(visitor.errors);
-            }
+            Ok(file) => match definitions(module, &file) {
+                Ok(items) => {
+                    for item in items {
+                        match item {
+                            syn::Item::Struct(item)
+                                if item.ident.unraw().to_string().ends_with("Context") =>
+                            {
+                                errors.push(format!("runtime owns context: {}", item.ident));
+                            }
+                            syn::Item::Impl(item) => {
+                                if let Some((_, path, _)) = &item.trait_ {
+                                    match resolve_path(module, &file, path) {
+                                        Ok(path) if path.ends_with("CommandContext") => errors
+                                            .push(format!(
+                                                "runtime implements command context: {path}"
+                                            )),
+                                        Err(error) => errors.push(error),
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Err(error) => errors.push(error),
+            },
             Err(error) => errors.push(error),
         }
     }
@@ -167,6 +156,8 @@ fn nested_and_aliased_context_implementations_remain_outside_runtime() {
         "struct r#RenamedContext;",
         "use super::super::handler::ProjectCommandContext as Capability; impl Capability for Adapter {}",
         "fn outer() { struct LocalContext; }",
+        "fn helper() { format!(\"{}\", { struct LocalContext; 0 }); }",
+        "fn helper() { format!(\"{}\", { impl CommandContext for Adapter {} 0 }); }",
     ] {
         let mut modules = controller_modules();
         modules.insert("controller::runtime::nested".into(), product_file(source).unwrap());
