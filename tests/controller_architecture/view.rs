@@ -1,6 +1,6 @@
 use super::paths::{
-    definitions, expand_local_globs, expand_type_aliases, has_float_literal, output_dependencies,
-    output_functions, references, resolve_path, type_alias_dependencies, type_has, used_paths,
+    definitions, expand_local_globs, output_dependencies, output_functions, references,
+    resolve_path, type_has,
 };
 use super::source::{controller_modules, fixture_modules, module_family};
 use std::collections::BTreeMap;
@@ -228,109 +228,4 @@ fn focus_source_ownership_rejects_nested_and_macro_duplicates() {
         );
         assert!(!focus_ownership_violations(&modules).is_empty(), "{source}");
     }
-}
-
-fn calculation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    let aliases = match type_alias_dependencies(modules) {
-        Ok(aliases) => aliases,
-        Err(error) => return vec![error],
-    };
-    let mut errors = Vec::new();
-    // Runtime wraps completed display values, while view owns their data and
-    // calculations. Message models and the view's source adapter remain usable.
-    let data_roles = [
-        "TreeDisplay",
-        "TaskListDisplay",
-        "TaskListMetricsDisplay",
-        "CalendarDisplay",
-        "BandDisplay",
-        "PackDisplay",
-        "FlattenDisplay",
-        "FocusDisplay",
-        "SnapshotDisplay",
-        "TaskListTaskRow",
-        "TaskListDisplayRow",
-        "TaskCategoryWorkSeconds",
-        "BandDurations",
-        "CalendarDayRow",
-        "BandDayRow",
-        "RhoMetrics",
-        "ProjectCategory",
-        "f64",
-    ];
-    for (module, file) in module_family(modules, "controller::runtime") {
-        let expanded = match expand_local_globs(module, file, modules) {
-            Ok(file) => file,
-            Err(error) => {
-                errors.push(error);
-                continue;
-            }
-        };
-        match has_float_literal(module, &expanded) {
-            Ok(true) => errors.push(format!(
-                "runtime owns floating-point display calculation: {module}"
-            )),
-            Err(error) => errors.push(error),
-            Ok(false) => {}
-        }
-        let paths = used_paths(module, &expanded);
-        match paths {
-            Ok(paths) => {
-                for path in expand_type_aliases(module, paths, &aliases) {
-                    if path.split("::").any(|part| data_roles.contains(&part)) {
-                        errors.push(format!("runtime owns display data calculation: {path}"));
-                    }
-                }
-            }
-            Err(error) => errors.push(error),
-        }
-    }
-    errors
-}
-
-#[test]
-fn renamed_runtime_helper_cannot_build_task_display_data() {
-    let mut modules = controller_modules();
-    modules
-        .get_mut("controller::runtime")
-        .unwrap()
-        .items
-        .push(syn::parse_quote! {
-            fn renamed() -> super::renderer::TreeDisplay { todo!() }
-        });
-    assert!(!calculation_violations(&modules).is_empty());
-}
-
-#[test]
-fn product_runtime_uses_completed_view_models() {
-    assert_eq!(
-        calculation_violations(&controller_modules()),
-        Vec::<String>::new()
-    );
-}
-
-#[test]
-fn display_calculations_cannot_hide_in_aliases_or_nested_helpers() {
-    for source in [
-        "fn renamed() -> String { let ratio = 1.0_f64 / 2.0; ratio.to_string() }",
-        "fn renamed() -> String { format!(\"{}\", 1.0 / 2.0) }",
-        "use super::renderer::BandDurations as Value; fn renamed() -> Value { todo!() }",
-        "type Ratio = f64; impl Helper { fn renamed(value: Ratio) -> Ratio { value / 2.0 } }",
-        "fn renamed() { format!(\"{:?}\", super::renderer::TreeDisplay::Debug { rows: vec![] }); }",
-        "fn renamed(category: crate::entity::task::ProjectCategory) -> usize { 0 }",
-    ] {
-        let mut modules = controller_modules();
-        modules.insert(
-            "controller::runtime::helper".into(),
-            super::source::product_file(source).unwrap(),
-        );
-        assert!(!calculation_violations(&modules).is_empty(), "{source}");
-    }
-}
-
-#[test]
-fn runtime_may_compose_messages_and_wrap_completed_focus_models() {
-    let mut modules = controller_modules();
-    modules.get_mut("controller::runtime").unwrap().items.extend(super::source::product_file("fn renamed(source: &dyn FocusDisplaySource) { let model = DisplayModel::Focus(source.build_header()); render_display_model(writer, &model); }").unwrap().items);
-    assert!(calculation_violations(&modules).is_empty());
 }

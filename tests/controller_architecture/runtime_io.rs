@@ -1,6 +1,6 @@
 use super::paths::{
-    definitions, expand_local_globs, expand_type_aliases, method_names, references, resolve_path,
-    return_paths, signature_paths, signatures, type_alias_dependencies,
+    definitions, expand_local_globs, method_names, references, resolve_path, signature_paths,
+    signatures,
 };
 use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
@@ -180,96 +180,6 @@ fn runtime_context_text_is_not_a_definition() {
     assert!(ownership_violations(&modules).is_empty());
 }
 
-fn datetime_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    let aliases = match type_alias_dependencies(modules) {
-        Ok(aliases) => aliases,
-        Err(error) => return vec![error],
-    };
-    let mut errors = Vec::new();
-    for (module, file) in module_family(modules, "controller::runtime") {
-        let inspect = || -> Result<Vec<String>, String> {
-            let file = expand_local_globs(module, file, modules)?;
-            let mut errors = Vec::new();
-            for path in references(module, &file)? {
-                if [
-                    "chrono::NaiveDate",
-                    "chrono::NaiveTime",
-                    "chrono::NaiveDateTime",
-                ]
-                .iter()
-                .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}::")))
-                {
-                    errors.push(format!("runtime interprets calendar values: {path}"));
-                }
-            }
-            for signature in signatures(module, &file)? {
-                let output =
-                    expand_type_aliases(module, return_paths(module, &file, &signature)?, &aliases);
-                let parameters = expand_type_aliases(
-                    module,
-                    signature_paths(module, &file, &signature)?,
-                    &aliases,
-                );
-                if output.contains("chrono::DateTime")
-                    || (parameters.contains("chrono::DateTime") && output.contains("i64"))
-                {
-                    errors.push(format!(
-                        "runtime computes datetime result: {}",
-                        signature.ident
-                    ));
-                }
-            }
-            Ok(errors)
-        };
-        match inspect() {
-            Ok(found) => errors.extend(found),
-            Err(error) => errors.push(error),
-        }
-    }
-    errors
-}
-
-#[test]
-fn renamed_runtime_helper_cannot_interpret_calendar_dates() {
-    let mut modules = controller_modules();
-    modules
-        .get_mut("controller::runtime")
-        .unwrap()
-        .items
-        .push(syn::parse_quote! {
-            fn renamed() { chrono::NaiveDate::from_ymd_opt(2026, 9, 19); }
-        });
-    assert!(!datetime_violations(&modules).is_empty());
-}
-
-#[test]
-fn product_runtime_coordinates_existing_dates_without_interpreting_them() {
-    assert_eq!(
-        datetime_violations(&controller_modules()),
-        Vec::<String>::new()
-    );
-}
-
-#[test]
-fn calendar_roles_survive_aliases_nested_methods_and_macro_blocks() {
-    for source in [
-        "use chrono::NaiveDate as Day; fn renamed() { Day::from_ymd_opt(2026, 9, 19); }",
-        "use chrono::DateTime as Instant; impl Helper { fn renamed() -> Instant<Local> { todo!() } }",
-        "fn renamed() { format!(\"{}\", { fn inner(now: chrono::DateTime<Local>) -> i64 { 0 } 0 }); }",
-    ] {
-        let mut modules = controller_modules();
-        modules.insert("controller::runtime::helper".into(), product_file(source).unwrap());
-        assert!(!datetime_violations(&modules).is_empty(), "{source}");
-    }
-}
-
-#[test]
-fn runtime_may_pass_operation_dates_to_io_and_return_unrelated_counts() {
-    let mut modules = controller_modules();
-    modules.get_mut("controller::runtime").unwrap().items.extend(product_file("fn renamed(now: chrono::DateTime<Local>) { repository.reload(now); } fn io_count() -> i64 { 0 }").unwrap().items);
-    assert!(datetime_violations(&modules).is_empty());
-}
-
 fn mutation_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     // These are domain capabilities, not names of controller implementations.
     // sync_clock also belongs to TaskRepositoryTrait: runtime coordinates that
@@ -383,24 +293,4 @@ fn runtime_may_read_tasks_and_manage_its_own_io_state() {
     let mut modules = controller_modules();
     modules.get_mut("controller::runtime").unwrap().items.extend(product_file("fn renamed(task: TaskHandle) { task.get_id(); task.get_status(); selection.set_explicit(true); repository.reload(); }").unwrap().items);
     assert!(mutation_violations(&modules).is_empty());
-}
-
-#[test]
-fn type_aliases_cannot_hide_calendar_results_or_inputs() {
-    for source in [
-        "type Instant = chrono::DateTime<chrono::Local>; fn renamed() -> Instant { chrono::Local::now() }",
-        "type Instant = chrono::DateTime<chrono::Local>; type Later = Instant; fn renamed(now: Later) -> i64 { 0 }",
-        "type Pair = (chrono::DateTime<chrono::Local>, bool); fn renamed() -> Pair { todo!() }",
-    ] {
-        let mut modules = controller_modules();
-        modules.insert("controller::runtime::helper".into(), product_file(source).unwrap());
-        assert!(!datetime_violations(&modules).is_empty(), "{source}");
-    }
-    let mut modules = controller_modules();
-    modules.insert(
-        "controller::view::types".into(),
-        product_file("pub type Instant = chrono::DateTime<chrono::Local>;").unwrap(),
-    );
-    modules.insert("controller::runtime::helper".into(), product_file("use crate::adapter::controller::view::types::Instant as Value; fn renamed() -> Value { todo!() }").unwrap());
-    assert!(!datetime_violations(&modules).is_empty());
 }

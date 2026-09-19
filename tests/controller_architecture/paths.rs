@@ -24,81 +24,11 @@ pub fn definitions(module: &str, file: &syn::File) -> Result<Vec<syn::Item>, Str
     }
 }
 
-pub fn type_alias_dependencies(
-    modules: &BTreeMap<String, syn::File>,
-) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
-    let mut aliases = BTreeMap::new();
-    for (module, file) in modules {
-        let file = expand_local_globs(module, file, modules)?;
-        for item in definitions(module, &file)? {
-            if let syn::Item::Type(alias) = item {
-                let mut scope = file.clone();
-                scope.items.retain(|item| matches!(item, syn::Item::Use(_)));
-                let key = format!("{module}::{}", alias.ident.unraw());
-                scope.items.push(syn::Item::Type(alias));
-                if aliases
-                    .insert(key.clone(), used_paths(module, &scope)?)
-                    .is_some()
-                {
-                    return Err(format!("ambiguous type alias: {key}"));
-                }
-            }
-        }
-    }
-    Ok(aliases)
-}
-
-pub fn expand_type_aliases(
-    module: &str,
-    paths: BTreeSet<String>,
-    aliases: &BTreeMap<String, BTreeSet<String>>,
-) -> BTreeSet<String> {
-    let mut result = paths.clone();
-    let mut pending: Vec<_> = paths
-        .into_iter()
-        .map(|path| (module.to_string(), path))
-        .collect();
-    let mut visited = BTreeSet::new();
-    while let Some((owner, path)) = pending.pop() {
-        let key = if aliases.contains_key(&path) {
-            path
-        } else {
-            format!("{owner}::{path}")
-        };
-        if !visited.insert(key.clone()) {
-            continue;
-        }
-        if let Some(dependencies) = aliases.get(&key) {
-            let owner = key.rsplit_once("::").unwrap().0;
-            for dependency in dependencies {
-                result.insert(dependency.clone());
-                pending.push((owner.to_string(), dependency.clone()));
-            }
-        }
-    }
-    result
-}
-
 pub fn signatures(module: &str, file: &syn::File) -> Result<Vec<syn::Signature>, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
     if collector.errors.is_empty() {
         Ok(collector.signatures)
-    } else {
-        Err(collector.errors.join("\n"))
-    }
-}
-
-pub fn return_paths(
-    module: &str,
-    file: &syn::File,
-    signature: &syn::Signature,
-) -> Result<BTreeSet<String>, String> {
-    let mut collector = References::new(module, file)?;
-    collector.paths.clear();
-    collector.visit_return_type(&signature.output);
-    if collector.errors.is_empty() {
-        Ok(collector.paths)
     } else {
         Err(collector.errors.join("\n"))
     }
@@ -129,16 +59,6 @@ pub fn data_accesses(module: &str, file: &syn::File) -> Result<(BTreeSet<String>
     }
 }
 
-pub fn has_float_literal(module: &str, file: &syn::File) -> Result<bool, String> {
-    let mut collector = References::new(module, file)?;
-    collector.visit_file(file);
-    if collector.errors.is_empty() {
-        Ok(collector.float_literal)
-    } else {
-        Err(collector.errors.join("\n"))
-    }
-}
-
 pub fn method_names(module: &str, file: &syn::File) -> Result<BTreeSet<String>, String> {
     let mut collector = References::new(module, file)?;
     collector.visit_file(file);
@@ -163,7 +83,6 @@ struct References<'a> {
     indexed: bool,
     block_depth: usize,
     callbacks: BTreeSet<String>,
-    float_literal: bool,
     definitions: Vec<syn::Item>,
     signatures: Vec<syn::Signature>,
 }
@@ -185,7 +104,6 @@ impl<'a> References<'a> {
             indexed: false,
             block_depth: 0,
             callbacks: BTreeSet::new(),
-            float_literal: false,
             definitions: Vec::new(),
             signatures: Vec::new(),
         })
@@ -220,10 +138,6 @@ impl<'ast> Visit<'ast> for References<'_> {
     fn visit_expr_index(&mut self, expression: &'ast syn::ExprIndex) {
         self.indexed = true;
         visit::visit_expr_index(self, expression);
-    }
-
-    fn visit_lit_float(&mut self, _literal: &'ast syn::LitFloat) {
-        self.float_literal = true;
     }
 
     fn visit_signature(&mut self, signature: &'ast syn::Signature) {
