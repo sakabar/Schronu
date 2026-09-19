@@ -90,3 +90,16 @@ fn relative_and_qualified_gateway_paths_have_the_same_boundary() {
     assert!(!errors[0].is_empty());
     assert_eq!(errors[0], errors[1]);
 }
+
+fn ownership_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> {
+    Vec::new()
+}
+
+#[test]
+fn runtime_cannot_define_command_contexts_under_new_names() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
+        struct RenamedContext;
+    });
+    assert!(!ownership_violations(&modules).is_empty());
+}
