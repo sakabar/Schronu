@@ -6,6 +6,20 @@ use super::source::{controller_modules, module_family, product_file};
 use std::collections::BTreeMap;
 use syn::ext::IdentExt;
 
+pub fn external_io_dependency(path: &str) -> bool {
+    [
+        "controller::runtime",
+        "crate::application::repository_transaction",
+        "crate::adapter::gateway",
+        "std::process",
+        "std::fs",
+        "std::env",
+        "webbrowser",
+    ]
+    .iter()
+    .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}::")))
+}
+
 fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let mut errors = Vec::new();
     for root in [
@@ -17,18 +31,7 @@ fn io_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             match references(module, file) {
                 Ok(paths) => {
                     for path in paths {
-                        if [
-                            "controller::runtime",
-                            "crate::application::repository_transaction",
-                            "crate::adapter::gateway",
-                            "std::process",
-                            "std::fs",
-                            "std::env",
-                            "webbrowser",
-                        ]
-                        .iter()
-                        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}::")))
-                        {
+                        if external_io_dependency(&path) {
                             errors.push(format!("{module} owns external I/O dependency: {path}"));
                         }
                     }

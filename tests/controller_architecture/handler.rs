@@ -31,20 +31,10 @@ fn module_violations(module: &str, file: &syn::File, parser_paths: &[String]) ->
     paths
         .into_iter()
         .filter(|path| {
-            [
-                "controller::runtime",
-                "controller::interactive",
-                "crate::adapter::gateway",
-                "crate::application::repository_transaction",
-                "termion",
-                "webbrowser",
-                "std::env",
-                "std::process",
-                "std::fs",
-                "std::io",
-            ]
-            .iter()
-            .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}::")))
+            super::runtime_io::external_io_dependency(path)
+                || ["controller::interactive", "termion", "std::io"]
+                    .iter()
+                    .any(|prefix| path == prefix || path.starts_with(&format!("{prefix}::")))
                 || [
                     "TaskRepository",
                     "TaskRepositoryTrait",
