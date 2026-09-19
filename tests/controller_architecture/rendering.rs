@@ -1,4 +1,4 @@
-use super::paths::{expand_local_globs, references};
+use super::paths::{definitions, expand_local_globs, references};
 use super::source::{controller_modules, fixture_modules};
 use std::collections::BTreeMap;
 use syn::ext::IdentExt;
@@ -113,15 +113,20 @@ fn raw_legacy_variant_declarations_have_the_same_identity() {
 }
 
 fn mode_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
-    let owners: Vec<_> = modules
-        .iter()
-        .flat_map(|(module, file)| {
-            file.items.iter().filter_map(move |item| {
-                matches!(item, syn::Item::Enum(item) if item.ident.unraw() == "RenderMode")
-                    .then_some(module.as_str())
-            })
-        })
-        .collect();
+    let mut owners = Vec::new();
+    for (module, file) in modules {
+        let items = match expand_local_globs(module, file, modules)
+            .and_then(|file| definitions(module, &file))
+        {
+            Ok(items) => items,
+            Err(error) => return vec![error],
+        };
+        for item in items {
+            if matches!(item, syn::Item::Enum(item) if item.ident.unraw() == "RenderMode") {
+                owners.push(module.as_str());
+            }
+        }
+    }
     match owners.as_slice() {
         [owner]
             if *owner == "controller::renderer" || owner.starts_with("controller::renderer::") =>
@@ -144,6 +149,14 @@ fn render_mode_owner_cannot_move_or_duplicate() {
         (
             "enum RenderMode { Flushed }",
             "enum RenderMode { Unflushed }",
+        ),
+        (
+            "enum RenderMode { Flushed }",
+            "fn helper() { enum RenderMode { Flushed } }",
+        ),
+        (
+            "enum RenderMode { Flushed }",
+            "fn helper() { format!(\"{}\", { enum RenderMode { Flushed } 0 }); }",
         ),
         ("", ""),
     ] {

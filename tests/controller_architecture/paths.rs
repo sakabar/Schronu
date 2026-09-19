@@ -236,7 +236,11 @@ impl<'ast> Visit<'ast> for References<'_> {
     fn visit_item(&mut self, item: &'ast syn::Item) {
         if matches!(
             item,
-            syn::Item::Struct(_) | syn::Item::Trait(_) | syn::Item::Impl(_) | syn::Item::Type(_)
+            syn::Item::Struct(_)
+                | syn::Item::Enum(_)
+                | syn::Item::Trait(_)
+                | syn::Item::Impl(_)
+                | syn::Item::Type(_)
         ) {
             self.definitions.push(item.clone());
         }
