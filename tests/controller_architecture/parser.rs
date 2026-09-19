@@ -134,3 +134,16 @@ fn parser_rejects_method_and_literal_decoys_and_wrong_mode() {
         assert_eq!(violations(&file).len(), 1);
     }
 }
+
+#[test]
+fn parser_rejects_calls_hidden_in_unexecuted_scopes() {
+    for body in [
+        "{ fn unused(input: &str) -> Result<Command, Error> { decode(&tokenize(input), ParseMode::Interactive) } Ok(Command::Noop) }",
+        "{ let unused = || decode(&tokenize(input), ParseMode::Interactive); Ok(Command::Noop) }",
+    ] {
+        let mut file = fixture();
+        let syn::Item::Fn(entry) = &mut file.items[1] else { panic!("fixture entry") };
+        *entry.block = syn::parse_str(body).unwrap();
+        assert_eq!(violations(&file).len(), 1);
+    }
+}

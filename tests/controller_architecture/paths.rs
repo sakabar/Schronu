@@ -13,6 +13,7 @@ pub fn references(module: &str, file: &syn::File) -> Result<BTreeSet<String>, St
         errors: Vec::new(),
         in_macro: false,
         calls: Vec::new(),
+        scoped_calls: false,
     };
     collector.visit_file(file);
     if collector.errors.is_empty() {
@@ -29,6 +30,7 @@ struct References<'a> {
     errors: Vec<String>,
     in_macro: bool,
     calls: Vec<(String, syn::ExprCall)>,
+    scoped_calls: bool,
 }
 
 impl References<'_> {
@@ -52,6 +54,34 @@ impl References<'_> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_item_fn(&mut self, item: &'ast syn::ItemFn) {
+        if !self.scoped_calls {
+            visit::visit_item_fn(self, item);
+        }
+    }
+
+    fn visit_expr_closure(&mut self, expression: &'ast syn::ExprClosure) {
+        if !self.scoped_calls {
+            visit::visit_expr_closure(self, expression);
+        }
+    }
+
+    fn visit_expr_method_call(&mut self, expression: &'ast syn::ExprMethodCall) {
+        if self.scoped_calls && expression.method == "and_then" {
+            // The maintenance parser's Result::and_then executes its inline
+            // closure. Merely declaring another closure is not a direct call.
+            self.visit_expr(&expression.receiver);
+            for argument in &expression.args {
+                if let syn::Expr::Closure(closure) = argument {
+                    visit::visit_expr_closure(self, closure);
+                } else {
+                    self.visit_expr(argument);
+                }
+            }
+        } else {
+            visit::visit_expr_method_call(self, expression);
+        }
+    }
     fn visit_expr_call(&mut self, expression: &'ast syn::ExprCall) {
         let mut function = expression.func.as_ref();
         loop {
@@ -172,6 +202,7 @@ pub fn function_calls(
         errors: Vec::new(),
         in_macro: false,
         calls: Vec::new(),
+        scoped_calls: true,
     };
     collector.visit_block(&function.block);
     if collector.errors.is_empty() {
