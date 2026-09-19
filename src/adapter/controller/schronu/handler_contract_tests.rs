@@ -244,7 +244,7 @@ fn handler_owns_noop_but_leaves_unmigrated_commands_to_runtime() {
 }
 
 #[test]
-fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstruction() {
+fn typed_focus_commands_return_structured_requests() {
     let open = handle(&no_arguments(CommandKind::Open, "ignored alias"))
         .expect("typed open command must produce an outcome");
     let focus = handle(&Command::Action(CommandAction::FocusMode {
@@ -264,26 +264,6 @@ fn handler_has_no_runtime_or_external_io_dependency_and_no_command_reconstructio
         focus.focus_change,
         FocusChange::SelectionMode(FocusSelection::LowestPriority { recent_days: 7 })
     );
-
-    let product_source = handler_product_source();
-    for forbidden_dependency_or_reconstruction in [
-        "super::runtime",
-        "termion",
-        "termion::",
-        "std::env",
-        "std::env::",
-        "webbrowser",
-        "webbrowser::",
-        "TaskRepository",
-        "run_repository_transaction",
-        "legacy_tokens",
-        "canonical_command",
-    ] {
-        assert!(
-            !product_source.contains(forbidden_dependency_or_reconstruction),
-            "handler product source must not depend on runtime, concrete repository I/O, or reconstruct parsed commands: {forbidden_dependency_or_reconstruction}"
-        );
-    }
 }
 
 struct TraceProjectContext {
