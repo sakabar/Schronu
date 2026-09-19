@@ -368,6 +368,17 @@ fn diagnostic_roles(
     Ok(result)
 }
 
+fn borrowed_value(mut expression: &syn::Expr) -> &syn::Expr {
+    loop {
+        expression = match expression {
+            syn::Expr::Reference(value) => &value.expr,
+            syn::Expr::Paren(value) => &value.expr,
+            syn::Expr::Group(value) => &value.expr,
+            _ => return expression,
+        };
+    }
+}
+
 fn diagnostic_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
     let roles = match diagnostic_roles(modules) {
         Ok(roles) => roles,
@@ -408,14 +419,16 @@ fn diagnostic_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
                 .iter()
                 .nth(1)
                 .ok_or_else(|| format!("{role} missing model argument"))?;
-            let block = syn::parse_quote!({ #argument; });
-            let model_calls = super::paths::block_calls(module, &file, &block)?;
-            if model_calls
-                .iter()
-                .filter(|(path, _)| canonical(module, path) == role_path(model))
-                .count()
-                != 1
-            {
+            let syn::Expr::Call(model_call) = borrowed_value(argument) else {
+                return Err(format!(
+                    "{role} must pass its semantic model result directly"
+                ));
+            };
+            let syn::Expr::Path(model_function) = borrowed_value(&model_call.func) else {
+                return Err(format!("{role} must call its typed model builder"));
+            };
+            let target = super::paths::resolve_path(module, &file, &model_function.path)?;
+            if canonical(module, &target) != role_path(model) {
                 return Err(format!("{role} must pass its semantic model to renderer"));
             }
             if flushed {
@@ -594,4 +607,35 @@ fn diagnostic_model_must_be_the_renderers_argument() {
         false
     });
     assert!(!diagnostic_violations(&modules).is_empty());
+}
+
+#[test]
+fn diagnostic_model_cannot_be_discarded_inside_the_argument() {
+    let mut modules = controller_modules();
+    let roles = diagnostic_roles(&modules).unwrap();
+    let (module, role) = &roles["report"];
+    let error_model = &roles["error_model"].1.sig.ident;
+    let renderer = &roles["plain_renderer"].1.sig.ident;
+    let file = modules.get_mut(module).unwrap();
+    let function = file
+        .items
+        .iter_mut()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == role.sig.ident => Some(function),
+            _ => None,
+        })
+        .unwrap();
+    function.block = syn::parse_quote!({ #renderer(writer, &{ let _ = #error_model(error); DisplayModel::empty() }); false });
+    assert!(!diagnostic_violations(&modules).is_empty());
+    let file = modules.get_mut(module).unwrap();
+    let function = file
+        .items
+        .iter_mut()
+        .find_map(|item| match item {
+            syn::Item::Fn(function) if function.sig.ident == role.sig.ident => Some(function),
+            _ => None,
+        })
+        .unwrap();
+    function.block = syn::parse_quote!({ #renderer(writer, &((#error_model)(error))); false });
+    assert!(diagnostic_violations(&modules).is_empty());
 }
