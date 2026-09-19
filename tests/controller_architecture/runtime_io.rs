@@ -173,3 +173,14 @@ fn runtime_context_text_is_not_a_definition() {
     });
     assert!(ownership_violations(&modules).is_empty());
 }
+
+fn datetime_violations(_modules: &BTreeMap<String, syn::File>) -> Vec<String> { Vec::new() }
+
+#[test]
+fn renamed_runtime_helper_cannot_interpret_calendar_dates() {
+    let mut modules = controller_modules();
+    modules.get_mut("controller::runtime").unwrap().items.push(syn::parse_quote! {
+        fn renamed() { chrono::NaiveDate::from_ymd_opt(2026, 9, 19); }
+    });
+    assert!(!datetime_violations(&modules).is_empty());
+}
