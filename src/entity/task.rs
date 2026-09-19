@@ -1692,6 +1692,35 @@ mod checked_deadline_calculation_tests {
             original_revision
         );
     }
+
+    #[test]
+    fn set_deadline_time_optは計算不能な子孫を特定し全deadlineとrevisionを変更しない() {
+        let now = Local::now();
+        let parent = TaskHandle::with_identity("親", Uuid::new_v4(), now).unwrap();
+        let child_id = Uuid::new_v4();
+        let mut child_attr = TaskAttr::with_identity("子", child_id, now);
+        child_attr.set_estimated_work_seconds(i64::MAX);
+        let child = parent.create_child(child_attr).unwrap();
+        let revision = parent.get_persistent_mutation_revision().unwrap();
+        let deadline = now + Duration::days(1);
+
+        let actual = parent.set_deadline_time_opt(Some(deadline));
+
+        assert!(matches!(
+            actual,
+            Err(TaskTreeError::DeadlineCalculation {
+                task_id: error_task_id,
+                field: "deadline_time",
+                source: DeadlineCalculationError::DurationOutOfRange {
+                    operation: "deadline_pending_limit",
+                    ..
+                },
+            }) if error_task_id == child_id
+        ));
+        assert_eq!(parent.get_deadline_time_opt().unwrap(), None);
+        assert_eq!(child.get_deadline_time_opt().unwrap(), None);
+        assert_eq!(parent.get_persistent_mutation_revision().unwrap(), revision);
+    }
 }
 
 #[cfg(test)]

@@ -534,6 +534,61 @@ fn cli_日時減算範囲外の見積更新はerrorとなり保存内容を変�
     assert_eq!(persistent_storage_bytes(storage.path()), before);
 }
 
+#[test]
+fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "descendant-create",
+        "create_task",
+        Some(json!({"name": "deadline parent"})),
+    );
+    let parent_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let breakdown = call_tool(
+        storage.path(),
+        "descendant-breakdown",
+        "breakdown_task",
+        Some(json!({"parent_id": parent_id, "names": ["oversized child"]})),
+    );
+    let child_id = breakdown["result"]["structuredContent"]["child_ids"][0]
+        .as_str()
+        .unwrap();
+    let estimate_update = call_tool(
+        storage.path(),
+        "descendant-estimate",
+        "update_task",
+        Some(json!({
+            "task_id": child_id,
+            "estimated_work_minutes": i64::MAX / 60
+        })),
+    );
+    assert_eq!(estimate_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("descendant-deadline");
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+
+    let failed = mcp.call_tool(
+        "descendant-deadline",
+        "update_task",
+        json!({"task_id": parent_id, "deadline_time": deadline}),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(child_id));
+    assert!(message.contains("deadline_time"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+    let retried = mcp.call_tool("descendant-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
 fn persistent_storage_bytes(storage: &Path) -> Vec<(PathBuf, Vec<u8>)> {
     let mut files = fs::read_dir(storage)
         .unwrap()
