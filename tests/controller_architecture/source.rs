@@ -1,6 +1,16 @@
+use std::collections::BTreeMap;
+use std::path::Path;
 use syn::punctuated::Punctuated;
 use syn::visit_mut::{self, VisitMut};
 use syn::{Attribute, Item, Meta, Token};
+
+pub fn load_modules(
+    root: &Path,
+    mut read: impl FnMut(&Path) -> Result<String, String>,
+) -> Result<BTreeMap<String, syn::File>, String> {
+    let file = product_file(&read(root)?).map_err(|error| error.to_string())?;
+    Ok(BTreeMap::from([("controller".into(), file)]))
+}
 
 pub fn product_file(text: &str) -> syn::Result<syn::File> {
     let mut file = syn::parse_file(text)?;
