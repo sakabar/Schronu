@@ -535,6 +535,43 @@ fn cli_日時減算範囲外の見積更新はerrorとなり保存内容を変�
 }
 
 #[test]
+fn cli_duration範囲外の見積更新はerrorとなり保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-duration-create",
+        "create_task",
+        Some(json!({"name": "cli duration target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "cli-duration-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+        .args(["予", &(i64::MAX / 60).to_string()])
+        .env("SCHRONU_STORAGE_DIR", storage.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id));
+    assert!(stderr.contains("estimated_work_seconds"));
+    assert!(stderr.contains("duration is outside"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+#[test]
 fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を変えない() {
     let storage = TestStorageDirectory::new();
     let created = call_tool(
