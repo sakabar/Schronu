@@ -66,27 +66,63 @@ fn seed_projects(storage_directory: &Path, count: usize) {
 }
 
 struct TestStorageDirectory {
+    root: PathBuf,
     path: PathBuf,
+    config_path: PathBuf,
 }
 
 impl TestStorageDirectory {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().join(format!(
             "schronu-mcp-stdio-test-{}",
             Uuid::new_v4().hyphenated()
         ));
-        fs::create_dir(&path).unwrap();
-        Self { path }
+        let path = root.join("storage");
+        fs::create_dir_all(&path).unwrap();
+        let busy_time_slots_path = root.join("busy_time_slots.yaml");
+        fs::write(&busy_time_slots_path, empty_busy_time_slots_yaml()).unwrap();
+        let config_path = root.join("schronu.yaml");
+        fs::write(
+            &config_path,
+            format!(
+                "busy_time_slots_yaml_path: {}\n",
+                busy_time_slots_path.display()
+            ),
+        )
+        .unwrap();
+        Self {
+            root,
+            path,
+            config_path,
+        }
     }
 
     fn path(&self) -> &Path {
         &self.path
     }
+
+    fn cli_command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_schronu"));
+        command
+            .env("SCHRONU_STORAGE_DIR", self.path())
+            .env("SCHRONU_CONFIG_PATH", &self.config_path);
+        command
+    }
+}
+
+fn empty_busy_time_slots_yaml() -> String {
+    let mut yaml = String::from("days_of_week:\n");
+    for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        yaml.push_str(&format!(
+            "  - day_of_week: {day_of_week}\n    busy_time_slots: []\n"
+        ));
+    }
+    yaml
 }
 
 impl Drop for TestStorageDirectory {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -524,16 +560,16 @@ fn cli_日時減算範囲外の見積更新はerrorとなり保存内容を変�
     assert_eq!(deadline_update["result"]["isError"], false);
     let before = persistent_storage_bytes(storage.path());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let output = storage
+        .cli_command()
         .args(["予", &(10_000_000_000_000_i64 / 60).to_string()])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(task_id));
+    assert!(stderr.contains(task_id), "stderr={stderr}");
     assert!(stderr.contains("estimated_work_seconds"));
     assert!(stderr.contains("datetime subtraction"));
     assert_eq!(persistent_storage_bytes(storage.path()), before);
@@ -561,16 +597,16 @@ fn cli_duration範囲外の見積更新はerrorとなり保存内容を変えな
     assert_eq!(deadline_update["result"]["isError"], false);
     let before = persistent_storage_bytes(storage.path());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let output = storage
+        .cli_command()
         .args(["予", &(i64::MAX / 60).to_string()])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains(task_id));
+    assert!(stderr.contains(task_id), "stderr={stderr}");
     assert!(stderr.contains("estimated_work_seconds"));
     assert!(stderr.contains("duration is outside"));
     assert_eq!(persistent_storage_bytes(storage.path()), before);
@@ -588,18 +624,22 @@ fn cli_予約はduration範囲外の受理済み見積をerrorにし保存内容
     let task_id = created["result"]["structuredContent"]["task_id"]
         .as_str()
         .unwrap();
-    let estimate = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let estimate = storage
+        .cli_command()
         .args(["予", &(i64::MAX / 60).to_string()])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
-    assert!(estimate.status.success());
+    assert!(
+        estimate.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&estimate.stderr)
+    );
     let before = persistent_storage_bytes(storage.path());
 
     let appointment_time = Local::now().format("%H:%M").to_string();
-    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let output = storage
+        .cli_command()
         .args(["約", &appointment_time])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
 
@@ -624,18 +664,22 @@ fn cli_予約は日時加算範囲外をerrorにし保存内容を変えない()
     let task_id = created["result"]["structuredContent"]["task_id"]
         .as_str()
         .unwrap();
-    let estimate = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let estimate = storage
+        .cli_command()
         .args(["予", &(10_000_000_000_000_i64 / 60).to_string()])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
-    assert!(estimate.status.success());
+    assert!(
+        estimate.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&estimate.stderr)
+    );
     let before = persistent_storage_bytes(storage.path());
 
     let appointment_time = Local::now().format("%H:%M").to_string();
-    let output = Command::new(env!("CARGO_BIN_EXE_schronu"))
+    let output = storage
+        .cli_command()
         .args(["約", &appointment_time])
-        .env("SCHRONU_STORAGE_DIR", storage.path())
         .output()
         .unwrap();
 
