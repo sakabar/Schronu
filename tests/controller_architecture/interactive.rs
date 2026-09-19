@@ -1,6 +1,6 @@
 use super::paths::{
-    expand_local_globs, function_calls, function_calls_with_callbacks, input_has, method_names,
-    output_has, references, used_paths,
+    block_calls, expand_local_globs, function_calls, input_has, method_names, output_has,
+    references, used_paths,
 };
 use super::source::{controller_modules, module_family};
 use std::collections::{BTreeMap, BTreeSet};
@@ -282,20 +282,30 @@ fn event_violations(modules: &BTreeMap<String, syn::File>) -> Vec<String> {
             let syn::Item::Fn(function) = item else {
                 continue;
             };
-            let calls = match function_calls_with_callbacks(
-                module,
-                &expanded,
-                function,
-                &BTreeSet::from([driver_path.clone()]),
-            ) {
+            let calls = match function_calls(module, &expanded, function) {
                 Ok(calls) => calls,
                 Err(error) => {
                     errors.push(error);
                     continue;
                 }
             };
-            if calls.iter().any(|(path, _)| path == &driver_path) {
+            for (_, driver_call) in calls.iter().filter(|(path, _)| path == &driver_path) {
                 connected_entries += 1;
+                let Some(syn::Expr::Closure(callback)) = driver_call.args.last() else {
+                    errors.push("driver requires an explicit event callback".into());
+                    continue;
+                };
+                let body = syn::Block {
+                    brace_token: Default::default(),
+                    stmts: vec![syn::Stmt::Expr(*callback.body.clone(), None)],
+                };
+                let calls = match block_calls(module, &expanded, &body) {
+                    Ok(calls) => calls,
+                    Err(error) => {
+                        errors.push(error);
+                        continue;
+                    }
+                };
                 if calls
                     .iter()
                     .filter(|(path, _)| {
@@ -401,5 +411,25 @@ fn driver_entry_cannot_drop_the_product_event_callback() {
         panic!("entry")
     };
     *entry.block = syn::parse_quote!({ interactive::#driver_name(now, |_, event| interactive::DriverOutcome::Continue); Ok(()) });
+    assert!(!event_violations(&modules).is_empty());
+    let event_name = roles(
+        &modules,
+        "controller::runtime",
+        "DriverEvent",
+        "DriverOutcome",
+    )[0]
+    .2
+    .sig
+    .ident
+    .clone();
+    let syn::Item::Fn(entry) = &mut modules.get_mut("controller::runtime").unwrap().items[index]
+    else {
+        panic!("entry")
+    };
+    *entry.block = syn::parse_quote!({
+        #event_name(writer, state, event);
+        interactive::#driver_name(now, |_, event| interactive::DriverOutcome::Continue);
+        Ok(())
+    });
     assert!(!event_violations(&modules).is_empty());
 }
