@@ -61,6 +61,17 @@ impl fmt::Display for DeadlineCalculationError {
 
 impl std::error::Error for DeadlineCalculationError {}
 
+pub(crate) fn try_appointment_duration(
+    estimated_work_seconds: i64,
+) -> Result<Duration, DeadlineCalculationError> {
+    Duration::try_seconds(estimated_work_seconds).ok_or(
+        DeadlineCalculationError::DurationOutOfRange {
+            operation: "appointment_deadline",
+            seconds: estimated_work_seconds,
+        },
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LogicalDateTimePolicy {
     end_of_day_offset_minutes: i64,

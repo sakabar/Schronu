@@ -6,7 +6,8 @@ use std::fmt;
 use uuid::Uuid;
 
 use crate::entity::datetime::{
-    DeadlineCalculationError, LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES,
+    try_appointment_duration, DeadlineCalculationError, LogicalDateTimePolicy,
+    DEFAULT_END_OF_DAY_OFFSET_MINUTES,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize)]
@@ -1442,8 +1443,17 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        let deadline_time =
-            appointment_start_time + Duration::seconds(self.get_estimated_work_seconds()?);
+        let task_id = self.get_id()?;
+        let estimated_work_seconds = self.get_estimated_work_seconds()?;
+        let appointment_duration =
+            try_appointment_duration(estimated_work_seconds).map_err(|source| {
+                TaskTreeError::DeadlineCalculation {
+                    task_id,
+                    field: "estimated_work_seconds",
+                    source,
+                }
+            })?;
+        let deadline_time = appointment_start_time + appointment_duration;
 
         let root = self.root()?;
         let is_done = self.get_status()? == Status::Done;
