@@ -6,10 +6,10 @@
 2. laneの所属、依存種別、完了契約、write所有権のいずれかが曖昧なら、task作成前に停止する。隣接Waveから不足方針を推測してはならない。
 3. サイドバーから確認できる新しいlane taskの作成を、ユーザーが明示的に依頼していることを確認する。Skillの自動選択やWaveの説明・計画依頼は`create_thread`の許可にならない。権限がなければ先に尋ねる。
 4. repositoryの指示を読み、`main`、revision、現在のworktree、remote、関連backlog項目を調査する。status表記だけで依存充足とは扱わず、必要な契約commitが`main`に存在することを確認する。
-5. 製品file、test、fixture、文書の予約表を作る。所有単位はfile全体とする。全laneの計画用taskを作成するが、実装を承認するのは依存がreadyなlaneだけとする。
+5. 製品file、test、fixture、文書の予約表を作る。所有単位はfile全体とする。全laneのtaskを作成するが、同turnで実装へ進めるのは依存がreadyなlaneだけとする。
 6. `list_projects`で保存済みprojectを解決する。`git worktree list`で得たprimary worktree pathとGit repository projectを一致させる。一意に一致しなければ停止してユーザーへ尋ね、projectless taskで代用しない。
 
-## 2. 計画用taskの作成
+## 2. lane taskの作成と連続実行
 
 各laneについて、解決した`projectId`と`environment.type: worktree`を指定して`create_thread`を呼ぶ。modelとthinkingは上書きしない。titleにはlane IDとbacklog項目を含める。
 
@@ -18,16 +18,17 @@ worktree準備中で`clientThreadId`だけが返った場合、それをreadyな
 初回promptには次を含める。
 
 - Wave/lane ID、backlog項目、固定する契約、依存関係、予約済みwrite範囲、基点となる`main` revision、予定branch `feature/<lane>-<short-name>`。
-- 初回turnでのfile編集、実装、branch作成・切り替え、commit、push、PR作成の絶対禁止。
 - `backlog.md`、`AGENTS.md`、関連コード・test、依存のready状態、write競合の調査依頼。
 - 各契約単位のcommit計画。各commitについてmessage、固定する契約、責務・module、先行commitへの依存、対象test、想定する単一のRed理由、Green確認commandを必須とする。
-- 計画提示後にturnを終了し、親の明示承認を待つ指示。
+- file編集より前に、計画をbacklog契約、repository規則、依存関係、予約表と照合し、自己検査結果を提示する指示。調査、計画提示、自己検査が完了するまではfile編集、test、scaffold、部分実装、branch作成・切り替え、commitを禁止する。
+- 自己検査を通過したready laneは、計画提示後にturnを終了せず、親の計画承認や再開messageを待たずに専用feature branchを作成または確認し、実装を続行する指示。検査を通過しなければ編集せず、理由を示して対応を求める。
+- pushとPR作成は、後続の親reviewと統合gateが完了するまで禁止する指示。
 
-`wait_threads`で待機する。laneが8件を超える場合は最大8 targetのgroupへ分け、返されたcursorを後続waitで使用する。`read_thread`は詳細不足、対応要求、最終証跡の確認にだけ使う。初回turnでcommit追加もfile変更もないことをlane worktreeで確認する。違反があればそのlaneを隔離し、ほかのlaneを続行しながら回復方針をユーザーへ尋ねる。
+`wait_threads`でlaneの完了または対応要求を待つ。計画完了を中間gateとして待ったり、実装再開messageを送ったりしない。laneが8件を超える場合は最大8 targetのgroupへ分け、返されたcursorを後続waitで使用する。`read_thread`は詳細不足、対応要求、最終証跡の確認にだけ使う。laneの出力とhistoryから、計画提示と自己検査の後に初めて編集したことを確認する。違反があればそのlaneを隔離し、ほかのlaneを続行しながら回復方針をユーザーへ尋ねる。
 
-## 3. 実装の承認と監視
+## 3. 実装の監視
 
-各計画をbacklog契約、repositoryのcommit規則、依存関係、予約表と照合する。計画と依存関係の両方を承認した場合にだけ、実装開始を明示するmessageを送る。編集前に専用feature branchを作成または確認させる。
+初回promptは、自己検査を通過したready laneに対する実装開始の条件付き許可を含む。親は初回計画の事前承認や実装再開messageを必要としない。laneの計画、自己検査、実装証跡をbacklog契約、repositoryのcommit規則、依存関係、予約表と照合し、不整合または範囲拡張を検出したら該当laneだけを停止する。
 
 各laneで次を実施する。
 
@@ -70,7 +71,7 @@ Wave内hard dependencyがある場合は、deadlockを避けるためdependency 
 ## 初回prompt例
 
 ```text
-あなたはW4-A / TD-039の計画だけを担当します。固定する契約、依存関係、予約済みの製品・test・fixture・文書file、予定branch、基点となるmain revisionを以下に記載します。
+あなたはW4-A / TD-039の計画と実装を担当します。固定する契約、依存関係、予約済みの製品・test・fixture・文書file、予定branch、基点となるmain revisionを以下に記載します。
 
-初回turnでは、file編集、実装、branch作成・切り替え、commit、push、PR作成を行わないでください。backlog.md、AGENTS.md、依存関係、関連コード・testを調査してください。各commitについて、message、固定する契約、責務・module、依存関係、対象test、想定する単一のRed理由、Green確認commandを含む契約単位のRed/Green commit計画を提示してください。計画提示後にturnを終了し、親の明示承認を待ってください。
+最初にbacklog.md、AGENTS.md、依存関係、関連コード・testを調査してください。各commitについて、message、固定する契約、責務・module、依存関係、対象test、想定する単一のRed理由、Green確認commandを含む契約単位のRed/Green commit計画を提示してください。file編集より前に、計画をbacklog契約、repository規則、依存関係、予約表と照合し、自己検査結果を提示してください。自己検査を通過した場合は、そのturnを終了せず、親の承認や再開messageを待たずに専用feature branchを作成または確認し、契約単位のRed/Green実装を続行してください。自己検査を通過しない場合は何も編集せず、理由を報告して対応を求めてください。pushとPR作成は、親reviewと統合gateの完了後まで行わないでください。
 ```

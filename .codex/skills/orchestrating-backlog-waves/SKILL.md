@@ -17,7 +17,7 @@ taskを作成する前に、[references/orchestration-protocol.md](references/or
 
 - 自動選択だけではtask作成権限を得られない。lane taskを作成するユーザーの明示的な依頼を必要とする。
 - 各laneは、現在の保存済みproject内に`create_thread`で作成し、それぞれ別worktreeを使用する。内部subagentはreviewだけに使う。
-- laneの初回turnは、調査と契約単位のcommit計画だけに限定する。file編集、実装、commit、pushは禁止する。「安全な」test、scaffold、部分実装も禁止する。
+- laneは初回turnで、調査と契約単位のcommit計画を提示し、backlog契約、repository規則、依存関係、予約表に対する自己検査を行う。検査を通過したready laneは、親の計画承認を待たず、同turnで専用branchの確認から実装へ進む。計画提示と自己検査より前のfile編集、test、scaffold、部分実装は禁止する。
 - hard dependencyは、必要な契約commitが`main`に入った時点でのみreadyになる。積み重ねbranch、draft PR、APIの推測で迂回しない。
 - laneは予約済みfileだけを変更できる。範囲拡張、共有契約、Red理由の変化があれば該当laneを止め、独立laneは続行する。
 - laneの自己申告だけでは公開を許可しない。親reviewと該当する統合検証の通過後にのみpush・PRを許可する。
@@ -27,8 +27,8 @@ taskを作成する前に、[references/orchestration-protocol.md](references/or
 
 | 段階 | 必要な証跡 | 次の操作 |
 | --- | --- | --- |
-| 調査 | 曖昧さのないWaveとwrite予約 | 計画用taskを作成 |
-| 計画 | 完全な計画と変更のないworktree | readyなlaneを承認 |
+| 調査 | 曖昧さのないWaveとwrite予約 | lane taskを作成 |
+| 計画・自己検査 | 完全な計画、readyな依存、競合のない予約 | 同turnで実装を継続 |
 | lane完了 | Red/Green履歴、内部review、品質gate | 親によるbranch review |
 | 親確認 | 許可範囲内で保守可能な差分、未解消P1/P2なし | 統合検証 |
 | 統合完了 | 依存順の合成とWave gateの成功 | pushと非draft PR作成 |
@@ -37,21 +37,22 @@ taskを作成する前に、[references/orchestration-protocol.md](references/or
 
 次の提案が出た場合は、該当laneを停止する。
 
-- 小さい、または元に戻せるという理由で初回turnから実装する。
+- 小さい、または元に戻せるという理由で、計画提示または自己検査より前に編集する。
 - 未mergeの依存branchから実装を始める。
 - 変更行が異なるという理由で同じfileを同時所有する。
 - 内部reviewまたはGreenの自己申告を親承認の代わりにする。
 - 統合検証前に公開する。
 - 待ち時間に次Waveを実装する。
 
-laneが初回turnの禁止事項に違反した場合は、その作業を隔離して回復方法をユーザーへ尋ねる。黙ってsalvage、reset、revert、archive、再作成してはならない。
+laneが計画提示または自己検査より前に編集した場合は、その作業を隔離して回復方法をユーザーへ尋ねる。黙ってsalvage、reset、revert、archive、再作成してはならない。
 
 ## よくある合理化
 
 | 合理化 | 必須対応 |
 | --- | --- |
 | 「依存branchはすでにGreen」 | 必要なcommitが`main`へ入るまで待つ。 |
+| 「親が計画をまだ承認していない」 | ready laneは自己検査後に同turnで進む。親は完了後のbranch reviewを行う。 |
 | 「共有部分は10行だけ」 | file全体の所有権を直列化する。 |
 | 「laneは数時間かけ、testも成功済み」 | 状態を保持して承認せず、ユーザーへ判断を求める。 |
-| 「draft PRなら進捗を維持できる」 | 計画taskや依存待ちは公開gateではない。 |
+| 「draft PRなら進捗を維持できる」 | lane taskの計画段階や依存待ちは公開gateではない。 |
 | 「次Waveは独立している」 | 今回の実行範囲外として扱う。 |
