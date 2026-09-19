@@ -15,6 +15,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[path = "support/persistent_storage.rs"]
+mod persistent_storage;
+
+use persistent_storage::persistent_storage_bytes_excluding_process_lock as persistent_storage_bytes;
+
 fn new_test_task_handle(name: &str) -> TaskHandle {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -699,30 +704,32 @@ fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を�
     assert_process_succeeded(&mcp.finish());
 }
 
-fn persistent_storage_bytes(storage: &Path) -> Vec<(PathBuf, Vec<u8>)> {
-    let mut files = fs::read_dir(storage)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
-        .filter(|entry| entry.file_name() != ".lock")
-        .map(|entry| (entry.path(), fs::read(entry.path()).unwrap()))
-        .collect::<Vec<_>>();
-    for directory in fs::read_dir(storage).unwrap().filter_map(Result::ok) {
-        if directory
-            .file_type()
-            .is_ok_and(|file_type| file_type.is_dir())
-        {
-            files.extend(
-                fs::read_dir(directory.path())
-                    .unwrap()
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.file_type().is_ok_and(|file_type| file_type.is_file()))
-                    .map(|entry| (entry.path(), fs::read(entry.path()).unwrap())),
-            );
-        }
-    }
-    files.sort_by(|left, right| left.0.cmp(&right.0));
-    files
+#[test]
+fn persistent_storage_snapshotは深いtransaction階層を収集しroot_lockだけを除外する() {
+    let storage = TestStorageDirectory::new();
+    let staged_directory = storage
+        .path()
+        .join(".transactions")
+        .join("transaction-id")
+        .join("staged");
+    fs::create_dir_all(&staged_directory).unwrap();
+    fs::write(storage.path().join(".lock"), b"process lock").unwrap();
+    fs::write(staged_directory.join("project.yaml"), b"deep bytes").unwrap();
+    fs::write(staged_directory.join(".lock"), b"nested lock").unwrap();
+
+    let snapshot = persistent_storage_bytes(storage.path());
+
+    assert!(!snapshot.contains_key(Path::new(".lock")));
+    assert_eq!(
+        snapshot.get(Path::new(
+            ".transactions/transaction-id/staged/project.yaml"
+        )),
+        Some(&b"deep bytes".to_vec())
+    );
+    assert_eq!(
+        snapshot.get(Path::new(".transactions/transaction-id/staged/.lock")),
+        Some(&b"nested lock".to_vec())
+    );
 }
 
 #[test]
