@@ -74,7 +74,7 @@
 | TD-033 | P1 | 完了 | M | 同一taskの複数segmentをApps Scriptが別行へ同期する |
 | TD-034 | P1 | 一部完了(W1-J) | M | Spreadsheet入力が存在しない日付と不正な時分秒をcommandへ変換する |
 | TD-035 | P2 | 完了 | M | 反復延期が夏時間の切り替え境界で開始時刻とdeadlineの壁時計時刻をずらす |
-| TD-036 | P2 | 開発完了(未merge) | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
+| TD-036 | P2 | 完了 | L | source textを独自parseするarchitecture testがRust構文と実装名へ強く結合している |
 | TD-037 | P2 | 完了 | M | 未使用のlenient YAML変換APIがstrict loaderと並存している |
 | TD-038 | P2 | 完了 | L | MCPのtask一覧に検索・paginationがなく、大規模storageで応答が無制限に増える |
 | TD-039 | P2 | 完了 | L | 稼働中processを止めずに整合したbackupを作成・検証・restoreする手段がない |
@@ -1496,7 +1496,7 @@
 - 分類: `技術的負債 / test保守性`
 - 優先度: `P2`
 - 概算規模: `L`
-- 状態: 簡素化実装完了・親再統合gate通過(未merge)。[PR #467](https://github.com/sakabar/Schronu/pull/467)は作成済みでOPEN・non-draft。簡素化後の追加commitは未push、PR更新も保留。
+- 状態: 完了。[PR #467](https://github.com/sakabar/Schronu/pull/467)へpush・PR本文更新済み。
 
 #### W2-C schedule境界の既存証跡
 
@@ -1541,7 +1541,7 @@
 
 #### 残存範囲・別契約
 
-- W2-CとW7-Aのsource scanner置換と簡素化は開発完了・親再統合gate通過済み。PR #467はOPEN・non-draft・未mergeであり、追加commitの通常push・PR本文更新は親の承認待ち。
+- W2-CとW7-Aのsource scanner置換と簡素化は完了。親再統合gate通過済み。
 - `src/adapter/controller/mod.rs`の`binary_entrypoint_delegates_to_library_cli`は、binary入口がlibraryの`run_cli`だけへ委譲する薄いwrapperであることをsource一致で固定する別契約であり、今回の独自Rust scanner置換の対象外として維持した。
 
 #### 対応前の現状と根拠
