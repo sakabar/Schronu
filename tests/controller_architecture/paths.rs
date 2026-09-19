@@ -118,6 +118,7 @@ struct References<'a> {
     fields: BTreeSet<String>,
     block_depth: usize,
     callbacks: BTreeSet<String>,
+    scaling: bool,
 }
 
 impl<'a> References<'a> {
@@ -135,6 +136,7 @@ impl<'a> References<'a> {
             fields: BTreeSet::new(),
             block_depth: 0,
             callbacks: BTreeSet::new(),
+            scaling: false,
         })
     }
 
@@ -158,6 +160,10 @@ impl<'a> References<'a> {
 }
 
 impl<'ast> Visit<'ast> for References<'_> {
+    fn visit_expr_binary(&mut self, expression: &'ast syn::ExprBinary) {
+        self.scaling |= matches!(expression.op, syn::BinOp::Mul(_) | syn::BinOp::Div(_));
+        visit::visit_expr_binary(self, expression);
+    }
     fn visit_block(&mut self, block: &'ast syn::Block) {
         self.block_depth += 1;
         visit::visit_block(self, block);
@@ -331,6 +337,20 @@ pub fn function_calls(
     function: &syn::ItemFn,
 ) -> Result<Vec<(String, syn::ExprCall)>, String> {
     function_calls_with_callbacks(module, file, function, &BTreeSet::new())
+}
+
+pub fn function_has_scaling(
+    module: &str,
+    file: &syn::File,
+    function: &syn::ItemFn,
+) -> Result<bool, String> {
+    let mut collector = References::new(module, file)?;
+    collector.visit_block(&function.block);
+    if collector.errors.is_empty() {
+        Ok(collector.scaling)
+    } else {
+        Err(collector.errors.join("\n"))
+    }
 }
 
 pub fn function_calls_with_callbacks(

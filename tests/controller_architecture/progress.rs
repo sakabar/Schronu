@@ -1,6 +1,5 @@
-use super::paths::{function_calls, output_has, type_has};
+use super::paths::{function_calls, function_has_scaling, output_has, type_has};
 use super::source::product_file;
-use syn::visit::{self, Visit};
 
 fn violations(file: &syn::File) -> Vec<String> {
     let formatters: Vec<_> = file.items.iter().filter_map(|item| match item {
@@ -23,17 +22,10 @@ fn violations(file: &syn::File) -> Vec<String> {
     {
         errors.push("progress formatter must delegate once to application session progress".into());
     }
-    struct Arithmetic(bool);
-    impl<'ast> Visit<'ast> for Arithmetic {
-        fn visit_expr_binary(&mut self, expression: &'ast syn::ExprBinary) {
-            self.0 |= matches!(expression.op, syn::BinOp::Mul(_) | syn::BinOp::Div(_));
-            visit::visit_expr_binary(self, expression);
-        }
-    }
-    let mut arithmetic = Arithmetic(false);
-    arithmetic.visit_block(&formatter.block);
-    if arithmetic.0 {
-        errors.push("progress formatter owns scaling arithmetic".into());
+    match function_has_scaling("controller::renderer", file, formatter) {
+        Ok(true) => errors.push("progress formatter owns scaling arithmetic".into()),
+        Err(error) => errors.push(error),
+        Ok(false) => {}
     }
     errors
 }
@@ -76,4 +68,19 @@ fn progress_calculator_decoys_do_not_satisfy_delegation() {
         let file = product_file(&format!("fn renamed(a: i64, b: i64, c: i64) -> String {{ {body} }}")).unwrap();
         assert!(!violations(&file).is_empty(), "{body}");
     }
+}
+
+#[test]
+fn progress_arithmetic_inside_format_arguments_is_rejected() {
+    let file = product_file(
+        r#"fn renamed(a: i64, b: i64, c: i64) -> String {
+        let _ = crate::application::session_progress::calculate_session_progress(a, b, c);
+        format!("{}", (b + c) * 100 / a)
+    }"#,
+    )
+    .unwrap();
+    assert_eq!(
+        violations(&file),
+        ["progress formatter owns scaling arithmetic"]
+    );
 }
