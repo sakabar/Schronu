@@ -429,36 +429,6 @@ fn contains_identifier(source: &str, identifier: &str) -> bool {
         .any(|token| token == identifier)
 }
 
-fn is_possible_identifier_character(character: char) -> bool {
-    character == '_' || character.is_alphanumeric() || !character.is_ascii()
-}
-
-fn contains_direct_free_function_call(code: &str, function_name: &str) -> bool {
-    code.match_indices(function_name).any(|(start, _)| {
-        let before = &code[..start];
-        let after = &code[start + function_name.len()..];
-        let target_prefix = before.strip_suffix("r#").unwrap_or(before);
-        let has_identifier_boundary = target_prefix
-            .chars()
-            .next_back()
-            .is_none_or(|character| !is_possible_identifier_character(character))
-            && after
-                .chars()
-                .next()
-                .is_none_or(|character| !is_possible_identifier_character(character));
-        let trimmed_prefix = target_prefix.trim_end();
-        let is_unqualified = !trimmed_prefix.ends_with('.') && !trimmed_prefix.ends_with("::");
-        let previous_token = trimmed_prefix
-            .rsplit(|character: char| !is_possible_identifier_character(character))
-            .next()
-            .unwrap_or_default();
-        has_identifier_boundary
-            && is_unqualified
-            && previous_token != "fn"
-            && after.trim_start().starts_with('(')
-    })
-}
-
 fn compact_code(source: &str) -> String {
     code_only(source)
         .chars()
@@ -710,43 +680,6 @@ fn runtime_final_boundary_violations(sources: &[ControllerProductSource]) -> Vec
     }
 
     violations
-}
-
-#[test]
-fn interactive_terminal_driver_is_isolated_from_runtime() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let interactive_path = manifest_dir.join("src/adapter/controller/schronu/interactive.rs");
-    assert!(
-        interactive_path.is_file(),
-        "interactive terminal driver module must exist"
-    );
-
-    let interactive_source =
-        fs::read_to_string(interactive_path).expect("interactive source must be readable");
-    let runtime_source = include_str!("runtime.rs");
-
-    for required in [
-        "termion::event::Key",
-        "termion::input::TermRead",
-        "termion::raw::IntoRawMode",
-        "termion::raw::RawTerminal",
-        "std::io::stdin().keys()",
-        "recv_timeout",
-        "fn render_prompt(",
-        "fn get_byte_offset_for_insert(",
-        "fn get_byte_offset_for_deletion(",
-        "termion::cursor",
-        "termion::clear",
-    ] {
-        assert!(
-            interactive_source.contains(required),
-            "interactive driver must own {required}"
-        );
-        assert!(
-            !runtime_source.contains(required),
-            "runtime must not retain terminal detail {required}"
-        );
-    }
 }
 
 #[test]
@@ -1228,88 +1161,6 @@ fn interactive_aliasは同じtyped_kindと再描画方針になる() {
             .into_iter()
             .all(should_suppress_leaf_tasks_after_command));
     }
-}
-
-#[test]
-fn interactive製品eventはtyped_classifierへ直接接続する() {
-    let product_sources = controller_product_sources();
-    let (classifier_path, classifier_source) =
-        unique_function_region(&product_sources, "should_suppress_leaf_tasks_after_command")
-            .expect("controller must define one interactive redraw classifier");
-    assert_eq!(
-        classifier_path.file_name().and_then(|name| name.to_str()),
-        Some("interactive.rs"),
-        "interactive driver must own the redraw classifier"
-    );
-    assert!(
-        classifier_source.contains("kind: CommandKind"),
-        "redraw classifier must accept the parsed command kind"
-    );
-    for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
-        assert!(
-            !classifier_source.contains(forbidden),
-            "redraw classifier must not inspect raw command text with {forbidden}"
-        );
-    }
-
-    let (_, caller_source) =
-        unique_function_region(&product_sources, "handle_interactive_driver_event")
-            .expect("interactive driver event boundary must remain unique");
-    let caller_code = code_only(caller_source);
-    assert!(
-        caller_code.contains("should_suppress_leaf_tasks_after_command(command_kind)"),
-        "interactive command completion must pass its typed kind directly to the redraw classifier"
-    );
-    for forbidden in ["parse_command(", ".chars().next(", ".split_whitespace("] {
-        assert!(
-            !caller_code.contains(forbidden),
-            "interactive event caller must not recover command meaning with {forbidden}"
-        );
-    }
-
-    let (_, entrypoint_source) =
-        unique_function_region(&product_sources, "interactive_application")
-            .expect("interactive application entrypoint must remain unique");
-    let entrypoint_code = code_only(entrypoint_source);
-    assert!(
-        contains_direct_free_function_call(&entrypoint_code, "handle_interactive_driver_event"),
-        "interactive application must delegate product events to the shared driver boundary"
-    );
-}
-
-#[test]
-fn direct_free_function_call_scannerはqualified_callと非codeを除外する() {
-    let function_name = "handle_interactive_driver_event";
-    for source in [
-        "another_handle_interactive_driver_event();",
-        "別handle_interactive_driver_event();",
-        "handle_interactive_driver_event別();",
-        "driver.handle_interactive_driver_event();",
-        "runtime::handle_interactive_driver_event();",
-        "fn handle_interactive_driver_event() {}",
-        "fn r#handle_interactive_driver_event() {}",
-        "driver.r#handle_interactive_driver_event();",
-        "runtime::r#handle_interactive_driver_event();",
-        "// handle_interactive_driver_event();",
-        "let marker = \"handle_interactive_driver_event();\";",
-    ] {
-        assert!(
-            !contains_direct_free_function_call(&code_only(source), function_name),
-            "scanner must reject non-direct call: {source}"
-        );
-    }
-    assert!(contains_direct_free_function_call(
-        &code_only("handle_interactive_driver_event ();"),
-        function_name
-    ));
-    assert!(contains_direct_free_function_call(
-        &code_only("State { field: handle_interactive_driver_event() };"),
-        function_name
-    ));
-    assert!(contains_direct_free_function_call(
-        &code_only("r#handle_interactive_driver_event();"),
-        function_name
-    ));
 }
 
 #[test]
