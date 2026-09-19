@@ -219,22 +219,23 @@ impl Imports<'_> {
             }
         };
         match tree {
-            UseTree::Path(path) => self.tree(&append(&path.ident.to_string()), &path.tree),
+            UseTree::Path(path) => self.tree(&append(&path.ident.unraw().to_string()), &path.tree),
             UseTree::Name(name) if name.ident == "self" => {
                 self.bind(
                     prefix.rsplit("::").next().unwrap_or(prefix).into(),
                     prefix.into(),
                 );
             }
-            UseTree::Name(name) => {
-                self.bind(name.ident.to_string(), append(&name.ident.to_string()))
-            }
+            UseTree::Name(name) => self.bind(
+                name.ident.unraw().to_string(),
+                append(&name.ident.unraw().to_string()),
+            ),
             UseTree::Rename(rename) => self.bind(
-                rename.rename.to_string(),
+                rename.rename.unraw().to_string(),
                 if rename.ident == "self" {
                     prefix.into()
                 } else {
-                    append(&rename.ident.to_string())
+                    append(&rename.ident.unraw().to_string())
                 },
             ),
             UseTree::Group(group) => {

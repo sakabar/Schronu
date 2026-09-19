@@ -103,3 +103,16 @@ fn macro_local_imports_cannot_hide_dependencies() {
             .unwrap();
     assert!(super::paths::references("controller::handler", &file).is_err());
 }
+
+#[test]
+fn raw_import_targets_and_aliases_have_the_same_identity() {
+    for text in [
+        "use super::r#runtime as rt; fn f() { rt::invoke(); }",
+        "use super::runtime as r#type; fn f() { r#type::invoke(); }",
+    ] {
+        let file = product_file(text).unwrap();
+        assert!(super::paths::references("controller::handler", &file)
+            .unwrap()
+            .contains("controller::runtime::invoke"));
+    }
+}
