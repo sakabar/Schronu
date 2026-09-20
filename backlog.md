@@ -2126,6 +2126,7 @@ TD-048 / TD-049はNodeの`vm`で`apps_script/main.js`を実行し、`apps_script
 | TD-054 | P2 | 未着手 | M | 静的確認・性能未計測 | Webの毎秒tickで非表示画面のmodelも再構築し、性能基準がない |
 | TD-055 | P2 | 未着手 | L | 静的確認 | scheduling policyに複数の状態管理責務が集中している |
 | TD-056 | P2 | 未着手 | L | 静的確認・RSS未計測 | transaction preflightが適用待ちの全write bytesを保持する |
+| TD-057 | P1 | 未着手 | L | 実dataで再現・試作review | fixed予約で締切枠を失うflexible taskを前倒しできない |
 
 ### TD-044: 締切計算が受理済みの大きな見積秒数でpanicする
 
@@ -2527,6 +2528,45 @@ TD-048 / TD-049はNodeの`vm`で`apps_script/main.js`を実行し、`apps_script
 #### 依存関係
 
 - TD-022のtransaction protocolを前提とする。TD-039のsnapshot固有resource limitとは別境界であり、TD-041のstack消費とも分ける。既存failure injectionを再利用する。
+
+### TD-057: fixed予約で締切枠を失うflexible taskを前倒しできない
+
+- 分類: `バグ / 予定配置の正確性`
+- 優先度: `P1`
+- 概算規模: `L`
+- 証拠: `実dataで再現・試作review`
+
+#### 現状と再現条件
+
+- 明示deadlineを持つflexible taskの派生releaseは、task単体の`first_available_time + remaining_work`がdeadlineを超える場合だけ前倒しされる。releaseからdeadlineまでをfixed予約が塞ぐ場合は、この補正へ反映されない。
+- 実dataでは、`atomic`な「昼食をとる」が`start_time 11:30`、`deadline 12:50`、残作業3,182秒であり、11:00〜13:53:15のfixed予定と衝突する。09:17〜11:00には全量が入る連続枠があるが、候補は11:30までreleaseされないため13:53:15〜14:46:17へ配置され、1時間56分17秒の締切超過となる。
+- slack計算はfixed予約を容量から除くが、未releaseの候補を選択できない。既存の`v`は超過を表示するだけで、回避可能な配置へ直さない。
+
+#### 単純なrelease逆算を採用しない理由
+
+- 非atomicの実配置はfixed境界の前後どちらかが15分以下になる分割を捨てるため、fixedを除いた全秒をそのまま利用可能容量とすると、逆算上は足りても実scheduleでは締切を超える。
+- 「fixedだけが原因」という因果を確認せず補正すると、fixedなしでも元々締切内に収まらないtaskや、呼出し側が指定した一時的なrelease overrideまで不必要に前倒しする。
+- atomicの連続枠探索で巨大な作業秒数を先に`Duration`化すると、従来は実segment開始を保持していた日時範囲errorがdeadline基準のerrorへ変質し得る。
+- deadline、fixed union、atomic連続枠、非atomic分割規則、dependency release、日時error、性能counterが同じmoduleで相互作用するため、局所的な前処理追加では契約を安全に閉じられない。
+
+#### 推奨する改善方針
+
+- 永続的な`start_time`と`pending_until`は変更せず、schedule内の派生releaseだけを扱う。
+- fixedなしではdeadline内に入るが、fixed予約を適用すると入らない候補だけを補正対象にする。他のflexible taskとの全体最適化は別契約とする。
+- atomicはdeadline以前の最新の連続空き枠、非atomicは実際の最小分割規則を適用した利用可能segmentから最新releaseを逆算する。現在以降に全量を置けなければ既存の`v`を維持する。
+- TD-055の責務分離でfixed availability、segment生成、frontier / slackの所有境界を明確にしてから、同じ「利用可能segment」表現を逆算と実配置で共有する。日時演算はTD-044のchecked error契約を維持する。
+
+#### 完了条件
+
+- 上記の昼食fixtureがfixed開始までの最新連続枠へ配置され、保存済みtask属性を変更せずdeadline内に完了する。
+- 非atomicの15分境界、十分なrelease後容量、解決不能なatomic / 非atomic、重複fixed union、dependency未完了、fixed境界との同時終了を製品経路で固定する。
+- fixedなしでも不可能なtaskと明示的なrelease overrideを不必要に前倒ししない。
+- 日時範囲errorのtask ID・実開始・作業秒数、work conservation、決定性、既存warning形式を維持する。
+- scheduling benchmark contractのcounter上限と全品質gateがGreenである。
+
+#### 依存関係
+
+- TD-055のscheduler責務分離後に着手する。TD-044のchecked datetime契約、TD-012 / TD-019の性能計測契約を維持し、それらと同じcommitへ混在させない。
 
 ### 追加項目の推奨着手順と検証方針
 
