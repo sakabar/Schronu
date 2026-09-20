@@ -5534,6 +5534,26 @@ fn test_execute_calendarとband_週次容量超過の日数と最初の日と最
 }
 
 #[test]
+fn test_execute_calendarとband_週次容量の1秒超過を1分へ切り上げて警告する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let two_days_later = now + Duration::days(2);
+    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が1日あります。最初の超過日: 2026-08-13, 最大超過: 0時間01分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("週次容量秒精度fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let task =
+            add_scheduled_child_for_test(&root, "2日後60分01秒", two_days_later, 60);
+        task.set_estimated_work_seconds(60 * 60 + 1).unwrap();
+        task.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
 fn test_execute_calendarとband_累積超過が縮小しても週次最大値を保持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let expected = "最初の超過日: 2026-08-13, 最大超過: 2時間00分";

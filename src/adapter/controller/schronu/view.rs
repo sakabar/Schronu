@@ -1249,6 +1249,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // 「それぞれの日の自由時間との差」の累積和
     let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
+    let mut accumulate_capacity_alert_overrun = Duration::seconds(0);
 
     let mut first_caught_up_date = unreached_daily_summary_date();
 
@@ -1328,10 +1329,15 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .unwrap_or(&0);
         let adjustable_estimated_work_duration =
             Duration::seconds(adjustable_estimated_work_seconds);
+        let daily_overrun_seconds =
+            total_estimated_work_seconds_of_the_date - free_time_minutes * 60;
 
         // これまでにどれだけ累積でマイナス(余裕)だったとしても、前倒しできるタスクの量でキャップされる
         if accumulate_duration_diff_to_limit < -adjustable_estimated_work_duration {
             accumulate_duration_diff_to_limit = -adjustable_estimated_work_duration
+        }
+        if accumulate_capacity_alert_overrun < -adjustable_estimated_work_duration {
+            accumulate_capacity_alert_overrun = -adjustable_estimated_work_duration;
         }
 
         let over_time_duration = if over_time_hours_f > 0.0 {
@@ -1340,6 +1346,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             -Duration::hours(over_time_hours) - Duration::minutes(over_time_minutes)
         };
         accumulate_duration_diff_to_limit += over_time_duration;
+        accumulate_capacity_alert_overrun += Duration::seconds(daily_overrun_seconds);
 
         if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
@@ -1403,8 +1410,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 - (free_time_hours * 3600.0).floor() as i64;
         // alert確認
         let days_from_today = (**date - last_synced_logical_date).num_days();
-        let daily_overrun_seconds =
-            total_estimated_work_seconds_of_the_date - free_time_minutes * 60;
         if days_from_today == 0 {
             if daily_overrun_seconds > 0 {
                 add_calendar_alert_issue(&mut today_capacity_issue, **date, daily_overrun_seconds);
@@ -1417,12 +1422,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
         }
 
         if (2..=6).contains(&days_from_today)
-            && accumulate_duration_diff_to_limit > Duration::zero()
+            && accumulate_capacity_alert_overrun > Duration::zero()
         {
             add_calendar_alert_issue(
                 &mut weekly_capacity_issue,
                 **date,
-                accumulate_duration_diff_to_limit.num_seconds(),
+                accumulate_capacity_alert_overrun.num_seconds(),
             );
         }
 
