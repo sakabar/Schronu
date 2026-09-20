@@ -3794,6 +3794,32 @@ fn test_execute_deadline_締切を設定して解除する() {
         tomorrow.task.get_deadline_time_opt().unwrap(),
         Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 59, 59).unwrap())
     );
+
+    for command in ["〆 14:30 9/21", "〆 9/21 14:30"] {
+        let task = new_test_task_handle("日時指定").unwrap();
+        let task_id = task.get_id().unwrap();
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, 21, 14, 30, 0).unwrap()),
+            "command: {command}"
+        );
+    }
+
+    let before_logical_day_boundary =
+        Local.with_ymd_and_hms(2026, 8, 11, 2, 0, 0).unwrap();
+    let task = new_test_task_handle("暦日指定").unwrap();
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_for_test(
+        task,
+        before_logical_day_boundary,
+        Some(task_id),
+        "〆 14:30",
+    );
+    assert_eq!(
+        result.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
+    );
 }
 
 #[test]
@@ -3812,14 +3838,23 @@ fn test_execute_deadline_不正日時はfield付き入力エラーを表示し�
     );
     assert!(result.output.contains("[Error] 入力エラー: deadline:"));
 
-    for command in ["〆 13/40", "〆 25:99"] {
+    for command in [
+        "〆 13/40",
+        "〆 25:99",
+        "〆 9/21 9/22",
+        "〆 14:30 15:30",
+        "〆 消 14:30",
+        "〆 9/21 14:30 extra",
+    ] {
         let result = execute_command_for_test(result.task.clone(), now, Some(task_id), command);
         assert_eq!(
             result.task.get_deadline_time_opt().unwrap(),
             Some(previous_deadline)
         );
         assert!(result.output.contains("コマンド: 〆"));
-        assert!(result.output.contains("使い方: 〆 <日付または時刻>"));
+        assert!(result
+            .output
+            .contains("使い方: 〆 <日付または時刻> [時刻または日付]"));
     }
 }
 
