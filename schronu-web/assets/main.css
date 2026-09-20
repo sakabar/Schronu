@@ -265,7 +265,7 @@ button:disabled {
     display: flex;
     gap: 0.5rem;
     overflow-x: auto;
-    padding: 0.25rem 0.1rem 0.6rem;
+    padding: 0.125rem 0.1rem 0.25rem;
     scrollbar-width: thin;
 }
 
@@ -289,8 +289,9 @@ button:disabled {
 
 .date-pill {
     flex: 0 0 auto;
+    height: 36px;
     border-radius: 999px;
-    padding-inline: 1.2rem;
+    padding: 0.35rem 0.9rem;
 }
 
 .date-pill.is-selected {
@@ -349,7 +350,7 @@ button:disabled {
 }
 
 .session-start-compact-label {
-    display: none;
+    display: inline;
 }
 
 .task-defer {
@@ -360,6 +361,11 @@ button:disabled {
 }
 
 .task-defer-compact-label {
+    display: inline;
+}
+
+.session-start-full-label,
+.task-defer-full-label {
     display: none;
 }
 
@@ -600,14 +606,14 @@ button:disabled {
 
 .task-list-view {
     display: grid;
-    gap: 1rem;
+    gap: 0.5rem;
 }
 
 .list-controls {
     display: grid;
-    grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
-    gap: 0.75rem;
+    gap: 0.5rem;
     min-width: 0;
 }
 
@@ -624,16 +630,21 @@ button:disabled {
     min-width: 0;
 }
 
+.date-jump-input,
+.date-jump-submit {
+    height: 36px;
+    min-height: 36px;
+}
+
 .date-jump-input {
     width: 100%;
     min-width: 0;
-    min-height: max(2.75rem, 44px);
+    padding: 0.4rem 0.7rem;
     border: 1px solid var(--line);
     border-radius: 0.65rem;
     background: var(--surface);
     color: var(--ink);
     font: inherit;
-    padding: 0.65rem 0.85rem;
 }
 
 .date-jump-input:focus-visible {
@@ -646,7 +657,6 @@ button:disabled {
 }
 
 .date-jump-submit {
-    min-height: max(2.75rem, 44px);
     padding-inline: 1rem;
 }
 
@@ -668,13 +678,14 @@ button:disabled {
 .task-name-filter-input {
     width: 100%;
     min-width: 0;
-    min-height: max(2.75rem, 44px);
+    height: 36px;
+    min-height: 36px;
+    padding: 0.4rem 0.7rem;
     border: 1px solid var(--line);
     border-radius: 0.65rem;
     background: var(--surface);
     color: var(--ink);
     font: inherit;
-    padding: 0.65rem 0.85rem;
 }
 
 .task-name-filter-input:focus-visible {
@@ -684,9 +695,11 @@ button:disabled {
 
 .task-name-filter-clear {
     flex: 0 0 auto;
-    min-width: max(2.75rem, 44px);
-    min-height: max(2.75rem, 44px);
-    padding: 0.5rem;
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0.25rem;
     font-size: 1.25rem;
     line-height: 1;
 }
@@ -702,45 +715,153 @@ button:disabled {
 }
 
 .task-table-scroll {
-    overflow-x: auto;
+    overflow-x: visible;
     border: 1px solid var(--line);
-    border-radius: 1rem;
+    border-radius: 0;
     background: var(--surface);
-    box-shadow: var(--shadow);
+    box-shadow: none;
 }
 
 .task-table {
+    display: block;
+    min-width: 0;
     width: 100%;
-    min-width: 44rem;
     border-collapse: collapse;
 }
 
-.task-table th,
-.task-table td {
-    padding: 0.9rem 1rem;
-    border-bottom: 1px solid var(--line);
-    text-align: left;
-    vertical-align: middle;
+.task-table thead {
+    display: block;
+}
+
+.task-table tbody {
+    display: block;
+}
+
+.task-table thead tr,
+.task-row {
+    display: grid;
+    width: 100%;
+    grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);
+    grid-template-areas: "action schedule deadline task";
+}
+
+.task-table thead tr {
+    min-height: 1.75rem;
+    align-items: center;
+    background: var(--surface-muted);
 }
 
 .task-table th {
+    min-width: 0;
+    padding: 0.3rem 0.35rem;
+    border-radius: 0;
+    border-bottom: 1px solid var(--line);
     background: var(--surface-muted);
     color: var(--muted);
-    font-size: 0.8rem;
-    letter-spacing: 0.08em;
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-align: left;
 }
 
-.task-table tr:last-child td {
+.task-row {
+    min-height: 32px;
+    align-items: stretch;
+}
+
+.task-row:not(:last-child) {
+    border-bottom: 1px solid var(--line);
+}
+
+.deadline-heading,
+.deadline {
+    grid-area: deadline;
+}
+
+.schedule-heading,
+.schedule-time {
+    grid-area: schedule;
+}
+
+.task-heading,
+.task-name {
+    grid-area: task;
+}
+
+.session-heading,
+.session-cell {
+    grid-area: action;
+}
+
+.task-table td {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    padding: 0.125rem 0.35rem;
     border-bottom: 0;
+    text-align: left;
 }
 
-.task-defer-confirmation-row td {
-    padding: 0.65rem 1rem;
+.deadline,
+.schedule-time {
+    font-size: 0.68rem;
+    line-height: 1;
+}
+
+.task-name {
+    overflow: hidden;
+    font-size: 0.75rem;
+    line-height: 1.15;
+}
+
+.task-name-scroll {
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    white-space: nowrap;
+    width: 100%;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.task-name-scroll:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: -3px;
+}
+
+.task-table .session-cell {
+    padding: 0;
+}
+
+.session-cell .session-start,
+.session-cell .task-defer {
+    width: 44px;
+    min-height: 32px;
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+    padding: 0;
+    font-size: 1.1rem;
+}
+
+.session-cell .task-defer {
+    margin-left: 0;
+}
+
+.task-defer-confirmation-row {
+    display: block;
+    min-height: 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.task-table .task-defer-confirmation-row td {
+    display: block;
+    padding: 0.35rem;
 }
 
 .task-defer-confirmation {
     display: flex;
-    align-items: center;
+    align-items: stretch;
+    flex-direction: column;
     justify-content: space-between;
     gap: 0.75rem;
     border: 1px solid var(--red);
@@ -761,7 +882,8 @@ button:disabled {
 }
 
 .task-defer-confirmation-actions {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     flex: 0 0 auto;
     gap: 0.45rem;
 }
@@ -873,209 +995,6 @@ button:disabled {
         padding: 0.4rem 0.35rem;
     }
 
-    .task-list-view {
-        gap: 0.5rem;
-    }
-
-    .list-controls {
-        grid-template-columns: minmax(0, 1fr);
-        gap: 0.5rem;
-    }
-
-    .date-pills {
-        padding: 0.125rem 0.1rem 0.25rem;
-    }
-
-    .date-pill {
-        height: 36px;
-        padding: 0.35rem 0.9rem;
-    }
-
-    .task-name-filter-input {
-        height: 36px;
-        min-height: 36px;
-        padding: 0.4rem 0.7rem;
-    }
-
-    .date-jump-input,
-    .date-jump-submit {
-        height: 36px;
-        min-height: 36px;
-    }
-
-    .date-jump-input {
-        padding: 0.4rem 0.7rem;
-    }
-
-    .task-name-filter-clear {
-        width: 36px;
-        height: 36px;
-        min-width: 36px;
-        min-height: 36px;
-        padding: 0.25rem;
-    }
-
-    .task-table-scroll {
-        overflow-x: visible;
-        border-radius: 0;
-        box-shadow: none;
-    }
-
-    .task-table {
-        display: block;
-        min-width: 0;
-    }
-
-    .task-table thead {
-        display: block;
-    }
-
-    .task-table thead tr,
-    .task-row {
-        display: grid;
-        width: 100%;
-        grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);
-        grid-template-areas: "action schedule deadline task";
-    }
-
-    .task-table thead tr {
-        min-height: 1.75rem;
-        align-items: center;
-        background: var(--surface-muted);
-    }
-
-    .task-table th {
-        min-width: 0;
-        padding: 0.3rem 0.35rem;
-        border-radius: 0;
-        border-bottom: 1px solid var(--line);
-        font-size: 0.68rem;
-        letter-spacing: 0.04em;
-    }
-
-    .task-table tbody {
-        display: block;
-    }
-
-    .task-row {
-        min-height: 32px;
-        align-items: stretch;
-    }
-
-    .task-row:not(:last-child) {
-        border-bottom: 1px solid var(--line);
-    }
-
-    .deadline-heading,
-    .deadline {
-        grid-area: deadline;
-    }
-
-    .schedule-heading,
-    .schedule-time {
-        grid-area: schedule;
-    }
-
-    .task-heading,
-    .task-name {
-        grid-area: task;
-    }
-
-    .session-heading,
-    .session-cell {
-        grid-area: action;
-    }
-
-    .task-table td {
-        display: flex;
-        min-width: 0;
-        align-items: center;
-        padding: 0.125rem 0.35rem;
-        border-bottom: 0;
-    }
-
-    .deadline,
-    .schedule-time {
-        font-size: 0.68rem;
-        line-height: 1;
-    }
-
-    .task-name {
-        overflow: hidden;
-        font-size: 0.75rem;
-        line-height: 1.15;
-    }
-
-    .task-name-scroll {
-        min-width: 0;
-        overflow-x: auto;
-        overflow-y: hidden;
-        overscroll-behavior-inline: contain;
-        white-space: nowrap;
-        width: 100%;
-        scrollbar-width: thin;
-        touch-action: pan-x pan-y pinch-zoom;
-    }
-
-    .task-name-scroll:focus-visible {
-        outline: 3px solid rgb(54 119 189 / 35%);
-        outline-offset: -3px;
-    }
-
-    .task-table .session-cell {
-        padding: 0;
-    }
-
-    .task-defer-confirmation-row {
-        display: block;
-        min-height: 0;
-        border-bottom: 1px solid var(--line);
-    }
-
-    .task-table .task-defer-confirmation-row td {
-        display: block;
-        padding: 0.35rem;
-    }
-
-    .task-defer-confirmation {
-        align-items: stretch;
-        flex-direction: column;
-    }
-
-    .task-defer-confirmation-actions {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .session-cell .session-start,
-    .session-cell .task-defer {
-        width: 44px;
-        min-height: 32px;
-        border-width: 0 1px 0 0;
-        border-radius: 0;
-        padding: 0;
-        font-size: 1.1rem;
-    }
-
-    .session-cell .task-defer {
-        margin-left: 0;
-    }
-
-    .session-start-full-label {
-        display: none;
-    }
-
-    .task-defer-full-label {
-        display: none;
-    }
-
-    .session-start-compact-label {
-        display: inline;
-    }
-
-    .task-defer-compact-label {
-        display: inline;
-    }
 }
 
 @media (max-width: 34rem) {
