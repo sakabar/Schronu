@@ -324,6 +324,54 @@ fn task_attr_does_not_retain_normal_deadline_after_becoming_repetition_series() 
 }
 
 #[test]
+fn task_attr_rejects_repetition_template_on_normal_task() {
+    let mut attr = new_test_task_attr("normal task");
+    let time = NaiveTime::from_hms_opt(9, 30, 0).unwrap();
+
+    let actual = format!("{:?}", attr.set_repetition_start_time_opt(Some(time)));
+
+    assert_eq!(actual, "Err(RepetitionTemplateWithoutSeries)");
+    assert_eq!(attr.get_repetition_start_time_opt(), None);
+}
+
+#[test]
+fn task_attr_rejects_clearing_required_series_template() {
+    let mut attr = new_test_task_attr("repetition series");
+    attr.set_repetition_interval_days_opt(Some(7));
+    let original = attr.get_repetition_start_time_opt();
+
+    let actual = format!("{:?}", attr.set_repetition_start_time_opt(None));
+
+    assert_eq!(actual, "Err(RepetitionSeriesTemplateRequired)");
+    assert_eq!(attr.get_repetition_start_time_opt(), original);
+}
+
+#[test]
+fn task_attr_rejects_series_conversion_when_normal_deadline_exists() {
+    let mut attr = new_test_task_attr("normal task");
+    let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
+    attr.set_deadline_time_opt(Some(deadline));
+
+    let actual = format!("{:?}", attr.set_repetition_interval_days_opt(Some(7)));
+
+    assert_eq!(actual, "Err(RepetitionSeriesDeadline)");
+    assert_eq!(attr.get_repetition_interval_days_opt(), None);
+    assert_eq!(attr.get_deadline_time_opt(), &Some(deadline));
+}
+
+#[test]
+fn task_attr_rejects_normal_deadline_on_series() {
+    let mut attr = new_test_task_attr("repetition series");
+    attr.set_repetition_interval_days_opt(Some(7));
+    let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
+
+    let actual = format!("{:?}", attr.set_deadline_time_opt(Some(deadline)));
+
+    assert_eq!(actual, "Err(RepetitionSeriesDeadline)");
+    assert_eq!(attr.get_deadline_time_opt(), &None);
+}
+
+#[test]
 fn test_task_attr_with_identity_caller指定のidと時刻を保持する() {
     let id = uuid!("018d578c-3f3b-7bd6-9384-9b4b00d69c21");
     let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
