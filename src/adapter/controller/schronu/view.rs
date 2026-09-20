@@ -5,10 +5,10 @@ use super::renderer::format_task_category_summary;
 pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
-    BandDisplay, BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary,
-    DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel, SnapshotDisplay,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
-    TaskListRow, TaskListTaskRow, TreeDisplay, BAND_SECONDS_PER_DAY,
+    BandDisplay, BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow,
+    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow,
+    MessageLevel, SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
+    TaskListMetricsDisplay, TaskListRow, TaskListTaskRow, TreeDisplay, BAND_SECONDS_PER_DAY,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
@@ -19,7 +19,7 @@ use crate::application::daily_capacity::{
     try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use crate::application::schedule_use_case::get_schedule;
+use crate::application::schedule_use_case::{get_schedule, scheduled_end_by_task};
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
     extract_leaf_tasks_from_project, round_up_sec_as_minute, ProjectCategory, TaskHandle,
@@ -144,6 +144,78 @@ pub(super) enum TaskListDisplayOrder {
 struct DailySummaryRow {
     calendar_row: CalendarDayRow,
     band_row: Option<BandDayRow>,
+}
+
+struct DeadlineAlertIssues {
+    today: Option<CalendarAlertIssue>,
+    tomorrow: Option<CalendarAlertIssue>,
+    weekly: Option<CalendarAlertIssue>,
+}
+
+fn add_calendar_alert_issue(
+    issue: &mut Option<CalendarAlertIssue>,
+    affected_date: NaiveDate,
+    overrun_seconds: i64,
+) {
+    match issue {
+        Some(issue) => {
+            issue.affected_count += 1;
+            issue.first_affected_date = issue.first_affected_date.min(affected_date);
+            issue.max_overrun_seconds = issue.max_overrun_seconds.max(overrun_seconds);
+        }
+        None => {
+            *issue = Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: affected_date,
+                max_overrun_seconds: overrun_seconds,
+            });
+        }
+    }
+}
+
+fn deadline_alert_issues(
+    scheduled_tasks: &[crate::application::schedule_use_case::ScheduledTaskView],
+    today: NaiveDate,
+) -> Result<DeadlineAlertIssues, ApplicationError> {
+    let scheduled_ends = scheduled_end_by_task(scheduled_tasks);
+    let deadlines_by_task = scheduled_tasks
+        .iter()
+        .filter_map(|scheduled| {
+            scheduled
+                .task
+                .deadline_time
+                .map(|deadline| (scheduled.task.id, deadline))
+        })
+        .collect::<HashMap<_, _>>();
+    let mut today_issue = None;
+    let mut tomorrow_issue = None;
+    let mut weekly_issue = None;
+
+    for (task_id, scheduled_end) in scheduled_ends {
+        let Some(deadline) = deadlines_by_task.get(&task_id) else {
+            continue;
+        };
+        let overrun_seconds = (scheduled_end - *deadline).num_seconds();
+        if overrun_seconds <= 0 {
+            continue;
+        }
+
+        let deadline_date = try_logical_date(*deadline)?;
+        match (deadline_date - today).num_days() {
+            days if days <= 0 => {
+                add_calendar_alert_issue(&mut today_issue, deadline_date, overrun_seconds)
+            }
+            1 => add_calendar_alert_issue(&mut tomorrow_issue, deadline_date, overrun_seconds),
+            2..=6 => add_calendar_alert_issue(&mut weekly_issue, deadline_date, overrun_seconds),
+            _ => {}
+        }
+    }
+
+    Ok(DeadlineAlertIssues {
+        today: today_issue,
+        tomorrow: tomorrow_issue,
+        weekly: weekly_issue,
+    })
 }
 
 pub(super) fn calculate_daily_band_durations(
@@ -689,6 +761,15 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let is_today_func = pattern_opt.as_ref().is_some_and(|pattern| pattern == "今");
 
     let is_daily_summary_func = is_calendar_func || is_band_func;
+    let deadline_issues = if is_daily_summary_func {
+        deadline_alert_issues(&scheduled_tasks, last_synced_logical_date)?
+    } else {
+        DeadlineAlertIssues {
+            today: None,
+            tomorrow: None,
+            weekly: None,
+        }
+    };
 
     // 日付ごとのタスク数を集計する
     let mut counter: HashMap<NaiveDate, usize> = HashMap::new();
@@ -1151,12 +1232,9 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
     // 順調フラグ
-    let mut has_today_deadline_leeway = true;
     let mut has_today_freetime_leeway = true;
     let mut has_today_new_task_leeway = true;
-    let mut has_tomorrow_deadline_leeway = true;
     let mut has_tomorrow_freetime_leeway = true;
-    let mut has_weekly_deadline_leeway = true;
     let mut has_weekly_freetime_leeway = true;
 
     // 「それぞれの日の rho (0.7) との差」の累積和。
@@ -1335,31 +1413,14 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
-        let deadline_rest_sign: char = if deadline_rest_duration_seconds > 0 {
-            ' '
-        } else {
-            '-'
-        };
-
         // 順調フラグ確認
         if daily_summary_rows.is_empty() {
-            has_today_deadline_leeway = deadline_rest_sign == '-';
             has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
             has_today_new_task_leeway = diff_to_goal_sign == '-';
         }
 
         if daily_summary_rows.len() == 1 {
-            has_tomorrow_deadline_leeway = deadline_rest_sign == '-';
             has_tomorrow_freetime_leeway = diff_to_limit_in_day_sign == '-';
-        }
-
-        // 一度フラグが折れていたら復活させない
-        // 今日と明日については個別にアラートを出すので、判定はそれ以降について行う。
-        if 2 <= daily_summary_rows.len()
-            && daily_summary_rows.len() < 7
-            && has_weekly_deadline_leeway
-        {
-            has_weekly_deadline_leeway = deadline_rest_sign == '-';
         }
 
         if 2 <= daily_summary_rows.len()
@@ -1460,12 +1521,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
         max_accumulated_rho_diff_date,
     };
     let alerts = CalendarAlerts {
-        has_today_deadline_leeway,
+        today_deadline_issue: deadline_issues.today,
         has_today_freetime_leeway,
         has_today_new_task_leeway,
-        has_tomorrow_deadline_leeway,
+        tomorrow_deadline_issue: deadline_issues.tomorrow,
         has_tomorrow_freetime_leeway,
-        has_weekly_deadline_leeway,
+        weekly_deadline_issue: deadline_issues.weekly,
         has_weekly_freetime_leeway,
     };
     let calendar_display = is_calendar_func.then(|| {

@@ -197,13 +197,20 @@ pub(super) struct CalendarSummary {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct CalendarAlertIssue {
+    pub(super) affected_count: usize,
+    pub(super) first_affected_date: NaiveDate,
+    pub(super) max_overrun_seconds: i64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct CalendarAlerts {
-    pub(super) has_today_deadline_leeway: bool,
+    pub(super) today_deadline_issue: Option<CalendarAlertIssue>,
     pub(super) has_today_freetime_leeway: bool,
     pub(super) has_today_new_task_leeway: bool,
-    pub(super) has_tomorrow_deadline_leeway: bool,
+    pub(super) tomorrow_deadline_issue: Option<CalendarAlertIssue>,
     pub(super) has_tomorrow_freetime_leeway: bool,
-    pub(super) has_weekly_deadline_leeway: bool,
+    pub(super) weekly_deadline_issue: Option<CalendarAlertIssue>,
     pub(super) has_weekly_freetime_leeway: bool,
 }
 
@@ -953,8 +960,13 @@ fn render_calendar_alerts(
     alerts: CalendarAlerts,
 ) -> Result<(), std::io::Error> {
     let mut is_all_favorable = true;
-    if !alerts.has_today_deadline_leeway {
-        writer.writeln_newline("[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。")?;
+    if let Some(issue) = alerts.today_deadline_issue {
+        writer.writeln_newline(&format!(
+            "[Crit] 【今日までの】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【ただちに】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            issue.affected_count,
+            issue.first_affected_date,
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
         is_all_favorable = false;
     }
     if alerts.has_today_freetime_leeway {
@@ -966,16 +978,26 @@ fn render_calendar_alerts(
         writer.writeln_newline("[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。")?;
         is_all_favorable = false;
     }
-    if !alerts.has_tomorrow_deadline_leeway {
-        writer.writeln_newline("[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。")?;
+    if let Some(issue) = alerts.tomorrow_deadline_issue {
+        writer.writeln_newline(&format!(
+            "[Warn] 【明日の】〆切に間に合わないタスクが{}件あります。対象日: {}, 最大超過: {}。【今日中に】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            issue.affected_count,
+            issue.first_affected_date,
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
         is_all_favorable = false;
     }
     if !alerts.has_tomorrow_freetime_leeway {
         writer.writeln_newline("[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。")?;
         is_all_favorable = false;
     }
-    if !alerts.has_weekly_deadline_leeway {
-        writer.writeln_newline("[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。")?;
+    if let Some(issue) = alerts.weekly_deadline_issue {
+        writer.writeln_newline(&format!(
+            "[Warn] 【7日以内の】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【近々】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            issue.affected_count,
+            issue.first_affected_date,
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
         is_all_favorable = false;
     }
     if !alerts.has_weekly_freetime_leeway {
@@ -987,6 +1009,11 @@ fn render_calendar_alerts(
     }
     writer.writeln_newline("")?;
     Ok(())
+}
+
+fn format_alert_overrun(seconds: i64) -> String {
+    let minutes = (seconds + 59) / 60;
+    format!("{}時間{:02}分", minutes / 60, minutes % 60)
 }
 
 pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
