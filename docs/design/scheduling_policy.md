@@ -66,6 +66,8 @@ segmentは次の最も早いeventで閉じます。
 
 予定配置上のfixedは、`fixed_start == true`かつ自身に`repetition_interval_days`がないtaskです。自身に反復間隔を持つ親taskの`fixed_start`は、次回子taskを生成するためのtemplateとしてのみ扱います。その親自身はfixed予約、過去fixed windowの超過作業、synthetic effective deadline、`平`・`詰`・日次容量計算のfixed対象から除外します。
 
+自身に`repetition_interval_days`を持つnodeは反復series containerとし、leaf候補やschedule candidateへ含めません。祖先計算ではseriesの`status`、`start_time`、`pending_until`、`deadline_time`、見積もり、`fixed_start`を読まずに通過し、occurrenceからseriesより上の通常祖先へdependency edgeを接続します。
+
 - fixed同士の重複はそのまま表示します。flexible taskは重複区間のunionを避けます。
 - fixed開始が現在より過去なら、現在から元window終了までを見える予約として残します。
 - 元windowへ収まらない残作業は元window終了後のflexible taskとなります。予約windowと後続作業を合わせた作業秒数は元の残作業量と一致します。
