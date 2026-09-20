@@ -2737,3 +2737,16 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 
 - 通常範囲のdeadline計算、既存YAML、CLI / MCPの成功経路、完了済みtaskの予約境界を維持する。新しいerrorは従来panicしていた範囲外入力だけを明示的に拒否する。
 - Wave 8統合gateと共有summary後の文書gateは成功済みであり、初回branch pushとPR #470作成まで実施した。`a9544c9c`と本記録commitの外部push、それらを含む最新CI再実行、mainへのmergeは未実施。
+
+### W8-B / TD-048 実行記録(2026-09-20)
+
+- 状態: lane実装、内部review、親review、local品質gateまで完了。push、PR作成、実CI、統合、mergeは未実施。
+- task / worktree / branch: Codex task `01a0ba5b-356d-7ec1-a365-34f73a8362c2`、`/Users/sakakibaratakafumi/.codex/worktrees/1983/Schronu`、`feature/w8-b-sheet-lock-feedback`。
+- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`、製品・test・利用者文書のreview済みrevision`67405c91717f707ba53d037d2e013e06d54f273a`。本項の文書commitはこの後続。
+- 予約file: `apps_script/main.js`、`apps_script/main.test.mjs`、`apps_script/test_support/fake_spreadsheet.mjs`、`apps_script/README.md`、本実行記録用の`backlog.md` lease。Spreadsheet列定義、Rust製品file、Web、TD-049の途中書込失敗処理は変更していない。
+- 固定契約: DocumentLockを取得できない編集は同期先へ書き込まず、元sheet・行・taskまたはsegment identityと手動復旧手順をToastへ表示する。明示的な`選択範囲を再同期`は、失敗時のevent値を保持せず、実行時の選択範囲から最新identityと値を読み直して既存の全件事前検証を通す。identity不一致では書き込まず診断し、取得済みlockは成功・検証失敗とも`finally`で解放する。未取得lockは解放しない。
+- Red / Green履歴: `a820fb8a`でlock失敗通知をRedにし、17件中その1件だけがToast未通知で失敗した。`6b007b56`で通知とlock lifecycleをGreenにした。`209d709b`でmenu再同期、最新値再読込、identity不一致をRedにし、20件中新規2件だけがmenu / handler未実装で失敗した。`1ee72b67`で共通lock・検証経路を使う再同期をGreenにし、`41dd264c`で復旧手順を文書化した。
+- review: 内部subagent reviewはtask列のlock競合通知分岐が未固定であるP2を1件指摘した。`67405c91`でN列の実`onEdit`回帰testを追加し、再reviewで解消・追加指摘なしとなった。親reviewでは`main...branch`の責務境界、commit履歴、TD-049 / batch化 / 列契約変更の非混入を確認した。
+- 検証: `node --test apps_script/main.test.mjs`は21件成功、`cargo test --locked --test spreadsheet_contract`は5件成功。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`も成功した。Rust主要unit testは1313件成功、1件manual計測としてignoredで、integration testも成功した。
+- 互換性: L/P列のsegment同期、N/R列のtask全segment同期、複合identity検証、command出力pasteの同期除外、列構成A-Sを維持する。lock対象外の編集は従来どおり無処理で、再同期menuは既存menuへ追加する。
+- 未検証・残存作業: local Node fakeではToastの実表示、Google Sheetsのmenu配置とactive range取得を完全には再現できないため、実sheetでの表示・操作確認を公開後の確認対象とする。書込途中例外の失敗範囲診断と復旧はTD-049で扱い、W8-Bには含めない。

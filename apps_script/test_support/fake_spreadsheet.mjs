@@ -116,9 +116,11 @@ class FakeSheet {
   }
 }
 
-export function loadAppsScript(sheetRows) {
+export function loadAppsScript(sheetRows, { lockResults = [true] } = {}) {
   const writes = [];
   const toasts = [];
+  const menuItems = [];
+  let activeRange = null;
   const sheets = new Map(
     Object.entries(sheetRows).map(([name, rows]) => [name, new FakeSheet(name, rows, writes)]),
   );
@@ -126,15 +128,26 @@ export function loadAppsScript(sheetRows) {
     getSheetByName(name) {
       return sheets.get(name) ?? null;
     },
+    getActiveRange() {
+      return activeRange;
+    },
     toast(message, title) {
       toasts.push({ message, title });
     },
   };
+  const lockState = {
+    attempts: 0,
+    releases: 0,
+  };
   const lock = {
     tryLock() {
-      return true;
+      const result = lockResults[Math.min(lockState.attempts, lockResults.length - 1)];
+      lockState.attempts += 1;
+      return result;
     },
-    releaseLock() {},
+    releaseLock() {
+      lockState.releases += 1;
+    },
   };
   const context = vm.createContext({
     LockService: { getDocumentLock: () => lock },
@@ -142,7 +155,13 @@ export function loadAppsScript(sheetRows) {
       getActiveSpreadsheet: () => spreadsheet,
       getUi: () => ({
         alert() {},
-        createMenu: () => ({ addItem() { return this; }, addToUi() {} }),
+        createMenu: () => ({
+          addItem(label, functionName) {
+            menuItems.push({ label, functionName });
+            return this;
+          },
+          addToUi() {},
+        }),
       }),
     },
   });
@@ -171,7 +190,21 @@ export function loadAppsScript(sheetRows) {
       };
       vm.runInContext('onEdit(event)', context);
     },
+    userEdit(sheetName, row, column, value) {
+      sheets.get(sheetName).userEdit(row, column, value);
+    },
+    selectRange(sheetName, row, column, numRows = 1, numColumns = 1) {
+      activeRange = sheets.get(sheetName).getRange(row, column, numRows, numColumns);
+    },
+    open() {
+      vm.runInContext('onOpen()', context);
+    },
+    resyncSelection() {
+      vm.runInContext('resyncSelectedRange()', context);
+    },
     writes,
     toasts,
+    lockState,
+    menuItems,
   };
 }
