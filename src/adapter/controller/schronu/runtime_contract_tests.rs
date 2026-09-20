@@ -3820,6 +3820,19 @@ fn test_execute_deadline_締切を設定して解除する() {
         result.task.get_deadline_time_opt().unwrap(),
         Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
     );
+
+    let task = new_test_task_handle("logical date指定").unwrap();
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_for_test(
+        task,
+        before_logical_day_boundary,
+        Some(task_id),
+        "〆 今日 14:30",
+    );
+    assert_eq!(
+        result.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 10, 14, 30, 0).unwrap())
+    );
 }
 
 #[test]
