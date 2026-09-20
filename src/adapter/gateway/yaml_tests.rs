@@ -1265,13 +1265,40 @@ repetition_interval_days: 7
     expected.set_repetition_interval_days_opt(Some(7)).unwrap();
 
     // 2037/12/31までpendingになる
-    let distant_future = Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap();
-    expected.set_orig_status(Status::Pending).unwrap();
-    expected.set_pending_until(distant_future).unwrap();
-
     expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
+}
+
+#[test]
+fn test_yaml_to_task_legacy_repetition_parent_migrates_time_templates() {
+    let yaml = YamlLoader::load_from_str(
+        "name: routine\nstart_time: '2026/08/20 09:30:00'\ndeadline_time: '2037/12/31 18:45:00'\nrepetition_interval_days: 7\n",
+    )
+    .unwrap();
+
+    let task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+    assert_eq!(task.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+
+    let canonical = task_snapshot_to_yaml(&task.snapshot().unwrap());
+    assert_eq!(canonical["repetition_start_time"].as_str(), Some("09:30:00"));
+    assert_eq!(canonical["repetition_deadline_time"].as_str(), Some("18:45:00"));
+    assert!(canonical["deadline_time"].is_badvalue());
+}
+
+#[test]
+fn test_yaml_to_task_repetition_time_on_non_repetition_task_is_error() {
+    let yaml = YamlLoader::load_from_str(
+        "name: normal\nrepetition_start_time: '09:30:00'\nrepetition_deadline_time: '18:45:00'\n",
+    )
+    .unwrap();
+
+    let error = yaml_to_task(&yaml[0], yaml_test_now()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "cannot convert project YAML to task: project.repetition_start_time: requires repetition_interval_days"
+    );
 }
 
 #[test]

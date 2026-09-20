@@ -223,6 +223,35 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
 }
 
 #[test]
+fn extract_leaf_tasks_never_returns_repetition_series_itself() {
+    for with_done_child in [false, true] {
+        let series = new_test_task_handle("repetition series").unwrap();
+        series.set_repetition_interval_days_opt(Some(7)).unwrap();
+        if with_done_child {
+            let mut child = new_test_task_attr("done occurrence");
+            child.set_orig_status(Status::Done);
+            series.create_as_last_child(child);
+        }
+
+        assert!(extract_leaf_tasks_from_project(&series).unwrap().is_empty());
+        assert!(extract_leaf_tasks_from_project_with_pending(&series)
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
+fn extract_leaf_tasks_still_finds_unfinished_repetition_occurrence() {
+    let series = new_test_task_handle("repetition series").unwrap();
+    series.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let occurrence = series.create_as_last_child(new_test_task_attr("unfinished occurrence"));
+
+    let leaves = extract_leaf_tasks_from_project(&series).unwrap();
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(leaves[0].get_id().unwrap(), occurrence.get_id().unwrap());
+}
+
+#[test]
 fn test_task_attr_with_identity_caller指定のidと時刻を保持する() {
     let id = uuid!("018d578c-3f3b-7bd6-9384-9b4b00d69c21");
     let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();
