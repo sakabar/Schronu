@@ -3131,7 +3131,7 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
     let parent = new_test_task_handle("反復routine親").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     parent
-        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()))
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
         .unwrap();
     let mut child_attr = new_test_task_attr("延期対象routine子");
     child_attr.set_deadline_time_opt(Some(orig_deadline));
@@ -3158,7 +3158,7 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
     assert_eq!(
         actual,
         Err(ApplicationError::LogicalDateOutOfRange {
-            operation: "next_logical_date_start",
+            operation: "defer_routine_deadline",
             datetime: orig_deadline,
         })
     );
@@ -3192,7 +3192,21 @@ fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期
     ] {
         let parent = new_test_task_handle("正常反復routine親").unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
-        parent.set_deadline_time_opt(parent_deadline).unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(
+                parent_deadline
+                    .map(|deadline| deadline.time())
+                    .unwrap_or_else(|| orig_deadline.time()),
+            ))
+            .unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(orig_start.time()))
+            .unwrap();
+        if parent_deadline.is_none() {
+            parent
+                .set_repetition_deadline_time_opt(Some(orig_deadline.time()))
+                .unwrap();
+        }
         let mut child_attr = new_test_task_attr("正常延期routine子");
         child_attr.set_deadline_time_opt(Some(orig_deadline));
         child_attr.set_start_time(orig_start);

@@ -36,6 +36,12 @@ fn seed_routine_task(storage_directory: &Path) -> (String, DateTime<Local>, Date
     let parent_id = Uuid::new_v4();
     let parent = TaskHandle::with_identity("stdio routine parent", parent_id, now).unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(start.time()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let child_id = Uuid::new_v4();
     let mut child_attr = TaskAttr::with_identity("stdio routine child", child_id, now);
     child_attr.set_deadline_time_opt(Some(deadline));

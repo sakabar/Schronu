@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, NaiveTime};
 use dendron::{HotNode, InsertAs, Node};
 use serde::Serialize;
 use std::cmp::{max, min};
@@ -137,6 +137,7 @@ fn extract_leaf_tasks_from_project_rec(
     task: &TaskHandle,
     target_status_arr: &Vec<Status>,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
+    let is_repetition_series = task.is_repetition_series()?;
     let mut children_are_all_done = true;
     for child_node in task.node.children() {
         if child_node
@@ -150,7 +151,8 @@ fn extract_leaf_tasks_from_project_rec(
         }
     }
 
-    if target_status_arr.contains(&task.get_status()?)
+    if !is_repetition_series
+        && target_status_arr.contains(&task.get_status()?)
         && (!task.node.has_children() || children_are_all_done)
     {
         let new_task = TaskHandle {
@@ -216,6 +218,8 @@ pub struct TaskAttr {
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
 
     repetition_interval_days_opt: Option<i64>,
+    repetition_start_time_opt: Option<NaiveTime>,
+    repetition_deadline_time_opt: Option<NaiveTime>,
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
     project_category_opt: Option<ProjectCategory>,
@@ -242,6 +246,8 @@ impl PartialEq for TaskAttr {
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
+            && self.repetition_start_time_opt == other.repetition_start_time_opt
+            && self.repetition_deadline_time_opt == other.repetition_deadline_time_opt
             && self.repetition_anchor == other.repetition_anchor
             && self.days_in_advance == other.days_in_advance
             && self.project_category_opt == other.project_category_opt
@@ -304,6 +310,8 @@ impl TaskAttr {
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
+            repetition_start_time_opt: None,
+            repetition_deadline_time_opt: None,
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
             project_category_opt: None,
@@ -444,6 +452,9 @@ impl TaskAttr {
 
     pub fn set_start_time(&mut self, start_time: DateTime<Local>) {
         self.start_time = start_time;
+        if self.repetition_interval_days_opt.is_some() {
+            self.repetition_start_time_opt = Some(start_time.time());
+        }
         self.set_orig_status(*self.get_orig_status());
     }
 
@@ -489,10 +500,36 @@ impl TaskAttr {
 
     pub fn set_repetition_interval_days_opt(&mut self, repetition_interval_days_opt: Option<i64>) {
         self.repetition_interval_days_opt = repetition_interval_days_opt;
+        if repetition_interval_days_opt.is_some() {
+            self.repetition_start_time_opt
+                .get_or_insert(self.start_time.time());
+            self.repetition_deadline_time_opt
+                .get_or_insert_with(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+            self.deadline_time_opt = None;
+        } else {
+            self.repetition_start_time_opt = None;
+            self.repetition_deadline_time_opt = None;
+        }
     }
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
         self.repetition_interval_days_opt
+    }
+
+    pub fn set_repetition_start_time_opt(&mut self, value: Option<NaiveTime>) {
+        self.repetition_start_time_opt = value;
+    }
+
+    pub fn get_repetition_start_time_opt(&self) -> Option<NaiveTime> {
+        self.repetition_start_time_opt
+    }
+
+    pub fn set_repetition_deadline_time_opt(&mut self, value: Option<NaiveTime>) {
+        self.repetition_deadline_time_opt = value;
+    }
+
+    pub fn get_repetition_deadline_time_opt(&self) -> Option<NaiveTime> {
+        self.repetition_deadline_time_opt
     }
 
     pub fn set_repetition_anchor(&mut self, repetition_anchor: RepetitionAnchor) {
@@ -565,6 +602,8 @@ pub enum TaskTreeError {
         field: &'static str,
         source: DeadlineCalculationError,
     },
+    RepetitionSeriesDeadline,
+    RepetitionTemplateWithoutSeries,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -578,6 +617,12 @@ impl fmt::Display for TaskTreeError {
             Self::Insert => "cannot insert task subtree",
             Self::MissingDummyRootChild => {
                 "task tree dummy root must have exactly one task child containing this handle"
+            }
+            Self::RepetitionSeriesDeadline => {
+                "repetition series cannot have a normal deadline"
+            }
+            Self::RepetitionTemplateWithoutSeries => {
+                "repetition time template requires a repetition series"
             }
             Self::DeadlineCalculation {
                 task_id,
@@ -1170,6 +1215,12 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repetition_series()? {
+            if deadline_time_opt.is_some() {
+                return Err(TaskTreeError::RepetitionSeriesDeadline);
+            }
+            return Ok(());
+        }
         if let Some(deadline) = deadline_time_opt {
             let attr = self
                 .node
@@ -1352,6 +1403,62 @@ impl TaskHandle {
             .map_err(|_| TaskTreeError::Borrow)
     }
 
+    pub fn is_repetition_series(&self) -> Result<bool, TaskTreeError> {
+        Ok(self.get_repetition_interval_days_opt()?.is_some())
+    }
+
+    pub fn is_schedulable_work(&self) -> Result<bool, TaskTreeError> {
+        Ok(!self.is_repetition_series()?)
+    }
+
+    pub fn get_repetition_start_time_opt(&self) -> Result<Option<NaiveTime>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_start_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_repetition_start_time_opt(
+        &self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        if value.is_some() && !self.is_repetition_series()? {
+            return Err(TaskTreeError::RepetitionTemplateWithoutSeries);
+        }
+        self.update(|attr| {
+            if attr.get_repetition_start_time_opt() == value {
+                false
+            } else {
+                attr.set_repetition_start_time_opt(value);
+                true
+            }
+        })
+    }
+
+    pub fn get_repetition_deadline_time_opt(&self) -> Result<Option<NaiveTime>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_deadline_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_repetition_deadline_time_opt(
+        &self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        if value.is_some() && !self.is_repetition_series()? {
+            return Err(TaskTreeError::RepetitionTemplateWithoutSeries);
+        }
+        self.update(|attr| {
+            if attr.get_repetition_deadline_time_opt() == value {
+                false
+            } else {
+                attr.set_repetition_deadline_time_opt(value);
+                true
+            }
+        })
+    }
+
     pub fn get_inherited_repetition_interval_days_opt(&self) -> Result<Option<i64>, TaskTreeError> {
         let mut current_parent_opt = self.parent()?;
 
@@ -1370,6 +1477,9 @@ impl TaskHandle {
         &self,
         repetition_interval_days_opt: Option<i64>,
     ) -> Result<(), TaskTreeError> {
+        if repetition_interval_days_opt.is_some() && self.get_deadline_time_opt()?.is_some() {
+            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        }
         self.update(|attr| {
             if attr.get_repetition_interval_days_opt() == repetition_interval_days_opt {
                 false

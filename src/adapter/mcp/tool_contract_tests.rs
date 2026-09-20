@@ -200,13 +200,16 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
     root.set_priority(7).unwrap();
     root.set_create_time(create_time).unwrap();
     root.set_start_time(start_time).unwrap();
-    root.set_deadline_time_opt(Some(deadline_time)).unwrap();
     root.set_estimated_work_seconds(1_800).unwrap();
     root.set_actual_work_seconds(900).unwrap();
     root.set_atomic(true).unwrap();
     root.set_fixed_start(true).unwrap();
     root.set_is_on_other_side(true).unwrap();
     root.set_repetition_interval_days_opt(Some(7)).unwrap();
+    root.set_repetition_start_time_opt(Some(start_time.time()))
+        .unwrap();
+    root.set_repetition_deadline_time_opt(Some(deadline_time.time()))
+        .unwrap();
     root.set_repetition_anchor(RepetitionAnchor::Completion)
         .unwrap();
     root.set_days_in_advance(2).unwrap();
@@ -255,7 +258,9 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
             "priority",
             "project_category",
             "repetition_anchor",
+            "repetition_deadline_time",
             "repetition_interval_days",
+            "repetition_start_time",
             "root_id",
             "start_time",
             "status"
@@ -289,10 +294,12 @@ fn get_taskはTaskViewをstructured_contentで返してsaveしない() {
     assert_eq!(task["create_time"], create_time.to_rfc3339());
     assert_eq!(task["start_time"], start_time.to_rfc3339());
     assert_eq!(task["end_time"], serde_json::Value::Null);
-    assert_eq!(task["deadline_time"], deadline_time.to_rfc3339());
+    assert_eq!(task["deadline_time"], serde_json::Value::Null);
     assert_eq!(task["estimated_work_seconds"], 1_800);
     assert_eq!(task["actual_work_seconds"], 900);
     assert_eq!(task["repetition_interval_days"], 7);
+    assert_eq!(task["repetition_start_time"], "10:00:00");
+    assert_eq!(task["repetition_deadline_time"], "23:59:59");
     assert_eq!(task["repetition_anchor"], "completion");
     assert_eq!(task["days_in_advance"], 2);
     assert_eq!(task["project_category"], "recovery");
@@ -1728,6 +1735,13 @@ fn routine_task_fixture(
     parent
         .set_repetition_interval_days_opt(repetition_interval_days)
         .unwrap();
+    if repetition_interval_days.is_some() {
+        if let Some(deadline) = deadline {
+            parent
+                .set_repetition_deadline_time_opt(Some(deadline.time()))
+                .unwrap();
+        }
+    }
     let mut child_attr = new_task_attr("routine child");
     child_attr.set_deadline_time_opt(deadline);
     let child = parent.create_as_last_child(child_attr);
@@ -1740,6 +1754,9 @@ fn defer_routine_task_次周期へ延期して1回saveする() {
     let start = fixed_now() - Duration::days(1);
     let pending_until = fixed_now() + Duration::hours(1);
     let (parent, child) = routine_task_fixture(Some(7), Some(deadline));
+    parent
+        .set_repetition_start_time_opt(Some(start.time()))
+        .unwrap();
     child.set_start_time(start).unwrap();
     child.set_orig_status(Status::Pending).unwrap();
     child.set_pending_until(pending_until).unwrap();

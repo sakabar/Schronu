@@ -252,6 +252,19 @@ fn extract_leaf_tasks_still_finds_unfinished_repetition_occurrence() {
 }
 
 #[test]
+fn repetition_series_rejects_normal_deadline() {
+    let series = new_test_task_handle("repetition series").unwrap();
+    series.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let deadline = Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap();
+
+    assert_eq!(
+        series.set_deadline_time_opt(Some(deadline)),
+        Err(TaskTreeError::RepetitionSeriesDeadline)
+    );
+    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
+}
+
+#[test]
 fn test_task_attr_with_identity_caller指定のidと時刻を保持する() {
     let id = uuid!("018d578c-3f3b-7bd6-9384-9b4b00d69c21");
     let now = Local.with_ymd_and_hms(2026, 8, 19, 12, 34, 56).unwrap();

@@ -6,7 +6,7 @@
   ],
   "create_time": "{{create_time}}",
   "days_in_advance": 2,
-  "deadline_time": "{{deadline_time}}",
+  "deadline_time": null,
   "end_time": null,
   "estimated_work_seconds": 1800,
   "fixed_start": true,
@@ -20,6 +20,8 @@
   "project_category": "recovery",
   "repetition_anchor": "completion",
   "repetition_interval_days": 7,
+  "repetition_start_time": "10:00:00",
+  "repetition_deadline_time": "23:59:59",
   "root_id": "{{task_id}}",
   "start_time": "{{start_time}}",
   "status": "pending"

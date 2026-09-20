@@ -46,6 +46,8 @@ use crate::application::task_use_case::{get_focus_excluding, ApplicationError, T
 #[cfg(test)]
 use crate::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
 use crate::entity::task::{Status, TaskHandle};
+#[cfg(test)]
+use chrono::NaiveTime;
 use chrono::{DateTime, Duration, Local};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 #[cfg(test)]

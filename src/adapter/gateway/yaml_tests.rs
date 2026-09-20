@@ -438,6 +438,8 @@ id: 67e55044-10b1-426f-9247-bb680e5fe0c8
 create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
 repetition_interval_days: 7
+repetition_start_time: '01:23:45'
+repetition_deadline_time: '23:59:59'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
@@ -1298,6 +1300,39 @@ fn test_yaml_to_task_repetition_time_on_non_repetition_task_is_error() {
     assert_eq!(
         error.to_string(),
         "cannot convert project YAML to task: project.repetition_start_time: requires repetition_interval_days"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_new_repetition_times_override_legacy_datetimes() {
+    let yaml = YamlLoader::load_from_str(
+        "name: routine\nstart_time: '2026/08/20 01:02:03'\ndeadline_time: '2037/12/31 04:05:06'\nrepetition_interval_days: 7\nrepetition_start_time: '09:30:00'\nrepetition_deadline_time: '18:45:00'\n",
+    )
+    .unwrap();
+
+    let task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+    assert_eq!(
+        task.get_repetition_start_time_opt().unwrap(),
+        Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap())
+    );
+    assert_eq!(
+        task.get_repetition_deadline_time_opt().unwrap(),
+        Some(NaiveTime::from_hms_opt(18, 45, 0).unwrap())
+    );
+    assert_eq!(task.get_deadline_time_opt().unwrap(), None);
+}
+
+#[test]
+fn test_yaml_to_task_invalid_repetition_time_has_field_error() {
+    let yaml = YamlLoader::load_from_str(
+        "name: routine\nrepetition_interval_days: 7\nrepetition_start_time: '24:00:00'\n",
+    )
+    .unwrap();
+
+    let error = yaml_to_task(&yaml[0], yaml_test_now()).unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "cannot convert project YAML to task: project.repetition_start_time: must be a valid time in HH:MM:SS format"
     );
 }
 

@@ -346,6 +346,59 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
 }
 
 #[test]
+fn get_schedule_skips_repetition_series_after_2037_boundary() {
+    for now in [
+        Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 58).unwrap(),
+        Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap(),
+        Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap(),
+    ] {
+        let series = task_with_schedule("series", now, 15 * 60, 0);
+        series.set_repetition_interval_days_opt(Some(7)).unwrap();
+        let repository = TestTaskRepository::new(vec![series], now);
+
+        assert!(get_schedule(&repository).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn get_schedule_treats_repetition_series_as_transparent_ancestor() {
+    let now = fixed_now();
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    let mut series_attr = crate::test_support::new_task_attr_at("series", now);
+    series_attr.set_repetition_interval_days_opt(Some(7));
+    series_attr.set_estimated_work_seconds(24 * 60 * 60);
+    series_attr.set_start_time(now + Duration::days(30));
+    series_attr.set_deadline_time_opt(Some(now - Duration::days(30)));
+    let series = root.create_as_last_child(series_attr);
+    let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
+    occurrence_attr.set_estimated_work_seconds(15 * 60);
+    let occurrence = series.create_as_last_child(occurrence_attr);
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    assert!(ids.contains(&root.get_id().unwrap()));
+    assert!(ids.contains(&occurrence.get_id().unwrap()));
+    assert!(!ids.contains(&series.get_id().unwrap()));
+    assert_eq!(
+        schedule
+            .iter()
+            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .unwrap()
+            .rank,
+        0
+    );
+    assert_eq!(
+        schedule
+            .iter()
+            .find(|item| item.task.id == root.get_id().unwrap())
+            .unwrap()
+            .rank,
+        1
+    );
+}
+
+#[test]
 fn get_scheduleは表現不能なfixed_flexible_atomic終了時刻を構造化errorにする() {
     let now = fixed_now();
 

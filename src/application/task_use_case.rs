@@ -13,7 +13,7 @@ use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Timelike,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
 };
 use serde::{Deserialize, Serialize};
 use std::cmp::{max, Ordering};
@@ -585,17 +585,22 @@ pub fn defer_routine_task(
             field: "task_id",
             reason: "parent task must have a repetition interval",
         })?;
-    let parent_deadline_time_opt = parent_task
-        .get_deadline_time_opt()
+    let repetition_deadline_time = parent_task
+        .get_repetition_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let repetition_start_time = parent_task
+        .get_repetition_start_time_opt()
         .map_err(ApplicationError::TaskTree)?;
     let orig_start_time = task.get_start_time().map_err(ApplicationError::TaskTree)?;
 
-    if parent_deadline_time_opt.is_some() {
-        try_next_logical_date_start(orig_deadline_time)?;
-    }
-    let deadline_time = parent_deadline_time_opt
-        .unwrap_or(orig_deadline_time)
-        .time();
+    let deadline_time = repetition_deadline_time.ok_or(ApplicationError::InvalidInput {
+        field: "repetition_deadline_time",
+        reason: "repetition series must have a deadline time template",
+    })?;
+    let start_time = repetition_start_time.ok_or(ApplicationError::InvalidInput {
+        field: "repetition_start_time",
+        reason: "repetition series must have a start time template",
+    })?;
     let new_deadline_time = shift_local_date_and_time(
         orig_deadline_time,
         repetition_interval_days,
@@ -606,7 +611,7 @@ pub fn defer_routine_task(
     let new_start_time = shift_local_date_and_time(
         orig_start_time,
         repetition_interval_days,
-        orig_start_time.time(),
+        start_time,
         "defer_routine_start",
         orig_start_time,
     )?;
@@ -893,22 +898,6 @@ fn adjusted_repetition_estimate(
     Ok(adjusted_estimated_seconds)
 }
 
-fn apply_time_template(
-    base_datetime: DateTime<Local>,
-    time_template: DateTime<Local>,
-) -> Result<DateTime<Local>, ApplicationError> {
-    let time = NaiveTime::from_hms_opt(
-        time_template.hour(),
-        time_template.minute(),
-        time_template.second(),
-    )
-    .ok_or(ApplicationError::LogicalDateOutOfRange {
-        operation: "apply_time_template",
-        datetime: time_template,
-    })?;
-    resolve_date_and_time(base_datetime, time)
-}
-
 fn resolve_date_and_time(
     base_datetime: DateTime<Local>,
     time: NaiveTime,
@@ -954,12 +943,20 @@ fn build_next_repetition_task_attr(
             .unwrap_or(finished_at),
         RepetitionAnchor::Completion => finished_at,
     };
-    let parent_start_time = parent_task
-        .get_start_time()
-        .map_err(ApplicationError::TaskTree)?;
-    let parent_deadline_time = parent_task
-        .get_deadline_time_opt()
-        .map_err(ApplicationError::TaskTree)?;
+    let repetition_start_time = parent_task
+        .get_repetition_start_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "repetition_start_time",
+            reason: "repetition series must have a start time template",
+        })?;
+    let repetition_deadline_time = parent_task
+        .get_repetition_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "repetition_deadline_time",
+            reason: "repetition series must have a deadline time template",
+        })?;
     let days_in_advance = parent_task
         .get_days_in_advance()
         .map_err(ApplicationError::TaskTree)?;
@@ -986,7 +983,7 @@ fn build_next_repetition_task_attr(
         "next_logical_date_start",
         occurrence_anchor,
     )?;
-    let occurrence_start_time = apply_time_template(next_occurrence_day, parent_start_time)?;
+    let occurrence_start_time = resolve_date_and_time(next_occurrence_day, repetition_start_time)?;
     let start_offset_days =
         days_in_advance
             .checked_neg()
@@ -1001,20 +998,7 @@ fn build_next_repetition_task_attr(
         "repetition_start_time",
         occurrence_start_time,
     )?;
-    let new_deadline_time = match parent_deadline_time {
-        Some(parent_deadline_time) => {
-            apply_time_template(next_occurrence_day, parent_deadline_time)?
-        }
-        None => {
-            let end_of_day = NaiveTime::from_hms_opt(23, 59, 59).ok_or(
-                ApplicationError::LogicalDateOutOfRange {
-                    operation: "repetition_deadline_time",
-                    datetime: next_occurrence_day,
-                },
-            )?;
-            resolve_date_and_time(next_occurrence_day, end_of_day)?
-        }
-    };
+    let new_deadline_time = resolve_date_and_time(next_occurrence_day, repetition_deadline_time)?;
 
     let mut new_task_attr = factory.create_task_attr(&format!(
         "{}({}/{})",

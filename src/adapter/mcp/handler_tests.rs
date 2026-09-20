@@ -710,6 +710,9 @@ fn defer_routine_task_handlerはtyped_uuidで次周期へ延期する() {
     let deadline = fixed_now() + Duration::hours(2);
     let parent = new_task_handle("routine parent").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("routine child");
     child_attr.set_deadline_time_opt(Some(deadline));
     child_attr.set_orig_status(Status::Pending);

@@ -73,7 +73,13 @@ fn next_repetition_child(
     parent
         .set_start_time(Local.with_ymd_and_hms(2026, 1, 1, 9, 30, 0).unwrap())
         .unwrap();
-    parent.set_deadline_time_opt(parent_deadline_time).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(
+            parent_deadline_time
+                .map(|deadline| deadline.time())
+                .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap()),
+        ))
+        .unwrap();
 
     let mut child_attr = crate::test_support::new_task_attr_at("今回", anchor);
     child_attr.set_deadline_time_opt(Some(anchor));
@@ -160,7 +166,7 @@ fn assert_complete_task_calendar_error(
     parent.set_days_in_advance(days_in_advance).unwrap();
     parent.set_start_time(parent_start_time).unwrap();
     parent
-        .set_deadline_time_opt(Some(parent_deadline_time))
+        .set_repetition_deadline_time_opt(Some(parent_deadline_time.time()))
         .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("今回", anchor);
     child_attr.set_deadline_time_opt(Some(anchor));
@@ -291,7 +297,23 @@ fn deferred_routine_task(
     parent
         .set_repetition_interval_days_opt(Some(interval_days))
         .unwrap();
-    parent.set_deadline_time_opt(parent_deadline_time).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(
+            parent_deadline_time
+                .map(|deadline| deadline.time())
+                .unwrap_or_else(|| original_deadline.time()),
+        ))
+        .unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(original_start.time()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(
+            parent_deadline_time
+                .map(|deadline| deadline.time())
+                .unwrap_or_else(|| original_deadline.time()),
+        ))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
     child_attr.set_start_time(original_start);
     child_attr.set_deadline_time_opt(Some(original_deadline));
@@ -358,7 +380,23 @@ fn assert_defer_routine_calendar_error(
 ) {
     let parent = crate::test_support::new_task_handle_at("ルーチン", original_deadline).unwrap();
     parent.set_repetition_interval_days_opt(Some(1)).unwrap();
-    parent.set_deadline_time_opt(parent_deadline_time).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(
+            parent_deadline_time
+                .map(|deadline| deadline.time())
+                .unwrap_or_else(|| original_deadline.time()),
+        ))
+        .unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(original_start.time()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(
+            parent_deadline_time
+                .map(|deadline| deadline.time())
+                .unwrap_or_else(|| original_deadline.time()),
+        ))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
     child_attr.set_start_time(original_start);
     child_attr.set_deadline_time_opt(Some(original_deadline));

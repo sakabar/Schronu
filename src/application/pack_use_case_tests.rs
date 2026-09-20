@@ -425,15 +425,20 @@ fn pack_tasks_締切と依存と反復設定を変更しない() {
     let now = fixed_now();
     let task = pending_task("対象", now, now + Duration::days(10), 30, 9);
     let deadline = now + Duration::days(20);
-    task.set_deadline_time_opt(Some(deadline)).unwrap();
     task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    task.set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], now);
     let mut free_time_manager = TestFreeTimeManager::new(120);
 
     let actual = pack_tasks(&repository, &mut free_time_manager).unwrap();
 
-    assert_eq!(actual.packed_tasks.len(), 1);
-    assert_eq!(task.get_deadline_time_opt().unwrap(), Some(deadline));
+    assert!(actual.packed_tasks.is_empty());
+    assert_eq!(task.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(
+        task.get_repetition_deadline_time_opt().unwrap(),
+        Some(deadline.time())
+    );
     assert_eq!(task.get_repetition_interval_days_opt().unwrap(), Some(7));
     assert!(task.get_children().unwrap().is_empty());
 }
