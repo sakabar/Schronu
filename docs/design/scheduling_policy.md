@@ -27,8 +27,6 @@ fixedは指定開始時刻と元の見積時間から予約windowを作ります
 
 flexible taskと、fixed windowに収まらなかった残作業はevent loopの候補にします。
 
-明示deadlineを持つflexible taskについて、元のreleaseからdeadlineまでの非fixed容量が残作業に足りない場合は、予定計算内のreleaseだけを必要最小限前倒しします。非atomicはfixedを除く累積容量をdeadlineから逆算し、atomicはdeadline以前の最新の連続空き枠を使います。元fixedのwindow超過分、永続的な`start_time`と`pending_until`、dependency releaseは変更しません。他のflexible taskとの競合はこの補正へ含めず、後続のslack選択で扱います。現在以降に全量を確保できない非atomicはreleaseを現在まで前倒しして利用可能な容量を使い、連続枠を確保できないatomicはreleaseを維持します。いずれも残る締切超過は既存警告へ委ねます。
-
 ### 2. 予約unionとcompletion eventの構築
 
 flexible taskから見たfixed予約はunion化します。これにより、重なったfixedの時間を空き時間から二重に差し引きません。一方、表示では各fixedを個別に残します。
