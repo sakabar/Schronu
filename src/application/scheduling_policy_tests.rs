@@ -231,6 +231,105 @@ fn fixed予約で締切までの容量が不足する非atomicは必要量だけ
 }
 
 #[test]
+fn fixed予約後も締切までの容量が足りる候補はreleaseを維持する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let release = now + Duration::hours(1);
+    let fixed = fixed_candidate("fixed", now + Duration::hours(2), 60 * 60, 60 * 60);
+    let mut task = candidate("flexible", release, 89, 60 * 60);
+    task.deadline_time = Some(now + Duration::minutes(210));
+    let task_id = task.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, task], now).unwrap();
+    let task_segment = segments_for(&scheduled, task_id);
+
+    assert_eq!(task_segment.len(), 1);
+    assert_eq!(task_segment[0].first_available_time, release);
+    assert_eq!(task_segment[0].scheduled_start, release);
+}
+
+#[test]
+fn 締切までに連続枠がないatomicはreleaseを維持して超過を表示可能にする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap();
+    let release = now + Duration::minutes(30);
+    let deadline = now + Duration::minutes(150);
+    let fixed = fixed_candidate("fixed", now + Duration::hours(1), 60 * 60, 60 * 60);
+    let mut task = candidate("atomic", release, 89, 90 * 60);
+    task.atomic = true;
+    task.deadline_time = Some(deadline);
+    let task_id = task.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, task], now).unwrap();
+    let task_segment = segments_for(&scheduled, task_id);
+
+    assert_eq!(task_segment.len(), 1);
+    assert_eq!(task_segment[0].first_available_time, release);
+    assert!(task_segment[0].scheduled_end > deadline);
+}
+
+#[test]
+fn 締切までの総容量が不足する非atomicは現在まで前倒しして超過を表示可能にする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 10, 0, 0).unwrap();
+    let deadline = now + Duration::minutes(150);
+    let fixed = fixed_candidate("fixed", now + Duration::hours(1), 60 * 60, 60 * 60);
+    let mut task = candidate("flexible", now + Duration::minutes(30), 89, 2 * 60 * 60);
+    task.deadline_time = Some(deadline);
+    let task_id = task.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, task], now).unwrap();
+    let task_segments = segments_for(&scheduled, task_id);
+
+    assert_eq!(task_segments[0].first_available_time, now);
+    assert_eq!(task_segments[0].scheduled_start, now);
+    assert!(task_segments.last().unwrap().scheduled_end > deadline);
+}
+
+#[test]
+fn deadlineによるrelease前倒し後もdependency完了前には開始しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let fixed = fixed_candidate("fixed", now + Duration::hours(2), 60 * 60, 60 * 60);
+    let child = candidate("child", now + Duration::hours(3), 89, 60);
+    let child_id = child.id;
+    let mut parent = candidate("parent", now + Duration::minutes(150), 89, 30 * 60);
+    parent.atomic = true;
+    parent.deadline_time = Some(now + Duration::minutes(195));
+    parent.dependency_ids = vec![child_id];
+    let parent_id = parent.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, parent, child], now).unwrap();
+    let child_segment = segments_for(&scheduled, child_id);
+    let parent_segment = segments_for(&scheduled, parent_id);
+
+    assert_eq!(
+        parent_segment[0].first_available_time,
+        now + Duration::minutes(90)
+    );
+    assert!(parent_segment[0].scheduled_start >= child_segment[0].scheduled_end);
+}
+
+#[test]
+fn 重複fixedはunion容量から非atomicのreleaseを逆算する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let first = fixed_candidate("first", now + Duration::hours(2), 60 * 60, 60 * 60);
+    let second = fixed_candidate("second", now + Duration::minutes(150), 60 * 60, 60 * 60);
+    let mut task = candidate("flexible", now + Duration::minutes(90), 89, 90 * 60);
+    task.deadline_time = Some(now + Duration::hours(4));
+    let task_id = task.id;
+
+    let scheduled = schedule_tasks_by_priority(&[first, second, task], now).unwrap();
+    let task_segments = segments_for(&scheduled, task_id);
+
+    assert_eq!(
+        task_segments[0].first_available_time,
+        now + Duration::hours(1)
+    );
+    assert_eq!(task_segments[0].scheduled_start, now + Duration::hours(1));
+    assert_eq!(
+        task_segments.last().unwrap().scheduled_end,
+        now + Duration::hours(4)
+    );
+}
+
+#[test]
 fn 過去開始のfixed予定は元window内へ残作業を置き超過分を後続へ置く() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let start = now - Duration::hours(1);
