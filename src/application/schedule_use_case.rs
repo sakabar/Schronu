@@ -219,11 +219,13 @@ fn list_ancestor_schedule_times_checked(
     let mut ancestors = Vec::new();
     let mut child_finish = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
     let mut task = Some(leaf.clone());
+    let mut boundary_deadline = None;
 
     // Phase 1: 子の終了を親の開始下限にする。ただしfixedはdependencyで動かさない。
     // 部分木に繰り返しtaskを含むtaskは完了不能なので、そのtaskから上を予定しない。
     while let Some(current) = task {
         if subtree_contains_repeating_task(&current, subtree_contains_repeating_task_by_id)? {
+            boundary_deadline = minimum_deadline_from(&current)?;
             break;
         }
         let fixed = current
@@ -248,9 +250,11 @@ fn list_ancestor_schedule_times_checked(
         task = current.parent().map_err(ApplicationError::TaskTree)?;
     }
 
-    // Phase 2: 親側のdeadlineから必要開始時刻を子へ伝える。fixedは動かさず、
-    // その指定開始をdependency側の必要時刻として伝える。
-    let mut parent_required_start = DateTime::<Local>::MAX_UTC.with_timezone(&Local);
+    // Phase 2: 親側のdeadlineから必要開始時刻を子へ伝える。繰り返し境界より上も
+    // deadlineだけは維持する。fixedは動かさず、その指定開始をdependency側の
+    // 必要時刻として伝える。
+    let mut parent_required_start =
+        boundary_deadline.unwrap_or_else(|| DateTime::<Local>::MAX_UTC.with_timezone(&Local));
     for (rough_start, current) in ancestors.iter_mut().rev() {
         if current
             .fixed_start_applies_to_schedule()
@@ -306,6 +310,25 @@ fn list_ancestor_schedule_times_checked(
     }
 
     Ok(ancestors)
+}
+
+fn minimum_deadline_from(task: &TaskHandle) -> Result<Option<DateTime<Local>>, ApplicationError> {
+    let mut deadline = None;
+    let mut current = Some(task.clone());
+    while let Some(task) = current {
+        if let Some(current_deadline) = task
+            .get_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            deadline = Some(
+                deadline
+                    .map(|deadline| min(deadline, current_deadline))
+                    .unwrap_or(current_deadline),
+            );
+        }
+        current = task.parent().map_err(ApplicationError::TaskTree)?;
+    }
+    Ok(deadline)
 }
 
 fn subtree_contains_repeating_task(

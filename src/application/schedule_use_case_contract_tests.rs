@@ -396,6 +396,37 @@ fn get_schedule_stops_at_repeating_task_boundary() {
 }
 
 #[test]
+fn get_schedule_preserves_normal_ancestor_deadline_across_repeating_boundary() {
+    let now = fixed_now();
+    let ancestor_deadline = now + Duration::hours(1);
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    root.set_deadline_time_opt(Some(ancestor_deadline)).unwrap();
+    let repeating_task =
+        root.create_as_last_child(crate::test_support::new_task_attr_at("repeating task", now));
+    repeating_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
+    occurrence_attr.set_estimated_work_seconds(15 * 60);
+    occurrence_attr.set_start_time(now + Duration::hours(2));
+    occurrence_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(4)))
+        .unwrap();
+    let occurrence = repeating_task.create_as_last_child(occurrence_attr);
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let occurrence_schedule = schedule
+        .iter()
+        .find(|item| item.task.id == occurrence.get_id().unwrap())
+        .unwrap();
+    assert!(occurrence_schedule.scheduled_end <= ancestor_deadline);
+    assert!(!schedule
+        .iter()
+        .any(|item| item.task.id == root.get_id().unwrap()));
+}
+
+#[test]
 fn get_schedule_excludes_common_ancestor_but_keeps_normal_sibling() {
     let now = fixed_now();
     let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
