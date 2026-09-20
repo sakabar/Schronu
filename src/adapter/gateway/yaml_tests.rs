@@ -1306,6 +1306,22 @@ fn test_yaml_to_task_repetition_time_on_non_repetition_task_is_error() {
 }
 
 #[test]
+fn test_yaml_to_task_null_repetition_time_on_non_repetition_task_is_error() {
+    for field in ["repetition_start_time", "repetition_deadline_time"] {
+        let yaml = YamlLoader::load_from_str(&format!("name: normal\n{field}: null\n")).unwrap();
+
+        let error = yaml_to_task(&yaml[0], yaml_test_now()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "cannot convert project YAML to task: project.{field}: requires repetition_interval_days"
+            )
+        );
+    }
+}
+
+#[test]
 fn test_yaml_to_task_new_repetition_times_override_legacy_datetimes() {
     let yaml = YamlLoader::load_from_str(
         "name: routine\nstart_time: '2026/08/20 01:02:03'\ndeadline_time: '2037/12/31 04:05:06'\nrepetition_interval_days: 7\nrepetition_start_time: '09:30:00'\nrepetition_deadline_time: '18:45:00'\n",
