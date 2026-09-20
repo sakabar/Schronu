@@ -3823,6 +3823,39 @@ fn test_execute_deadline_締切を設定して解除する() {
 }
 
 #[test]
+fn interactive_deadlineは日付と時刻の両順序を製品経路で設定する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["〆 14:30 9/21", "〆 9/21 14:30"] {
+        let task = new_test_task_handle("interactive日時指定").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+        let mut stdout = FlushTrackingWriter::successful(false);
+
+        execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            now,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(
+            task_repository.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, 21, 14, 30, 0).unwrap()),
+            "command: {command}"
+        );
+    }
+}
+
+#[test]
 fn test_execute_deadline_不正日時はfield付き入力エラーを表示して状態を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("更新対象").unwrap();
