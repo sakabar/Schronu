@@ -427,23 +427,25 @@ fn yaml_to_task_strict(
             }
         },
     };
+    let has_repetition_start_time = yaml_field(yaml, "repetition_start_time").is_some();
     let repetition_start_time = match yaml_field(yaml, "repetition_start_time") {
         None | Some(Yaml::Null) => None,
         Some(value) => Some(strict_time(value, path, "repetition_start_time")?),
     };
+    let has_repetition_deadline_time = yaml_field(yaml, "repetition_deadline_time").is_some();
     let repetition_deadline_time = match yaml_field(yaml, "repetition_deadline_time") {
         None | Some(Yaml::Null) => None,
         Some(value) => Some(strict_time(value, path, "repetition_deadline_time")?),
     };
     if interval.is_none() {
-        if repetition_start_time.is_some() {
+        if has_repetition_start_time {
             return Err(strict_error(
                 path,
                 "repetition_start_time",
                 "requires repetition_interval_days",
             ));
         }
-        if repetition_deadline_time.is_some() {
+        if has_repetition_deadline_time {
             return Err(strict_error(
                 path,
                 "repetition_deadline_time",

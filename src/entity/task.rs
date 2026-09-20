@@ -138,22 +138,33 @@ fn extract_leaf_tasks_from_project_rec(
     target_status_arr: &Vec<Status>,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let is_repetition_series = task.is_repetition_series()?;
-    let mut children_are_all_done = true;
+    let mut has_active_child = false;
+    let mut descendants = Vec::new();
     for child_node in task.node.children() {
-        if child_node
+        let child_task = TaskHandle {
+            node: child_node.clone(),
+        };
+        let child_is_series = child_task.is_repetition_series()?;
+        let child_is_done = child_node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?
             .get_status()
-            != &Status::Done
-        {
-            children_are_all_done = false;
-            break;
+            == &Status::Done;
+        if child_is_series {
+            let mut child_leaves =
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
+            has_active_child |= repetition_series_has_unfinished_descendant(&child_task)?;
+            descendants.append(&mut child_leaves);
+        } else if !child_is_done {
+            has_active_child = true;
+            descendants.append(&mut extract_leaf_tasks_from_project_rec(
+                &child_task,
+                target_status_arr,
+            )?);
         }
     }
 
-    if !is_repetition_series
-        && target_status_arr.contains(&task.get_status()?)
-        && (!task.node.has_children() || children_are_all_done)
+    if !is_repetition_series && target_status_arr.contains(&task.get_status()?) && !has_active_child
     {
         let new_task = TaskHandle {
             node: task.node.clone(),
@@ -161,34 +172,21 @@ fn extract_leaf_tasks_from_project_rec(
         return Ok(vec![new_task]);
     }
 
-    let mut ans: Vec<TaskHandle> = vec![];
+    Ok(descendants)
+}
 
-    // 深さ優先
-    for child_node in task.node.children() {
-        if child_node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?
-            .get_status()
-            != &Status::Done
-        {
-            let child_task = TaskHandle { node: child_node };
-
-            let leaves_with_pending: Vec<TaskHandle> =
-                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
-
-            let mut leaves = Vec::new();
-            for leaf in leaves_with_pending {
-                if target_status_arr.contains(&leaf.get_status()?) {
-                    leaves.push(TaskHandle {
-                        node: leaf.node.clone(),
-                    });
-                }
+fn repetition_series_has_unfinished_descendant(series: &TaskHandle) -> Result<bool, TaskTreeError> {
+    for child_node in series.node.children() {
+        let child = TaskHandle { node: child_node };
+        if child.is_repetition_series()? {
+            if repetition_series_has_unfinished_descendant(&child)? {
+                return Ok(true);
             }
-            ans.append(&mut leaves);
+        } else if child.get_status()? != Status::Done {
+            return Ok(true);
         }
     }
-
-    Ok(ans)
+    Ok(false)
 }
 
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
@@ -468,6 +466,9 @@ impl TaskAttr {
     }
 
     pub fn set_deadline_time_opt(&mut self, deadline_time_opt: Option<DateTime<Local>>) {
+        if self.repetition_interval_days_opt.is_some() && deadline_time_opt.is_some() {
+            return;
+        }
         self.deadline_time_opt = deadline_time_opt;
     }
 
@@ -1288,6 +1289,13 @@ impl TaskHandle {
             .node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?;
+        if attr.get_repetition_interval_days_opt().is_some() {
+            drop(attr);
+            for child in self.node.children() {
+                Self { node: child }.collect_deadline_updates(inherited, None, updates)?;
+            }
+            return Ok(());
+        }
         if *attr.get_status() == Status::Done {
             return Ok(());
         }
@@ -1323,6 +1331,9 @@ impl TaskHandle {
         &self,
         deadline_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repetition_series()? {
+            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        }
         let mut updates = Vec::new();
         let current_deadline = self
             .node
@@ -1559,6 +1570,9 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repetition_series()? {
+            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        }
         let task_id = self.get_id()?;
         let estimated_work_seconds = self.get_estimated_work_seconds()?;
         let deadline_time = try_appointment_deadline(
