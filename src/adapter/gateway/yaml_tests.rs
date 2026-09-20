@@ -1268,7 +1268,7 @@ repetition_interval_days: 7
     let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_repetition_interval_days_opt(Some(7)).unwrap();
 
-    // 2037/12/31までpendingになる
+    // 反復seriesでも通常のstatus同期は行える。
     expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
