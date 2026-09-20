@@ -5554,6 +5554,52 @@ fn test_execute_calendarとband_週次容量の1秒超過を1分へ切り上げ�
 }
 
 #[test]
+fn test_execute_calendarとband_分割taskの調整可能時間をsegment単位で週次容量へ反映する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let two_days_later = now + Duration::days(2);
+    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が1日あります。最初の超過日: 2026-08-13, 最大超過: 1時間00分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("分割task容量fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let today_task = add_scheduled_child_for_test(&root, "今日1分", now, 1);
+        today_task.set_fixed_start(true).unwrap();
+
+        let target = add_scheduled_child_for_test(&root, "2日後の分割対象", now, 180);
+        target.set_pending_until(two_days_later).unwrap();
+        let target_id = target.get_id().unwrap();
+
+        let blocker = add_scheduled_child_for_test(
+            &root,
+            "2日後の固定予定",
+            two_days_later + Duration::hours(1),
+            120,
+        );
+        blocker.set_fixed_start(true).unwrap();
+
+        let repository = TestTaskRepository::new(root.clone(), now);
+        let segment_work_seconds =
+            crate::application::schedule_use_case::get_schedule(&repository)
+                .unwrap()
+                .into_iter()
+                .filter(|scheduled| scheduled.task.id == target_id)
+                .map(|scheduled| scheduled.scheduled_work_seconds)
+                .collect::<Vec<_>>();
+        assert_eq!(segment_work_seconds, [60 * 60, 120 * 60]);
+
+        let actual = execute_calendar_command_by_date_for_test(
+            command,
+            now,
+            root,
+            HashMap::from([(today, 400), (two_days_later.date_naive(), 60)]),
+        );
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
 fn test_execute_calendarとband_累積超過が縮小しても週次最大値を保持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let expected = "最初の超過日: 2026-08-13, 最大超過: 2時間00分";

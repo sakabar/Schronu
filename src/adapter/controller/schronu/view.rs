@@ -781,6 +781,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // 日ごとの、前倒し可能なtaskの見積もりの和
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
+    let mut adjustable_scheduled_work_seconds_for_capacity_alert: HashMap<NaiveDate, i64> =
+        HashMap::new();
 
     // タスク一覧で、どのタスクをいつやる見込みかを表示するために、「現在時刻」をズラして見ていく
     let mut current_datetime_cursor = task_repository.get_last_synced_time();
@@ -870,6 +872,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         *estimated_work_seconds_val += task_estimated_work_seconds
                     })
                     .or_insert(task_estimated_work_seconds);
+                adjustable_scheduled_work_seconds_for_capacity_alert
+                    .entry(logical_naive_date)
+                    .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
+                    .or_insert(scheduled_work_seconds);
             }
 
             let name = format!(
@@ -1329,6 +1335,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .unwrap_or(&0);
         let adjustable_estimated_work_duration =
             Duration::seconds(adjustable_estimated_work_seconds);
+        let adjustable_scheduled_work_duration_for_capacity_alert = Duration::seconds(
+            *adjustable_scheduled_work_seconds_for_capacity_alert
+                .get(date)
+                .unwrap_or(&0),
+        );
         let daily_overrun_seconds =
             total_estimated_work_seconds_of_the_date - free_time_minutes * 60;
 
@@ -1336,8 +1347,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
         if accumulate_duration_diff_to_limit < -adjustable_estimated_work_duration {
             accumulate_duration_diff_to_limit = -adjustable_estimated_work_duration
         }
-        if accumulate_capacity_alert_overrun < -adjustable_estimated_work_duration {
-            accumulate_capacity_alert_overrun = -adjustable_estimated_work_duration;
+        if accumulate_capacity_alert_overrun
+            < -adjustable_scheduled_work_duration_for_capacity_alert
+        {
+            accumulate_capacity_alert_overrun =
+                -adjustable_scheduled_work_duration_for_capacity_alert;
         }
 
         let over_time_duration = if over_time_hours_f > 0.0 {

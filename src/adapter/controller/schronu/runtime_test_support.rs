@@ -1263,6 +1263,32 @@ fn execute_calendar_command_for_test(
 }
 
 #[cfg(test)]
+fn execute_calendar_command_by_date_for_test(
+    command: &str,
+    now: DateTime<Local>,
+    task: TaskHandle,
+    free_minutes_by_date: HashMap<NaiveDate, i64>,
+) -> String {
+    let mut task_repository = TestTaskRepository::new(task, now);
+    let mut free_time_manager = TestFreeTimeManagerByDate {
+        free_minutes_by_date,
+    };
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    let _ = execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        command,
+    );
+
+    String::from_utf8(stdout.buffer).unwrap()
+}
+
+#[cfg(test)]
 fn rendered_focus_messages_for_test(
     focused_task: &TaskHandle,
     focus_started_datetime: &DateTime<Local>,
