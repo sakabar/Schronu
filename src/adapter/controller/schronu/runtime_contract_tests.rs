@@ -5555,7 +5555,9 @@ fn test_execute_calendarとband_累積超過が縮小しても週次最大値を
         let actual = execute_calendar_command_for_test(command, now, root, 60);
 
         assert!(actual.contains(expected), "{command}: {actual}");
-        assert!(actual.contains("2026-08-14(金)\t 1.0時間\t-0時間30分"));
+        if command == "暦" {
+            assert!(actual.contains("2026-08-14(金)\t 1.0時間\t-0時間30分"));
+        }
     }
 }
 

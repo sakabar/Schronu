@@ -592,20 +592,32 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
                 first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
                 max_overrun_seconds: 15 * 60,
             }),
-            has_today_freetime_leeway: false,
+            today_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                max_overrun_seconds: 8 * 60,
+            }),
             has_today_new_task_leeway: false,
             tomorrow_deadline_issue: Some(CalendarAlertIssue {
                 affected_count: 1,
                 first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
                 max_overrun_seconds: 15 * 60,
             }),
-            has_tomorrow_freetime_leeway: false,
+            tomorrow_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                max_overrun_seconds: (60 + 44) * 60,
+            }),
             weekly_deadline_issue: Some(CalendarAlertIssue {
                 affected_count: 2,
                 first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
                 max_overrun_seconds: (3 * 60 + 54) * 60,
             }),
-            has_weekly_freetime_leeway: false,
+            weekly_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 3,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+                max_overrun_seconds: (2 * 60 + 33) * 60,
+            }),
         },
     });
     let mut writer = TraceWriter::default();
@@ -643,12 +655,12 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             summary: summary.clone(),
             alerts: CalendarAlerts {
                 today_deadline_issue: None,
-                has_today_freetime_leeway: true,
+                today_capacity_issue: None,
                 has_today_new_task_leeway: false,
                 tomorrow_deadline_issue: None,
-                has_tomorrow_freetime_leeway: true,
+                tomorrow_capacity_issue: None,
                 weekly_deadline_issue: None,
-                has_weekly_freetime_leeway: true,
+                weekly_capacity_issue: None,
             },
         }),
     )
@@ -670,12 +682,12 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             summary,
             alerts: CalendarAlerts {
                 today_deadline_issue: None,
-                has_today_freetime_leeway: true,
+                today_capacity_issue: None,
                 has_today_new_task_leeway: true,
                 tomorrow_deadline_issue: None,
-                has_tomorrow_freetime_leeway: true,
+                tomorrow_capacity_issue: None,
                 weekly_deadline_issue: None,
-                has_weekly_freetime_leeway: true,
+                weekly_capacity_issue: None,
             },
         }),
     )
@@ -706,12 +718,12 @@ fn calendar_displayは日別rowが空でもfooterとsummaryとhealthy_alertを�
         },
         alerts: CalendarAlerts {
             today_deadline_issue: None,
-            has_today_freetime_leeway: true,
+            today_capacity_issue: None,
             has_today_new_task_leeway: true,
             tomorrow_deadline_issue: None,
-            has_tomorrow_freetime_leeway: true,
+            tomorrow_capacity_issue: None,
             weekly_deadline_issue: None,
-            has_weekly_freetime_leeway: true,
+            weekly_capacity_issue: None,
         },
     });
     let mut writer = TraceWriter::default();
@@ -772,12 +784,12 @@ fn band_display_fixture() -> BandDisplay {
         },
         alerts: CalendarAlerts {
             today_deadline_issue: None,
-            has_today_freetime_leeway: true,
+            today_capacity_issue: None,
             has_today_new_task_leeway: true,
             tomorrow_deadline_issue: None,
-            has_tomorrow_freetime_leeway: true,
+            tomorrow_capacity_issue: None,
             weekly_deadline_issue: None,
-            has_weekly_freetime_leeway: true,
+            weekly_capacity_issue: None,
         },
     }
 }

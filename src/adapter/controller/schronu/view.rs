@@ -1232,10 +1232,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
     // 順調フラグ
-    let mut has_today_freetime_leeway = true;
+    let mut today_capacity_issue = None;
     let mut has_today_new_task_leeway = true;
-    let mut has_tomorrow_freetime_leeway = true;
-    let mut has_weekly_freetime_leeway = true;
+    let mut tomorrow_capacity_issue = None;
+    let mut weekly_capacity_issue = None;
 
     // 「それぞれの日の rho (0.7) との差」の累積和。
     // どれくらい突発を吸収できるかの指標となる。
@@ -1354,12 +1354,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             first_caught_up_date = **date;
         }
 
-        let diff_to_limit_sign: char = if accumulate_duration_diff_to_limit > Duration::minutes(0) {
-            ' '
-        } else {
-            '-'
-        };
-
         let repetitive_task_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
             .get(date)
             .unwrap_or(&0);
@@ -1396,12 +1390,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             first_leeway_duration = accumulate_duration_diff_to_goal_rho;
         }
 
-        let diff_to_limit_in_day_sign: char =
-            if total_estimated_work_hours_of_the_date > free_time_hours {
-                ' '
-            } else {
-                '-'
-            };
         if !daily_summary_rows.is_empty()
             && accumulated_rho_diff.is_finite()
             && accumulated_rho_diff > max_accumulated_rho_diff
@@ -1413,21 +1401,29 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
-        // 順調フラグ確認
-        if daily_summary_rows.is_empty() {
-            has_today_freetime_leeway = diff_to_limit_in_day_sign == '-';
+        // alert確認
+        let days_from_today = (**date - last_synced_logical_date).num_days();
+        let daily_overrun_seconds =
+            total_estimated_work_seconds_of_the_date - free_time_minutes * 60;
+        if days_from_today == 0 {
+            if daily_overrun_seconds > 0 {
+                add_calendar_alert_issue(&mut today_capacity_issue, **date, daily_overrun_seconds);
+            }
             has_today_new_task_leeway = diff_to_goal_sign == '-';
         }
 
-        if daily_summary_rows.len() == 1 {
-            has_tomorrow_freetime_leeway = diff_to_limit_in_day_sign == '-';
+        if days_from_today == 1 && daily_overrun_seconds > 0 {
+            add_calendar_alert_issue(&mut tomorrow_capacity_issue, **date, daily_overrun_seconds);
         }
 
-        if 2 <= daily_summary_rows.len()
-            && daily_summary_rows.len() < 7
-            && has_weekly_freetime_leeway
+        if (2..=6).contains(&days_from_today)
+            && accumulate_duration_diff_to_limit > Duration::zero()
         {
-            has_weekly_freetime_leeway = diff_to_limit_sign == '-';
+            add_calendar_alert_issue(
+                &mut weekly_capacity_issue,
+                **date,
+                accumulate_duration_diff_to_limit.num_seconds(),
+            );
         }
 
         // 今日より前には前倒せないため
@@ -1522,12 +1518,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
     };
     let alerts = CalendarAlerts {
         today_deadline_issue: deadline_issues.today,
-        has_today_freetime_leeway,
+        today_capacity_issue,
         has_today_new_task_leeway,
         tomorrow_deadline_issue: deadline_issues.tomorrow,
-        has_tomorrow_freetime_leeway,
+        tomorrow_capacity_issue,
         weekly_deadline_issue: deadline_issues.weekly,
-        has_weekly_freetime_leeway,
+        weekly_capacity_issue,
     };
     let calendar_display = is_calendar_func.then(|| {
         DisplayModel::Calendar(CalendarDisplay {

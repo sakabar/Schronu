@@ -206,12 +206,12 @@ pub(super) struct CalendarAlertIssue {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct CalendarAlerts {
     pub(super) today_deadline_issue: Option<CalendarAlertIssue>,
-    pub(super) has_today_freetime_leeway: bool,
+    pub(super) today_capacity_issue: Option<CalendarAlertIssue>,
     pub(super) has_today_new_task_leeway: bool,
     pub(super) tomorrow_deadline_issue: Option<CalendarAlertIssue>,
-    pub(super) has_tomorrow_freetime_leeway: bool,
+    pub(super) tomorrow_capacity_issue: Option<CalendarAlertIssue>,
     pub(super) weekly_deadline_issue: Option<CalendarAlertIssue>,
-    pub(super) has_weekly_freetime_leeway: bool,
+    pub(super) weekly_capacity_issue: Option<CalendarAlertIssue>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -969,13 +969,14 @@ fn render_calendar_alerts(
         ))?;
         is_all_favorable = false;
     }
-    if alerts.has_today_freetime_leeway {
-        if !alerts.has_today_new_task_leeway {
-            writer.writeln_newline("[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。")?;
-            is_all_favorable = false;
-        }
-    } else {
-        writer.writeln_newline("[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。")?;
+    if let Some(issue) = alerts.today_capacity_issue {
+        writer.writeln_newline(&format!(
+            "[Crit] 【今日の】終了予定時刻を{}超過します。【ただちに】`尾`で候補を確認し、予定を減らすか明日以降へ延期してください。",
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
+        is_all_favorable = false;
+    } else if !alerts.has_today_new_task_leeway {
+        writer.writeln_newline("[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。")?;
         is_all_favorable = false;
     }
     if let Some(issue) = alerts.tomorrow_deadline_issue {
@@ -987,8 +988,11 @@ fn render_calendar_alerts(
         ))?;
         is_all_favorable = false;
     }
-    if !alerts.has_tomorrow_freetime_leeway {
-        writer.writeln_newline("[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。")?;
+    if let Some(issue) = alerts.tomorrow_capacity_issue {
+        writer.writeln_newline(&format!(
+            "[Warn] 【明日の】終了予定時刻を{}超過します。【今日中に】`尾 明`で候補を確認し、予定を減らすかあさって以降へ延期してください。",
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
         is_all_favorable = false;
     }
     if let Some(issue) = alerts.weekly_deadline_issue {
@@ -1000,8 +1004,13 @@ fn render_calendar_alerts(
         ))?;
         is_all_favorable = false;
     }
-    if !alerts.has_weekly_freetime_leeway {
-        writer.writeln_newline("[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。")?;
+    if let Some(issue) = alerts.weekly_capacity_issue {
+        writer.writeln_newline(&format!(
+            "[Warn] 【7日以内の】終了予定時刻を超過する日が{}日あります。最初の超過日: {}, 最大超過: {}。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。",
+            issue.affected_count,
+            issue.first_affected_date,
+            format_alert_overrun(issue.max_overrun_seconds),
+        ))?;
         is_all_favorable = false;
     }
     if is_all_favorable {
