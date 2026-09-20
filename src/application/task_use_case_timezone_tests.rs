@@ -74,6 +74,9 @@ fn next_repetition_child(
         .set_start_time(Local.with_ymd_and_hms(2026, 1, 1, 9, 30, 0).unwrap())
         .unwrap();
     parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap()))
+        .unwrap();
+    parent
         .set_repetition_deadline_time_opt(Some(
             parent_deadline_time
                 .map(|deadline| deadline.time())
@@ -165,6 +168,9 @@ fn assert_complete_task_calendar_error(
         .unwrap();
     parent.set_days_in_advance(days_in_advance).unwrap();
     parent.set_start_time(parent_start_time).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(parent_start_time.time()))
+        .unwrap();
     parent
         .set_repetition_deadline_time_opt(Some(parent_deadline_time.time()))
         .unwrap();

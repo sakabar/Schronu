@@ -452,9 +452,6 @@ impl TaskAttr {
 
     pub fn set_start_time(&mut self, start_time: DateTime<Local>) {
         self.start_time = start_time;
-        if self.repetition_interval_days_opt.is_some() {
-            self.repetition_start_time_opt = Some(start_time.time());
-        }
         self.set_orig_status(*self.get_orig_status());
     }
 

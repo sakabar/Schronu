@@ -252,6 +252,9 @@ fn next_child_after_finish(
         .set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap())
         .unwrap();
     parent_task
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(9, 30, 15).unwrap()))
+        .unwrap();
+    parent_task
         .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 59, 59).unwrap()))
         .unwrap();
 

@@ -429,6 +429,8 @@ fn test_task_to_yaml_repetition_interval() {
     let now = Local.with_ymd_and_hms(2023, 5, 19, 1, 23, 45).unwrap();
     task.set_create_time(now).unwrap();
     task.set_start_time(now).unwrap();
+    task.set_repetition_start_time_opt(Some(now.time()))
+        .unwrap();
     let snapshot = task.snapshot().unwrap();
     let actual = task_snapshot_to_yaml(&snapshot);
 
