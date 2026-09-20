@@ -5557,8 +5557,8 @@ fn test_execute_calendarとband_週次容量の1秒超過を1分へ切り上げ�
 fn test_execute_calendarとband_分割taskの調整可能時間をsegment単位で週次容量へ反映する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let today = now.date_naive();
-    let two_days_later = now + Duration::days(2);
-    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が1日あります。最初の超過日: 2026-08-13, 最大超過: 1時間00分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
+    let tomorrow = now + Duration::days(1);
+    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が1日あります。最初の超過日: 2026-08-13, 最大超過: 0時間30分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
 
     for command in ["暦", "帯"] {
         let root = new_test_task_handle("分割task容量fixture").unwrap();
@@ -5566,17 +5566,24 @@ fn test_execute_calendarとband_分割taskの調整可能時間をsegment単位�
         let today_task = add_scheduled_child_for_test(&root, "今日1分", now, 1);
         today_task.set_fixed_start(true).unwrap();
 
-        let target = add_scheduled_child_for_test(&root, "2日後の分割対象", now, 180);
-        target.set_pending_until(two_days_later).unwrap();
+        let target = add_scheduled_child_for_test(&root, "複数日に跨る分割対象", now, 180);
+        target.set_pending_until(tomorrow).unwrap();
         let target_id = target.get_id().unwrap();
 
-        let blocker = add_scheduled_child_for_test(
+        let overnight_blocker = add_scheduled_child_for_test(
+            &root,
+            "翌日からの固定予定",
+            tomorrow + Duration::hours(1),
+            23 * 60,
+        );
+        overnight_blocker.set_fixed_start(true).unwrap();
+        let second_blocker = add_scheduled_child_for_test(
             &root,
             "2日後の固定予定",
-            two_days_later + Duration::hours(1),
-            120,
+            tomorrow + Duration::days(1) + Duration::hours(1),
+            60,
         );
-        blocker.set_fixed_start(true).unwrap();
+        second_blocker.set_fixed_start(true).unwrap();
 
         let repository = TestTaskRepository::new(root.clone(), now);
         let segment_work_seconds =
@@ -5586,16 +5593,66 @@ fn test_execute_calendarとband_分割taskの調整可能時間をsegment単位�
                 .filter(|scheduled| scheduled.task.id == target_id)
                 .map(|scheduled| scheduled.scheduled_work_seconds)
                 .collect::<Vec<_>>();
-        assert_eq!(segment_work_seconds, [60 * 60, 120 * 60]);
+        assert_eq!(segment_work_seconds, [60 * 60, 60 * 60, 60 * 60]);
 
         let actual = execute_calendar_command_by_date_for_test(
             command,
             now,
             root,
-            HashMap::from([(today, 400), (two_days_later.date_naive(), 60)]),
+            HashMap::from([
+                (today, 0),
+                (today + Duration::days(1), 1_590),
+                (today + Duration::days(2), 30),
+                (today + Duration::days(3), 60),
+                (today + Duration::days(4), 60),
+                (today + Duration::days(5), 60),
+                (today + Duration::days(6), 60),
+            ]),
         );
 
         assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_空白日の容量で週次超過を解消して後日を数えない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が1日あります。最初の超過日: 2026-08-13, 最大超過: 1時間00分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("空白日容量fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let overloaded = add_scheduled_child_for_test(
+            &root,
+            "2日後120分",
+            now + Duration::days(2),
+            120,
+        );
+        overloaded.set_fixed_start(true).unwrap();
+        let equal = add_scheduled_child_for_test(
+            &root,
+            "4日後60分",
+            now + Duration::days(4),
+            60,
+        );
+        equal.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_by_date_for_test(
+            command,
+            now,
+            root,
+            HashMap::from([
+                (today, 0),
+                (today + Duration::days(1), 0),
+                (today + Duration::days(2), 60),
+                (today + Duration::days(3), 60),
+                (today + Duration::days(4), 60),
+            ]),
+        );
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+        assert!(!actual.contains("超過する日が2日あります"), "{command}: {actual}");
     }
 }
 
@@ -5692,6 +5749,35 @@ fn test_execute_calendarとband_全alertなしで今日の新規task余裕があ
         tight.set_fixed_start(true).unwrap();
         let tight_actual = execute_calendar_command_for_test(command, now, tight_root, 60);
         assert!(!tight_actual.contains(info), "{command}: {tight_actual}");
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_今日rowなしで容量zeroなら脇道warnを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let today = now.date_naive();
+    let warning = "[Warn] 脇道に逸れずに予定の遂行をしてください。見積もりを間違えたり突発タスクが発生したりした場合に終了予定時刻に間に合わなくなる可能性があります。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("今日rowなしfixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let tomorrow = add_scheduled_child_for_test(
+            &root,
+            "明日30分",
+            now + Duration::days(1),
+            30,
+        );
+        tomorrow.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_by_date_for_test(
+            command,
+            now,
+            root,
+            HashMap::from([(today, 0), (today + Duration::days(1), 60)]),
+        );
+
+        assert!(actual.contains(warning), "{command}: {actual}");
+        assert!(!actual.contains("[Info] 順調です"), "{command}: {actual}");
     }
 }
 

@@ -13,7 +13,7 @@ use super::renderer::{
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
 use crate::application::daily_capacity::{
-    calculate_daily_rho_diff_hours,
+    calculate_daily_leeway_seconds, calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
     try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
@@ -152,6 +152,13 @@ struct DeadlineAlertIssues {
     weekly: Option<CalendarAlertIssue>,
 }
 
+struct CapacityAlertIssues {
+    today: Option<CalendarAlertIssue>,
+    has_today_new_task_leeway: bool,
+    tomorrow: Option<CalendarAlertIssue>,
+    weekly: Option<CalendarAlertIssue>,
+}
+
 fn add_calendar_alert_issue(
     issue: &mut Option<CalendarAlertIssue>,
     affected_date: NaiveDate,
@@ -213,6 +220,74 @@ fn deadline_alert_issues(
 
     Ok(DeadlineAlertIssues {
         today: today_issue,
+        tomorrow: tomorrow_issue,
+        weekly: weekly_issue,
+    })
+}
+
+fn capacity_alert_issues(
+    total_work_seconds_by_date: &HashMap<NaiveDate, i64>,
+    repetitive_work_seconds_by_date: &HashMap<NaiveDate, i64>,
+    adjustable_work_seconds_by_date: &HashMap<NaiveDate, i64>,
+    today: NaiveDate,
+    last_synced_time: DateTime<Local>,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    end_of_day_offset_minutes: i64,
+) -> Result<CapacityAlertIssues, ApplicationError> {
+    let mut today_issue = None;
+    let mut tomorrow_issue = None;
+    let mut weekly_issue = None;
+    let mut has_today_new_task_leeway = false;
+    let mut accumulated_overrun = Duration::zero();
+
+    for days_from_today in 0..=6 {
+        let date = today + Duration::days(days_from_today);
+        let total_work_seconds = *total_work_seconds_by_date.get(&date).unwrap_or(&0);
+        let repetitive_work_seconds = *repetitive_work_seconds_by_date.get(&date).unwrap_or(&0);
+        let free_time_minutes =
+            calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                &date,
+                last_synced_time,
+                free_time_manager,
+                end_of_day_offset_minutes,
+            )?;
+        let daily_overrun_seconds = total_work_seconds - free_time_minutes * 60;
+        let adjustable_work_duration =
+            Duration::seconds(*adjustable_work_seconds_by_date.get(&date).unwrap_or(&0));
+
+        if accumulated_overrun < -adjustable_work_duration {
+            accumulated_overrun = -adjustable_work_duration;
+        }
+        accumulated_overrun += Duration::seconds(daily_overrun_seconds);
+
+        match days_from_today {
+            0 => {
+                if daily_overrun_seconds > 0 {
+                    add_calendar_alert_issue(&mut today_issue, date, daily_overrun_seconds);
+                }
+                has_today_new_task_leeway = calculate_daily_leeway_seconds(
+                    free_time_minutes,
+                    repetitive_work_seconds,
+                    total_work_seconds,
+                ) > 0;
+            }
+            1 if daily_overrun_seconds > 0 => {
+                add_calendar_alert_issue(&mut tomorrow_issue, date, daily_overrun_seconds);
+            }
+            2..=6 if accumulated_overrun > Duration::zero() => {
+                add_calendar_alert_issue(
+                    &mut weekly_issue,
+                    date,
+                    accumulated_overrun.num_seconds(),
+                );
+            }
+            _ => {}
+        }
+    }
+
+    Ok(CapacityAlertIssues {
+        today: today_issue,
+        has_today_new_task_leeway,
         tomorrow: tomorrow_issue,
         weekly: weekly_issue,
     })
@@ -1202,6 +1277,25 @@ pub(super) fn build_show_all_tasks_display_with_config(
         task_list_display_rows.push(row);
     }
 
+    let capacity_issues = if is_daily_summary_func {
+        capacity_alert_issues(
+            &total_estimated_work_seconds_of_the_date_counter,
+            &repetitive_task_estimated_work_seconds_map,
+            &adjustable_scheduled_work_seconds_for_capacity_alert,
+            last_synced_logical_date,
+            last_synced_time,
+            free_time_manager,
+            config.end_of_day_offset_minutes,
+        )?
+    } else {
+        CapacityAlertIssues {
+            today: None,
+            has_today_new_task_leeway: true,
+            tomorrow: None,
+            weekly: None,
+        }
+    };
+
     // 1日の残りの時間から稼働率ρを計算する
     let busy_minutes = max(
         0,
@@ -1237,12 +1331,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let mut daily_summary_rows: Vec<DailySummaryRow> = vec![];
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
-    // 順調フラグ
-    let mut today_capacity_issue = None;
-    let mut has_today_new_task_leeway = true;
-    let mut tomorrow_capacity_issue = None;
-    let mut weekly_capacity_issue = None;
-
     // 「それぞれの日の rho (0.7) との差」の累積和。
     // どれくらい突発を吸収できるかの指標となる。
     // 元々は単に0.7との差で計算していたが、それだと0.7<rho<1.0でその日のタスクがなんとかなっているのに
@@ -1255,7 +1343,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // 「それぞれの日の自由時間との差」の累積和
     let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
-    let mut accumulate_capacity_alert_overrun = Duration::seconds(0);
 
     let mut first_caught_up_date = unreached_daily_summary_date();
 
@@ -1322,7 +1409,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             total_repetitive_task_work_seconds_of_the_date,
             total_estimated_work_seconds_of_the_date,
         );
-        let diff_to_goal_sign: char = if diff_to_goal > 0.0 { ' ' } else { '-' };
         let diff_to_goal_hour = diff_to_goal.abs().floor();
         let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
 
@@ -1335,23 +1421,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .unwrap_or(&0);
         let adjustable_estimated_work_duration =
             Duration::seconds(adjustable_estimated_work_seconds);
-        let adjustable_scheduled_work_duration_for_capacity_alert = Duration::seconds(
-            *adjustable_scheduled_work_seconds_for_capacity_alert
-                .get(date)
-                .unwrap_or(&0),
-        );
-        let daily_overrun_seconds =
-            total_estimated_work_seconds_of_the_date - free_time_minutes * 60;
 
         // これまでにどれだけ累積でマイナス(余裕)だったとしても、前倒しできるタスクの量でキャップされる
         if accumulate_duration_diff_to_limit < -adjustable_estimated_work_duration {
             accumulate_duration_diff_to_limit = -adjustable_estimated_work_duration
-        }
-        if accumulate_capacity_alert_overrun
-            < -adjustable_scheduled_work_duration_for_capacity_alert
-        {
-            accumulate_capacity_alert_overrun =
-                -adjustable_scheduled_work_duration_for_capacity_alert;
         }
 
         let over_time_duration = if over_time_hours_f > 0.0 {
@@ -1360,7 +1433,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             -Duration::hours(over_time_hours) - Duration::minutes(over_time_minutes)
         };
         accumulate_duration_diff_to_limit += over_time_duration;
-        accumulate_capacity_alert_overrun += Duration::seconds(daily_overrun_seconds);
 
         if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
@@ -1422,29 +1494,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
-        // alert確認
-        let days_from_today = (**date - last_synced_logical_date).num_days();
-        if days_from_today == 0 {
-            if daily_overrun_seconds > 0 {
-                add_calendar_alert_issue(&mut today_capacity_issue, **date, daily_overrun_seconds);
-            }
-            has_today_new_task_leeway = diff_to_goal_sign == '-';
-        }
-
-        if days_from_today == 1 && daily_overrun_seconds > 0 {
-            add_calendar_alert_issue(&mut tomorrow_capacity_issue, **date, daily_overrun_seconds);
-        }
-
-        if (2..=6).contains(&days_from_today)
-            && accumulate_capacity_alert_overrun > Duration::zero()
-        {
-            add_calendar_alert_issue(
-                &mut weekly_capacity_issue,
-                **date,
-                accumulate_capacity_alert_overrun.num_seconds(),
-            );
-        }
-
         // 今日より前には前倒せないため
         let adjustable_estimated_work_hours = if daily_summary_rows.is_empty() {
             0.0
@@ -1537,12 +1586,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
     };
     let alerts = CalendarAlerts {
         today_deadline_issue: deadline_issues.today,
-        today_capacity_issue,
-        has_today_new_task_leeway,
+        today_capacity_issue: capacity_issues.today,
+        has_today_new_task_leeway: capacity_issues.has_today_new_task_leeway,
         tomorrow_deadline_issue: deadline_issues.tomorrow,
-        tomorrow_capacity_issue,
+        tomorrow_capacity_issue: capacity_issues.tomorrow,
         weekly_deadline_issue: deadline_issues.weekly,
-        weekly_capacity_issue,
+        weekly_capacity_issue: capacity_issues.weekly,
     };
     let calendar_display = is_calendar_func.then(|| {
         DisplayModel::Calendar(CalendarDisplay {
