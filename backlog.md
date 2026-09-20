@@ -2750,3 +2750,31 @@ Web製品変更のあるlaneでは、範囲確定後のWASM checkをcache warmup
 - 検証: `node --test apps_script/main.test.mjs`は21件成功、`cargo test --locked --test spreadsheet_contract`は5件成功。`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`も成功した。Rust主要unit testは1313件成功、1件manual計測としてignoredで、integration testも成功した。
 - 互換性: L/P列のsegment同期、N/R列のtask全segment同期、複合identity検証、command出力pasteの同期除外、列構成A-Sを維持する。lock対象外の編集は従来どおり無処理で、再同期menuは既存menuへ追加する。
 - 未検証・残存作業: local Node fakeではToastの実表示、Google Sheetsのmenu配置とactive range取得を完全には再現できないため、実sheetでの表示・操作確認を公開後の確認対象とする。書込途中例外の失敗範囲診断と復旧はTD-049で扱い、W8-Bには含めない。
+
+### W8-C / TD-050: Web CI feature gate
+
+- 状態: 実装、内部review修正、親review、local gateまで完了。push、PR作成、実CI、Wave統合gateは未実施。
+- task / worktree / branch: `W8-C / TD-050` / `/Users/sakakibaratakafumi/.codex/worktrees/a5c6/Schronu` / `feature/w8-c-web-ci-gates`。
+- revision: 基点`566a5e238a6c9e9cd923b18f7571308acb3de6b0`。設定・test・READMEの最終revisionは`2184cf9483958a2c3a92ae560accc0ee8b2086ce`。
+- 予約file: `.github/workflows/ci.yml`、`schronu-web/tests/web_feature_boundary_contract.rs`、`README.md`。製品code、共有manifest、UI文書は変更していない。
+- 契約: 既存のroot / Apps Script / benchmarking gateを維持したまま、`schronu-web`のdefault / server / web featureをnative targetで個別にtest・Clippyする。browser専用moduleは別jobの`wasm32-unknown-unknown` checkで検証し、native all-featuresで代替しない。Rust 1.97.1、WASM target、job別cacheを明示する。
+- Red / Green: commit `6e659cbb`でworkflow契約4件のうち既存2件だけが成功し、`web-native` / `web-wasm` job不在という同じ理由で新規2件がRedになった。commit `7da61197`で2jobとREADMEを追加してGreenにした。
+- 内部review: active commandのraw部分一致ではroot testとdefault Web testの欠落を別commandのprefixで見逃すP2を検出した。commit `2184cf94`でjobごとのactiveな`run:`を抽出し、完全一致で検証するよう修正した。修正後のP1 / P2 / P3残存指摘はない。
+- 親review: `main...branch`の3fileの累積差分、Red / Green履歴、予約範囲、製品挙動を変更しない責務分離を確認し、lane専用の`backlog.md`文書leaseを取得した。
+- Web local gate: default test、既知のfeature限定未使用codeだけを許可するdefault Clippy、server test / Clippy、web全integration test、web製品library Clippy、WASM checkに成功した。server featureではendpoint unit test 2件を含む124件、feature boundary contractは4件が成功した。
+- 既存・全体local gate: YAML parse、`node --test apps_script/main.test.mjs`(16件)、`cargo test --locked --features benchmarking --test scheduling_benchmark_contract`(16件)、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`、`git diff --check`に成功した。
+- 互換性: 製品挙動、公開API、wire format、storage schema、error分類を変更していない。root、Apps Script、benchmarkingの既存CI commandを同じ`quality` jobに維持する。
+- 未検証・残存作業: GitHub Actionsの実CIはpush / PR公開後にだけ確認する。local成功を実CI成功として扱わない。Web製品code変更がないためWASM prewarmと`dx build`の必須条件には該当しない。Wave共有summaryは統合gate後の別leaseで追記する。
+- 依存commit: Wave 8内のhard dependencyはない。W8-A / W8-Bの未merge文書commitは取り込んでいない。
+
+### Wave 8共有統合summary
+
+- 統合状態: W8-A / TD-044、W8-B / TD-048、W8-C / TD-050を表記順に使い捨てintegration worktreeへ合成し、統合HEAD `1eb9efc2`で確認した。このrevisionは検証専用であり、各lane branchへ取り込まない。
+- conflict: 製品codeのconflictは0件だった。`backlog.md`は各laneの末尾追記を内容不変のままW8-A→W8-B→W8-Cの順に配置した。
+- root gate: `git diff --check`、`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`に成功した。root libraryは1,326件成功・1件ignoredで、MCPは23件成功した。
+- Apps Script / Spreadsheet gate: `node --test apps_script/main.test.mjs`は21件、`cargo test --locked --test spreadsheet_contract`は5件が成功した。実spreadsheetでの動作確認は未実施である。
+- benchmarking gate: `cargo test --locked --features benchmarking --test scheduling_benchmark_contract`は16件成功した。
+- Web gate: default test、default Clippy(`dead-code`だけを許可)、server test、server Clippy、web integration test、web library Clippy、`wasm32-unknown-unknown` checkに成功した。server testはlibrary 124件とmain 1件に加え、各integration testが成功した。
+- 互換性: 3 laneを合成した状態でもroot、Apps Script、benchmarking、Web native / WASMの既存契約を維持した。統合側だけの製品修正はない。
+- 公開・外部検証: push、PR作成、merge、GitHub Actionsの実CIは未実施であり、local / 統合gate成功を実CI成功として扱わない。実spreadsheet確認も未実施である。
+- merge順: 共有文書末尾の競合を避けるため、PRはW8-A→W8-B→W8-Cの順でmergeする。先行PRのmerge後、後続branchは最新`main`へrebaseし、先行laneの文書記録を維持したうえで関連gate、全gate、親review、最新HEADの実CIを再確認する。

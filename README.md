@@ -81,11 +81,17 @@ browser時計がserver時計より進んでいる場合も、開始・終了clic
 Web側だけを検証するcommandは次のとおりです。
 
 ```shell
+cargo test --locked -p schronu-web --no-default-features
+cargo clippy --locked -p schronu-web --no-default-features --all-targets -- -D warnings -A dead-code
 cargo test --locked -p schronu-web --no-default-features --features server
 cargo clippy --locked -p schronu-web --no-default-features --features server --all-targets -- -D warnings
+cargo test --locked -p schronu-web --no-default-features --features web --test '*'
+cargo clippy --locked -p schronu-web --no-default-features --features web --lib -- -D warnings
 cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
 ~/.cargo/bin/dx build --locked --web --package schronu-web
 ```
+
+CIの`web-native` jobはdefault、server、webの各featureをnative targetで個別にtest・Clippyし、server endpoint testの失敗を検出します。defaultではweb featureでのみ使用するcodeが意図的に未使用となるため`dead-code`だけを許可し、その他のwarningはdenyします。web featureのnative testはserver専用SSR unit testを混入させず全integration testを実行し、Clippyは製品libraryを検査します。`web-wasm` jobはbrowser専用moduleを`wasm32-unknown-unknown`で独立してcheckし、nativeのall-features buildでは代替しません。`dx build`はWeb製品コード変更時のlocal最終品質gateです。上記commandのlocal成功は実CI成功の代わりではなく、実CI結果はpush後のGitHub Actionsで確認します。
 
 ### testの責務とfixture配置
 
