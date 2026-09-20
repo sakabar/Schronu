@@ -26,6 +26,18 @@ pub struct ScheduledTaskView {
     pub rank: usize,
 }
 
+pub(crate) fn scheduled_end_by_task(
+    schedule: &[ScheduledTaskView],
+) -> HashMap<Uuid, DateTime<Local>> {
+    let mut ends = HashMap::<Uuid, DateTime<Local>>::new();
+    for scheduled in schedule {
+        ends.entry(scheduled.task.id)
+            .and_modify(|end| *end = (*end).max(scheduled.scheduled_end))
+            .or_insert(scheduled.scheduled_end);
+    }
+    ends
+}
+
 pub(crate) struct ScheduleContext {
     candidates: Vec<TaskScheduleCandidate>,
     last_synced_time: DateTime<Local>,
@@ -359,4 +371,46 @@ fn calculate_ancestry_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeErr
         .get_estimated_work_seconds()?
         .saturating_sub(task.get_actual_work_seconds()?)
         .max(0))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::new_task_handle;
+    use chrono::TimeZone;
+
+    #[test]
+    fn scheduled_end_by_taskは分割taskごとの最終終了時刻を返す() {
+        let start = Local.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap();
+        let first_task = new_task_handle("first").unwrap();
+        let second_task = new_task_handle("second").unwrap();
+        let first_task_id = first_task.get_id().unwrap();
+        let second_task_id = second_task.get_id().unwrap();
+        let scheduled = |task: &TaskHandle, scheduled_end| ScheduledTaskView {
+            task: TaskView::try_from(task).unwrap(),
+            first_available_time: start,
+            scheduled_start: start,
+            scheduled_end,
+            scheduled_work_seconds: 60,
+            total_work_seconds: 120,
+            rank: 0,
+        };
+        let schedule = vec![
+            scheduled(&first_task, start + Duration::minutes(2)),
+            scheduled(&second_task, start + Duration::minutes(3)),
+            scheduled(&first_task, start + Duration::minutes(1)),
+        ];
+
+        let ends = scheduled_end_by_task(&schedule);
+
+        assert_eq!(ends.len(), 2);
+        assert_eq!(
+            ends.get(&first_task_id),
+            Some(&(start + Duration::minutes(2)))
+        );
+        assert_eq!(
+            ends.get(&second_task_id),
+            Some(&(start + Duration::minutes(3)))
+        );
+    }
 }
