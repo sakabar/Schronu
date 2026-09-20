@@ -503,7 +503,7 @@ fn yaml_to_task_strict(
             .ok_or_else(|| strict_error(path, "fixed_start", "must be a boolean"))?,
         None => matches_legacy_fixed_start_shape(
             task.get_start_time().map_err(map_task_tree_error)?,
-            task.get_deadline_time_opt().map_err(map_task_tree_error)?,
+            loaded_deadline_time,
             task.get_estimated_work_seconds()
                 .map_err(map_task_tree_error)?,
         ),
