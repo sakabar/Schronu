@@ -239,7 +239,7 @@ SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml cargo run --bin schronu
 | `end_of_day_offset_minutes` | `30` | 当日24:00からの符号付き分オフセットです。`-120`は22:00、`30`は翌日00:30を表し、日次容量・`全`・`暦`・`帯`・`平`・`詰`で使います。論理日の開始境界である06:00は変更しません。 |
 | `calendar_blank_line_weekday` | `Mon` | `暦`の出力で、その曜日の直後に空行を入れます。 |
 | `extrude_skip_weekdays` | `[]` | `押`で次の割当日として飛ばす曜日です。例の`[Sat, Sun]`では土日を飛ばします。7曜日すべては指定できません。 |
-| `default_deadline_time` | `23:59:59` | `〆`の`今`・`明`・曜日・日付指定で使う締切時刻です。時刻を明示した`〆 19:00`と`〆 消`には適用しません。 |
+| `default_deadline_time` | `23:59:59` | `〆`の日付指定で時刻を省略した場合に使う締切時刻です。`〆 9/21`はこの時刻、`〆 19:00`は暦上の今日19:00、`〆 9/21 19:00`と`〆 19:00 9/21`は9/21の19:00になります。`今日`・`明日`・曜日は06:00境界のlogical dateを使いますが、時刻だけの指定は暦日を使います。`〆 消`には適用しません。 |
 
 曜日は`Mon`、`Tue`、`Wed`、`Thu`、`Fri`、`Sat`、`Sun`のいずれかです。`end_of_day_offset_minutes`は`-1079`から`1439`までの整数、`default_deadline_time`は`HH:MM`または`HH:MM:SS`で指定します。
 

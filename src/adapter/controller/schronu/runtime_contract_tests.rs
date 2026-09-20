@@ -5959,7 +5959,14 @@ fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
 fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
 
-    for command in ["予 -1", "類 invalid", "〆 invalid"] {
+    for command in [
+        "予 -1",
+        "類 invalid",
+        "〆 invalid",
+        "〆 9/21 9/22",
+        "〆 14:30 15:30",
+        "〆 消 14:30",
+    ] {
         let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
