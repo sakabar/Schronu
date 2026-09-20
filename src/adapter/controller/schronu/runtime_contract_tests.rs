@@ -5472,6 +5472,162 @@ fn test_execute_calendar_現行出力を固定する() {
 }
 
 #[test]
+fn test_execute_calendarとband_今日の終了予定超過量と確認commandを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let expected = "[Crit] 【今日の】終了予定時刻を0時間08分超過します。【ただちに】`尾`で候補を確認し、予定を減らすか明日以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("今日の容量超過fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let task = add_scheduled_child_for_test(&root, "今日68分", now, 68);
+        task.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_明日の終了予定超過量と確認commandを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let tomorrow = now + Duration::days(1);
+    let expected = "[Warn] 【明日の】終了予定時刻を1時間44分超過します。【今日中に】`尾 明`で候補を確認し、予定を減らすかあさって以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("明日の容量超過fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let today = add_scheduled_child_for_test(&root, "今日1分", now, 1);
+        today.set_fixed_start(true).unwrap();
+        let task = add_scheduled_child_for_test(&root, "明日164分", tomorrow, 164);
+        task.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_週次容量超過の日数と最初の日と最大値を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let expected = "[Warn] 【7日以内の】終了予定時刻を超過する日が3日あります。最初の超過日: 2026-08-13, 最大超過: 2時間00分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("週次容量超過fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        for (days, minutes) in [(0, 30), (1, 30), (2, 180), (3, 30), (4, 30)] {
+            let start = now + Duration::days(days);
+            let task = add_scheduled_child_for_test(
+                &root,
+                &format!("{days}日後{minutes}分"),
+                start,
+                minutes,
+            );
+            task.set_fixed_start(true).unwrap();
+        }
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_累積超過が縮小しても週次最大値を保持する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let expected = "最初の超過日: 2026-08-13, 最大超過: 2時間00分";
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("週次最大超過fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        for (days, minutes) in [(0, 30), (1, 30), (2, 180), (3, 30)] {
+            let start = now + Duration::days(days);
+            let task = add_scheduled_child_for_test(
+                &root,
+                &format!("{days}日後{minutes}分"),
+                start,
+                minutes,
+            );
+            task.set_fixed_start(true).unwrap();
+        }
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(actual.contains(expected), "{command}: {actual}");
+        assert!(actual.contains("2026-08-14(金)\t 1.0時間\t-0時間30分"));
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_容量と作業量が等しければ終了予定警告を表示しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("容量境界fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let task = add_scheduled_child_for_test(&root, "容量と等しい", now, 60);
+        task.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(
+            !actual.contains("【今日の】終了予定時刻"),
+            "超過量0は終了予定警告の対象外です: {command}: {actual}"
+        );
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_7日後の容量超過を週次警告へ含めない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let seven_days_later = now + Duration::days(7);
+
+    for command in ["暦", "帯"] {
+        let root = new_test_task_handle("週次容量境界fixture").unwrap();
+        let _ = root.set_estimated_work_seconds(0);
+        let today = add_scheduled_child_for_test(&root, "今日30分", now, 30);
+        today.set_fixed_start(true).unwrap();
+        let outside =
+            add_scheduled_child_for_test(&root, "7日後120分", seven_days_later, 120);
+        outside.set_fixed_start(true).unwrap();
+
+        let actual = execute_calendar_command_for_test(command, now, root, 60);
+
+        assert!(
+            !actual.contains("【7日以内の】終了予定時刻"),
+            "7日後は今日から6日後までの週次範囲外です: {command}: {actual}"
+        );
+        assert!(
+            !actual.contains("【明日の】終了予定時刻"),
+            "空白日を飛ばした2行目を明日と誤認してはいけません: {command}: {actual}"
+        );
+    }
+}
+
+#[test]
+fn test_execute_calendarとband_全alertなしで今日の新規task余裕がある場合だけinfoを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let info = "[Info] 順調です。突発タスクに対応したり1日の終わり際にタスクを新しく積んだりする余裕があります。ひとまずは脇道に逸れずに予定の遂行をしてください。";
+
+    for command in ["暦", "帯"] {
+        let roomy_root = new_test_task_handle("余裕ありfixture").unwrap();
+        let _ = roomy_root.set_estimated_work_seconds(0);
+        let roomy = add_scheduled_child_for_test(&roomy_root, "今日30分", now, 30);
+        roomy.set_fixed_start(true).unwrap();
+        let roomy_actual = execute_calendar_command_for_test(command, now, roomy_root, 60);
+        assert!(roomy_actual.contains(info), "{command}: {roomy_actual}");
+
+        let tight_root = new_test_task_handle("新規task余裕なしfixture").unwrap();
+        let _ = tight_root.set_estimated_work_seconds(0);
+        let tight = add_scheduled_child_for_test(&tight_root, "今日50分", now, 50);
+        tight.set_fixed_start(true).unwrap();
+        let tight_actual = execute_calendar_command_for_test(command, now, tight_root, 60);
+        assert!(!tight_actual.contains(info), "{command}: {tight_actual}");
+    }
+}
+
+#[test]
 fn test_execute_calendar_単発余暇zeroは正符号で表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("単発余暇zero fixture").unwrap();
