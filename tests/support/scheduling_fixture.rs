@@ -270,7 +270,9 @@ fn build_small() -> Result<SchedulingFixture, TaskTreeError> {
     let mut atomic = new_attr("fixture-task-0002", &mut sequence, now, Status::Todo);
     atomic.set_atomic(true);
     atomic.set_estimated_work_seconds(60 * 60);
-    atomic.set_deadline_time_opt(Some(now + Duration::days(1)));
+    atomic
+        .set_deadline_time_opt(Some(now + Duration::days(1)))
+        .unwrap();
     atomic.set_start_time(now + Duration::hours(1));
     atomic.set_pending_until(now + Duration::days(7));
     atomic.set_orig_status(Status::Pending);
@@ -430,7 +432,8 @@ fn configure_active_leaf(
         attr.set_atomic(true);
     }
     if active_leaf_index < 343 {
-        attr.set_deadline_time_opt(Some(now + Duration::days(1 + (random.next() % 14) as i64)));
+        attr.set_deadline_time_opt(Some(now + Duration::days(1 + (random.next() % 14) as i64)))
+            .unwrap();
     }
     let work_seconds = match active_leaf_index {
         0..=30 => 0,

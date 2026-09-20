@@ -1128,7 +1128,9 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
         .get_deadline_time_opt()
         .map_err(ApplicationError::TaskTree)?
     {
-        new_task_attr.set_deadline_time_opt(Some(deadline_time));
+        new_task_attr
+            .set_deadline_time_opt(Some(deadline_time))
+            .map_err(ApplicationError::TaskTree)?;
     }
 
     let new_task = focused_task

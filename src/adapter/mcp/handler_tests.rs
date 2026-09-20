@@ -714,7 +714,7 @@ fn defer_routine_task_handlerはtyped_uuidで次周期へ延期する() {
         .set_repetition_deadline_time_opt(Some(deadline.time()))
         .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("routine child");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     child_attr.set_orig_status(Status::Pending);
     let child = parent.create_as_last_child(child_attr);
     let task_id = child.get_id().unwrap();
@@ -796,7 +796,9 @@ fn defer_routine_task_handlerは未知taskと対象不成立をstructured_error�
 
     let parent = new_task_handle("parent without interval").unwrap();
     let mut child_attr = crate::test_support::new_task_attr("routine child");
-    child_attr.set_deadline_time_opt(Some(fixed_now() + Duration::days(1)));
+    child_attr
+        .set_deadline_time_opt(Some(fixed_now() + Duration::days(1)))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let task_id = child.get_id().unwrap();
     let snapshot = child.snapshot().unwrap();
@@ -827,7 +829,7 @@ fn defer_routine_task_handlerは日時error情報を保持して変更しない(
     let parent = new_task_handle("routine parent").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     let mut child_attr = crate::test_support::new_task_attr("routine child");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     let task_id = child.get_id().unwrap();
     let snapshot = child.snapshot().unwrap();

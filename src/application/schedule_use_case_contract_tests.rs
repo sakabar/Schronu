@@ -327,9 +327,11 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
     let child_start = Local.with_ymd_and_hms(2026, 9, 9, 21, 4, 6).unwrap();
     let mut child_attr = crate::test_support::new_task_attr("既存のflexible子");
     child_attr.set_start_time(child_start);
-    child_attr.set_deadline_time_opt(Some(
-        Local.with_ymd_and_hms(2026, 9, 9, 23, 59, 59).unwrap(),
-    ));
+    child_attr
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 9, 9, 23, 59, 59).unwrap(),
+        ))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let repository = TestTaskRepository::new(vec![parent.clone()], now);
 
@@ -365,10 +367,11 @@ fn get_schedule_treats_repetition_series_as_transparent_ancestor() {
     let now = fixed_now();
     let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
     let mut series_attr = crate::test_support::new_task_attr_at("series", now);
-    series_attr.set_repetition_interval_days_opt(Some(7));
+    series_attr
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
     series_attr.set_estimated_work_seconds(24 * 60 * 60);
     series_attr.set_start_time(now + Duration::days(30));
-    series_attr.set_deadline_time_opt(Some(now - Duration::days(30)));
     let series = root.create_as_last_child(series_attr);
     let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
     occurrence_attr.set_estimated_work_seconds(15 * 60);

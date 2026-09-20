@@ -85,7 +85,7 @@ fn next_repetition_child(
         .unwrap();
 
     let mut child_attr = crate::test_support::new_task_attr_at("今回", anchor);
-    child_attr.set_deadline_time_opt(Some(anchor));
+    child_attr.set_deadline_time_opt(Some(anchor)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     let mut repository = TestTaskRepository::new(vec![parent.clone()], anchor);
     let mut next_id = || Uuid::from_u128(0x3501);
@@ -175,7 +175,7 @@ fn assert_complete_task_calendar_error(
         .set_repetition_deadline_time_opt(Some(parent_deadline_time.time()))
         .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("今回", anchor);
-    child_attr.set_deadline_time_opt(Some(anchor));
+    child_attr.set_deadline_time_opt(Some(anchor)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     let child_snapshot = child.snapshot().unwrap();
     let parent_revision = parent.get_persistent_mutation_revision().unwrap();
@@ -322,7 +322,9 @@ fn deferred_routine_task(
         .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
     child_attr.set_start_time(original_start);
-    child_attr.set_deadline_time_opt(Some(original_deadline));
+    child_attr
+        .set_deadline_time_opt(Some(original_deadline))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let mut repository = TestTaskRepository::new(vec![parent], original_deadline);
 
@@ -405,7 +407,9 @@ fn assert_defer_routine_calendar_error(
         .unwrap();
     let mut child_attr = crate::test_support::new_task_attr_at("延期対象", original_deadline);
     child_attr.set_start_time(original_start);
-    child_attr.set_deadline_time_opt(Some(original_deadline));
+    child_attr
+        .set_deadline_time_opt(Some(original_deadline))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let child_snapshot = child.snapshot().unwrap();
     let parent_revision = parent.get_persistent_mutation_revision().unwrap();

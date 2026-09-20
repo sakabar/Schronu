@@ -550,12 +550,17 @@ fn project_with_all_persisted_yaml_fields() -> Project {
     child_attr.set_create_time(create_time);
     child_attr.set_start_time(start_time);
     child_attr.set_end_time_opt(Some(end_time));
-    child_attr.set_deadline_time_opt(Some(deadline_time));
     child_attr.set_estimated_work_seconds(1800);
     child_attr.set_actual_work_seconds(60);
-    child_attr.set_repetition_interval_days_opt(Some(2));
-    child_attr.set_repetition_start_time_opt(Some(start_time.time()));
-    child_attr.set_repetition_deadline_time_opt(Some(deadline_time.time()));
+    child_attr
+        .set_repetition_interval_days_opt(Some(2))
+        .unwrap();
+    child_attr
+        .set_repetition_start_time_opt(Some(start_time.time()))
+        .unwrap();
+    child_attr
+        .set_repetition_deadline_time_opt(Some(deadline_time.time()))
+        .unwrap();
     child_attr.set_repetition_anchor(crate::entity::task::RepetitionAnchor::Completion);
     child_attr.set_days_in_advance(1);
     root_task.create_as_last_child(child_attr);

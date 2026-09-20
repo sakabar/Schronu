@@ -1743,7 +1743,7 @@ fn routine_task_fixture(
         }
     }
     let mut child_attr = new_task_attr("routine child");
-    child_attr.set_deadline_time_opt(deadline);
+    child_attr.set_deadline_time_opt(deadline).unwrap();
     let child = parent.create_as_last_child(child_attr);
     (parent, child)
 }

@@ -465,11 +465,15 @@ impl TaskAttr {
         &self.end_time_opt
     }
 
-    pub fn set_deadline_time_opt(&mut self, deadline_time_opt: Option<DateTime<Local>>) {
+    pub fn set_deadline_time_opt(
+        &mut self,
+        deadline_time_opt: Option<DateTime<Local>>,
+    ) -> Result<(), TaskTreeError> {
         if self.repetition_interval_days_opt.is_some() && deadline_time_opt.is_some() {
-            return;
+            return Err(TaskTreeError::RepetitionSeriesDeadline);
         }
         self.deadline_time_opt = deadline_time_opt;
+        Ok(())
     }
 
     pub fn get_deadline_time_opt(&self) -> &Option<DateTime<Local>> {
@@ -496,7 +500,13 @@ impl TaskAttr {
         self.actual_work_seconds
     }
 
-    pub fn set_repetition_interval_days_opt(&mut self, repetition_interval_days_opt: Option<i64>) {
+    pub fn set_repetition_interval_days_opt(
+        &mut self,
+        repetition_interval_days_opt: Option<i64>,
+    ) -> Result<(), TaskTreeError> {
+        if repetition_interval_days_opt.is_some() && self.deadline_time_opt.is_some() {
+            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        }
         self.repetition_interval_days_opt = repetition_interval_days_opt;
         if repetition_interval_days_opt.is_some() {
             self.repetition_start_time_opt
@@ -508,22 +518,41 @@ impl TaskAttr {
             self.repetition_start_time_opt = None;
             self.repetition_deadline_time_opt = None;
         }
+        Ok(())
     }
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
         self.repetition_interval_days_opt
     }
 
-    pub fn set_repetition_start_time_opt(&mut self, value: Option<NaiveTime>) {
+    pub fn set_repetition_start_time_opt(
+        &mut self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.repetition_interval_days_opt, value) {
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
+            (Some(_), None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            _ => {}
+        }
         self.repetition_start_time_opt = value;
+        Ok(())
     }
 
     pub fn get_repetition_start_time_opt(&self) -> Option<NaiveTime> {
         self.repetition_start_time_opt
     }
 
-    pub fn set_repetition_deadline_time_opt(&mut self, value: Option<NaiveTime>) {
+    pub fn set_repetition_deadline_time_opt(
+        &mut self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.repetition_interval_days_opt, value) {
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
+            (Some(_), None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            _ => {}
+        }
         self.repetition_deadline_time_opt = value;
+        Ok(())
     }
 
     pub fn get_repetition_deadline_time_opt(&self) -> Option<NaiveTime> {
@@ -602,6 +631,7 @@ pub enum TaskTreeError {
     },
     RepetitionSeriesDeadline,
     RepetitionTemplateWithoutSeries,
+    RepetitionSeriesTemplateRequired,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -621,6 +651,9 @@ impl fmt::Display for TaskTreeError {
             }
             Self::RepetitionTemplateWithoutSeries => {
                 "repetition time template requires a repetition series"
+            }
+            Self::RepetitionSeriesTemplateRequired => {
+                "repetition series requires both time templates"
             }
             Self::DeadlineCalculation {
                 task_id,
@@ -1253,7 +1286,7 @@ impl TaskHandle {
         for (node, deadline) in &updates {
             node.try_borrow_data_mut()
                 .map_err(|_| TaskTreeError::Borrow)?
-                .set_deadline_time_opt(Some(*deadline));
+                .set_deadline_time_opt(Some(*deadline))?;
         }
         if !updates.is_empty() {
             root.mark_persistent_mutation()?;
@@ -1321,7 +1354,8 @@ impl TaskHandle {
             if attr.get_deadline_time_opt().is_none() {
                 false
             } else {
-                attr.set_deadline_time_opt(None);
+                attr.set_deadline_time_opt(None)
+                    .expect("clearing a deadline is always valid");
                 true
             }
         })
@@ -1430,14 +1464,17 @@ impl TaskHandle {
         &self,
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
-        if value.is_some() && !self.is_repetition_series()? {
-            return Err(TaskTreeError::RepetitionTemplateWithoutSeries);
+        match (self.is_repetition_series()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
+            (true, None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            _ => {}
         }
         self.update(|attr| {
             if attr.get_repetition_start_time_opt() == value {
                 false
             } else {
-                attr.set_repetition_start_time_opt(value);
+                attr.set_repetition_start_time_opt(value)
+                    .expect("repetition template state was validated");
                 true
             }
         })
@@ -1454,14 +1491,17 @@ impl TaskHandle {
         &self,
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
-        if value.is_some() && !self.is_repetition_series()? {
-            return Err(TaskTreeError::RepetitionTemplateWithoutSeries);
+        match (self.is_repetition_series()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
+            (true, None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            _ => {}
         }
         self.update(|attr| {
             if attr.get_repetition_deadline_time_opt() == value {
                 false
             } else {
-                attr.set_repetition_deadline_time_opt(value);
+                attr.set_repetition_deadline_time_opt(value)
+                    .expect("repetition template state was validated");
                 true
             }
         })
@@ -1492,7 +1532,8 @@ impl TaskHandle {
             if attr.get_repetition_interval_days_opt() == repetition_interval_days_opt {
                 false
             } else {
-                attr.set_repetition_interval_days_opt(repetition_interval_days_opt);
+                attr.set_repetition_interval_days_opt(repetition_interval_days_opt)
+                    .expect("repetition series deadline state was validated");
                 true
             }
         })
@@ -1626,7 +1667,7 @@ impl TaskHandle {
         for (node, deadline) in &deadline_updates {
             node.try_borrow_data_mut()
                 .map_err(|_| TaskTreeError::Borrow)?
-                .set_deadline_time_opt(Some(*deadline));
+                .set_deadline_time_opt(Some(*deadline))?;
         }
         let mut attr = self
             .node
@@ -1639,7 +1680,7 @@ impl TaskHandle {
             attr.get_fixed_start(),
         );
         // 完了済みtaskは旧約実装と同じく自己deadlineを解除したままにする。
-        attr.set_deadline_time_opt((!is_done).then_some(deadline_time));
+        attr.set_deadline_time_opt((!is_done).then_some(deadline_time))?;
         attr.set_start_time(appointment_start_time);
         attr.set_fixed_start(true);
         let changed = !deadline_updates.is_empty()

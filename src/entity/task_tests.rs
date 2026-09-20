@@ -315,10 +315,13 @@ fn normal_ancestor_deadline_skips_done_series_and_propagates_to_occurrence() {
 #[test]
 fn task_attr_does_not_retain_normal_deadline_after_becoming_repetition_series() {
     let mut attr = new_test_task_attr("repetition series");
-    attr.set_repetition_interval_days_opt(Some(7));
+    attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
 
-    attr.set_deadline_time_opt(Some(deadline));
+    assert_eq!(
+        attr.set_deadline_time_opt(Some(deadline)),
+        Err(TaskTreeError::RepetitionSeriesDeadline)
+    );
 
     assert_eq!(attr.get_deadline_time_opt(), &None);
 }
@@ -337,7 +340,7 @@ fn task_attr_rejects_repetition_template_on_normal_task() {
 #[test]
 fn task_attr_rejects_clearing_required_series_template() {
     let mut attr = new_test_task_attr("repetition series");
-    attr.set_repetition_interval_days_opt(Some(7));
+    attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let original = attr.get_repetition_start_time_opt();
 
     let actual = format!("{:?}", attr.set_repetition_start_time_opt(None));
@@ -350,7 +353,7 @@ fn task_attr_rejects_clearing_required_series_template() {
 fn task_attr_rejects_series_conversion_when_normal_deadline_exists() {
     let mut attr = new_test_task_attr("normal task");
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
-    attr.set_deadline_time_opt(Some(deadline));
+    attr.set_deadline_time_opt(Some(deadline)).unwrap();
 
     let actual = format!("{:?}", attr.set_repetition_interval_days_opt(Some(7)));
 
@@ -362,7 +365,7 @@ fn task_attr_rejects_series_conversion_when_normal_deadline_exists() {
 #[test]
 fn task_attr_rejects_normal_deadline_on_series() {
     let mut attr = new_test_task_attr("repetition series");
-    attr.set_repetition_interval_days_opt(Some(7));
+    attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
 
     let actual = format!("{:?}", attr.set_deadline_time_opt(Some(deadline)));
@@ -427,7 +430,7 @@ mod deadline_buffer_contract_tests {
     ) -> TaskAttr {
         let mut task = TaskAttr::with_identity("task", Uuid::nil(), local_datetime(0, 0, 0));
         task.set_start_time(start_time);
-        task.set_deadline_time_opt(Some(deadline));
+        task.set_deadline_time_opt(Some(deadline)).unwrap();
         task.set_estimated_work_seconds(estimated_work_seconds);
         task.set_actual_work_seconds(actual_work_seconds);
         task.set_pending_until(pending_until);

@@ -44,7 +44,7 @@ fn seed_routine_task(storage_directory: &Path) -> (String, DateTime<Local>, Date
         .unwrap();
     let child_id = Uuid::new_v4();
     let mut child_attr = TaskAttr::with_identity("stdio routine child", child_id, now);
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     child_attr.set_start_time(start);
     child_attr.set_orig_status(Status::Pending);
     parent.create_child(child_attr).unwrap();

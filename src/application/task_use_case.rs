@@ -1007,7 +1007,9 @@ fn build_next_repetition_task_attr(
         occurrence_start_time.day()
     ));
     new_task_attr.set_start_time(task_start_time);
-    new_task_attr.set_deadline_time_opt(Some(new_deadline_time));
+    new_task_attr
+        .set_deadline_time_opt(Some(new_deadline_time))
+        .map_err(ApplicationError::TaskTree)?;
     new_task_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
     new_task_attr.set_atomic(parent_atomic);
     new_task_attr.set_fixed_start(parent_fixed_start);

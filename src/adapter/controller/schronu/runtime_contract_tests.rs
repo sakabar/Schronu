@@ -2207,14 +2207,18 @@ fn test_execute_all_締切順の予定時刻を表示する() {
     let mut late_deadline_attr = new_test_task_attr("締切が遅いタスク");
     late_deadline_attr.set_estimated_work_seconds(30 * 60);
     late_deadline_attr.set_start_time(now);
-    late_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(3)));
+    late_deadline_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(3)))
+        .unwrap();
     let late_deadline_task = root_task.create_as_last_child(late_deadline_attr);
     let _ = late_deadline_task.sync_clock(now);
 
     let mut early_deadline_attr = new_test_task_attr("締切が早いタスク");
     early_deadline_attr.set_estimated_work_seconds(15 * 60);
     early_deadline_attr.set_start_time(now);
-    early_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    early_deadline_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
     let early_deadline_task = root_task.create_as_last_child(early_deadline_attr);
     let _ = early_deadline_task.sync_clock(now);
 
@@ -3134,7 +3138,9 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
         .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
         .unwrap();
     let mut child_attr = new_test_task_attr("延期対象routine子");
-    child_attr.set_deadline_time_opt(Some(orig_deadline));
+    child_attr
+        .set_deadline_time_opt(Some(orig_deadline))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let child_id = child.get_id().unwrap();
     let parent_snapshot = parent.snapshot().unwrap();
@@ -3208,7 +3214,9 @@ fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期
                 .unwrap();
         }
         let mut child_attr = new_test_task_attr("正常延期routine子");
-        child_attr.set_deadline_time_opt(Some(orig_deadline));
+        child_attr
+            .set_deadline_time_opt(Some(orig_deadline))
+            .unwrap();
         child_attr.set_start_time(orig_start);
         child_attr.set_orig_status(Status::Pending);
         let child = parent.create_as_last_child(child_attr);
@@ -3271,7 +3279,7 @@ fn test_execute_defer_routine_対象不成立ならtaskとfocusを変更しな�
 
     let parent = new_test_task_handle("反復間隔なしの親").unwrap();
     let mut child_attr = new_test_task_attr("反復間隔なし");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     assert_noop(parent, Some(child.get_id().unwrap()));
 }
