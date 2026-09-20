@@ -142,20 +142,20 @@ fn extract_leaf_tasks_from_project_rec(
     task: &TaskHandle,
     target_status_arr: &Vec<Status>,
 ) -> Result<LeafExtraction, TaskTreeError> {
-    let is_repetition_series = task.is_repetition_series()?;
+    let is_repeating_task = task.is_repeating_task()?;
     let mut has_active_child = false;
     let mut descendants = Vec::new();
     for child_node in task.node.children() {
         let child_task = TaskHandle {
             node: child_node.clone(),
         };
-        let child_is_series = child_task.is_repetition_series()?;
+        let child_is_repeating_task = child_task.is_repeating_task()?;
         let child_is_done = child_node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?
             .get_status()
             == &Status::Done;
-        if child_is_series {
+        if child_is_repeating_task {
             let mut child_result =
                 extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
             has_active_child |= child_result.has_unfinished_work;
@@ -168,8 +168,7 @@ fn extract_leaf_tasks_from_project_rec(
         }
     }
 
-    if !is_repetition_series && target_status_arr.contains(&task.get_status()?) && !has_active_child
-    {
+    if !is_repeating_task && target_status_arr.contains(&task.get_status()?) && !has_active_child {
         let new_task = TaskHandle {
             node: task.node.clone(),
         };
@@ -181,7 +180,7 @@ fn extract_leaf_tasks_from_project_rec(
 
     Ok(LeafExtraction {
         leaves: descendants,
-        has_unfinished_work: if is_repetition_series {
+        has_unfinished_work: if is_repeating_task {
             has_active_child
         } else {
             task.get_status()? != Status::Done || has_active_child
@@ -470,7 +469,7 @@ impl TaskAttr {
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
         if self.repetition_interval_days_opt.is_some() && deadline_time_opt.is_some() {
-            return Err(TaskTreeError::RepetitionSeriesDeadline);
+            return Err(TaskTreeError::RepeatingTaskDeadline);
         }
         self.deadline_time_opt = deadline_time_opt;
         Ok(())
@@ -505,7 +504,7 @@ impl TaskAttr {
         repetition_interval_days_opt: Option<i64>,
     ) -> Result<(), TaskTreeError> {
         if repetition_interval_days_opt.is_some() && self.deadline_time_opt.is_some() {
-            return Err(TaskTreeError::RepetitionSeriesDeadline);
+            return Err(TaskTreeError::RepeatingTaskDeadline);
         }
         self.repetition_interval_days_opt = repetition_interval_days_opt;
         if repetition_interval_days_opt.is_some() {
@@ -530,8 +529,8 @@ impl TaskAttr {
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
         match (self.repetition_interval_days_opt, value) {
-            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
-            (Some(_), None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (Some(_), None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
             _ => {}
         }
         self.repetition_start_time_opt = value;
@@ -547,8 +546,8 @@ impl TaskAttr {
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
         match (self.repetition_interval_days_opt, value) {
-            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
-            (Some(_), None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (Some(_), None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
             _ => {}
         }
         self.repetition_deadline_time_opt = value;
@@ -629,9 +628,9 @@ pub enum TaskTreeError {
         field: &'static str,
         source: DeadlineCalculationError,
     },
-    RepetitionSeriesDeadline,
-    RepetitionTemplateWithoutSeries,
-    RepetitionSeriesTemplateRequired,
+    RepeatingTaskDeadline,
+    RepetitionTemplateWithoutRepeatingTask,
+    RepeatingTaskTemplateRequired,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -646,14 +645,14 @@ impl fmt::Display for TaskTreeError {
             Self::MissingDummyRootChild => {
                 "task tree dummy root must have exactly one task child containing this handle"
             }
-            Self::RepetitionSeriesDeadline => {
-                "repetition series cannot have a normal deadline"
+            Self::RepeatingTaskDeadline => {
+                "repeating task cannot have a normal deadline"
             }
-            Self::RepetitionTemplateWithoutSeries => {
-                "repetition time template requires a repetition series"
+            Self::RepetitionTemplateWithoutRepeatingTask => {
+                "repetition time template requires a repeating task"
             }
-            Self::RepetitionSeriesTemplateRequired => {
-                "repetition series requires both time templates"
+            Self::RepeatingTaskTemplateRequired => {
+                "repeating task requires both time templates"
             }
             Self::DeadlineCalculation {
                 task_id,
@@ -1246,9 +1245,9 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
-        if self.is_repetition_series()? {
+        if self.is_repeating_task()? {
             if deadline_time_opt.is_some() {
-                return Err(TaskTreeError::RepetitionSeriesDeadline);
+                return Err(TaskTreeError::RepeatingTaskDeadline);
             }
             return Ok(());
         }
@@ -1365,8 +1364,8 @@ impl TaskHandle {
         &self,
         deadline_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        if self.is_repetition_series()? {
-            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        if self.is_repeating_task()? {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
         }
         let mut updates = Vec::new();
         let current_deadline = self
@@ -1445,12 +1444,12 @@ impl TaskHandle {
             .map_err(|_| TaskTreeError::Borrow)
     }
 
-    pub fn is_repetition_series(&self) -> Result<bool, TaskTreeError> {
+    pub fn is_repeating_task(&self) -> Result<bool, TaskTreeError> {
         Ok(self.get_repetition_interval_days_opt()?.is_some())
     }
 
     pub fn is_schedulable_work(&self) -> Result<bool, TaskTreeError> {
-        Ok(!self.is_repetition_series()?)
+        Ok(!self.is_repeating_task()?)
     }
 
     pub fn get_repetition_start_time_opt(&self) -> Result<Option<NaiveTime>, TaskTreeError> {
@@ -1464,9 +1463,9 @@ impl TaskHandle {
         &self,
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
-        match (self.is_repetition_series()?, value) {
-            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
-            (true, None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+        match (self.is_repeating_task()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (true, None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
             _ => {}
         }
         self.update(|attr| {
@@ -1491,9 +1490,9 @@ impl TaskHandle {
         &self,
         value: Option<NaiveTime>,
     ) -> Result<(), TaskTreeError> {
-        match (self.is_repetition_series()?, value) {
-            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutSeries),
-            (true, None) => return Err(TaskTreeError::RepetitionSeriesTemplateRequired),
+        match (self.is_repeating_task()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (true, None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
             _ => {}
         }
         self.update(|attr| {
@@ -1526,14 +1525,14 @@ impl TaskHandle {
         repetition_interval_days_opt: Option<i64>,
     ) -> Result<(), TaskTreeError> {
         if repetition_interval_days_opt.is_some() && self.get_deadline_time_opt()?.is_some() {
-            return Err(TaskTreeError::RepetitionSeriesDeadline);
+            return Err(TaskTreeError::RepeatingTaskDeadline);
         }
         self.update(|attr| {
             if attr.get_repetition_interval_days_opt() == repetition_interval_days_opt {
                 false
             } else {
                 attr.set_repetition_interval_days_opt(repetition_interval_days_opt)
-                    .expect("repetition series deadline state was validated");
+                    .expect("repeating task deadline state was validated");
                 true
             }
         })
@@ -1611,8 +1610,8 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
-        if self.is_repetition_series()? {
-            return Err(TaskTreeError::RepetitionSeriesDeadline);
+        if self.is_repeating_task()? {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
         }
         let task_id = self.get_id()?;
         let estimated_work_seconds = self.get_estimated_work_seconds()?;

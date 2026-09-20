@@ -206,7 +206,7 @@ fn list_ancestor_schedule_times_checked(
     // Phase 1: 子の終了を親の開始下限にする。ただしfixedはdependencyで動かさない。
     while let Some(current) = task {
         if current
-            .is_repetition_series()
+            .is_repeating_task()
             .map_err(ApplicationError::TaskTree)?
         {
             task = current.parent().map_err(ApplicationError::TaskTree)?;

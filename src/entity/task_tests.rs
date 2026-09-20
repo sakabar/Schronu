@@ -223,18 +223,18 @@ fn test_extract_leaf_tasks_from_project_子が全てdoneのタスクで親がpen
 }
 
 #[test]
-fn extract_leaf_tasks_never_returns_repetition_series_itself() {
+fn extract_leaf_tasks_never_returns_repeating_task_itself() {
     for with_done_child in [false, true] {
-        let series = new_test_task_handle("repetition series").unwrap();
-        series.set_repetition_interval_days_opt(Some(7)).unwrap();
+        let repeating_task = new_test_task_handle("repeating task").unwrap();
+        repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
         if with_done_child {
             let mut child = new_test_task_attr("done occurrence");
             child.set_orig_status(Status::Done);
-            series.create_as_last_child(child);
+            repeating_task.create_as_last_child(child);
         }
 
-        assert!(extract_leaf_tasks_from_project(&series).unwrap().is_empty());
-        assert!(extract_leaf_tasks_from_project_with_pending(&series)
+        assert!(extract_leaf_tasks_from_project(&repeating_task).unwrap().is_empty());
+        assert!(extract_leaf_tasks_from_project_with_pending(&repeating_task)
             .unwrap()
             .is_empty());
     }
@@ -242,23 +242,23 @@ fn extract_leaf_tasks_never_returns_repetition_series_itself() {
 
 #[test]
 fn extract_leaf_tasks_still_finds_unfinished_repetition_occurrence() {
-    let series = new_test_task_handle("repetition series").unwrap();
-    series.set_repetition_interval_days_opt(Some(7)).unwrap();
-    let occurrence = series.create_as_last_child(new_test_task_attr("unfinished occurrence"));
+    let repeating_task = new_test_task_handle("repeating task").unwrap();
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let occurrence = repeating_task.create_as_last_child(new_test_task_attr("unfinished occurrence"));
 
-    let leaves = extract_leaf_tasks_from_project(&series).unwrap();
+    let leaves = extract_leaf_tasks_from_project(&repeating_task).unwrap();
     assert_eq!(leaves.len(), 1);
     assert_eq!(leaves[0].get_id().unwrap(), occurrence.get_id().unwrap());
 }
 
 #[test]
-fn extract_leaf_tasks_ignores_done_repetition_series_status_and_finds_active_occurrence() {
+fn extract_leaf_tasks_ignores_done_repeating_task_status_and_finds_active_occurrence() {
     let root = new_test_task_handle("normal parent").unwrap();
-    let series = root.create_as_last_child(new_test_task_attr("done repetition series"));
-    series.set_repetition_interval_days_opt(Some(7)).unwrap();
-    series.set_orig_status(Status::Done).unwrap();
+    let repeating_task = root.create_as_last_child(new_test_task_attr("done repeating task"));
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    repeating_task.set_orig_status(Status::Done).unwrap();
     let occurrence =
-        series.create_as_last_child(new_test_task_attr("unfinished occurrence"));
+        repeating_task.create_as_last_child(new_test_task_attr("unfinished occurrence"));
 
     let leaves = extract_leaf_tasks_from_project(&root).unwrap();
 
@@ -267,60 +267,60 @@ fn extract_leaf_tasks_ignores_done_repetition_series_status_and_finds_active_occ
 }
 
 #[test]
-fn repetition_series_rejects_normal_deadline() {
-    let series = new_test_task_handle("repetition series").unwrap();
-    series.set_repetition_interval_days_opt(Some(7)).unwrap();
+fn repeating_task_rejects_normal_deadline() {
+    let repeating_task = new_test_task_handle("repeating task").unwrap();
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap();
 
     assert_eq!(
-        series.set_deadline_time_opt(Some(deadline)),
-        Err(TaskTreeError::RepetitionSeriesDeadline)
+        repeating_task.set_deadline_time_opt(Some(deadline)),
+        Err(TaskTreeError::RepeatingTaskDeadline)
     );
-    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(repeating_task.get_deadline_time_opt().unwrap(), None);
 }
 
 #[test]
-fn repetition_series_rejects_direct_appointment() {
-    let series = new_test_task_handle("repetition series").unwrap();
-    series.set_repetition_interval_days_opt(Some(7)).unwrap();
-    let original_start = series.get_start_time().unwrap();
+fn repeating_task_rejects_direct_appointment() {
+    let repeating_task = new_test_task_handle("repeating task").unwrap();
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let original_start = repeating_task.get_start_time().unwrap();
     let appointment_start = Local.with_ymd_and_hms(2038, 1, 1, 9, 0, 0).unwrap();
 
     assert_eq!(
-        series.make_appointment(appointment_start),
-        Err(TaskTreeError::RepetitionSeriesDeadline)
+        repeating_task.make_appointment(appointment_start),
+        Err(TaskTreeError::RepeatingTaskDeadline)
     );
-    assert_eq!(series.get_start_time().unwrap(), original_start);
-    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
-    assert!(!series.get_fixed_start().unwrap());
+    assert_eq!(repeating_task.get_start_time().unwrap(), original_start);
+    assert_eq!(repeating_task.get_deadline_time_opt().unwrap(), None);
+    assert!(!repeating_task.get_fixed_start().unwrap());
 }
 
 #[test]
-fn normal_ancestor_deadline_skips_done_series_and_propagates_to_occurrence() {
+fn normal_ancestor_deadline_skips_done_repeating_task_and_propagates_to_occurrence() {
     let root = new_test_task_handle("normal parent").unwrap();
-    let series = root.create_as_last_child(new_test_task_attr("done repetition series"));
-    series.set_repetition_interval_days_opt(Some(7)).unwrap();
-    series.set_orig_status(Status::Done).unwrap();
+    let repeating_task = root.create_as_last_child(new_test_task_attr("done repeating task"));
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    repeating_task.set_orig_status(Status::Done).unwrap();
     let occurrence =
-        series.create_as_last_child(new_test_task_attr("unfinished occurrence"));
+        repeating_task.create_as_last_child(new_test_task_attr("unfinished occurrence"));
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
 
     root.set_deadline_time_opt(Some(deadline)).unwrap();
 
     assert_eq!(root.get_deadline_time_opt().unwrap(), Some(deadline));
-    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(repeating_task.get_deadline_time_opt().unwrap(), None);
     assert_eq!(occurrence.get_deadline_time_opt().unwrap(), Some(deadline));
 }
 
 #[test]
-fn task_attr_does_not_retain_normal_deadline_after_becoming_repetition_series() {
-    let mut attr = new_test_task_attr("repetition series");
+fn task_attr_does_not_retain_normal_deadline_after_becoming_repeating_task() {
+    let mut attr = new_test_task_attr("repeating task");
     attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
 
     assert_eq!(
         attr.set_deadline_time_opt(Some(deadline)),
-        Err(TaskTreeError::RepetitionSeriesDeadline)
+        Err(TaskTreeError::RepeatingTaskDeadline)
     );
 
     assert_eq!(attr.get_deadline_time_opt(), &None);
@@ -333,44 +333,44 @@ fn task_attr_rejects_repetition_template_on_normal_task() {
 
     let actual = format!("{:?}", attr.set_repetition_start_time_opt(Some(time)));
 
-    assert_eq!(actual, "Err(RepetitionTemplateWithoutSeries)");
+    assert_eq!(actual, "Err(RepetitionTemplateWithoutRepeatingTask)");
     assert_eq!(attr.get_repetition_start_time_opt(), None);
 }
 
 #[test]
-fn task_attr_rejects_clearing_required_series_template() {
-    let mut attr = new_test_task_attr("repetition series");
+fn task_attr_rejects_clearing_required_repeating_task_template() {
+    let mut attr = new_test_task_attr("repeating task");
     attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let original = attr.get_repetition_start_time_opt();
 
     let actual = format!("{:?}", attr.set_repetition_start_time_opt(None));
 
-    assert_eq!(actual, "Err(RepetitionSeriesTemplateRequired)");
+    assert_eq!(actual, "Err(RepeatingTaskTemplateRequired)");
     assert_eq!(attr.get_repetition_start_time_opt(), original);
 }
 
 #[test]
-fn task_attr_rejects_series_conversion_when_normal_deadline_exists() {
+fn task_attr_rejects_repeating_task_conversion_when_normal_deadline_exists() {
     let mut attr = new_test_task_attr("normal task");
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
     attr.set_deadline_time_opt(Some(deadline)).unwrap();
 
     let actual = format!("{:?}", attr.set_repetition_interval_days_opt(Some(7)));
 
-    assert_eq!(actual, "Err(RepetitionSeriesDeadline)");
+    assert_eq!(actual, "Err(RepeatingTaskDeadline)");
     assert_eq!(attr.get_repetition_interval_days_opt(), None);
     assert_eq!(attr.get_deadline_time_opt(), &Some(deadline));
 }
 
 #[test]
-fn task_attr_rejects_normal_deadline_on_series() {
-    let mut attr = new_test_task_attr("repetition series");
+fn task_attr_rejects_normal_deadline_on_repeating_task() {
+    let mut attr = new_test_task_attr("repeating task");
     attr.set_repetition_interval_days_opt(Some(7)).unwrap();
     let deadline = Local.with_ymd_and_hms(2038, 1, 1, 18, 0, 0).unwrap();
 
     let actual = format!("{:?}", attr.set_deadline_time_opt(Some(deadline)));
 
-    assert_eq!(actual, "Err(RepetitionSeriesDeadline)");
+    assert_eq!(actual, "Err(RepeatingTaskDeadline)");
     assert_eq!(attr.get_deadline_time_opt(), &None);
 }
 

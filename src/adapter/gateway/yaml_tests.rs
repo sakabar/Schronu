@@ -1274,7 +1274,7 @@ repetition_interval_days: 7
     let expected = crate::test_support::new_task_handle_at("タスク1", now).unwrap();
     expected.set_repetition_interval_days_opt(Some(7)).unwrap();
 
-    // 反復seriesでも通常のstatus同期は行える。
+    // 繰り返し親taskでも通常のstatus同期は行える。
     expected.sync_clock(now).unwrap();
 
     assert_task(&actual, &expected);
@@ -1303,9 +1303,9 @@ fn test_legacy_repetition_fixed_shape_is_inherited_by_next_occurrence() {
         "name: routine\nstart_time: '2026/08/20 09:30:00'\ndeadline_time: '2026/08/20 10:00:00'\nestimated_work_seconds: 1800\nrepetition_interval_days: 7\nchildren:\n  - name: current occurrence\n    deadline_time: '2026/08/20 10:00:00'\n",
     )
     .unwrap();
-    let series = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
-    let current = series.get_children().unwrap().remove(0);
-    let mut repository = TestTaskRepository::new(vec![series.clone()], yaml_test_now());
+    let repeating_task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+    let current = repeating_task.get_children().unwrap().remove(0);
+    let mut repository = TestTaskRepository::new(vec![repeating_task.clone()], yaml_test_now());
     let mut next_id = Uuid::new_v4;
     let mut factory = TaskFactory::new(yaml_test_now(), &mut next_id);
 
@@ -1321,17 +1321,17 @@ fn test_legacy_repetition_fixed_shape_is_inherited_by_next_occurrence() {
     )
     .unwrap();
 
-    assert!(series.get_fixed_start().unwrap());
-    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
+    assert!(repeating_task.get_fixed_start().unwrap());
+    assert_eq!(repeating_task.get_deadline_time_opt().unwrap(), None);
     assert_eq!(
-        series.get_repetition_start_time_opt().unwrap(),
+        repeating_task.get_repetition_start_time_opt().unwrap(),
         Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap())
     );
     assert_eq!(
-        series.get_repetition_deadline_time_opt().unwrap(),
+        repeating_task.get_repetition_deadline_time_opt().unwrap(),
         Some(NaiveTime::from_hms_opt(10, 0, 0).unwrap())
     );
-    let next = series
+    let next = repeating_task
         .get_children()
         .unwrap()
         .into_iter()

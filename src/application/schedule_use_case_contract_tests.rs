@@ -348,41 +348,43 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
 }
 
 #[test]
-fn get_schedule_skips_repetition_series_after_2037_boundary() {
+fn get_schedule_skips_repeating_task_after_2037_boundary() {
     for now in [
         Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 58).unwrap(),
         Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap(),
         Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap(),
     ] {
-        let series = task_with_schedule("series", now, 15 * 60, 0);
-        series.set_repetition_interval_days_opt(Some(7)).unwrap();
-        let repository = TestTaskRepository::new(vec![series], now);
+        let repeating_task = task_with_schedule("repeating_task", now, 15 * 60, 0);
+        repeating_task
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        let repository = TestTaskRepository::new(vec![repeating_task], now);
 
         assert!(get_schedule(&repository).unwrap().is_empty());
     }
 }
 
 #[test]
-fn get_schedule_treats_repetition_series_as_transparent_ancestor() {
+fn get_schedule_treats_repeating_task_as_transparent_ancestor() {
     let now = fixed_now();
     let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
-    let mut series_attr = crate::test_support::new_task_attr_at("series", now);
-    series_attr
+    let mut repeating_task_attr = crate::test_support::new_task_attr_at("repeating_task", now);
+    repeating_task_attr
         .set_repetition_interval_days_opt(Some(7))
         .unwrap();
-    series_attr.set_estimated_work_seconds(24 * 60 * 60);
-    series_attr.set_start_time(now + Duration::days(30));
-    let series = root.create_as_last_child(series_attr);
+    repeating_task_attr.set_estimated_work_seconds(24 * 60 * 60);
+    repeating_task_attr.set_start_time(now + Duration::days(30));
+    let repeating_task = root.create_as_last_child(repeating_task_attr);
     let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
     occurrence_attr.set_estimated_work_seconds(15 * 60);
-    let occurrence = series.create_as_last_child(occurrence_attr);
+    let occurrence = repeating_task.create_as_last_child(occurrence_attr);
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
     let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
     assert!(ids.contains(&root.get_id().unwrap()));
     assert!(ids.contains(&occurrence.get_id().unwrap()));
-    assert!(!ids.contains(&series.get_id().unwrap()));
+    assert!(!ids.contains(&repeating_task.get_id().unwrap()));
     assert_eq!(
         schedule
             .iter()

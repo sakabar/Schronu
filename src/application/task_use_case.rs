@@ -595,11 +595,11 @@ pub fn defer_routine_task(
 
     let deadline_time = repetition_deadline_time.ok_or(ApplicationError::InvalidInput {
         field: "repetition_deadline_time",
-        reason: "repetition series must have a deadline time template",
+        reason: "repeating task must have a deadline time template",
     })?;
     let start_time = repetition_start_time.ok_or(ApplicationError::InvalidInput {
         field: "repetition_start_time",
-        reason: "repetition series must have a start time template",
+        reason: "repeating task must have a start time template",
     })?;
     let new_deadline_time = shift_local_date_and_time(
         orig_deadline_time,
@@ -948,14 +948,14 @@ fn build_next_repetition_task_attr(
         .map_err(ApplicationError::TaskTree)?
         .ok_or(ApplicationError::InvalidInput {
             field: "repetition_start_time",
-            reason: "repetition series must have a start time template",
+            reason: "repeating task must have a start time template",
         })?;
     let repetition_deadline_time = parent_task
         .get_repetition_deadline_time_opt()
         .map_err(ApplicationError::TaskTree)?
         .ok_or(ApplicationError::InvalidInput {
             field: "repetition_deadline_time",
-            reason: "repetition series must have a deadline time template",
+            reason: "repeating task must have a deadline time template",
         })?;
     let days_in_advance = parent_task
         .get_days_in_advance()
