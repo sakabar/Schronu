@@ -1,12 +1,12 @@
 use super::renderer::{
     format_spreadsheet_task_row, format_task_list_columns, render_display_model,
     render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
-    BandDurations, CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow,
-    DisplayModel, ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary,
-    FlattenRow, FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay,
-    PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds,
-    TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskRow,
-    TreeDisplay,
+    BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
+    CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
+    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
+    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskRow, TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
@@ -587,13 +587,37 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
         blank_line_weekday: Weekday::Mon,
         summary: summary.clone(),
         alerts: CalendarAlerts {
-            has_today_deadline_leeway: false,
-            has_today_freetime_leeway: false,
+            today_deadline_issue: Some(CalendarAlertIssue {
+                affected_count: 3,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                max_overrun_seconds: 15 * 60,
+            }),
+            today_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
+                max_overrun_seconds: 8 * 60,
+            }),
             has_today_new_task_leeway: false,
-            has_tomorrow_deadline_leeway: false,
-            has_tomorrow_freetime_leeway: false,
-            has_weekly_deadline_leeway: false,
-            has_weekly_freetime_leeway: false,
+            tomorrow_deadline_issue: Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                max_overrun_seconds: 15 * 60,
+            }),
+            tomorrow_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 1,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
+                max_overrun_seconds: (60 + 44) * 60,
+            }),
+            weekly_deadline_issue: Some(CalendarAlertIssue {
+                affected_count: 2,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+                max_overrun_seconds: (3 * 60 + 54) * 60,
+            }),
+            weekly_capacity_issue: Some(CalendarAlertIssue {
+                affected_count: 3,
+                first_affected_date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+                max_overrun_seconds: (2 * 60 + 33) * 60,
+            }),
         },
     });
     let mut writer = TraceWriter::default();
@@ -612,12 +636,12 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             "newline:今のタスクが片付く日付: 2日後の2026-08-25",
             "newline:最大の累積時間:  02時間05分 (2026-08-24), 最大のrhoの差: 1.25 (2026-08-24), 次にタスクを積める日付: 3日後の2026-08-26 (-1時間30分)",
             "newline:",
-            "newline:[Crit] 【今日の】〆切に間に合いません。【ただちに】〆切をリスケする調整をしてください。",
-            "newline:[Crit] 【今日の】終了予定時刻に間に合いません。【ただちに】どれかの予定を諦めて明日以降に延期してください。",
-            "newline:[Warn] 【明日の】〆切に間に合いません。〆切をあさって以降にリスケする調整を【今日中に】してください。",
-            "newline:[Warn] 【明日の】終了予定時刻に間に合いません。【今日中に】どれかの予定を諦めてあさって以降に延期してください。",
-            "newline:[Warn] 【1週間以内の】〆切に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。",
-            "newline:[Warn] 【1週間以内の】終了予定時刻に間に合いません。【近々】どれかの予定を諦めて来週以降に延期してください。",
+            "newline:[Crit] 【今日までの】〆切に間に合わないタスクが3件あります。最初の対象日: 2026-08-23, 最大超過: 0時間15分。【ただちに】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "newline:[Crit] 【今日の】終了予定時刻を0時間08分超過します。【ただちに】`尾`で候補を確認し、予定を減らすか明日以降へ延期してください。",
+            "newline:[Warn] 【明日の】〆切に間に合わないタスクが1件あります。対象日: 2026-08-24, 最大超過: 0時間15分。【今日中に】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "newline:[Warn] 【明日の】終了予定時刻を1時間44分超過します。【今日中に】`尾 明`で候補を確認し、予定を減らすかあさって以降へ延期してください。",
+            "newline:[Warn] 【7日以内の】〆切に間に合わないタスクが2件あります。最初の対象日: 2026-08-25, 最大超過: 3時間54分。【近々】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "newline:[Warn] 【7日以内の】終了予定時刻を超過する日が3日あります。最初の超過日: 2026-08-25, 最大超過: 2時間33分。【近々】`尾 週`で候補を確認し、予定を減らすか7日後以降へ延期してください。",
             "newline:",
         ]
     );
@@ -630,13 +654,13 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             blank_line_weekday: Weekday::Mon,
             summary: summary.clone(),
             alerts: CalendarAlerts {
-                has_today_deadline_leeway: true,
-                has_today_freetime_leeway: true,
+                today_deadline_issue: None,
+                today_capacity_issue: None,
                 has_today_new_task_leeway: false,
-                has_tomorrow_deadline_leeway: true,
-                has_tomorrow_freetime_leeway: true,
-                has_weekly_deadline_leeway: true,
-                has_weekly_freetime_leeway: true,
+                tomorrow_deadline_issue: None,
+                tomorrow_capacity_issue: None,
+                weekly_deadline_issue: None,
+                weekly_capacity_issue: None,
             },
         }),
     )
@@ -657,13 +681,13 @@ fn calendar_displayはtyped日別値を逆順と週区切りとsummaryとalert�
             blank_line_weekday: Weekday::Mon,
             summary,
             alerts: CalendarAlerts {
-                has_today_deadline_leeway: true,
-                has_today_freetime_leeway: true,
+                today_deadline_issue: None,
+                today_capacity_issue: None,
                 has_today_new_task_leeway: true,
-                has_tomorrow_deadline_leeway: true,
-                has_tomorrow_freetime_leeway: true,
-                has_weekly_deadline_leeway: true,
-                has_weekly_freetime_leeway: true,
+                tomorrow_deadline_issue: None,
+                tomorrow_capacity_issue: None,
+                weekly_deadline_issue: None,
+                weekly_capacity_issue: None,
             },
         }),
     )
@@ -693,13 +717,13 @@ fn calendar_displayは日別rowが空でもfooterとsummaryとhealthy_alertを�
             max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 23).unwrap(),
         },
         alerts: CalendarAlerts {
-            has_today_deadline_leeway: true,
-            has_today_freetime_leeway: true,
+            today_deadline_issue: None,
+            today_capacity_issue: None,
             has_today_new_task_leeway: true,
-            has_tomorrow_deadline_leeway: true,
-            has_tomorrow_freetime_leeway: true,
-            has_weekly_deadline_leeway: true,
-            has_weekly_freetime_leeway: true,
+            tomorrow_deadline_issue: None,
+            tomorrow_capacity_issue: None,
+            weekly_deadline_issue: None,
+            weekly_capacity_issue: None,
         },
     });
     let mut writer = TraceWriter::default();
@@ -759,13 +783,13 @@ fn band_display_fixture() -> BandDisplay {
             max_accumulated_rho_diff_date: NaiveDate::from_ymd_opt(2026, 8, 24).unwrap(),
         },
         alerts: CalendarAlerts {
-            has_today_deadline_leeway: true,
-            has_today_freetime_leeway: true,
+            today_deadline_issue: None,
+            today_capacity_issue: None,
             has_today_new_task_leeway: true,
-            has_tomorrow_deadline_leeway: true,
-            has_tomorrow_freetime_leeway: true,
-            has_weekly_deadline_leeway: true,
-            has_weekly_freetime_leeway: true,
+            tomorrow_deadline_issue: None,
+            tomorrow_capacity_issue: None,
+            weekly_deadline_issue: None,
+            weekly_capacity_issue: None,
         },
     }
 }

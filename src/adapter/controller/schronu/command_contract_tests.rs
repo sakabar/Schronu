@@ -109,6 +109,33 @@ fn parser_converts_command_fields_to_typed_values() {
 }
 
 #[test]
+fn deadline_parser_preserves_one_or_two_argv_values_in_both_modes() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for (input, expected_values) in [
+            ("〆 14:30", vec!["14:30".to_string()]),
+            (
+                "〆 14:30 9/21",
+                vec!["14:30".to_string(), "9/21".to_string()],
+            ),
+            (
+                "〆 9/21 14:30",
+                vec!["9/21".to_string(), "14:30".to_string()],
+            ),
+        ] {
+            assert_eq!(
+                parse_command(input, mode).unwrap(),
+                Command::Action(CommandAction::TimeExpression {
+                    kind: CommandKind::Deadline,
+                    canonical_name: "〆",
+                    values: expected_values,
+                }),
+                "input: {input}"
+            );
+        }
+    }
+}
+
+#[test]
 fn focusは全aliasとmodeで先頭argumentだけを受理する() {
     let task_id = Uuid::new_v4();
 
@@ -388,10 +415,10 @@ fn all_commands_enforce_argument_bounds() {
         Case {
             command: "〆",
             mode: ParseMode::NonInteractive,
-            valid_arguments: &["今"],
+            valid_arguments: &["今", "09:00"],
             minimum: 1,
-            maximum: Some(1),
-            usage: "〆 <日付または時刻>",
+            maximum: Some(2),
+            usage: "〆 <日付または時刻> [時刻または日付]",
         },
         Case {
             command: "予",
@@ -744,7 +771,10 @@ fn parse_errors_preserve_field_reason_usage_and_display_contract() {
     let deadline_error = parse_command("〆", ParseMode::NonInteractive).unwrap_err();
     assert_eq!(deadline_error.field(), "arguments");
     assert_eq!(deadline_error.reason(), "引数の個数が正しくありません");
-    assert_eq!(deadline_error.usage(), "〆 <日付または時刻>");
+    assert_eq!(
+        deadline_error.usage(),
+        "〆 <日付または時刻> [時刻または日付]"
+    );
     let category_error = parse_command("類", ParseMode::NonInteractive).unwrap_err();
     assert_eq!(category_error.field(), "arguments");
     assert_eq!(category_error.reason(), "引数の個数が正しくありません");

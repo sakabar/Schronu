@@ -1241,8 +1241,8 @@ struct TraceTaskAttributeContext {
 }
 
 impl TaskAttributeCommandContext for TraceTaskAttributeContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
-        self.calls.push(format!("deadline:{value}"));
+    fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
+        self.calls.push(format!("deadline:{}", values.join(",")));
         Ok(())
     }
 
@@ -1296,27 +1296,31 @@ fn handler入口は直接構築された不正属性値をcontext実行前に拒
     ));
     assert!(estimate_context.task_attribute.calls.is_empty());
 
-    for (kind, canonical_name, field, reason, usage) in [
+    let cases = [
         (
-            CommandKind::Category,
+            Command::Action(CommandAction::StringValue {
+                kind: CommandKind::Category,
+                canonical_name: "類",
+                value: "invalid".to_string(),
+            }),
             "類",
             "category",
             "カテゴリが不正です",
             "類 <カテゴリ>",
         ),
         (
-            CommandKind::Deadline,
+            Command::Action(CommandAction::TimeExpression {
+                kind: CommandKind::Deadline,
+                canonical_name: "〆",
+                values: vec!["invalid".to_string()],
+            }),
             "〆",
             "deadline",
             "日時が不正です",
-            "〆 <日付または時刻>",
+            "〆 <日付または時刻> [時刻または日付]",
         ),
-    ] {
-        let command = Command::Action(CommandAction::StringValue {
-            kind,
-            canonical_name,
-            value: "invalid".to_string(),
-        });
+    ];
+    for (command, canonical_name, field, reason, usage) in cases {
         let mut context = CompositeTraceContext::new(now);
         let Err(HandlerError::Parse(error)) = handle_command(&command, &mut context) else {
             panic!("{canonical_name} must preserve its parse-error classification");
@@ -1332,10 +1336,10 @@ fn handler入口は直接構築された不正属性値をcontext実行前に拒
 #[test]
 fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有する() {
     let commands = [
-        Command::Action(CommandAction::StringValue {
+        Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Deadline,
             canonical_name: "〆",
-            value: "明".to_string(),
+            values: vec!["明".to_string()],
         }),
         Command::Estimate { minutes: 25 },
         Command::Arrange {
@@ -2178,8 +2182,8 @@ impl TaskTreeCommandContext for CompositeTraceContext {
 }
 
 impl TaskAttributeCommandContext for CompositeTraceContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
-        self.task_attribute.set_deadline(value)
+    fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
+        self.task_attribute.set_deadline(values)
     }
 
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
