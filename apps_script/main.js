@@ -13,6 +13,7 @@ function onOpen(e) {
   SpreadsheetApp.getUi()
     .createMenu('ユーザー関数')
     .addItem('時刻形式を再適用', 'applyTimeFormat')
+    .addItem('選択範囲を再同期', 'resyncSelectedRange')
     .addToUi();
 
   applyTimeFormat();
@@ -57,22 +58,74 @@ function onEdit(e) {
     return;
   }
 
+  if (isCommandOutputPaste_(range) || !rangeTouchesSyncCols_(range)) {
+    return;
+  }
+
+  syncRangeWithLock_(e.source, sheet, range);
+}
+
+function resyncSelectedRange() {
+  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const range = spreadsheet.getActiveRange();
+
+  if (!range) {
+    spreadsheet.toast('再同期する範囲を選択してください。', 'Schronu同期エラー');
+    return;
+  }
+
+  const sheet = range.getSheet();
+  if (!SCHRONU_CONFIG.sheetNames.includes(sheet.getName())
+    || !rangeTouchesDataRows_(range)
+    || isCommandOutputPaste_(range)
+    || !rangeTouchesSyncCols_(range)) {
+    spreadsheet.toast(
+      '対象sheetの3行目以降にあるL/N/P/R列を選択してください。',
+      'Schronu同期エラー',
+    );
+    return;
+  }
+
+  syncRangeWithLock_(spreadsheet, sheet, range);
+}
+
+function syncRangeWithLock_(spreadsheet, sheet, range) {
   const lock = LockService.getDocumentLock();
   if (!lock.tryLock(1000)) {
+    notifyLockContention_(spreadsheet, sheet, range);
     return;
   }
 
   try {
-    if (isCommandOutputPaste_(range)) {
-      return;
-    }
-
-    if (rangeTouchesSyncCols_(range)) {
-      syncEditedManualCols_(e.source, sheet, range);
-    }
+    syncEditedManualCols_(spreadsheet, sheet, range);
   } finally {
     lock.releaseLock();
   }
+}
+
+function notifyLockContention_(spreadsheet, sheet, range) {
+  const startRow = Math.max(range.getRow(), SCHRONU_CONFIG.dataStartRow);
+  const endRow = range.getRow() + range.getNumRows() - 1;
+  const startCol = range.getColumn();
+  const endCol = startCol + range.getNumColumns() - 1;
+  const scopes = [];
+
+  for (let row = startRow; row <= endRow; row++) {
+    const ind = normalizeInd_(sheet.getRange(row, SCHRONU_CONFIG.indCol).getValue());
+    const taskId = normalizeTaskId_(sheet.getRange(row, SCHRONU_CONFIG.taskIdCol).getValue());
+    if (SCHRONU_CONFIG.segmentSyncCols.some((col) => startCol <= col && col <= endCol)) {
+      scopes.push(`${sheet.getName()} ${row}行 segment A=${ind || '(空)'} B=${taskId || '(空)'}`);
+    }
+    if (SCHRONU_CONFIG.taskSyncCols.some((col) => startCol <= col && col <= endCol)) {
+      scopes.push(`${sheet.getName()} ${row}行 task B=${taskId || '(空)'}`);
+    }
+  }
+
+  spreadsheet.toast(
+    `lock競合のため同期されていません:\n${[...new Set(scopes)].join('\n')}\n`
+      + '競合解消後、対象範囲を選択して「ユーザー関数」>「選択範囲を再同期」を実行してください。',
+    'Schronu同期未完了',
+  );
 }
 
 function syncEditedManualCols_(spreadsheet, sourceSheet, editedRange) {

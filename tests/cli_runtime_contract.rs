@@ -8,6 +8,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use uuid::Uuid;
 
+#[path = "support/persistent_storage.rs"]
+mod persistent_storage;
+
+use persistent_storage::persistent_storage_bytes_excluding_process_lock;
+
 struct CliFixture {
     root: PathBuf,
     storage: PathBuf,
@@ -59,7 +64,7 @@ impl CliFixture {
     }
 
     fn persistent_storage_bytes_excluding_process_lock(&self) -> BTreeMap<PathBuf, Vec<u8>> {
-        let files = collect_persistent_storage_bytes_excluding_process_lock(&self.storage);
+        let files = persistent_storage_bytes_excluding_process_lock(&self.storage);
         assert!(files.contains_key(Path::new(".revision")));
         assert!(files.keys().any(|path| path.ends_with("project.yaml")));
         files
@@ -118,37 +123,4 @@ fn valid_busy_time_slots_yaml() -> String {
         ));
     }
     yaml
-}
-
-fn collect_persistent_storage_bytes_excluding_process_lock(
-    storage: &Path,
-) -> BTreeMap<PathBuf, Vec<u8>> {
-    let mut files = BTreeMap::new();
-    collect_directory_bytes(storage, storage, &mut files);
-    files
-}
-
-fn collect_directory_bytes(
-    storage: &Path,
-    directory: &Path,
-    files: &mut BTreeMap<PathBuf, Vec<u8>>,
-) {
-    let mut entries = fs::read_dir(directory)
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    entries.sort_by_key(|entry| entry.file_name());
-
-    for entry in entries {
-        let path = entry.path();
-        let file_type = entry.file_type().unwrap();
-        if file_type.is_dir() {
-            collect_directory_bytes(storage, &path, files);
-        } else if file_type.is_file() {
-            let relative_path = path.strip_prefix(storage).unwrap().to_path_buf();
-            if relative_path != Path::new(".lock") {
-                files.insert(relative_path, fs::read(path).unwrap());
-            }
-        }
-    }
 }

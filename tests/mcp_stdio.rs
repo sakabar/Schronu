@@ -15,6 +15,11 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
+#[path = "support/persistent_storage.rs"]
+mod persistent_storage;
+
+use persistent_storage::persistent_storage_bytes_excluding_process_lock as persistent_storage_bytes;
+
 fn new_test_task_handle(name: &str) -> TaskHandle {
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -61,27 +66,63 @@ fn seed_projects(storage_directory: &Path, count: usize) {
 }
 
 struct TestStorageDirectory {
+    root: PathBuf,
     path: PathBuf,
+    config_path: PathBuf,
 }
 
 impl TestStorageDirectory {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
+        let root = std::env::temp_dir().join(format!(
             "schronu-mcp-stdio-test-{}",
             Uuid::new_v4().hyphenated()
         ));
-        fs::create_dir(&path).unwrap();
-        Self { path }
+        let path = root.join("storage");
+        fs::create_dir_all(&path).unwrap();
+        let busy_time_slots_path = root.join("busy_time_slots.yaml");
+        fs::write(&busy_time_slots_path, empty_busy_time_slots_yaml()).unwrap();
+        let config_path = root.join("schronu.yaml");
+        fs::write(
+            &config_path,
+            format!(
+                "busy_time_slots_yaml_path: {}\n",
+                busy_time_slots_path.display()
+            ),
+        )
+        .unwrap();
+        Self {
+            root,
+            path,
+            config_path,
+        }
     }
 
     fn path(&self) -> &Path {
         &self.path
     }
+
+    fn cli_command(&self) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_schronu"));
+        command
+            .env("SCHRONU_STORAGE_DIR", self.path())
+            .env("SCHRONU_CONFIG_PATH", &self.config_path);
+        command
+    }
+}
+
+fn empty_busy_time_slots_yaml() -> String {
+    let mut yaml = String::from("days_of_week:\n");
+    for day_of_week in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] {
+        yaml.push_str(&format!(
+            "  - day_of_week: {day_of_week}\n    busy_time_slots: []\n"
+        ));
+    }
+    yaml
 }
 
 impl Drop for TestStorageDirectory {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.path);
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -359,6 +400,380 @@ fn mcp_stdio_壊れたrepositoryはcallでerrorとなり修復後に同一sessio
     assert_eq!(retried["result"]["isError"], false);
 
     assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn mcp_stdio_duration範囲外の見積秒数は読込errorとなり修復後に同一sessionで再試行できる() {
+    let storage = TestStorageDirectory::new();
+    let project_directory = storage.path().join("oversized-estimate");
+    fs::create_dir(&project_directory).unwrap();
+    let project_yaml = project_directory.join("project.yaml");
+    let original = format!(
+        "project:\n  name: audit-task\n  id: 00000000-0000-4000-8000-000000000001\n  status: pending\n  deadline_time: '2026/12/31 23:59:59'\n  estimated_work_seconds: {}\n",
+        i64::MAX
+    );
+    fs::write(&project_yaml, &original).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("duration-out-of-range");
+
+    let failed = mcp.call_tool("duration-out-of-range", "list_tasks", json!({}));
+
+    assert_structured_tool_error(
+        &failed,
+        "duration-out-of-range",
+        "repository_load_failed",
+        "repair_repository",
+    );
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains("project.estimated_work_seconds"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(fs::read_to_string(&project_yaml).unwrap(), original);
+
+    fs::remove_dir_all(&project_directory).unwrap();
+    let retried = mcp.call_tool("duration-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn mcp_stdio_duration範囲外の見積更新は保存内容を変えず後続requestへ応答する() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "duration-update-create",
+        "create_task",
+        Some(json!({"name": "duration update target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "duration-update-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let project_yaml = fs::read_dir(storage.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let before = fs::read(&project_yaml).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("duration-update");
+
+    let failed = mcp.call_tool(
+        "duration-update",
+        "update_task",
+        json!({"task_id": task_id, "estimated_work_minutes": i64::MAX / 60}),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(task_id));
+    assert!(message.contains("estimated_work_seconds"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(fs::read(&project_yaml).unwrap(), before);
+    let retried = mcp.call_tool("duration-update-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn mcp_stdio_日時減算範囲外の見積更新は保存内容を変えず後続requestへ応答する() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "datetime-update-create",
+        "create_task",
+        Some(json!({"name": "datetime update target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "datetime-update-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let project_yaml = fs::read_dir(storage.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path().join("project.yaml"))
+        .find(|path| path.is_file())
+        .unwrap();
+    let before = fs::read(&project_yaml).unwrap();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("datetime-update");
+
+    let failed = mcp.call_tool(
+        "datetime-update",
+        "update_task",
+        json!({
+            "task_id": task_id,
+            "estimated_work_minutes": 10_000_000_000_000_i64 / 60
+        }),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(task_id));
+    assert!(message.contains("estimated_work_seconds"));
+    assert!(message.contains("datetime subtraction"));
+    assert_eq!(fs::read(&project_yaml).unwrap(), before);
+    let retried = mcp.call_tool("datetime-update-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn cli_日時減算範囲外の見積更新はerrorとなり保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-datetime-create",
+        "create_task",
+        Some(json!({"name": "cli datetime target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "cli-datetime-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+
+    let output = storage
+        .cli_command()
+        .args(["予", &(10_000_000_000_000_i64 / 60).to_string()])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id), "stderr={stderr}");
+    assert!(stderr.contains("estimated_work_seconds"));
+    assert!(stderr.contains("datetime subtraction"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+#[test]
+fn cli_duration範囲外の見積更新はerrorとなり保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-duration-create",
+        "create_task",
+        Some(json!({"name": "cli duration target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+    let deadline_update = call_tool(
+        storage.path(),
+        "cli-duration-deadline",
+        "update_task",
+        Some(json!({"task_id": task_id, "deadline_time": deadline})),
+    );
+    assert_eq!(deadline_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+
+    let output = storage
+        .cli_command()
+        .args(["予", &(i64::MAX / 60).to_string()])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id), "stderr={stderr}");
+    assert!(stderr.contains("estimated_work_seconds"));
+    assert!(stderr.contains("duration is outside"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+#[test]
+fn cli_予約はduration範囲外の受理済み見積をerrorにし保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-appointment-duration-create",
+        "create_task",
+        Some(json!({"name": "cli appointment duration target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let estimate = storage
+        .cli_command()
+        .args(["予", &(i64::MAX / 60).to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        estimate.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&estimate.stderr)
+    );
+    let before = persistent_storage_bytes(storage.path());
+
+    let appointment_time = Local::now().format("%H:%M").to_string();
+    let output = storage
+        .cli_command()
+        .args(["約", &appointment_time])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id));
+    assert!(stderr.contains("estimated_work_seconds"));
+    assert!(stderr.contains("appointment_deadline"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+#[test]
+fn cli_予約は日時加算範囲外をerrorにし保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "cli-appointment-datetime-create",
+        "create_task",
+        Some(json!({"name": "cli appointment datetime target"})),
+    );
+    let task_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let estimate = storage
+        .cli_command()
+        .args(["予", &(10_000_000_000_000_i64 / 60).to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        estimate.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&estimate.stderr)
+    );
+    let before = persistent_storage_bytes(storage.path());
+
+    let appointment_time = Local::now().format("%H:%M").to_string();
+    let output = storage
+        .cli_command()
+        .args(["約", &appointment_time])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(task_id));
+    assert!(stderr.contains("appointment_start_time"));
+    assert!(stderr.contains("appointment_deadline"));
+    assert!(stderr.contains("datetime addition"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+}
+
+#[test]
+fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を変えない() {
+    let storage = TestStorageDirectory::new();
+    let created = call_tool(
+        storage.path(),
+        "descendant-create",
+        "create_task",
+        Some(json!({"name": "deadline parent"})),
+    );
+    let parent_id = created["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let breakdown = call_tool(
+        storage.path(),
+        "descendant-breakdown",
+        "breakdown_task",
+        Some(json!({"parent_id": parent_id, "names": ["oversized child"]})),
+    );
+    let child_id = breakdown["result"]["structuredContent"]["child_ids"][0]
+        .as_str()
+        .unwrap();
+    let estimate_update = call_tool(
+        storage.path(),
+        "descendant-estimate",
+        "update_task",
+        Some(json!({
+            "task_id": child_id,
+            "estimated_work_minutes": i64::MAX / 60
+        })),
+    );
+    assert_eq!(estimate_update["result"]["isError"], false);
+    let before = persistent_storage_bytes(storage.path());
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("descendant-deadline");
+    let deadline = (Local::now() + chrono::Duration::days(1)).to_rfc3339();
+
+    let failed = mcp.call_tool(
+        "descendant-deadline",
+        "update_task",
+        json!({"task_id": parent_id, "deadline_time": deadline}),
+    );
+
+    assert_eq!(failed["result"]["isError"], true);
+    let message = failed["result"]["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains(child_id));
+    assert!(message.contains("deadline_time"));
+    assert!(message.contains("deadline_pending_limit"));
+    assert_eq!(persistent_storage_bytes(storage.path()), before);
+    let retried = mcp.call_tool("descendant-retry", "list_tasks", json!({}));
+    assert_eq!(retried["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
+fn persistent_storage_snapshotは深いtransaction階層を収集しroot_lockだけを除外する() {
+    let storage = TestStorageDirectory::new();
+    let staged_directory = storage
+        .path()
+        .join(".transactions")
+        .join("transaction-id")
+        .join("staged");
+    fs::create_dir_all(&staged_directory).unwrap();
+    fs::write(storage.path().join(".lock"), b"process lock").unwrap();
+    fs::write(staged_directory.join("project.yaml"), b"deep bytes").unwrap();
+    fs::write(staged_directory.join(".lock"), b"nested lock").unwrap();
+
+    let snapshot = persistent_storage_bytes(storage.path());
+
+    assert!(!snapshot.contains_key(Path::new(".lock")));
+    assert_eq!(
+        snapshot.get(Path::new(
+            ".transactions/transaction-id/staged/project.yaml"
+        )),
+        Some(&b"deep bytes".to_vec())
+    );
+    assert_eq!(
+        snapshot.get(Path::new(".transactions/transaction-id/staged/.lock")),
+        Some(&b"nested lock".to_vec())
+    );
 }
 
 #[test]
