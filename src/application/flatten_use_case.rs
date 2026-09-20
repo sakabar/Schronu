@@ -4,7 +4,8 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    build_schedule_context, get_schedule_from_context_with_overrides, ScheduledTaskView,
+    build_schedule_context, get_schedule_from_context_with_overrides, scheduled_end_by_task,
+    ScheduledTaskView,
 };
 use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
@@ -445,7 +446,9 @@ fn introduces_deadline_violation(
     current_schedule: &[ScheduledTaskView],
     trial_schedule: &[ScheduledTaskView],
 ) -> bool {
+    record_flatten(FlattenEvent::FullScheduleScan(current_schedule.len()));
     let current_ends = scheduled_end_by_task(current_schedule);
+    record_flatten(FlattenEvent::FullScheduleScan(trial_schedule.len()));
     let trial_ends = scheduled_end_by_task(trial_schedule);
     trial_schedule.iter().any(|scheduled| {
         record_flatten(FlattenEvent::FullScheduleScan(1));
@@ -460,17 +463,6 @@ fn introduces_deadline_violation(
                 .get(&scheduled.task.id)
                 .is_none_or(|current_end| trial_end > *current_end)
     })
-}
-
-fn scheduled_end_by_task(schedule: &[ScheduledTaskView]) -> HashMap<Uuid, DateTime<Local>> {
-    let mut ends = HashMap::<Uuid, DateTime<Local>>::new();
-    for scheduled in schedule {
-        record_flatten(FlattenEvent::FullScheduleScan(1));
-        ends.entry(scheduled.task.id)
-            .and_modify(|end| *end = (*end).max(scheduled.scheduled_end))
-            .or_insert(scheduled.scheduled_end);
-    }
-    ends
 }
 
 fn summarize_unresolved_overload(
