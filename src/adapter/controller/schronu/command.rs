@@ -7,6 +7,8 @@ use uuid::Uuid;
 
 use super::cli_syntax::{tokenize, tokenize_with_prefix};
 
+pub(super) const DEADLINE_USAGE: &str = "〆 <日付または時刻> [時刻または日付]";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ParseMode {
     Interactive,
@@ -391,37 +393,48 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
             parse_project_category_input(value).map_err(CommandValidationError::Parse)?;
             Ok(())
         }
-        Command::Action(CommandAction::StringValue {
+        Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Deadline,
-            value,
+            values,
             ..
         }) => {
-            if value.starts_with('今')
-                || value.starts_with('明')
-                || matches!(
-                    value.as_str(),
-                    "消" | "月" | "火" | "水" | "木" | "金" | "土" | "日"
-                )
-                || Regex::new(r"^\d{1,2}/\d{1,2}$")
-                    .expect("valid regex")
-                    .is_match(value)
-                || Regex::new(r"^\d{1,2}:\d{1,2}$")
-                    .expect("valid regex")
-                    .is_match(value)
-                || parse_local_datetime(&format!("{} 23:59:59", value), "%Y/%m/%d %H:%M:%S").is_ok()
-            {
+            let valid = match values.as_slice() {
+                [value] => value == "消" || is_deadline_date(value) || is_deadline_time(value),
+                [first, second] => {
+                    (is_deadline_date(first) && is_deadline_time(second))
+                        || (is_deadline_time(first) && is_deadline_date(second))
+                }
+                _ => false,
+            };
+            if valid {
                 Ok(())
             } else {
                 Err(CommandValidationError::Parse(CommandParseError::new(
                     "〆",
                     "deadline",
                     "日時が不正です",
-                    "〆 <日付または時刻>",
+                    DEADLINE_USAGE,
                 )))
             }
         }
         _ => Ok(()),
     }
+}
+
+fn is_deadline_date(value: &str) -> bool {
+    value.starts_with('今')
+        || value.starts_with('明')
+        || matches!(value, "月" | "火" | "水" | "木" | "金" | "土" | "日")
+        || Regex::new(r"^\d{1,2}/\d{1,2}$")
+            .expect("valid regex")
+            .is_match(value)
+        || parse_local_datetime(&format!("{value} 23:59:59"), "%Y/%m/%d %H:%M:%S").is_ok()
+}
+
+fn is_deadline_time(value: &str) -> bool {
+    Regex::new(r"^\d{1,2}:\d{1,2}$")
+        .expect("valid regex")
+        .is_match(value)
 }
 
 pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandParseError> {
@@ -787,10 +800,10 @@ fn parse_action(
                 name: name.clone(),
             }
         }
-        CommandKind::Deadline => CommandAction::StringValue {
+        CommandKind::Deadline => CommandAction::TimeExpression {
             kind,
             canonical_name,
-            value: required_argument(arguments, definition, "deadline")?.to_string(),
+            values: arguments.to_vec(),
         },
         CommandKind::Category => CommandAction::StringValue {
             kind,
@@ -1037,7 +1050,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         }
         "待" | "wait" => CommandDefinition::new(Kind::Wait, "待", "待", 0, Some(0)),
         "〆" | "締" | "deadline" => {
-            CommandDefinition::new(Kind::Deadline, "〆", "〆 <日付または時刻>", 1, Some(1))
+            CommandDefinition::new(Kind::Deadline, "〆", DEADLINE_USAGE, 1, Some(2))
         }
         "予" | "estimate" | "es" => {
             CommandDefinition::new(Kind::Estimate, "予", "予 <分>", 1, Some(1))

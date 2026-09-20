@@ -126,7 +126,7 @@ pub(super) trait TaskTreeCommandContext {
 }
 
 pub(super) trait TaskAttributeCommandContext {
-    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError>;
+    fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError>;
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn arrange(
         &mut self,
@@ -630,11 +630,11 @@ pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Si
     let kind = command.kind();
 
     match command {
-        Command::Action(CommandAction::StringValue {
+        Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Deadline,
-            value,
+            values,
             ..
-        }) => context.set_deadline(value)?,
+        }) => context.set_deadline(values)?,
         Command::Estimate { minutes } => context.set_estimate(*minutes)?,
         Command::Arrange {
             minutes,

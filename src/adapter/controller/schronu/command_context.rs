@@ -1,4 +1,6 @@
-use super::command::{parse_project_category_input, CommandKind, CommandParseError};
+use super::command::{
+    parse_project_category_input, CommandKind, CommandParseError, DEADLINE_USAGE,
+};
 use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, HandlerError,
     NextUpResult, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
@@ -834,7 +836,7 @@ pub(super) fn resolve_deadline_date(
     let mmdd = Regex::new(r"^(\d{1,2})/(\d{1,2})$").expect("valid deadline regex");
     if let Some(captures) = mmdd.captures(value) {
         let invalid_deadline =
-            || command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>");
+            || command_parse_error("〆", "deadline", "日時が不正です", DEADLINE_USAGE);
         let month = captures[1].parse::<u32>().map_err(|_| invalid_deadline())?;
         let day = captures[2].parse::<u32>().map_err(|_| invalid_deadline())?;
         let validation_year = 2000 + now.year().rem_euclid(400);
@@ -866,34 +868,48 @@ pub(super) fn resolve_deadline_date(
 }
 
 fn resolve_deadline_time(
-    deadline_value: &str,
+    deadline_values: &[String],
     now: DateTime<Local>,
     config: &SchronuConfig,
 ) -> Result<Option<DateTime<Local>>, HandlerError> {
-    let deadline_date_str = resolve_deadline_date(deadline_value, now)?;
-    if deadline_date_str == "消" {
-        return Ok(None);
-    }
-
     let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
     let invalid_datetime =
-        || command_parse_error("〆", "deadline", "日時が不正です", "〆 <日付または時刻>");
-    let (date, time) = if hhmm_reg.is_match(&deadline_date_str) {
-        let caps = hhmm_reg
-            .captures(&deadline_date_str)
-            .expect("matched deadline time must have captures");
-        let hh: u32 = caps[1].parse().map_err(|_| {
-            command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
-        })?;
-        let mm: u32 = caps[2].parse().map_err(|_| {
-            command_parse_error("〆", "deadline", "時刻が不正です", "〆 <日付または時刻>")
-        })?;
-        let time = NaiveTime::from_hms_opt(hh, mm, 0).ok_or_else(invalid_datetime)?;
-        (now.date_naive(), time)
+        || command_parse_error("〆", "deadline", "日時が不正です", DEADLINE_USAGE);
+    let (date_value, time_value) = match deadline_values {
+        [value] if value == "消" => return Ok(None),
+        [value] if hhmm_reg.is_match(value) => (None, Some(value.as_str())),
+        [value] => (Some(value.as_str()), None),
+        [first, second] if hhmm_reg.is_match(first) && !hhmm_reg.is_match(second) => {
+            (Some(second.as_str()), Some(first.as_str()))
+        }
+        [first, second] if !hhmm_reg.is_match(first) && hhmm_reg.is_match(second) => {
+            (Some(first.as_str()), Some(second.as_str()))
+        }
+        _ => return Err(invalid_datetime()),
+    };
+
+    let date = if let Some(value) = date_value {
+        let deadline_date_str = resolve_deadline_date(value, now)?;
+        if deadline_date_str == "消" {
+            return Err(invalid_datetime());
+        }
+        NaiveDate::parse_from_str(&deadline_date_str, "%Y/%m/%d").map_err(|_| invalid_datetime())?
     } else {
-        let date = NaiveDate::parse_from_str(&deadline_date_str, "%Y/%m/%d")
-            .map_err(|_| invalid_datetime())?;
-        (date, config.default_deadline_time)
+        now.date_naive()
+    };
+    let time = if let Some(value) = time_value {
+        let caps = hhmm_reg
+            .captures(value)
+            .expect("matched deadline time must have captures");
+        let hh: u32 = caps[1]
+            .parse()
+            .map_err(|_| command_parse_error("〆", "deadline", "時刻が不正です", DEADLINE_USAGE))?;
+        let mm: u32 = caps[2]
+            .parse()
+            .map_err(|_| command_parse_error("〆", "deadline", "時刻が不正です", DEADLINE_USAGE))?;
+        NaiveTime::from_hms_opt(hh, mm, 0).ok_or_else(invalid_datetime)?
+    } else {
+        config.default_deadline_time
     };
     Ok(Some(try_local_date_and_time(date, time)?))
 }
@@ -989,9 +1005,9 @@ impl RuntimeTaskAttributeCommandContext<'_> {
 }
 
 impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
-    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
+    fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         let deadline_time = resolve_deadline_time(
-            value,
+            values,
             self.task_repository.get_last_synced_time(),
             self.config,
         )?;
@@ -1406,14 +1422,14 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
 }
 
 impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
-    fn set_deadline(&mut self, value: &str) -> Result<(), HandlerError> {
+    fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         let mut context = RuntimeTaskAttributeCommandContext {
             task_repository: self.task_repository,
             focused_task_id_opt: self.focused_task_id_opt,
             focus_started_datetime: &self.focus_started_datetime,
             config: self.config,
         };
-        context.set_deadline(value)
+        context.set_deadline(values)
     }
 
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
@@ -1751,5 +1767,47 @@ impl TaskTreeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
         }
         .next_up(name, estimated_minutes)
+    }
+}
+
+#[cfg(test)]
+mod deadline_resolution_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn 日付だけの締切は設定された既定時刻を使う() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let config = SchronuConfig {
+            default_deadline_time: NaiveTime::from_hms_opt(19, 0, 0).unwrap(),
+            ..SchronuConfig::default()
+        };
+
+        let actual = resolve_deadline_time(&["9/21".to_string()], now, &config)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            actual,
+            Local.with_ymd_and_hms(2026, 9, 21, 19, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn 明示時刻と今日の組合せはlogical_dateを使う() {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, 2, 0, 0).unwrap();
+
+        let actual = resolve_deadline_time(
+            &["今日".to_string(), "14:30".to_string()],
+            now,
+            &SchronuConfig::default(),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            actual,
+            Local.with_ymd_and_hms(2026, 8, 10, 14, 30, 0).unwrap()
+        );
     }
 }

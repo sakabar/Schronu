@@ -3844,6 +3844,78 @@ fn test_execute_deadline_締切を設定して解除する() {
         tomorrow.task.get_deadline_time_opt().unwrap(),
         Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 59, 59).unwrap())
     );
+
+    for command in ["〆 14:30 9/21", "〆 9/21 14:30"] {
+        let task = new_test_task_handle("日時指定").unwrap();
+        let task_id = task.get_id().unwrap();
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, 21, 14, 30, 0).unwrap()),
+            "command: {command}"
+        );
+    }
+
+    let before_logical_day_boundary =
+        Local.with_ymd_and_hms(2026, 8, 11, 2, 0, 0).unwrap();
+    let task = new_test_task_handle("暦日指定").unwrap();
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_for_test(
+        task,
+        before_logical_day_boundary,
+        Some(task_id),
+        "〆 14:30",
+    );
+    assert_eq!(
+        result.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
+    );
+
+    let task = new_test_task_handle("logical date指定").unwrap();
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_for_test(
+        task,
+        before_logical_day_boundary,
+        Some(task_id),
+        "〆 今日 14:30",
+    );
+    assert_eq!(
+        result.task.get_deadline_time_opt().unwrap(),
+        Some(Local.with_ymd_and_hms(2026, 8, 10, 14, 30, 0).unwrap())
+    );
+}
+
+#[test]
+fn interactive_deadlineは日付と時刻の両順序を製品経路で設定する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    for command in ["〆 14:30 9/21", "〆 9/21 14:30"] {
+        let task = new_test_task_handle("interactive日時指定").unwrap();
+        let task_id = task.get_id().unwrap();
+        let mut task_repository = TestTaskRepository::new(task, now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(task_id);
+        let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+        let mut stdout = FlushTrackingWriter::successful(false);
+
+        execute_interactive_command(
+            &mut stdout,
+            &mut task_repository,
+            &mut free_time_manager,
+            &mut focused_task_id_opt,
+            &now,
+            &mut focus_selection_mode,
+            now,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(
+            task_repository.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, 21, 14, 30, 0).unwrap()),
+            "command: {command}"
+        );
+    }
 }
 
 #[test]
@@ -3862,14 +3934,23 @@ fn test_execute_deadline_不正日時はfield付き入力エラーを表示し�
     );
     assert!(result.output.contains("[Error] 入力エラー: deadline:"));
 
-    for command in ["〆 13/40", "〆 25:99"] {
+    for command in [
+        "〆 13/40",
+        "〆 25:99",
+        "〆 9/21 9/22",
+        "〆 14:30 15:30",
+        "〆 消 14:30",
+        "〆 9/21 14:30 extra",
+    ] {
         let result = execute_command_for_test(result.task.clone(), now, Some(task_id), command);
         assert_eq!(
             result.task.get_deadline_time_opt().unwrap(),
             Some(previous_deadline)
         );
         assert!(result.output.contains("コマンド: 〆"));
-        assert!(result.output.contains("使い方: 〆 <日付または時刻>"));
+        assert!(result
+            .output
+            .contains("使い方: 〆 <日付または時刻> [時刻または日付]"));
     }
 }
 
@@ -6436,8 +6517,17 @@ fn test_parse_non_interactive_command_複数引数を1コマンドにする() {
 fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
 
-    for command in ["予 -1", "類 invalid", "〆 invalid"] {
-        let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
+    for command in [
+        "予 -1",
+        "類 invalid",
+        "〆 invalid",
+        "〆 9/21 9/22",
+        "〆 14:30 15:30",
+        "〆 消 14:30",
+    ] {
+        let task = new_test_task_handle("既存").unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
         let result = execute_non_interactive_command_at_for_test(
@@ -6452,6 +6542,14 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
             "input error must win before busy-time I/O: {command}: {result:?}"
         );
         assert_eq!(free_time_manager.loaded_path(), None, "{command}");
+        assert_eq!(repository.load_attempt_count.get(), 0, "{command}");
+        assert_eq!(repository.reload_if_changed_attempt_count.get(), 0, "{command}");
+        assert_eq!(repository.save_attempt_count.get(), 0, "{command}");
+        assert_eq!(
+            repository.task.snapshot().unwrap(),
+            original_snapshot,
+            "{command}"
+        );
     }
 }
 
