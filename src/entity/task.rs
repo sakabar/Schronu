@@ -122,7 +122,7 @@ pub fn extract_leaf_tasks_from_project(
     task: &TaskHandle,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo];
-    extract_leaf_tasks_from_project_rec(task, &target_status)
+    Ok(extract_leaf_tasks_from_project_rec(task, &target_status)?.leaves)
 }
 
 // TodoもしくはPendingの葉タスクを抽出する
@@ -130,13 +130,18 @@ pub fn extract_leaf_tasks_from_project_with_pending(
     task: &TaskHandle,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo, Status::Pending];
-    extract_leaf_tasks_from_project_rec(task, &target_status)
+    Ok(extract_leaf_tasks_from_project_rec(task, &target_status)?.leaves)
+}
+
+struct LeafExtraction {
+    leaves: Vec<TaskHandle>,
+    has_unfinished_work: bool,
 }
 
 fn extract_leaf_tasks_from_project_rec(
     task: &TaskHandle,
     target_status_arr: &Vec<Status>,
-) -> Result<Vec<TaskHandle>, TaskTreeError> {
+) -> Result<LeafExtraction, TaskTreeError> {
     let is_repetition_series = task.is_repetition_series()?;
     let mut has_active_child = false;
     let mut descendants = Vec::new();
@@ -151,16 +156,15 @@ fn extract_leaf_tasks_from_project_rec(
             .get_status()
             == &Status::Done;
         if child_is_series {
-            let mut child_leaves =
+            let mut child_result =
                 extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
-            has_active_child |= repetition_series_has_unfinished_descendant(&child_task)?;
-            descendants.append(&mut child_leaves);
+            has_active_child |= child_result.has_unfinished_work;
+            descendants.append(&mut child_result.leaves);
         } else if !child_is_done {
             has_active_child = true;
-            descendants.append(&mut extract_leaf_tasks_from_project_rec(
-                &child_task,
-                target_status_arr,
-            )?);
+            let mut child_result =
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
+            descendants.append(&mut child_result.leaves);
         }
     }
 
@@ -169,24 +173,20 @@ fn extract_leaf_tasks_from_project_rec(
         let new_task = TaskHandle {
             node: task.node.clone(),
         };
-        return Ok(vec![new_task]);
+        return Ok(LeafExtraction {
+            leaves: vec![new_task],
+            has_unfinished_work: true,
+        });
     }
 
-    Ok(descendants)
-}
-
-fn repetition_series_has_unfinished_descendant(series: &TaskHandle) -> Result<bool, TaskTreeError> {
-    for child_node in series.node.children() {
-        let child = TaskHandle { node: child_node };
-        if child.is_repetition_series()? {
-            if repetition_series_has_unfinished_descendant(&child)? {
-                return Ok(true);
-            }
-        } else if child.get_status()? != Status::Done {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    Ok(LeafExtraction {
+        leaves: descendants,
+        has_unfinished_work: if is_repetition_series {
+            has_active_child
+        } else {
+            task.get_status()? != Status::Done || has_active_child
+        },
+    })
 }
 
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
