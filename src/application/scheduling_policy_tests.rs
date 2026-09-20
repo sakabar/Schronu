@@ -175,6 +175,62 @@ fn fixed予定同士は重複しても双方の指定時刻を保持する() {
 }
 
 #[test]
+fn fixed予約で締切内の連続枠を失うatomicは予約前の最新枠へ前倒しする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let fixed_start = Local.with_ymd_and_hms(2026, 9, 26, 11, 0, 0).unwrap();
+    let fixed = fixed_candidate("fixed", fixed_start, 10_395, 10_395);
+    let mut lunch = candidate(
+        "lunch",
+        Local.with_ymd_and_hms(2026, 9, 26, 11, 30, 0).unwrap(),
+        89,
+        3_182,
+    );
+    lunch.atomic = true;
+    lunch.deadline_time = Some(Local.with_ymd_and_hms(2026, 9, 26, 12, 50, 0).unwrap());
+    let lunch_id = lunch.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, lunch], now).unwrap();
+    let lunch_segment = segments_for(&scheduled, lunch_id);
+
+    assert_eq!(lunch_segment.len(), 1);
+    assert_eq!(
+        lunch_segment[0].first_available_time,
+        fixed_start - Duration::seconds(3_182)
+    );
+    assert_eq!(
+        lunch_segment[0].scheduled_start,
+        fixed_start - Duration::seconds(3_182)
+    );
+    assert_eq!(lunch_segment[0].scheduled_end, fixed_start);
+}
+
+#[test]
+fn fixed予約で締切までの容量が不足する非atomicは必要量だけ前倒しする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let fixed_start = now + Duration::hours(2);
+    let fixed = fixed_candidate("fixed", fixed_start, 60 * 60, 60 * 60);
+    let mut task = candidate("flexible", now + Duration::minutes(90), 89, 90 * 60);
+    task.deadline_time = Some(now + Duration::minutes(210));
+    let task_id = task.id;
+
+    let scheduled = schedule_tasks_by_priority(&[fixed, task], now).unwrap();
+    let task_segments = segments_for(&scheduled, task_id);
+
+    assert_eq!(task_segments.len(), 2);
+    assert_eq!(
+        task_segments[0].first_available_time,
+        now + Duration::hours(1)
+    );
+    assert_eq!(task_segments[0].scheduled_start, now + Duration::hours(1));
+    assert_eq!(task_segments[0].scheduled_end, fixed_start);
+    assert_eq!(
+        task_segments[1].scheduled_start,
+        fixed_start + Duration::hours(1)
+    );
+    assert_eq!(task_segments[1].scheduled_end, now + Duration::minutes(210));
+}
+
+#[test]
 fn 過去開始のfixed予定は元window内へ残作業を置き超過分を後続へ置く() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let start = now - Duration::hours(1);

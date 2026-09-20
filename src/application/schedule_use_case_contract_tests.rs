@@ -313,6 +313,39 @@ fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する
 }
 
 #[test]
+fn get_scheduleはfixed予約で締切内の枠を失うatomicを予約前へ前倒しする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 26, 9, 0, 0).unwrap();
+    let fixed_start = Local.with_ymd_and_hms(2026, 9, 26, 11, 0, 0).unwrap();
+    let fixed = task_with_schedule("fixed", fixed_start, 10_395, 144);
+    fixed.set_fixed_start(true).unwrap();
+    let lunch_start = Local.with_ymd_and_hms(2026, 9, 26, 11, 30, 0).unwrap();
+    let lunch_deadline = Local.with_ymd_and_hms(2026, 9, 26, 12, 50, 0).unwrap();
+    let lunch = task_with_schedule("lunch", lunch_start, 3_182, 89);
+    lunch.set_atomic(true).unwrap();
+    lunch.set_deadline_time_opt(Some(lunch_deadline)).unwrap();
+    let original_start = lunch.get_start_time().unwrap();
+    let repository = TestTaskRepository::new(vec![fixed, lunch.clone()], now);
+
+    let scheduled = get_schedule(&repository).unwrap();
+    let lunch_segment = scheduled
+        .iter()
+        .find(|segment| segment.task.id == lunch.get_id().unwrap())
+        .unwrap();
+
+    assert_eq!(
+        lunch_segment.first_available_time,
+        fixed_start - Duration::seconds(3_182)
+    );
+    assert_eq!(
+        lunch_segment.scheduled_start,
+        lunch_segment.first_available_time
+    );
+    assert_eq!(lunch_segment.scheduled_end, fixed_start);
+    assert_eq!(lunch.get_start_time().unwrap(), original_start);
+    assert_eq!(repository.save_count(), 0);
+}
+
+#[test]
 fn get_scheduleは反復親のfixed_startを生成用属性として予定から除外する() {
     let now = Local.with_ymd_and_hms(2026, 9, 4, 1, 0, 0).unwrap();
     let parent_start = Local.with_ymd_and_hms(2026, 9, 3, 21, 4, 6).unwrap();
