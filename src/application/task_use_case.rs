@@ -406,7 +406,14 @@ pub fn plan_defer_task(
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
     let deadline_limit = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES)
-        .deadline_pending_limit(deadline, estimated_work_seconds);
+        .try_deadline_pending_limit(deadline, estimated_work_seconds)
+        .map_err(|source| {
+            ApplicationError::TaskTree(TaskTreeError::DeadlineCalculation {
+                task_id,
+                field: "estimated_work_seconds",
+                source,
+            })
+        })?;
     if requested_pending_until <= deadline_limit {
         return Ok(DeferTaskPlan {
             mode: DeferMode::Normal,

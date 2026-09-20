@@ -10,7 +10,7 @@ use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
 use super::scheduling_instrumentation::{record_flatten, FlattenEvent};
 use super::task_use_case::ApplicationError;
 use crate::entity::datetime::LogicalDateTimePolicy;
-use crate::entity::task::{fixed_start_applies_to_schedule, Status};
+use crate::entity::task::{fixed_start_applies_to_schedule, Status, TaskTreeError};
 use chrono::{DateTime, Duration, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
@@ -187,7 +187,8 @@ fn flatten_tasks_with_end_of_day_offset_minutes_internal(
                 target_datetime,
                 candidate.deadline_time,
                 candidate.estimated_work_seconds,
-            ) != target_datetime
+                candidate.task_id,
+            )? != target_datetime
             {
                 rejected.push((candidate, UnresolvedReason::OwnDeadline));
                 continue;
@@ -411,10 +412,20 @@ fn effective_pending_until(
     requested: DateTime<Local>,
     deadline_time: Option<DateTime<Local>>,
     estimated_work_seconds: i64,
-) -> DateTime<Local> {
+    task_id: Uuid,
+) -> Result<DateTime<Local>, ApplicationError> {
     let datetime_policy = LogicalDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES);
-    deadline_time.map_or(requested, |deadline| {
-        requested.min(datetime_policy.deadline_pending_limit(deadline, estimated_work_seconds))
+    deadline_time.map_or(Ok(requested), |deadline| {
+        datetime_policy
+            .try_deadline_pending_limit(deadline, estimated_work_seconds)
+            .map(|limit| requested.min(limit))
+            .map_err(|source| {
+                ApplicationError::TaskTree(TaskTreeError::DeadlineCalculation {
+                    task_id,
+                    field: "estimated_work_seconds",
+                    source,
+                })
+            })
     })
 }
 

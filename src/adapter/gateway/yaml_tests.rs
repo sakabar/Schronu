@@ -640,6 +640,37 @@ children:
 }
 
 #[test]
+fn test_yaml_to_task_duration範囲外の見積秒数は子のpathと演算付きerrorを返す() {
+    let docs = YamlLoader::load_from_str(&format!(
+        "name: 親\nchildren:\n  - name: 子\n    status: pending\n    deadline_time: '2026/12/31 23:59:59'\n    estimated_work_seconds: {}\n",
+        i64::MAX
+    ))
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], yaml_test_now()).unwrap_err();
+
+    assert_eq!(
+        actual.to_string(),
+        "cannot convert project YAML to task: project.children[0].estimated_work_seconds: deadline_pending_limit duration is outside the supported range"
+    );
+}
+
+#[test]
+fn test_yaml_to_task_日時減算範囲外の見積秒数はpathと演算付きerrorを返す() {
+    let docs = YamlLoader::load_from_str(
+        "name: 日時境界\nstatus: pending\ndeadline_time: '0000/01/01 00:00:00'\nestimated_work_seconds: 10000000000000\n",
+    )
+    .unwrap();
+
+    let actual = yaml_to_task(&docs[0], yaml_test_now()).unwrap_err();
+
+    assert_eq!(actual.path, "project");
+    assert_eq!(actual.field, "estimated_work_seconds");
+    assert!(actual.reason.contains("deadline_pending_limit"));
+    assert!(actual.reason.contains("datetime subtraction"));
+}
+
+#[test]
 fn test_yaml_to_task_存在する型違いと不正enumはerrorを返す() {
     for (yaml, expected) in [
         (
@@ -1015,7 +1046,7 @@ fn test_yaml_to_task_fixed_start未指定なら旧約の完全一致式だけで
 }
 
 #[test]
-fn test_yaml_to_task_fixed_start旧推定は最大見積時間でpanicしない() {
+fn test_yaml_to_task_fixed_start旧推定は範囲外の最大見積時間をerrorにする() {
     let source = format!(
         "name: '最大見積'\nstart_time: '2026/08/20 13:00:00'\ndeadline_time: '2026/08/20 13:15:00'\nestimated_work_seconds: {}\n",
         i64::MAX
@@ -1023,9 +1054,12 @@ fn test_yaml_to_task_fixed_start旧推定は最大見積時間でpanicしない(
     let docs = YamlLoader::load_from_str(&source).unwrap();
 
     let operation_now = Local.with_ymd_and_hms(2026, 8, 20, 13, 0, 0).unwrap();
-    let actual = yaml_to_task(&docs[0], operation_now).unwrap();
+    let actual = yaml_to_task(&docs[0], operation_now).unwrap_err();
 
-    assert!(!actual.get_fixed_start().unwrap());
+    assert_eq!(actual.path, "project");
+    assert_eq!(actual.field, "estimated_work_seconds");
+    assert!(actual.reason.contains("deadline_pending_limit"));
+    assert!(actual.reason.contains("duration"));
 }
 
 #[test]
