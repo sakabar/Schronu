@@ -366,41 +366,40 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
 }
 
 #[test]
-fn listは46rem以下で可視header付きの高密度な一行tableになる() {
+fn listは全幅で可視header付きの高密度な一行tableになる() {
     let css = include_str!("../../assets/main.css");
-    let desktop_list_layout = css
+    let (universal_list_layout, responsive_layout) = css
         .split_once("@media (max-width: 46rem)")
-        .expect("mobile list breakpoint must exist")
+        .expect("navigation breakpoint must exist");
+    let mobile_only_layout = responsive_layout
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
         .0;
-    let mobile_list_layout = css
-        .split_once("@media (max-width: 46rem)")
-        .expect("list card breakpoint must match the 44rem table plus 2rem shell gutters")
-        .1;
-
-    assert!(
-        desktop_list_layout
-            .contains(".task-table th,\n.task-table td {\n    padding: 0.9rem 1rem;"),
-        "desktop table spacing must remain unchanged"
-    );
 
     for required in [
-        ".task-table-scroll {\n        overflow-x: visible;",
-        ".task-table {\n        display: block;\n        min-width: 0;",
-        ".task-table thead {\n        display: block;",
-        ".task-table thead tr,\n    .task-row {\n        display: grid;",
+        ".task-table-scroll {\n    overflow-x: visible;",
+        ".task-table {\n    display: block;\n    min-width: 0;",
+        ".task-table thead {\n    display: block;",
+        ".task-table thead tr,\n.task-row {\n    display: grid;",
         "grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);",
         "grid-template-areas: \"action schedule deadline task\";",
-        ".task-row {\n        min-height: 32px;",
-        ".task-row:not(:last-child) {\n        border-bottom: 1px solid var(--line);",
-        ".task-table td {\n        display: flex;\n        min-width: 0;\n        align-items: center;\n        padding: 0.125rem 0.35rem;",
-        ".task-table .session-cell {\n        padding: 0;",
-        ".deadline,\n    .schedule-time {\n        font-size: 0.68rem;",
-        ".task-name {\n        overflow: hidden;\n        font-size: 0.75rem;",
-        ".task-name-scroll {\n        min-width: 0;\n        overflow-x: auto;\n        overflow-y: hidden;\n        overscroll-behavior-inline: contain;\n        white-space: nowrap;",
+        ".task-row {\n    min-height: 32px;",
+        ".task-row:not(:last-child) {\n    border-bottom: 1px solid var(--line);",
+        ".task-table td {\n    display: flex;\n    min-width: 0;\n    align-items: center;\n    padding: 0.125rem 0.35rem;",
+        ".task-table .session-cell {\n    padding: 0;",
+        ".deadline,\n.schedule-time {\n    font-size: 0.68rem;",
+        ".task-name {\n    overflow: hidden;\n    font-size: 0.75rem;",
+        ".task-name-scroll {\n    min-width: 0;\n    overflow-x: auto;\n    overflow-y: hidden;\n    overscroll-behavior-inline: contain;\n    white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",
-        ".session-cell .session-start,\n    .session-cell .task-defer {\n        width: 44px;\n        min-height: 32px;",
+        ".session-cell .session-start,\n.session-cell .task-defer {\n    width: 44px;\n    min-height: 32px;",
+        ".session-start-compact-label {\n    display: inline;",
+        ".task-defer-compact-label {\n    display: inline;",
+        ".session-start-full-label,\n.task-defer-full-label {\n    display: none;",
     ] {
-        assert!(mobile_list_layout.contains(required), "missing: {required}");
+        assert!(
+            universal_list_layout.contains(required),
+            "missing universal rule: {required}"
+        );
     }
 
     for removed_card_style in [
@@ -408,48 +407,62 @@ fn listは46rem以下で可視header付きの高密度な一行tableになる() 
         "border-radius: 1rem;",
         "box-shadow: var(--shadow);",
     ] {
-        let row_rule = mobile_list_layout
+        let row_rule = universal_list_layout
             .split_once(".task-row {")
-            .expect("mobile task row rule must exist")
+            .expect("universal task row rule must exist")
             .1
             .split_once('}')
             .unwrap()
             .0;
         assert!(!row_rule.contains(removed_card_style), "{row_rule}");
     }
+
+    for selector in [
+        ".task-list-view",
+        ".list-controls",
+        ".date-pills",
+        ".date-pill",
+        ".task-name-filter-input",
+        ".date-jump-input",
+        ".task-table",
+        ".task-row",
+        ".task-name-scroll",
+        ".session-start-compact-label",
+        ".task-defer-compact-label",
+        ".session-start-full-label",
+        ".task-defer-full-label",
+    ] {
+        assert!(
+            !mobile_only_layout.contains(selector),
+            "list layout must not depend on viewport width: {selector}"
+        );
+    }
 }
 
 #[test]
-fn 幅46rem以下は曜日と検索領域を36pxへ圧縮する() {
+fn 一覧操作領域は全幅で36pxに統一する() {
     let css = include_str!("../../assets/main.css");
-    let (desktop_layout, mobile_layout) = css
+    let (universal_layout, responsive_layout) = css
         .split_once("@media (max-width: 46rem)")
-        .expect("mobile list breakpoint must exist");
-    let narrow_layout = mobile_layout
+        .expect("navigation breakpoint must exist");
+    let narrow_layout = responsive_layout
         .split_once("@media (max-width: 34rem)")
         .expect("narrow viewport rule must exist")
         .1;
 
-    for unchanged in [
-        ".task-list-view {\n    display: grid;\n    gap: 1rem;",
-        ".task-name-filter-input {\n    width: 100%;\n    min-width: 0;\n    min-height: max(2.75rem, 44px);",
-    ] {
-        assert!(desktop_layout.contains(unchanged), "missing: {unchanged}");
-    }
-
     for required in [
-        ".task-list-view {\n        gap: 0.5rem;",
-        ".date-pills {\n        padding: 0.125rem 0.1rem 0.25rem;",
-        ".date-pill {\n        height: 36px;\n        padding: 0.35rem 0.9rem;",
-        ".task-name-filter-input {\n        height: 36px;\n        min-height: 36px;\n        padding: 0.4rem 0.7rem;",
-        ".task-name-filter-clear {\n        width: 36px;\n        height: 36px;\n        min-width: 36px;\n        min-height: 36px;\n        padding: 0.25rem;",
+        ".task-list-view {\n    display: grid;\n    gap: 0.5rem;",
+        ".date-pills {\n    display: flex;\n    gap: 0.5rem;\n    overflow-x: auto;\n    padding: 0.125rem 0.1rem 0.25rem;",
+        ".date-pill {\n    flex: 0 0 auto;\n    height: 36px;\n    border-radius: 999px;\n    padding: 0.35rem 0.9rem;",
+        ".task-name-filter-input {\n    width: 100%;\n    min-width: 0;\n    height: 36px;\n    min-height: 36px;\n    padding: 0.4rem 0.7rem;",
+        ".task-name-filter-clear {\n    flex: 0 0 auto;\n    width: 36px;\n    height: 36px;\n    min-width: 36px;\n    min-height: 36px;\n    padding: 0.25rem;",
     ] {
-        assert!(mobile_layout.contains(required), "missing: {required}");
+        assert!(universal_layout.contains(required), "missing: {required}");
     }
 
     assert!(
         !narrow_layout.contains(".date-pill {"),
-        "date pill sizing must be owned by the 46rem breakpoint"
+        "date pill sizing must be owned by the universal layout"
     );
 }
 
@@ -906,11 +919,11 @@ fn filter一致なしはstatusを表示してtask操作を生成しない() {
 }
 
 #[test]
-fn task_name_filterはdesktop幅とclearの既定touch_targetを維持する() {
+fn task_name_filterは全幅でcompactなclear操作を使う() {
     let css = include_str!("../../assets/main.css");
-    let desktop_layout = css
+    let universal_layout = css
         .split_once("@media (max-width: 46rem)")
-        .expect("mobile list breakpoint must exist")
+        .expect("navigation breakpoint must exist")
         .0;
 
     for required in [
@@ -918,38 +931,40 @@ fn task_name_filterはdesktop幅とclearの既定touch_targetを維持する() {
         "width: 100%;",
         "min-width: 0;",
         ".task-name-filter-clear {",
-        "min-width: max(2.75rem, 44px);",
-        "min-height: max(2.75rem, 44px);",
+        "width: 36px;",
+        "height: 36px;",
+        "min-width: 36px;",
+        "min-height: 36px;",
     ] {
-        assert!(desktop_layout.contains(required), "missing: {required}");
+        assert!(universal_layout.contains(required), "missing: {required}");
     }
 }
 
 #[test]
-fn 日付入力はdesktopで検索の左かつmobileで検索の上に並ぶ() {
+fn 日付入力は全幅で検索の上に並ぶ() {
     let css = include_str!("../../assets/main.css");
-    let (desktop_layout, mobile_layout) = css
+    let (universal_layout, responsive_layout) = css
         .split_once("@media (max-width: 46rem)")
-        .expect("mobile list breakpoint must exist");
+        .expect("navigation breakpoint must exist");
+    let mobile_only_layout = responsive_layout
+        .split_once("@media (max-width: 34rem)")
+        .expect("narrow viewport rule must exist")
+        .0;
 
     for required in [
         ".list-controls {\n    display: grid;",
-        "grid-template-columns: minmax(13rem, 18rem) minmax(0, 1fr);",
+        "grid-template-columns: minmax(0, 1fr);",
         ".date-jump-controls {\n    display: grid;",
         "grid-template-columns: minmax(0, 1fr) auto;",
         ".date-jump-input {\n    width: 100%;",
-        ".date-jump-submit {\n    min-height: max(2.75rem, 44px);",
-    ] {
-        assert!(desktop_layout.contains(required), "missing: {required}");
-    }
-
-    for required in [
-        ".list-controls {\n        grid-template-columns: minmax(0, 1fr);",
-        ".date-jump-input,\n    .date-jump-submit {\n        height: 36px;",
+        ".date-jump-input,\n.date-jump-submit {\n    height: 36px;",
         "min-height: 36px;",
     ] {
-        assert!(mobile_layout.contains(required), "missing: {required}");
+        assert!(universal_layout.contains(required), "missing: {required}");
     }
+
+    assert!(!mobile_only_layout.contains(".list-controls"));
+    assert!(!mobile_only_layout.contains(".date-jump-input"));
 }
 
 #[component]
