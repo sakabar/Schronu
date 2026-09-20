@@ -8,6 +8,12 @@ use crate::entity::task::assert_task;
 use crate::entity::task::ProjectCategory;
 
 #[cfg(test)]
+use crate::application::task_use_case::{complete_task, CompleteTaskInput, TaskFactory};
+
+#[cfg(test)]
+use crate::test_support::TestTaskRepository;
+
+#[cfg(test)]
 use uuid::uuid;
 
 #[cfg(test)]
@@ -1289,6 +1295,53 @@ fn test_yaml_to_task_legacy_repetition_parent_migrates_time_templates() {
     assert_eq!(canonical["repetition_start_time"].as_str(), Some("09:30:00"));
     assert_eq!(canonical["repetition_deadline_time"].as_str(), Some("18:45:00"));
     assert!(canonical["deadline_time"].is_badvalue());
+}
+
+#[test]
+fn test_legacy_repetition_fixed_shape_is_inherited_by_next_occurrence() {
+    let yaml = YamlLoader::load_from_str(
+        "name: routine\nstart_time: '2026/08/20 09:30:00'\ndeadline_time: '2026/08/20 10:00:00'\nestimated_work_seconds: 1800\nrepetition_interval_days: 7\nchildren:\n  - name: current occurrence\n    deadline_time: '2026/08/20 10:00:00'\n",
+    )
+    .unwrap();
+    let series = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+    let current = series.get_children().unwrap().remove(0);
+    let mut repository = TestTaskRepository::new(vec![series.clone()], yaml_test_now());
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(yaml_test_now(), &mut next_id);
+
+    complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: current.get_id().unwrap(),
+            finished_at: yaml_test_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+        &mut factory,
+    )
+    .unwrap();
+
+    assert!(series.get_fixed_start().unwrap());
+    assert_eq!(series.get_deadline_time_opt().unwrap(), None);
+    assert_eq!(
+        series.get_repetition_start_time_opt().unwrap(),
+        Some(NaiveTime::from_hms_opt(9, 30, 0).unwrap())
+    );
+    assert_eq!(
+        series.get_repetition_deadline_time_opt().unwrap(),
+        Some(NaiveTime::from_hms_opt(10, 0, 0).unwrap())
+    );
+    let next = series
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|task| task.get_status().unwrap() != Status::Done)
+        .expect("next occurrence");
+    assert!(next.get_fixed_start().unwrap());
+    assert_eq!(
+        next.get_deadline_time_opt().unwrap().unwrap().time(),
+        NaiveTime::from_hms_opt(10, 0, 0).unwrap()
+    );
 }
 
 #[test]
