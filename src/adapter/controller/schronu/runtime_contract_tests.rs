@@ -6000,7 +6000,9 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
         "〆 14:30 15:30",
         "〆 消 14:30",
     ] {
-        let mut repository = TestTaskRepository::new(new_test_task_handle("既存").unwrap(), now);
+        let task = new_test_task_handle("既存").unwrap();
+        let original_snapshot = task.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(task, now);
         let mut free_time_manager = TestFreeTimeManagerWithLoadError::default();
 
         let result = execute_non_interactive_command_at_for_test(
@@ -6015,6 +6017,14 @@ fn test_non_interactiveの不正属性値はbusy_time読込前に拒否する() 
             "input error must win before busy-time I/O: {command}: {result:?}"
         );
         assert_eq!(free_time_manager.loaded_path(), None, "{command}");
+        assert_eq!(repository.load_attempt_count.get(), 0, "{command}");
+        assert_eq!(repository.reload_if_changed_attempt_count.get(), 0, "{command}");
+        assert_eq!(repository.save_attempt_count.get(), 0, "{command}");
+        assert_eq!(
+            repository.task.snapshot().unwrap(),
+            original_snapshot,
+            "{command}"
+        );
     }
 }
 
