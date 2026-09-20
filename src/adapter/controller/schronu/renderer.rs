@@ -962,7 +962,7 @@ fn render_calendar_alerts(
     let mut is_all_favorable = true;
     if let Some(issue) = alerts.today_deadline_issue {
         writer.writeln_newline(&format!(
-            "[Crit] 【今日までの】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【ただちに】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "[Crit] 【今日までの】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【ただちに】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
             issue.affected_count,
             issue.first_affected_date,
             format_alert_overrun(issue.max_overrun_seconds),
@@ -981,7 +981,7 @@ fn render_calendar_alerts(
     }
     if let Some(issue) = alerts.tomorrow_deadline_issue {
         writer.writeln_newline(&format!(
-            "[Warn] 【明日の】〆切に間に合わないタスクが{}件あります。対象日: {}, 最大超過: {}。【今日中に】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "[Warn] 【明日の】〆切に間に合わないタスクが{}件あります。対象日: {}, 最大超過: {}。【今日中に】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
             issue.affected_count,
             issue.first_affected_date,
             format_alert_overrun(issue.max_overrun_seconds),
@@ -997,7 +997,7 @@ fn render_calendar_alerts(
     }
     if let Some(issue) = alerts.weekly_deadline_issue {
         writer.writeln_newline(&format!(
-            "[Warn] 【7日以内の】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【近々】`全 〆`で対象を確認し、予定を前倒しするか〆切を調整してください。",
+            "[Warn] 【7日以内の】〆切に間に合わないタスクが{}件あります。最初の対象日: {}, 最大超過: {}。【近々】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。",
             issue.affected_count,
             issue.first_affected_date,
             format_alert_overrun(issue.max_overrun_seconds),

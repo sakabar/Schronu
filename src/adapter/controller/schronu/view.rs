@@ -1134,6 +1134,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         if has_task_list_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
+                    } else if pattern == "v" {
+                        if icon == breaking_deadline_icon {
+                            task_list_display_rows.push(task_list_display_row.clone());
+                        }
                     } else if pattern == "〆" {
                         if has_deadline_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
