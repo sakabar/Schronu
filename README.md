@@ -717,7 +717,7 @@ SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正�
 
 ただし、自身に`repetition_interval_days`を持つ繰り返し親taskでは、`fixed_start`は次回子taskを生成するための既定値です。繰り返し親task自身はfixed予定にならず、新しく生成される子だけが親の値を継承します。既存の子の`fixed_start`は変更されず、個別の子に対する`約`・`始`も親や次回子へ逆伝播しません。
 
-`repetition_interval_days`を持つtaskは、各回のtaskを生成する繰り返し親taskです。繰り返し親task自身は子の有無、status、`pending_until`、日時にかかわらず予定候補にならず、未完了の各回のtaskだけを予定します。繰り返し親taskより上の通常親taskと各回のtaskの依存関係は維持します。
+`repetition_interval_days`を持つtaskは、各回のtaskを生成する繰り返し親taskです。繰り返し親task自身は子の有無、status、`pending_until`、日時にかかわらず予定候補にならず、未完了の各回のtaskだけを予定します。繰り返し親taskは予定依存の境界となり、それより上の通常祖先も予定候補になりません。通常祖先のdeadlineは従来どおり各回のtaskへ継承します。
 
 繰り返し親taskのYAMLでは、次回taskの壁時計時刻を`repetition_start_time: "HH:MM:SS"`と`repetition_deadline_time: "HH:MM:SS"`で保存します。旧YAMLは`start_time`と`deadline_time`の時刻部分から自動移行し、旧deadlineがなければ`23:59:59`を使います。繰り返し親taskに通常のdeadlineは設定できません。
 

@@ -241,6 +241,46 @@ fn extract_leaf_tasks_never_returns_repeating_task_itself() {
 }
 
 #[test]
+fn repeating_task_always_prevents_normal_ancestor_from_becoming_leaf() {
+    for (repeating_task_is_done, with_done_occurrence) in
+        [(false, false), (false, true), (true, false), (true, true)]
+    {
+        let root = new_test_task_handle("normal ancestor").unwrap();
+        let repeating_task =
+            root.create_as_last_child(new_test_task_attr("repeating task"));
+        repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+        if repeating_task_is_done {
+            repeating_task.set_orig_status(Status::Done).unwrap();
+        }
+        if with_done_occurrence {
+            let mut occurrence = new_test_task_attr("done occurrence");
+            occurrence.set_orig_status(Status::Done);
+            repeating_task.create_as_last_child(occurrence);
+        }
+
+        assert!(extract_leaf_tasks_from_project(&root).unwrap().is_empty());
+        assert!(extract_leaf_tasks_from_project_with_pending(&root)
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
+fn removing_repetition_allows_normal_ancestor_to_become_leaf_again() {
+    let root = new_test_task_handle("normal ancestor").unwrap();
+    let repeating_task = root.create_as_last_child(new_test_task_attr("repeating task"));
+    repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    repeating_task.set_orig_status(Status::Done).unwrap();
+    assert!(extract_leaf_tasks_from_project(&root).unwrap().is_empty());
+
+    repeating_task.set_repetition_interval_days_opt(None).unwrap();
+
+    let leaves = extract_leaf_tasks_from_project(&root).unwrap();
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(leaves[0].get_id().unwrap(), root.get_id().unwrap());
+}
+
+#[test]
 fn extract_leaf_tasks_still_finds_unfinished_repetition_occurrence() {
     let repeating_task = new_test_task_handle("repeating task").unwrap();
     repeating_task.set_repetition_interval_days_opt(Some(7)).unwrap();

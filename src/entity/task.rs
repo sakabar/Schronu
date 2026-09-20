@@ -181,7 +181,7 @@ fn extract_leaf_tasks_from_project_rec(
     Ok(LeafExtraction {
         leaves: descendants,
         has_unfinished_work: if is_repeating_task {
-            has_active_child
+            true
         } else {
             task.get_status()? != Status::Done || has_active_child
         },
