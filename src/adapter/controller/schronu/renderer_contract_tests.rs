@@ -534,7 +534,7 @@ fn task_list_displayはansi有効時に単発task名と締切超過を帯配色�
     assert_eq!(
         writer.operations[0],
         format!(
-            "newline:0001 {task_id} v \x1b[38;5;196m+00:10____\x1b[39m 08/23(日)-09:00~09:40 0 40 01 維 \x1b[38;5;208m単発task\x1b[39m"
+            "newline:0001 {task_id} \x1b[38;5;196mv\x1b[39m \x1b[38;5;196m+00:10____\x1b[39m 08/23(日)-09:00~09:40 0 40 01 維 \x1b[38;5;208m単発task\x1b[39m"
         )
     );
 }
@@ -585,12 +585,70 @@ fn task_list_displayは種別ごとのtask名と今日以降の締切を指定�
 
     render_display_model(&mut writer, &display).unwrap();
 
-    assert!(writer.operations[0].contains("! \x1b[38;5;214m____-01:20\x1b[39m"));
+    assert!(
+        writer.operations[0].contains("\x1b[38;5;214m!\x1b[39m \x1b[38;5;214m____-01:20\x1b[39m")
+    );
     assert!(writer.operations[0].ends_with("\x1b[38;5;110m固定task\x1b[39m"));
     assert!(writer.operations[1].contains("- \x1b[38;5;34m_____-001D\x1b[39m"));
     assert!(writer.operations[1].ends_with("\x1b[38;5;33m繰返task\x1b[39m"));
     assert!(writer.operations[2].contains("- ____/__/__"));
     assert!(writer.operations[2].ends_with("\x1b[38;5;208m単発task\x1b[39m"));
+}
+
+#[test]
+fn task_list_displayは警告iconだけを意味別の色で表示する() {
+    let scheduled_start = Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap();
+    let rows = [
+        ("v", "+00:10____", false),
+        ("!", "____-01:20", false),
+        ("v", "+00:10____", true),
+        ("/", "____/__/__", false),
+        ("-", "____/__/__", false),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(ind, (icon, deadline, give_up_candidate))| {
+        TaskListRow::Task(TaskListTaskRow {
+            ind,
+            task_id: Uuid::from_u128(ind as u128 + 1),
+            icon: icon.to_string(),
+            deadline: deadline.to_string(),
+            scheduled_start,
+            scheduled_end: scheduled_start + chrono::Duration::minutes(15),
+            rank: 0,
+            estimated_minutes: 15,
+            priority: 0,
+            project_category: None,
+            task_name: format!("task{ind}"),
+            kind: TaskListTaskKind::NonRepetitive,
+            has_deadline: deadline != "____/__/__",
+            give_up_candidate,
+        })
+    })
+    .collect();
+    let display = DisplayModel::TaskList(TaskListDisplay {
+        rows,
+        category_work_seconds: vec![],
+        category_denominator_seconds: 0,
+    });
+    let mut writer = TraceWriter {
+        supports_ansi_color: true,
+        ..TraceWriter::default()
+    };
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert!(
+        writer.operations[0].contains("\x1b[38;5;196mv\x1b[39m \x1b[38;5;196m+00:10____\x1b[39m")
+    );
+    assert!(
+        writer.operations[1].contains("\x1b[38;5;214m!\x1b[39m \x1b[38;5;214m____-01:20\x1b[39m")
+    );
+    assert!(
+        writer.operations[2].contains("\x1b[38;5;135mA\x1b[39m \x1b[38;5;196m+00:10____\x1b[39m")
+    );
+    assert!(writer.operations[3].contains(" / ____/__/__"));
+    assert!(writer.operations[4].contains(" - ____/__/__"));
 }
 
 #[test]

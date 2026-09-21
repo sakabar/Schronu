@@ -539,6 +539,7 @@ const NON_REPETITIVE_COLOR: u8 = 208;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
 const DEADLINE_TODAY_COLOR: u8 = 214;
 const FUTURE_DEADLINE_COLOR: u8 = 34;
+const GIVE_UP_CANDIDATE_COLOR: u8 = 135;
 
 fn render_band_display(
     writer: &mut dyn SchronuWriter,
@@ -1073,6 +1074,14 @@ fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool
             };
             columns.task_name =
                 ansi_foreground(&columns.task_name, task_color, supports_ansi_color);
+            if let Some(icon_color) = match columns.icon.as_str() {
+                "v" => Some(DEADLINE_OVERRUN_COLOR),
+                "!" => Some(DEADLINE_TODAY_COLOR),
+                "A" => Some(GIVE_UP_CANDIDATE_COLOR),
+                _ => None,
+            } {
+                columns.icon = ansi_foreground(&columns.icon, icon_color, supports_ansi_color);
+            }
             if let Some(deadline_color) = match row.icon.as_str() {
                 "v" => Some(DEADLINE_OVERRUN_COLOR),
                 "!" => Some(DEADLINE_TODAY_COLOR),

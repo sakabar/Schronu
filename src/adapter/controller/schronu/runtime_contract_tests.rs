@@ -2156,6 +2156,33 @@ fn task_list共有表示は全今尾で同じtask名配色を使う() {
 }
 
 #[test]
+fn task_list製品経路は犠牲候補iconを端末だけ紫で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("犠牲候補task").unwrap();
+    task.set_estimated_work_seconds(40 * 60).unwrap();
+    task.set_start_time(now).unwrap();
+    task.sync_clock(now).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let terminal_output = execute_command_with_ansi_color_for_test(
+        task.clone(),
+        now,
+        Some(task_id),
+        "全",
+        true,
+    )
+    .output;
+    assert!(
+        terminal_output.contains("\x1b[38;5;135mA\x1b[39m"),
+        "{terminal_output}"
+    );
+
+    let redirected_output = execute_command_for_test(task, now, Some(task_id), "全").output;
+    assert!(redirected_output.contains(" A "), "{redirected_output}");
+    assert!(!redirected_output.contains("\x1b["), "{redirected_output}");
+}
+
+#[test]
 fn task_list製品経路は明日以降の締切を端末だけ明緑で表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("未来締切task").unwrap();
@@ -2499,7 +2526,7 @@ fn test_execute_all_未来締切を超過する予定のiconをvにする() {
     let mut task_repository = TestTaskRepository::new(root, now);
     let mut free_time_manager = TestFreeTimeManager::with_free_minutes(24 * 60);
     let mut focused_task_id_opt = None;
-    let mut stdout = TestWriter::new();
+    let mut stdout = TestWriter::new_for_pipe();
     execute(
         &mut stdout,
         &mut task_repository,
