@@ -3,7 +3,7 @@ use super::test_support::json_fixture;
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::TaskView;
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status};
-use chrono::{Local, TimeZone};
+use chrono::{Local, NaiveTime, TimeZone};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -32,10 +32,12 @@ fn task_viewのserde表現は既存mcp_json契約と一致する() {
         create_time,
         start_time,
         end_time: None,
-        deadline_time: Some(deadline_time),
+        deadline_time: None,
         estimated_work_seconds: 1_800,
         actual_work_seconds: 900,
         repetition_interval_days: Some(7),
+        repetition_start_time: Some(NaiveTime::from_hms_opt(10, 0, 0).unwrap()),
+        repetition_deadline_time: Some(NaiveTime::from_hms_opt(23, 59, 59).unwrap()),
         repetition_anchor: RepetitionAnchor::Completion,
         days_in_advance: 2,
         project_category: Some(ProjectCategory::Recovery),
@@ -90,6 +92,8 @@ fn scheduled_task_viewのserde表現はnested_taskを含む既存mcp_json契約�
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days: None,
+            repetition_start_time: None,
+            repetition_deadline_time: None,
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
             project_category: None,

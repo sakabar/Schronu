@@ -123,12 +123,16 @@ fn build_schedule_candidates(
     let last_synced_time = repository.get_last_synced_time();
     let mut task_schedule_attributes: HashMap<Uuid, TaskScheduleAttributes> = HashMap::new();
     let mut child_ids_by_parent_id: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+    let mut subtree_contains_repeating_task_by_id = HashMap::new();
 
     for project_root in repository.get_all_projects() {
         for leaf in extract_leaf_tasks_from_project_with_pending(project_root)
             .map_err(ApplicationError::TaskTree)?
         {
-            let ancestors = list_ancestor_schedule_times_checked(&leaf)?;
+            let ancestors = list_ancestor_schedule_times_checked(
+                &leaf,
+                &mut subtree_contains_repeating_task_by_id,
+            )?;
             for pair in ancestors.windows(2) {
                 let child_id = pair[0].1.get_id().map_err(ApplicationError::TaskTree)?;
                 let parent_id = pair[1].1.get_id().map_err(ApplicationError::TaskTree)?;
@@ -210,13 +214,20 @@ fn build_schedule_candidates(
 /// 保持しつつ、flexibleには従来のdeadline補正と祖先順序をそのまま適用する。
 fn list_ancestor_schedule_times_checked(
     leaf: &TaskHandle,
+    subtree_contains_repeating_task_by_id: &mut HashMap<Uuid, bool>,
 ) -> Result<Vec<(DateTime<Local>, TaskHandle)>, ApplicationError> {
     let mut ancestors = Vec::new();
     let mut child_finish = DateTime::<Local>::MIN_UTC.with_timezone(&Local);
     let mut task = Some(leaf.clone());
+    let mut boundary_deadline = None;
 
     // Phase 1: 子の終了を親の開始下限にする。ただしfixedはdependencyで動かさない。
+    // 部分木に繰り返しtaskを含むtaskは完了不能なので、そのtaskから上を予定しない。
     while let Some(current) = task {
+        if subtree_contains_repeating_task(&current, subtree_contains_repeating_task_by_id)? {
+            boundary_deadline = minimum_deadline_from(&current)?;
+            break;
+        }
         let fixed = current
             .fixed_start_applies_to_schedule()
             .map_err(ApplicationError::TaskTree)?;
@@ -239,9 +250,11 @@ fn list_ancestor_schedule_times_checked(
         task = current.parent().map_err(ApplicationError::TaskTree)?;
     }
 
-    // Phase 2: 親側のdeadlineから必要開始時刻を子へ伝える。fixedは動かさず、
-    // その指定開始をdependency側の必要時刻として伝える。
-    let mut parent_required_start = DateTime::<Local>::MAX_UTC.with_timezone(&Local);
+    // Phase 2: 親側のdeadlineから必要開始時刻を子へ伝える。繰り返し境界より上も
+    // deadlineだけは維持する。fixedは動かさず、その指定開始をdependency側の
+    // 必要時刻として伝える。
+    let mut parent_required_start =
+        boundary_deadline.unwrap_or_else(|| DateTime::<Local>::MAX_UTC.with_timezone(&Local));
     for (rough_start, current) in ancestors.iter_mut().rev() {
         if current
             .fixed_start_applies_to_schedule()
@@ -297,6 +310,44 @@ fn list_ancestor_schedule_times_checked(
     }
 
     Ok(ancestors)
+}
+
+fn minimum_deadline_from(task: &TaskHandle) -> Result<Option<DateTime<Local>>, ApplicationError> {
+    let mut deadline = None;
+    let mut current = Some(task.clone());
+    while let Some(task) = current {
+        if let Some(current_deadline) = task
+            .get_deadline_time_opt()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            deadline = Some(
+                deadline
+                    .map(|deadline| min(deadline, current_deadline))
+                    .unwrap_or(current_deadline),
+            );
+        }
+        current = task.parent().map_err(ApplicationError::TaskTree)?;
+    }
+    Ok(deadline)
+}
+
+fn subtree_contains_repeating_task(
+    task: &TaskHandle,
+    cache: &mut HashMap<Uuid, bool>,
+) -> Result<bool, ApplicationError> {
+    let id = task.get_id().map_err(ApplicationError::TaskTree)?;
+    if let Some(contains_repeating_task) = cache.get(&id) {
+        return Ok(*contains_repeating_task);
+    }
+
+    let mut contains_repeating_task = !task
+        .is_schedulable_work()
+        .map_err(ApplicationError::TaskTree)?;
+    for child in task.get_children().map_err(ApplicationError::TaskTree)? {
+        contains_repeating_task |= subtree_contains_repeating_task(&child, cache)?;
+    }
+    cache.insert(id, contains_repeating_task);
+    Ok(contains_repeating_task)
 }
 
 fn checked_candidate_end(

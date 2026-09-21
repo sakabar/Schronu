@@ -591,8 +591,6 @@ mod tests {
         repetition_parent
             .set_repetition_interval_days_opt(Some(7))
             .unwrap();
-        let repetition_parent_id = repetition_parent.get_id().unwrap();
-
         let flexible = new_task_handle("通常task").unwrap();
         flexible.sync_clock(now).unwrap();
         flexible.set_start_time(now).unwrap();
@@ -604,8 +602,7 @@ mod tests {
 
         let result = flatten_tasks(&repository, &mut free_time_manager).unwrap();
 
-        assert_eq!(result.flattened_tasks.len(), 1);
-        assert_eq!(result.flattened_tasks[0].task_id, repetition_parent_id);
+        assert!(result.flattened_tasks.is_empty());
         assert!(result.unresolved_overloads.is_empty());
         assert!(repetition_parent.get_fixed_start().unwrap());
     }

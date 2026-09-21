@@ -252,15 +252,18 @@ fn next_child_after_finish(
         .set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 30, 15).unwrap())
         .unwrap();
     parent_task
-        .set_deadline_time_opt(Some(
-            Local.with_ymd_and_hms(2026, 5, 10, 23, 59, 59).unwrap(),
-        ))
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(9, 30, 15).unwrap()))
+        .unwrap();
+    parent_task
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 59, 59).unwrap()))
         .unwrap();
 
     let mut child_task_attr =
         TaskAttr::with_identity("ルーチン(5/16)", Uuid::new_v4(), finished_at);
     child_task_attr.set_start_time(focused_start_time);
-    child_task_attr.set_deadline_time_opt(focused_deadline_time_opt);
+    child_task_attr
+        .set_deadline_time_opt(focused_deadline_time_opt)
+        .unwrap();
     let child_task = parent_task.create_as_last_child(child_task_attr);
 
     let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
@@ -320,12 +323,15 @@ fn get_task_task_viewの全属性を返す() {
     root.set_create_time(create_time).unwrap();
     root.set_start_time(start_time).unwrap();
     root.set_end_time_opt(Some(end_time)).unwrap();
-    root.set_deadline_time_opt(Some(deadline_time)).unwrap();
     root.set_estimated_work_seconds(1_800).unwrap();
     root.set_actual_work_seconds(900).unwrap();
     root.set_atomic(true).unwrap();
     root.set_is_on_other_side(true).unwrap();
     root.set_repetition_interval_days_opt(Some(7)).unwrap();
+    root.set_repetition_start_time_opt(Some(start_time.time()))
+        .unwrap();
+    root.set_repetition_deadline_time_opt(Some(deadline_time.time()))
+        .unwrap();
     root.set_repetition_anchor(RepetitionAnchor::Completion)
         .unwrap();
     root.set_days_in_advance(2).unwrap();
@@ -353,10 +359,12 @@ fn get_task_task_viewの全属性を返す() {
     assert_eq!(actual.create_time, create_time);
     assert_eq!(actual.start_time, start_time);
     assert_eq!(actual.end_time, Some(end_time));
-    assert_eq!(actual.deadline_time, Some(deadline_time));
+    assert_eq!(actual.deadline_time, None);
     assert_eq!(actual.estimated_work_seconds, 1_800);
     assert_eq!(actual.actual_work_seconds, 900);
     assert_eq!(actual.repetition_interval_days, Some(7));
+    assert_eq!(actual.repetition_start_time, Some(start_time.time()));
+    assert_eq!(actual.repetition_deadline_time, Some(deadline_time.time()));
     assert_eq!(actual.repetition_anchor, RepetitionAnchor::Completion);
     assert_eq!(actual.days_in_advance, 2);
     assert_eq!(actual.project_category, Some(ProjectCategory::Recovery));
@@ -988,8 +996,11 @@ fn routine_task_for_defer_policy(
 ) -> (TaskHandle, TestTaskRepository) {
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("ルーチン延期");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     let repository = TestTaskRepository::new(vec![parent], now);
     (child, repository)
@@ -1085,9 +1096,25 @@ fn defer_routine_task_親deadlineの有無に応じて次周期へ延期する()
     ] {
         let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
-        parent.set_deadline_time_opt(parent_deadline).unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(
+                parent_deadline
+                    .map(|deadline| deadline.time())
+                    .unwrap_or_else(|| orig_deadline.time()),
+            ))
+            .unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(orig_start.time()))
+            .unwrap();
+        if parent_deadline.is_none() {
+            parent
+                .set_repetition_deadline_time_opt(Some(orig_deadline.time()))
+                .unwrap();
+        }
         let mut child_attr = crate::test_support::new_task_attr("延期対象");
-        child_attr.set_deadline_time_opt(Some(orig_deadline));
+        child_attr
+            .set_deadline_time_opt(Some(orig_deadline))
+            .unwrap();
         child_attr.set_start_time(orig_start);
         child_attr.set_orig_status(Status::Pending);
         child_attr.set_pending_until(fixed_now() + Duration::hours(2));
@@ -1176,8 +1203,13 @@ fn defer_routine_task_日時計算不能なら変更しない() {
     );
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(orig_deadline.time()))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("延期対象");
-    child_attr.set_deadline_time_opt(Some(orig_deadline));
+    child_attr
+        .set_deadline_time_opt(Some(orig_deadline))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let child_id = child.get_id().unwrap();
     let snapshot = child.snapshot().unwrap();
@@ -1200,8 +1232,11 @@ fn defer_routine_task_deadline伝搬失敗でも変更しない() {
     let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("延期対象");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     let descendant = child.create_as_last_child(crate::test_support::new_task_attr("子孫"));
     let child_id = child.get_id().unwrap();
@@ -1225,8 +1260,11 @@ fn defer_routine_task_完了済みtaskもdeadlineを更新してtodoへ戻す() 
     let deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(deadline.time()))
+        .unwrap();
     let mut child_attr = crate::test_support::new_task_attr("完了済み延期対象");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     child_attr.set_orig_status(Status::Done);
     let child = parent.create_as_last_child(child_attr);
     let child_id = child.get_id().unwrap();
@@ -1476,7 +1514,9 @@ fn complete_task_反復anchorの次論理日計算不能をerrorにして変更�
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
     let mut child_attr = TaskAttr::with_identity("今回", Uuid::from_u128(0x202), fixed_now());
-    child_attr.set_deadline_time_opt(Some(occurrence_anchor));
+    child_attr
+        .set_deadline_time_opt(Some(occurrence_anchor))
+        .unwrap();
     child_attr.set_actual_work_seconds(120);
     let child = parent.create_as_last_child(child_attr);
     let child_id = child.get_id().unwrap();
@@ -2102,13 +2142,14 @@ fn complete_task_繰り返し親のatomicを次回子タスクに引き継ぐ() 
         .set_start_time(Local.with_ymd_and_hms(2026, 5, 10, 9, 0, 0).unwrap())
         .unwrap();
     parent_task
-        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 10, 10, 0, 0).unwrap()))
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(10, 0, 0).unwrap()))
         .unwrap();
 
     let mut child_task_attr = TaskAttr::with_identity("通勤(5/16)", Uuid::new_v4(), fixed_now());
     child_task_attr.set_start_time(Local.with_ymd_and_hms(2026, 5, 16, 9, 0, 0).unwrap());
     child_task_attr
-        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap()));
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap()))
+        .unwrap();
     let child_task = parent_task.create_as_last_child(child_task_attr);
 
     let finished_at = Local.with_ymd_and_hms(2026, 5, 16, 10, 0, 0).unwrap();

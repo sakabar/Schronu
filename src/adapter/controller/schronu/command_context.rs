@@ -403,7 +403,9 @@ pub(super) fn execute_next_up(
         .transpose()?;
 
     let mut new_task_attr = task_factory.create_task_attr(new_task_name_str);
-    new_task_attr.set_deadline_time_opt(parent_deadline_time_opt);
+    new_task_attr
+        .set_deadline_time_opt(parent_deadline_time_opt)
+        .map_err(ApplicationError::TaskTree)?;
 
     if let Some(new_task_estimated_work_seconds) = estimated_work_seconds_opt {
         new_task_attr.set_estimated_work_seconds(new_task_estimated_work_seconds);

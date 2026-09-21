@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, NaiveTime};
 use dendron::{HotNode, InsertAs, Node};
 use serde::Serialize;
 use std::cmp::{max, min};
@@ -122,7 +122,7 @@ pub fn extract_leaf_tasks_from_project(
     task: &TaskHandle,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo];
-    extract_leaf_tasks_from_project_rec(task, &target_status)
+    Ok(extract_leaf_tasks_from_project_rec(task, &target_status)?.leaves)
 }
 
 // TodoもしくはPendingの葉タスクを抽出する
@@ -130,63 +130,62 @@ pub fn extract_leaf_tasks_from_project_with_pending(
     task: &TaskHandle,
 ) -> Result<Vec<TaskHandle>, TaskTreeError> {
     let target_status: Vec<Status> = vec![Status::Todo, Status::Pending];
-    extract_leaf_tasks_from_project_rec(task, &target_status)
+    Ok(extract_leaf_tasks_from_project_rec(task, &target_status)?.leaves)
+}
+
+struct LeafExtraction {
+    leaves: Vec<TaskHandle>,
+    has_unfinished_work: bool,
 }
 
 fn extract_leaf_tasks_from_project_rec(
     task: &TaskHandle,
     target_status_arr: &Vec<Status>,
-) -> Result<Vec<TaskHandle>, TaskTreeError> {
-    let mut children_are_all_done = true;
+) -> Result<LeafExtraction, TaskTreeError> {
+    let is_repeating_task = task.is_repeating_task()?;
+    let mut has_active_child = false;
+    let mut descendants = Vec::new();
     for child_node in task.node.children() {
-        if child_node
+        let child_task = TaskHandle {
+            node: child_node.clone(),
+        };
+        let child_is_repeating_task = child_task.is_repeating_task()?;
+        let child_is_done = child_node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?
             .get_status()
-            != &Status::Done
-        {
-            children_are_all_done = false;
-            break;
+            == &Status::Done;
+        if child_is_repeating_task {
+            let mut child_result =
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
+            has_active_child |= child_result.has_unfinished_work;
+            descendants.append(&mut child_result.leaves);
+        } else if !child_is_done {
+            has_active_child = true;
+            let mut child_result =
+                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
+            descendants.append(&mut child_result.leaves);
         }
     }
 
-    if target_status_arr.contains(&task.get_status()?)
-        && (!task.node.has_children() || children_are_all_done)
-    {
+    if !is_repeating_task && target_status_arr.contains(&task.get_status()?) && !has_active_child {
         let new_task = TaskHandle {
             node: task.node.clone(),
         };
-        return Ok(vec![new_task]);
+        return Ok(LeafExtraction {
+            leaves: vec![new_task],
+            has_unfinished_work: true,
+        });
     }
 
-    let mut ans: Vec<TaskHandle> = vec![];
-
-    // 深さ優先
-    for child_node in task.node.children() {
-        if child_node
-            .try_borrow_data()
-            .map_err(|_| TaskTreeError::Borrow)?
-            .get_status()
-            != &Status::Done
-        {
-            let child_task = TaskHandle { node: child_node };
-
-            let leaves_with_pending: Vec<TaskHandle> =
-                extract_leaf_tasks_from_project_rec(&child_task, target_status_arr)?;
-
-            let mut leaves = Vec::new();
-            for leaf in leaves_with_pending {
-                if target_status_arr.contains(&leaf.get_status()?) {
-                    leaves.push(TaskHandle {
-                        node: leaf.node.clone(),
-                    });
-                }
-            }
-            ans.append(&mut leaves);
-        }
-    }
-
-    Ok(ans)
+    Ok(LeafExtraction {
+        leaves: descendants,
+        has_unfinished_work: if is_repeating_task {
+            true
+        } else {
+            task.get_status()? != Status::Done || has_active_child
+        },
+    })
 }
 
 pub fn round_up_sec_as_minute(seconds: i64) -> i64 {
@@ -216,6 +215,8 @@ pub struct TaskAttr {
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
 
     repetition_interval_days_opt: Option<i64>,
+    repetition_start_time_opt: Option<NaiveTime>,
+    repetition_deadline_time_opt: Option<NaiveTime>,
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
     project_category_opt: Option<ProjectCategory>,
@@ -242,6 +243,8 @@ impl PartialEq for TaskAttr {
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
+            && self.repetition_start_time_opt == other.repetition_start_time_opt
+            && self.repetition_deadline_time_opt == other.repetition_deadline_time_opt
             && self.repetition_anchor == other.repetition_anchor
             && self.days_in_advance == other.days_in_advance
             && self.project_category_opt == other.project_category_opt
@@ -304,6 +307,8 @@ impl TaskAttr {
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
+            repetition_start_time_opt: None,
+            repetition_deadline_time_opt: None,
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
             project_category_opt: None,
@@ -459,8 +464,15 @@ impl TaskAttr {
         &self.end_time_opt
     }
 
-    pub fn set_deadline_time_opt(&mut self, deadline_time_opt: Option<DateTime<Local>>) {
+    pub fn set_deadline_time_opt(
+        &mut self,
+        deadline_time_opt: Option<DateTime<Local>>,
+    ) -> Result<(), TaskTreeError> {
+        if self.repetition_interval_days_opt.is_some() && deadline_time_opt.is_some() {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
+        }
         self.deadline_time_opt = deadline_time_opt;
+        Ok(())
     }
 
     pub fn get_deadline_time_opt(&self) -> &Option<DateTime<Local>> {
@@ -487,12 +499,63 @@ impl TaskAttr {
         self.actual_work_seconds
     }
 
-    pub fn set_repetition_interval_days_opt(&mut self, repetition_interval_days_opt: Option<i64>) {
+    pub fn set_repetition_interval_days_opt(
+        &mut self,
+        repetition_interval_days_opt: Option<i64>,
+    ) -> Result<(), TaskTreeError> {
+        if repetition_interval_days_opt.is_some() && self.deadline_time_opt.is_some() {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
+        }
         self.repetition_interval_days_opt = repetition_interval_days_opt;
+        if repetition_interval_days_opt.is_some() {
+            self.repetition_start_time_opt
+                .get_or_insert(self.start_time.time());
+            self.repetition_deadline_time_opt
+                .get_or_insert_with(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+            self.deadline_time_opt = None;
+        } else {
+            self.repetition_start_time_opt = None;
+            self.repetition_deadline_time_opt = None;
+        }
+        Ok(())
     }
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
         self.repetition_interval_days_opt
+    }
+
+    pub fn set_repetition_start_time_opt(
+        &mut self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.repetition_interval_days_opt, value) {
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (Some(_), None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
+            _ => {}
+        }
+        self.repetition_start_time_opt = value;
+        Ok(())
+    }
+
+    pub fn get_repetition_start_time_opt(&self) -> Option<NaiveTime> {
+        self.repetition_start_time_opt
+    }
+
+    pub fn set_repetition_deadline_time_opt(
+        &mut self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.repetition_interval_days_opt, value) {
+            (None, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (Some(_), None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
+            _ => {}
+        }
+        self.repetition_deadline_time_opt = value;
+        Ok(())
+    }
+
+    pub fn get_repetition_deadline_time_opt(&self) -> Option<NaiveTime> {
+        self.repetition_deadline_time_opt
     }
 
     pub fn set_repetition_anchor(&mut self, repetition_anchor: RepetitionAnchor) {
@@ -565,6 +628,9 @@ pub enum TaskTreeError {
         field: &'static str,
         source: DeadlineCalculationError,
     },
+    RepeatingTaskDeadline,
+    RepetitionTemplateWithoutRepeatingTask,
+    RepeatingTaskTemplateRequired,
 }
 
 impl fmt::Display for TaskTreeError {
@@ -578,6 +644,15 @@ impl fmt::Display for TaskTreeError {
             Self::Insert => "cannot insert task subtree",
             Self::MissingDummyRootChild => {
                 "task tree dummy root must have exactly one task child containing this handle"
+            }
+            Self::RepeatingTaskDeadline => {
+                "repeating task cannot have a normal deadline"
+            }
+            Self::RepetitionTemplateWithoutRepeatingTask => {
+                "repetition time template requires a repeating task"
+            }
+            Self::RepeatingTaskTemplateRequired => {
+                "repeating task requires both time templates"
             }
             Self::DeadlineCalculation {
                 task_id,
@@ -1170,6 +1245,12 @@ impl TaskHandle {
         &self,
         deadline_time_opt: Option<DateTime<Local>>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repeating_task()? {
+            if deadline_time_opt.is_some() {
+                return Err(TaskTreeError::RepeatingTaskDeadline);
+            }
+            return Ok(());
+        }
         if let Some(deadline) = deadline_time_opt {
             let attr = self
                 .node
@@ -1204,7 +1285,7 @@ impl TaskHandle {
         for (node, deadline) in &updates {
             node.try_borrow_data_mut()
                 .map_err(|_| TaskTreeError::Borrow)?
-                .set_deadline_time_opt(Some(*deadline));
+                .set_deadline_time_opt(Some(*deadline))?;
         }
         if !updates.is_empty() {
             root.mark_persistent_mutation()?;
@@ -1240,6 +1321,13 @@ impl TaskHandle {
             .node
             .try_borrow_data()
             .map_err(|_| TaskTreeError::Borrow)?;
+        if attr.get_repetition_interval_days_opt().is_some() {
+            drop(attr);
+            for child in self.node.children() {
+                Self { node: child }.collect_deadline_updates(inherited, None, updates)?;
+            }
+            return Ok(());
+        }
         if *attr.get_status() == Status::Done {
             return Ok(());
         }
@@ -1265,7 +1353,8 @@ impl TaskHandle {
             if attr.get_deadline_time_opt().is_none() {
                 false
             } else {
-                attr.set_deadline_time_opt(None);
+                attr.set_deadline_time_opt(None)
+                    .expect("clearing a deadline is always valid");
                 true
             }
         })
@@ -1275,6 +1364,9 @@ impl TaskHandle {
         &self,
         deadline_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repeating_task()? {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
+        }
         let mut updates = Vec::new();
         let current_deadline = self
             .node
@@ -1352,6 +1444,68 @@ impl TaskHandle {
             .map_err(|_| TaskTreeError::Borrow)
     }
 
+    pub fn is_repeating_task(&self) -> Result<bool, TaskTreeError> {
+        Ok(self.get_repetition_interval_days_opt()?.is_some())
+    }
+
+    pub fn is_schedulable_work(&self) -> Result<bool, TaskTreeError> {
+        Ok(!self.is_repeating_task()?)
+    }
+
+    pub fn get_repetition_start_time_opt(&self) -> Result<Option<NaiveTime>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_start_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_repetition_start_time_opt(
+        &self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.is_repeating_task()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (true, None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
+            _ => {}
+        }
+        self.update(|attr| {
+            if attr.get_repetition_start_time_opt() == value {
+                false
+            } else {
+                attr.set_repetition_start_time_opt(value)
+                    .expect("repetition template state was validated");
+                true
+            }
+        })
+    }
+
+    pub fn get_repetition_deadline_time_opt(&self) -> Result<Option<NaiveTime>, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.get_repetition_deadline_time_opt())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub fn set_repetition_deadline_time_opt(
+        &self,
+        value: Option<NaiveTime>,
+    ) -> Result<(), TaskTreeError> {
+        match (self.is_repeating_task()?, value) {
+            (false, Some(_)) => return Err(TaskTreeError::RepetitionTemplateWithoutRepeatingTask),
+            (true, None) => return Err(TaskTreeError::RepeatingTaskTemplateRequired),
+            _ => {}
+        }
+        self.update(|attr| {
+            if attr.get_repetition_deadline_time_opt() == value {
+                false
+            } else {
+                attr.set_repetition_deadline_time_opt(value)
+                    .expect("repetition template state was validated");
+                true
+            }
+        })
+    }
+
     pub fn get_inherited_repetition_interval_days_opt(&self) -> Result<Option<i64>, TaskTreeError> {
         let mut current_parent_opt = self.parent()?;
 
@@ -1370,11 +1524,15 @@ impl TaskHandle {
         &self,
         repetition_interval_days_opt: Option<i64>,
     ) -> Result<(), TaskTreeError> {
+        if repetition_interval_days_opt.is_some() && self.get_deadline_time_opt()?.is_some() {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
+        }
         self.update(|attr| {
             if attr.get_repetition_interval_days_opt() == repetition_interval_days_opt {
                 false
             } else {
-                attr.set_repetition_interval_days_opt(repetition_interval_days_opt);
+                attr.set_repetition_interval_days_opt(repetition_interval_days_opt)
+                    .expect("repeating task deadline state was validated");
                 true
             }
         })
@@ -1452,6 +1610,9 @@ impl TaskHandle {
         &self,
         appointment_start_time: DateTime<Local>,
     ) -> Result<(), TaskTreeError> {
+        if self.is_repeating_task()? {
+            return Err(TaskTreeError::RepeatingTaskDeadline);
+        }
         let task_id = self.get_id()?;
         let estimated_work_seconds = self.get_estimated_work_seconds()?;
         let deadline_time = try_appointment_deadline(
@@ -1505,7 +1666,7 @@ impl TaskHandle {
         for (node, deadline) in &deadline_updates {
             node.try_borrow_data_mut()
                 .map_err(|_| TaskTreeError::Borrow)?
-                .set_deadline_time_opt(Some(*deadline));
+                .set_deadline_time_opt(Some(*deadline))?;
         }
         let mut attr = self
             .node
@@ -1518,7 +1679,7 @@ impl TaskHandle {
             attr.get_fixed_start(),
         );
         // 完了済みtaskは旧約実装と同じく自己deadlineを解除したままにする。
-        attr.set_deadline_time_opt((!is_done).then_some(deadline_time));
+        attr.set_deadline_time_opt((!is_done).then_some(deadline_time))?;
         attr.set_start_time(appointment_start_time);
         attr.set_fixed_start(true);
         let changed = !deadline_updates.is_empty()

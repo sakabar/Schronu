@@ -522,12 +522,15 @@ fn project_with_all_persisted_yaml_fields() -> Project {
     root_task.set_create_time(create_time).unwrap();
     root_task.set_start_time(start_time).unwrap();
     root_task.set_end_time_opt(Some(end_time)).unwrap();
-    root_task
-        .set_deadline_time_opt(Some(deadline_time))
-        .unwrap();
     root_task.set_estimated_work_seconds(3600).unwrap();
     root_task.set_actual_work_seconds(120).unwrap();
     root_task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    root_task
+        .set_repetition_start_time_opt(Some(start_time.time()))
+        .unwrap();
+    root_task
+        .set_repetition_deadline_time_opt(Some(deadline_time.time()))
+        .unwrap();
     root_task
         .set_repetition_anchor(crate::entity::task::RepetitionAnchor::Completion)
         .unwrap();
@@ -547,10 +550,17 @@ fn project_with_all_persisted_yaml_fields() -> Project {
     child_attr.set_create_time(create_time);
     child_attr.set_start_time(start_time);
     child_attr.set_end_time_opt(Some(end_time));
-    child_attr.set_deadline_time_opt(Some(deadline_time));
     child_attr.set_estimated_work_seconds(1800);
     child_attr.set_actual_work_seconds(60);
-    child_attr.set_repetition_interval_days_opt(Some(2));
+    child_attr
+        .set_repetition_interval_days_opt(Some(2))
+        .unwrap();
+    child_attr
+        .set_repetition_start_time_opt(Some(start_time.time()))
+        .unwrap();
+    child_attr
+        .set_repetition_deadline_time_opt(Some(deadline_time.time()))
+        .unwrap();
     child_attr.set_repetition_anchor(crate::entity::task::RepetitionAnchor::Completion);
     child_attr.set_days_in_advance(1);
     root_task.create_as_last_child(child_attr);
@@ -570,7 +580,7 @@ fn test_project_yaml保存bytesはkey順_既定値省略_root限定field_childre
 
     let actual = TaskRepository::serialize_project(&project).unwrap();
 
-    let expected = b"---\nproject:\n  name: root task\n  id: 67e55044-10b1-426f-9247-bb680e5fe0c8\n  status: pending\n  is_on_other_side: true\n  atomic: true\n  pending_until: \"2037/12/31 23:59:59\"\n  priority: 8\n  category: investment\n  create_time: \"2024/01/02 03:04:05\"\n  start_time: \"2025/02/03 04:05:06\"\n  end_time: \"2025/03/04 05:06:07\"\n  deadline_time: \"2040/04/05 06:07:08\"\n  estimated_work_seconds: 3600\n  actual_work_seconds: 120\n  repetition_interval_days: 7\n  repetition_anchor: completion\n  days_in_advance: 3\n  children:\n    - name: child task\n      id: 0aaee735-3e22-4216-8b59-d56d5caf29ee\n      status: pending\n      is_on_other_side: true\n      atomic: true\n      pending_until: \"2037/12/31 23:59:59\"\n      create_time: \"2024/01/02 03:04:05\"\n      start_time: \"2025/02/03 04:05:06\"\n      end_time: \"2025/03/04 05:06:07\"\n      deadline_time: \"2040/04/05 06:07:08\"\n      estimated_work_seconds: 1800\n      actual_work_seconds: 60\n      repetition_interval_days: 2\n      repetition_anchor: completion\n      days_in_advance: 1\n    - name: default child\n      id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256\n      create_time: \"2026/08/28 12:00:00\"\n      start_time: \"2026/08/28 12:00:00\"\n";
+    let expected = b"---\nproject:\n  name: root task\n  id: 67e55044-10b1-426f-9247-bb680e5fe0c8\n  status: pending\n  is_on_other_side: true\n  atomic: true\n  pending_until: \"2037/12/31 23:59:59\"\n  priority: 8\n  category: investment\n  create_time: \"2024/01/02 03:04:05\"\n  start_time: \"2025/02/03 04:05:06\"\n  end_time: \"2025/03/04 05:06:07\"\n  estimated_work_seconds: 3600\n  actual_work_seconds: 120\n  repetition_interval_days: 7\n  repetition_start_time: \"04:05:06\"\n  repetition_deadline_time: \"06:07:08\"\n  repetition_anchor: completion\n  days_in_advance: 3\n  children:\n    - name: child task\n      id: 0aaee735-3e22-4216-8b59-d56d5caf29ee\n      status: pending\n      is_on_other_side: true\n      atomic: true\n      pending_until: \"2037/12/31 23:59:59\"\n      create_time: \"2024/01/02 03:04:05\"\n      start_time: \"2025/02/03 04:05:06\"\n      end_time: \"2025/03/04 05:06:07\"\n      estimated_work_seconds: 1800\n      actual_work_seconds: 60\n      repetition_interval_days: 2\n      repetition_start_time: \"04:05:06\"\n      repetition_deadline_time: \"06:07:08\"\n      repetition_anchor: completion\n      days_in_advance: 1\n    - name: default child\n      id: 7ffcba2f-80e0-4a44-aee9-d68e0d2d1256\n      create_time: \"2026/08/28 12:00:00\"\n      start_time: \"2026/08/28 12:00:00\"\n";
     assert_eq!(actual, expected);
     assert_eq!(actual.last(), Some(&b'\n'));
 }

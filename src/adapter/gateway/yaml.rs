@@ -5,8 +5,9 @@ use crate::entity::task::read_status;
 use crate::entity::task::Status;
 use crate::entity::task::{RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError};
 use chrono::LocalResult;
+#[cfg(test)]
 use chrono::TimeZone;
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, NaiveTime};
 use linked_hash_map::LinkedHashMap;
 use std::error::Error;
 use std::fmt;
@@ -123,12 +124,14 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
     }
 
     let deadline_time_opt = task.get_deadline_time_opt();
-    if let Some(deadline_time) = deadline_time_opt {
-        let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
-        task_hash.insert(
-            Yaml::String(String::from("deadline_time")),
-            Yaml::String(deadline_time_string),
-        );
+    if task.get_repetition_interval_days_opt().is_none() {
+        if let Some(deadline_time) = deadline_time_opt {
+            let deadline_time_string = deadline_time.format("%Y/%m/%d %H:%M:%S").to_string();
+            task_hash.insert(
+                Yaml::String(String::from("deadline_time")),
+                Yaml::String(deadline_time_string),
+            );
+        }
     }
 
     let estimated_work_seconds = task.get_estimated_work_seconds();
@@ -152,6 +155,20 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
         task_hash.insert(
             Yaml::String(String::from("repetition_interval_days")),
             Yaml::Integer(repetition_interval_days),
+        );
+        let repetition_start_time = task
+            .get_repetition_start_time_opt()
+            .unwrap_or_else(|| task.get_start_time().time());
+        task_hash.insert(
+            Yaml::String(String::from("repetition_start_time")),
+            Yaml::String(repetition_start_time.format("%H:%M:%S").to_string()),
+        );
+        let repetition_deadline_time = task
+            .get_repetition_deadline_time_opt()
+            .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+        task_hash.insert(
+            Yaml::String(String::from("repetition_deadline_time")),
+            Yaml::String(repetition_deadline_time.format("%H:%M:%S").to_string()),
         );
     }
 
@@ -303,6 +320,14 @@ fn strict_datetime(
     ))
 }
 
+fn strict_time(value: &Yaml, path: &str, field: &str) -> Result<NaiveTime, YamlConversionError> {
+    let text = value
+        .as_str()
+        .ok_or_else(|| strict_error(path, field, "must be a string"))?;
+    NaiveTime::parse_from_str(text, "%H:%M:%S")
+        .map_err(|_| strict_error(path, field, "must be a valid time in HH:MM:SS format"))
+}
+
 fn yaml_to_task_strict(
     yaml: &Yaml,
     now: DateTime<Local>,
@@ -402,6 +427,32 @@ fn yaml_to_task_strict(
             }
         },
     };
+    let has_repetition_start_time = yaml_field(yaml, "repetition_start_time").is_some();
+    let repetition_start_time = match yaml_field(yaml, "repetition_start_time") {
+        None | Some(Yaml::Null) => None,
+        Some(value) => Some(strict_time(value, path, "repetition_start_time")?),
+    };
+    let has_repetition_deadline_time = yaml_field(yaml, "repetition_deadline_time").is_some();
+    let repetition_deadline_time = match yaml_field(yaml, "repetition_deadline_time") {
+        None | Some(Yaml::Null) => None,
+        Some(value) => Some(strict_time(value, path, "repetition_deadline_time")?),
+    };
+    if interval.is_none() {
+        if has_repetition_start_time {
+            return Err(strict_error(
+                path,
+                "repetition_start_time",
+                "requires repetition_interval_days",
+            ));
+        }
+        if has_repetition_deadline_time {
+            return Err(strict_error(
+                path,
+                "repetition_deadline_time",
+                "requires repetition_interval_days",
+            ));
+        }
+    }
     let children = match yaml_field(yaml, "children") {
         None | Some(Yaml::Null) => &[][..],
         Some(Yaml::Array(children)) => children.as_slice(),
@@ -432,14 +483,18 @@ fn yaml_to_task_strict(
         task.set_create_time(create_time)
             .map_err(map_task_tree_error)?;
     }
-    if let Some(start_time) = legacy_datetime("start_time")? {
+    let loaded_start_time = legacy_datetime("start_time")?;
+    if let Some(start_time) = loaded_start_time {
         task.set_start_time(start_time)
             .map_err(map_task_tree_error)?;
     }
     task.set_end_time_opt(optional_datetime("end_time")?)
         .map_err(map_task_tree_error)?;
-    task.set_deadline_time_opt(optional_datetime("deadline_time")?)
-        .map_err(map_task_tree_error)?;
+    let loaded_deadline_time = optional_datetime("deadline_time")?;
+    if interval.is_none() {
+        task.set_deadline_time_opt(loaded_deadline_time)
+            .map_err(map_task_tree_error)?;
+    }
     task.set_estimated_work_seconds(nonnegative("estimated_work_seconds", 900)?)
         .map_err(|error| map_task_field_error(path, "estimated_work_seconds", error))?;
     let fixed_start = match yaml_field(yaml, "fixed_start") {
@@ -448,7 +503,7 @@ fn yaml_to_task_strict(
             .ok_or_else(|| strict_error(path, "fixed_start", "must be a boolean"))?,
         None => matches_legacy_fixed_start_shape(
             task.get_start_time().map_err(map_task_tree_error)?,
-            task.get_deadline_time_opt().map_err(map_task_tree_error)?,
+            loaded_deadline_time,
             task.get_estimated_work_seconds()
                 .map_err(map_task_tree_error)?,
         ),
@@ -459,16 +514,24 @@ fn yaml_to_task_strict(
         .map_err(map_task_tree_error)?;
     task.set_repetition_interval_days_opt(interval)
         .map_err(map_task_tree_error)?;
+    if interval.is_some() {
+        task.set_repetition_start_time_opt(Some(
+            repetition_start_time
+                .or_else(|| loaded_start_time.map(|value| value.time()))
+                .unwrap_or_else(|| task.get_start_time().unwrap().time()),
+        ))
+        .map_err(map_task_tree_error)?;
+        task.set_repetition_deadline_time_opt(Some(
+            repetition_deadline_time
+                .or_else(|| loaded_deadline_time.map(|value| value.time()))
+                .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap()),
+        ))
+        .map_err(map_task_tree_error)?;
+    }
     task.set_repetition_anchor(anchor)
         .map_err(map_task_tree_error)?;
     task.set_days_in_advance(nonnegative("days_in_advance", 0)?)
         .map_err(map_task_tree_error)?;
-    if interval.is_some() {
-        task.set_pending_until(Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap())
-            .map_err(map_task_tree_error)?;
-        task.set_orig_status(Status::Pending)
-            .map_err(map_task_tree_error)?;
-    }
     task.sync_clock(now).map_err(map_task_tree_error)?;
     for (index, child_yaml) in children.iter().enumerate() {
         let mut child = yaml_to_task_strict(child_yaml, now, &format!("{path}.children[{index}]"))?;

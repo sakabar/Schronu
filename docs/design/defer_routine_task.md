@@ -28,13 +28,8 @@
     - `deadline_time` 未設定: `InvalidInput`
     - 親なし: `InvalidInput`
     - `repetition_interval_days` 未設定: `InvalidInput`
-  - 締切計算:
-    - 親 `deadline_time` あり:
-      - `try_next_logical_date_start(orig_deadline)` を基点に、`repetition_interval_days - 1` 日進めた日付へ
-      - 時刻は親の `deadline_time.time()` を採用
-    - 親 `deadline_time` なし:
-      - `orig_deadline + repetition_interval_days`
-  - `start_time`: `(new_deadline - orig_deadline).num_days()` 日分を加算し、元の時刻を維持
+  - 締切計算: `orig_deadline`の暦日に`repetition_interval_days`日を加え、時刻は親の`repetition_deadline_time`を適用する。
+  - `start_time`: 現在の開始日に`repetition_interval_days`日を加え、時刻は親の`repetition_start_time`を適用する。
   - 全日時を計算してからmutationする。日時範囲外、曖昧・存在しないlocal日時、task tree errorは`ApplicationError`の情報を保持して伝播する。
   - 対象 task:
     - `orig_status` を `Todo`

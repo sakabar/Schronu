@@ -64,7 +64,9 @@ segmentは次の最も早いeventで閉じます。
 
 ## Fixed予定
 
-予定配置上のfixedは、`fixed_start == true`かつ自身に`repetition_interval_days`がないtaskです。自身に反復間隔を持つ親taskの`fixed_start`は、次回子taskを生成するためのtemplateとしてのみ扱います。その親自身はfixed予約、過去fixed windowの超過作業、synthetic effective deadline、`平`・`詰`・日次容量計算のfixed対象から除外します。
+予定配置上のfixedは、`fixed_start == true`かつ自身に`repetition_interval_days`がないtaskです。繰り返し親taskの`fixed_start`は、次回子taskを生成するためのtemplateとしてのみ扱います。その親自身はfixed予約、過去fixed windowの超過作業、synthetic effective deadline、`平`・`詰`・日次容量計算のfixed対象から除外します。
+
+自身に`repetition_interval_days`を持つnodeは繰り返し親taskとし、leaf候補やschedule candidateへ含めません。繰り返し親taskは予定依存の境界であり、各回のtaskから上へ進む祖先計算はそこで終了します。別の通常taskから祖先をたどる場合も、部分木に繰り返し親taskを含む通常祖先はschedule candidateへ含めず、境界をまたぐdependency edgeは接続しません。繰り返し設定がある限り、子がない場合や全ての子が完了している場合も、その上の通常祖先をleafへ昇格させません。通常祖先から各回のtaskへのdeadline継承は、この予定依存とは分離して維持します。
 
 - fixed同士の重複はそのまま表示します。flexible taskは重複区間のunionを避けます。
 - fixed開始が現在より過去なら、現在から元window終了までを見える予約として残します。
@@ -73,7 +75,7 @@ segmentは次の最も早いeventで閉じます。
 
 `約`または`appointment`は開始時刻を設定して`fixed_start = true`にします。`始`または`start`は開始時刻を設定して`fixed_start = false`に戻します。
 
-反復親から次回子taskを生成するときは、完了した子ではなく親のrawな`fixed_start`を継承します。既存の子の値は補完・変更せず、個別の子に対する`約`・`始`も反復親へ逆伝播しません。YAMLとMCPではraw値を従来どおり公開・保存します。
+繰り返し親taskから次回子taskを生成するときは、完了した子ではなく親のrawな`fixed_start`を継承します。既存の子の値は補完・変更せず、個別の子に対する`約`・`始`も繰り返し親taskへ逆伝播しません。YAMLとMCPではraw値を従来どおり公開・保存します。
 
 旧YAMLに`fixed_start` fieldがない場合だけ、次の完全一致で従来の予定を推定します。
 

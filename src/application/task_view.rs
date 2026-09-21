@@ -1,5 +1,5 @@
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskHandle, TaskTreeError};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveTime};
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -24,6 +24,8 @@ pub struct TaskView {
     pub estimated_work_seconds: i64,
     pub actual_work_seconds: i64,
     pub repetition_interval_days: Option<i64>,
+    pub repetition_start_time: Option<NaiveTime>,
+    pub repetition_deadline_time: Option<NaiveTime>,
     pub repetition_anchor: RepetitionAnchor,
     pub days_in_advance: i64,
     pub project_category: Option<ProjectCategory>,
@@ -67,6 +69,8 @@ impl TryFrom<&TaskHandle> for TaskView {
             estimated_work_seconds: attr.get_estimated_work_seconds(),
             actual_work_seconds: attr.get_actual_work_seconds(),
             repetition_interval_days: attr.get_repetition_interval_days_opt(),
+            repetition_start_time: attr.get_repetition_start_time_opt(),
+            repetition_deadline_time: attr.get_repetition_deadline_time_opt(),
             repetition_anchor: attr.get_repetition_anchor(),
             days_in_advance: attr.get_days_in_advance(),
             project_category: root_attr.get_project_category_opt(),

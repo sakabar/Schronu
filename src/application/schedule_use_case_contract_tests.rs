@@ -327,9 +327,11 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
     let child_start = Local.with_ymd_and_hms(2026, 9, 9, 21, 4, 6).unwrap();
     let mut child_attr = crate::test_support::new_task_attr("既存のflexible子");
     child_attr.set_start_time(child_start);
-    child_attr.set_deadline_time_opt(Some(
-        Local.with_ymd_and_hms(2026, 9, 9, 23, 59, 59).unwrap(),
-    ));
+    child_attr
+        .set_deadline_time_opt(Some(
+            Local.with_ymd_and_hms(2026, 9, 9, 23, 59, 59).unwrap(),
+        ))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let repository = TestTaskRepository::new(vec![parent.clone()], now);
 
@@ -343,6 +345,149 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
     assert_eq!(child_schedule.scheduled_start, child_start);
     assert!(parent.get_fixed_start().unwrap());
     assert!(!child.get_fixed_start().unwrap());
+}
+
+#[test]
+fn get_schedule_skips_repeating_task_after_2037_boundary() {
+    for now in [
+        Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 58).unwrap(),
+        Local.with_ymd_and_hms(2037, 12, 31, 23, 59, 59).unwrap(),
+        Local.with_ymd_and_hms(2038, 1, 1, 0, 0, 0).unwrap(),
+    ] {
+        let repeating_task = task_with_schedule("repeating_task", now, 15 * 60, 0);
+        repeating_task
+            .set_repetition_interval_days_opt(Some(7))
+            .unwrap();
+        let repository = TestTaskRepository::new(vec![repeating_task], now);
+
+        assert!(get_schedule(&repository).unwrap().is_empty());
+    }
+}
+
+#[test]
+fn get_schedule_stops_at_repeating_task_boundary() {
+    let now = fixed_now();
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    let mut repeating_task_attr = crate::test_support::new_task_attr_at("repeating_task", now);
+    repeating_task_attr
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    repeating_task_attr.set_estimated_work_seconds(24 * 60 * 60);
+    repeating_task_attr.set_start_time(now + Duration::days(30));
+    let repeating_task = root.create_as_last_child(repeating_task_attr);
+    let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
+    occurrence_attr.set_estimated_work_seconds(15 * 60);
+    let occurrence = repeating_task.create_as_last_child(occurrence_attr);
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    assert!(ids.contains(&occurrence.get_id().unwrap()));
+    assert!(!ids.contains(&root.get_id().unwrap()));
+    assert!(!ids.contains(&repeating_task.get_id().unwrap()));
+    assert_eq!(
+        schedule
+            .iter()
+            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .unwrap()
+            .rank,
+        0
+    );
+}
+
+#[test]
+fn get_schedule_preserves_normal_ancestor_deadline_across_repeating_boundary() {
+    let now = fixed_now();
+    let ancestor_deadline = now + Duration::hours(1);
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    root.set_deadline_time_opt(Some(ancestor_deadline)).unwrap();
+    let repeating_task =
+        root.create_as_last_child(crate::test_support::new_task_attr_at("repeating task", now));
+    repeating_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let mut occurrence_attr = crate::test_support::new_task_attr_at("occurrence", now);
+    occurrence_attr.set_estimated_work_seconds(15 * 60);
+    occurrence_attr.set_start_time(now + Duration::hours(2));
+    occurrence_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(4)))
+        .unwrap();
+    let occurrence = repeating_task.create_as_last_child(occurrence_attr);
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let occurrence_schedule = schedule
+        .iter()
+        .find(|item| item.task.id == occurrence.get_id().unwrap())
+        .unwrap();
+    assert!(occurrence_schedule.scheduled_end <= ancestor_deadline);
+    assert!(!schedule
+        .iter()
+        .any(|item| item.task.id == root.get_id().unwrap()));
+}
+
+#[test]
+fn get_schedule_excludes_common_ancestor_but_keeps_normal_sibling() {
+    let now = fixed_now();
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    let repeating_task =
+        root.create_as_last_child(crate::test_support::new_task_attr_at("repeating task", now));
+    repeating_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let occurrence = repeating_task
+        .create_as_last_child(crate::test_support::new_task_attr_at("occurrence", now));
+    let sibling =
+        root.create_as_last_child(crate::test_support::new_task_attr_at("normal sibling", now));
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    assert!(ids.contains(&occurrence.get_id().unwrap()));
+    assert!(ids.contains(&sibling.get_id().unwrap()));
+    assert!(!ids.contains(&repeating_task.get_id().unwrap()));
+    assert!(!ids.contains(&root.get_id().unwrap()));
+}
+
+#[test]
+fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
+    let now = fixed_now();
+    let root = task_with_schedule("normal ancestor", now, 30 * 60, 0);
+    let repeating_task =
+        root.create_as_last_child(crate::test_support::new_task_attr_at("repeating task", now));
+    repeating_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let occurrence = repeating_task
+        .create_as_last_child(crate::test_support::new_task_attr_at("occurrence", now));
+    let occurrence_child = occurrence.create_as_last_child(crate::test_support::new_task_attr_at(
+        "occurrence child",
+        now,
+    ));
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    assert!(ids.contains(&occurrence_child.get_id().unwrap()));
+    assert!(ids.contains(&occurrence.get_id().unwrap()));
+    assert!(!ids.contains(&repeating_task.get_id().unwrap()));
+    assert!(!ids.contains(&root.get_id().unwrap()));
+    assert_eq!(
+        schedule
+            .iter()
+            .find(|item| item.task.id == occurrence_child.get_id().unwrap())
+            .unwrap()
+            .rank,
+        0
+    );
+    assert_eq!(
+        schedule
+            .iter()
+            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .unwrap()
+            .rank,
+        1
+    );
 }
 
 #[test]

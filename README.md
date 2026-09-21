@@ -715,7 +715,11 @@ SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正�
 
 `約`または`appointment`で開始時刻を設定したタスクはfixed予定となり、priorityや締切にかかわらず指定時刻から動きません。`始`または`start`で開始時刻を設定し直すとflexibleへ戻ります。fixed予定同士が重なる場合は重複したまま表示し、その他のタスクはその予約時間を避けます。
 
-ただし、自身に`repetition_interval_days`を持つ反復親では、`fixed_start`は次回子taskを生成するための既定値です。反復親自身はfixed予定にならず、新しく生成される子だけが親の値を継承します。既存の子の`fixed_start`は変更されず、個別の子に対する`約`・`始`も親や次回子へ逆伝播しません。
+ただし、自身に`repetition_interval_days`を持つ繰り返し親taskでは、`fixed_start`は次回子taskを生成するための既定値です。繰り返し親task自身はfixed予定にならず、新しく生成される子だけが親の値を継承します。既存の子の`fixed_start`は変更されず、個別の子に対する`約`・`始`も親や次回子へ逆伝播しません。
+
+`repetition_interval_days`を持つtaskは、各回のtaskを生成する繰り返し親taskです。繰り返し親task自身は子の有無、status、`pending_until`、日時にかかわらず予定候補にならず、未完了の各回のtaskだけを予定します。繰り返し親taskは予定依存の境界となり、それより上の通常祖先も予定候補になりません。通常祖先のdeadlineは従来どおり各回のtaskへ継承します。
+
+繰り返し親taskのYAMLでは、次回taskの壁時計時刻を`repetition_start_time: "HH:MM:SS"`と`repetition_deadline_time: "HH:MM:SS"`で保存します。旧YAMLは`start_time`と`deadline_time`の時刻部分から自動移行し、旧deadlineがなければ`23:59:59`を使います。繰り返し親taskに通常のdeadlineは設定できません。
 
 旧dataに`fixed_start`がない場合だけ、`deadline_time == start_time + estimated_work_seconds`と完全一致するタスクを従来の予定としてfixed扱いします。明示的な`fixed_start: false`は推定で上書きしません。
 

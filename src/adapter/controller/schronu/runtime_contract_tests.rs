@@ -2188,14 +2188,18 @@ fn 全vは締切超過iconだけを表示し全締切filterは既存対象を維
     let mut overdue_attr = new_test_task_attr("予定上の締切超過task");
     overdue_attr.set_estimated_work_seconds(60 * 60);
     overdue_attr.set_start_time(now);
-    overdue_attr.set_deadline_time_opt(Some(now + Duration::minutes(30)));
+    overdue_attr
+        .set_deadline_time_opt(Some(now + Duration::minutes(30)))
+        .unwrap();
     let overdue_task = root_task.create_as_last_child(overdue_attr);
     let _ = overdue_task.sync_clock(now);
 
     let mut due_today_attr = new_test_task_attr("今日締切だが間に合うtask");
     due_today_attr.set_estimated_work_seconds(10 * 60);
     due_today_attr.set_start_time(now);
-    due_today_attr.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    due_today_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
     let due_today_task = root_task.create_as_last_child(due_today_attr);
     let _ = due_today_task.sync_clock(now);
 
@@ -2257,14 +2261,18 @@ fn test_execute_all_締切順の予定時刻を表示する() {
     let mut late_deadline_attr = new_test_task_attr("締切が遅いタスク");
     late_deadline_attr.set_estimated_work_seconds(30 * 60);
     late_deadline_attr.set_start_time(now);
-    late_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(3)));
+    late_deadline_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(3)))
+        .unwrap();
     let late_deadline_task = root_task.create_as_last_child(late_deadline_attr);
     let _ = late_deadline_task.sync_clock(now);
 
     let mut early_deadline_attr = new_test_task_attr("締切が早いタスク");
     early_deadline_attr.set_estimated_work_seconds(15 * 60);
     early_deadline_attr.set_start_time(now);
-    early_deadline_attr.set_deadline_time_opt(Some(now + Duration::hours(2)));
+    early_deadline_attr
+        .set_deadline_time_opt(Some(now + Duration::hours(2)))
+        .unwrap();
     let early_deadline_task = root_task.create_as_last_child(early_deadline_attr);
     let _ = early_deadline_task.sync_clock(now);
 
@@ -3181,10 +3189,12 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
     let parent = new_test_task_handle("反復routine親").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     parent
-        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()))
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
         .unwrap();
     let mut child_attr = new_test_task_attr("延期対象routine子");
-    child_attr.set_deadline_time_opt(Some(orig_deadline));
+    child_attr
+        .set_deadline_time_opt(Some(orig_deadline))
+        .unwrap();
     let child = parent.create_as_last_child(child_attr);
     let child_id = child.get_id().unwrap();
     let parent_snapshot = parent.snapshot().unwrap();
@@ -3208,7 +3218,7 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
     assert_eq!(
         actual,
         Err(ApplicationError::LogicalDateOutOfRange {
-            operation: "next_logical_date_start",
+            operation: "defer_routine_deadline",
             datetime: orig_deadline,
         })
     );
@@ -3242,9 +3252,25 @@ fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期
     ] {
         let parent = new_test_task_handle("正常反復routine親").unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
-        parent.set_deadline_time_opt(parent_deadline).unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(
+                parent_deadline
+                    .map(|deadline| deadline.time())
+                    .unwrap_or_else(|| orig_deadline.time()),
+            ))
+            .unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(orig_start.time()))
+            .unwrap();
+        if parent_deadline.is_none() {
+            parent
+                .set_repetition_deadline_time_opt(Some(orig_deadline.time()))
+                .unwrap();
+        }
         let mut child_attr = new_test_task_attr("正常延期routine子");
-        child_attr.set_deadline_time_opt(Some(orig_deadline));
+        child_attr
+            .set_deadline_time_opt(Some(orig_deadline))
+            .unwrap();
         child_attr.set_start_time(orig_start);
         child_attr.set_orig_status(Status::Pending);
         let child = parent.create_as_last_child(child_attr);
@@ -3307,7 +3333,7 @@ fn test_execute_defer_routine_対象不成立ならtaskとfocusを変更しな�
 
     let parent = new_test_task_handle("反復間隔なしの親").unwrap();
     let mut child_attr = new_test_task_attr("反復間隔なし");
-    child_attr.set_deadline_time_opt(Some(deadline));
+    child_attr.set_deadline_time_opt(Some(deadline)).unwrap();
     let child = parent.create_as_last_child(child_attr);
     assert_noop(parent, Some(child.get_id().unwrap()));
 }
