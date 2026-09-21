@@ -2156,6 +2156,32 @@ fn task_list共有表示は全今尾で同じtask名配色を使う() {
 }
 
 #[test]
+fn task_list製品経路は明日以降の締切を端末だけ明緑で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("未来締切task").unwrap();
+    task.set_start_time(now).unwrap();
+    task.set_deadline_time_opt(Some(now + Duration::days(2)))
+        .unwrap();
+
+    let terminal_output = execute_command_with_ansi_color_for_test(
+        task.clone(),
+        now,
+        None,
+        "全",
+        true,
+    )
+    .output;
+    assert!(
+        terminal_output.contains("\x1b[38;5;34m_____-002D\x1b[39m"),
+        "{terminal_output}"
+    );
+
+    let redirected_output = execute_command_for_test(task, now, None, "全").output;
+    assert!(redirected_output.contains("_____-002D"), "{redirected_output}");
+    assert!(!redirected_output.contains("\x1b["), "{redirected_output}");
+}
+
+#[test]
 fn task_list通常表示はcategory集計後の2空行をwriter固有newlineで維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("末尾空行確認用タスク").unwrap();

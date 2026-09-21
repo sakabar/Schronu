@@ -111,6 +111,7 @@ pub(super) struct TaskListTaskRow {
     pub(super) project_category: Option<ProjectCategory>,
     pub(super) task_name: String,
     pub(super) kind: TaskListTaskKind,
+    pub(super) has_deadline: bool,
     pub(super) give_up_candidate: bool,
 }
 
@@ -537,6 +538,7 @@ const REPETITIVE_COLOR: u8 = 33;
 const NON_REPETITIVE_COLOR: u8 = 208;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
 const DEADLINE_TODAY_COLOR: u8 = 214;
+const FUTURE_DEADLINE_COLOR: u8 = 34;
 
 fn render_band_display(
     writer: &mut dyn SchronuWriter,
@@ -1074,6 +1076,7 @@ fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool
             if let Some(deadline_color) = match row.icon.as_str() {
                 "v" => Some(DEADLINE_OVERRUN_COLOR),
                 "!" => Some(DEADLINE_TODAY_COLOR),
+                _ if row.has_deadline => Some(FUTURE_DEADLINE_COLOR),
                 _ => None,
             } {
                 columns.deadline =

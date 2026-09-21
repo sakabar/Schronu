@@ -1113,6 +1113,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 project_category: task_project_category_opt,
                 task_name: shorten_name,
                 kind: task_kind,
+                has_deadline: task_deadline_time_opt.is_some(),
                 give_up_candidate: false,
             };
             let task_search_text = task_list_search_text(&task_row);

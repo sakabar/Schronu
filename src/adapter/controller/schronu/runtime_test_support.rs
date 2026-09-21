@@ -1455,6 +1455,7 @@ impl TaskListDisplayRow {
                     project_category: project_category_opt,
                     task_name,
                     kind: super::renderer::TaskListTaskKind::NonRepetitive,
+                    has_deadline: false,
                     give_up_candidate: false,
                 },
             ),

@@ -63,6 +63,7 @@ fn 同一taskの複数segmentは同じb列と異なるa列を出力する() {
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "分割task".to_string(),
         kind: TaskListTaskKind::NonRepetitive,
+        has_deadline: true,
         give_up_candidate: false,
     });
 
@@ -420,6 +421,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 project_category: Some(ProjectCategory::Sustaining),
                 task_name: "夕食 の 準備".to_string(),
                 kind: TaskListTaskKind::NonRepetitive,
+                has_deadline: true,
                 give_up_candidate: true,
             }),
             TaskListRow::Gap { minutes: 15 },
@@ -439,6 +441,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 project_category: None,
                 task_name: "短い task".to_string(),
                 kind: TaskListTaskKind::NonRepetitive,
+                has_deadline: false,
                 give_up_candidate: false,
             }),
         ],
@@ -515,6 +518,7 @@ fn task_list_displayはansi有効時に単発task名と締切超過を帯配色�
             project_category: Some(ProjectCategory::Sustaining),
             task_name: "単発task".to_string(),
             kind: TaskListTaskKind::NonRepetitive,
+            has_deadline: true,
             give_up_candidate: false,
         })],
         category_work_seconds: vec![],
@@ -536,7 +540,7 @@ fn task_list_displayはansi有効時に単発task名と締切超過を帯配色�
 }
 
 #[test]
-fn task_list_displayは種別ごとのtask名と今日締切だけを指定色で表示する() {
+fn task_list_displayは種別ごとのtask名と今日以降の締切を指定色で表示する() {
     let scheduled_start = Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap();
     let rows = [
         (TaskListTaskKind::Fixed, "!", "____-01:20", "固定task"),
@@ -564,6 +568,7 @@ fn task_list_displayは種別ごとのtask名と今日締切だけを指定色�
             project_category: None,
             task_name: task_name.to_string(),
             kind,
+            has_deadline: deadline != "____/__/__",
             give_up_candidate: false,
         })
     })
@@ -582,8 +587,7 @@ fn task_list_displayは種別ごとのtask名と今日締切だけを指定色�
 
     assert!(writer.operations[0].contains("! \x1b[38;5;214m____-01:20\x1b[39m"));
     assert!(writer.operations[0].ends_with("\x1b[38;5;110m固定task\x1b[39m"));
-    assert!(writer.operations[1].contains("- _____-001D"));
-    assert!(!writer.operations[1].contains("\x1b[38;5;214m"));
+    assert!(writer.operations[1].contains("- \x1b[38;5;34m_____-001D\x1b[39m"));
     assert!(writer.operations[1].ends_with("\x1b[38;5;33m繰返task\x1b[39m"));
     assert!(writer.operations[2].contains("- ____/__/__"));
     assert!(writer.operations[2].ends_with("\x1b[38;5;208m単発task\x1b[39m"));
@@ -605,6 +609,7 @@ fn task_list_displayはansi無効時に従来のa_j列と完全一致する() {
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "単発task".to_string(),
         kind: TaskListTaskKind::NonRepetitive,
+        has_deadline: true,
         give_up_candidate: false,
     };
     let expected = format_task_list_task_row(&row);
@@ -636,6 +641,7 @@ fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別�
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "give-up候補".to_string(),
         kind: TaskListTaskKind::NonRepetitive,
+        has_deadline: true,
         give_up_candidate: true,
     };
 
