@@ -1,12 +1,12 @@
 use super::renderer::{
-    format_spreadsheet_task_row, format_task_list_columns, render_display_model,
-    render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
-    BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
-    CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
-    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
-    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
-    TaskListRow, TaskListTaskRow, TreeDisplay,
+    format_spreadsheet_task_row, format_task_list_columns, format_task_list_task_row,
+    render_display_model, render_display_model_with_mode, task_list_columns, AncestorTreeRow,
+    BandDayRow, BandDisplay, BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow,
+    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter,
+    FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay,
+    FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter,
+    SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
+    TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
@@ -62,6 +62,7 @@ fn 同一taskの複数segmentは同じb列と異なるa列を出力する() {
         priority: 1,
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "分割task".to_string(),
+        kind: TaskListTaskKind::NonRepetitive,
         give_up_candidate: false,
     });
 
@@ -418,6 +419,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 priority: 1,
                 project_category: Some(ProjectCategory::Sustaining),
                 task_name: "夕食 の 準備".to_string(),
+                kind: TaskListTaskKind::NonRepetitive,
                 give_up_candidate: true,
             }),
             TaskListRow::Gap { minutes: 15 },
@@ -436,6 +438,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 priority: 8,
                 project_category: None,
                 task_name: "短い task".to_string(),
+                kind: TaskListTaskKind::NonRepetitive,
                 give_up_candidate: false,
             }),
         ],
@@ -496,6 +499,129 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
 }
 
 #[test]
+fn task_list_displayはansi有効時に単発task名と締切超過を帯配色で表示する() {
+    let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let display = DisplayModel::TaskList(TaskListDisplay {
+        rows: vec![TaskListRow::Task(TaskListTaskRow {
+            ind: 1,
+            task_id,
+            icon: "v".to_string(),
+            deadline: "+00:10____".to_string(),
+            scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
+            scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
+            rank: 0,
+            estimated_minutes: 40,
+            priority: 1,
+            project_category: Some(ProjectCategory::Sustaining),
+            task_name: "単発task".to_string(),
+            kind: TaskListTaskKind::NonRepetitive,
+            give_up_candidate: false,
+        })],
+        category_work_seconds: vec![],
+        category_denominator_seconds: 0,
+    });
+    let mut writer = TraceWriter {
+        supports_ansi_color: true,
+        ..TraceWriter::default()
+    };
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations[0],
+        format!(
+            "newline:0001 {task_id} v \x1b[38;5;196m+00:10____\x1b[39m 08/23(日)-09:00~09:40 0 40 01 維 \x1b[38;5;208m単発task\x1b[39m"
+        )
+    );
+}
+
+#[test]
+fn task_list_displayは種別ごとのtask名と今日締切だけを指定色で表示する() {
+    let scheduled_start = Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap();
+    let rows = [
+        (TaskListTaskKind::Fixed, "!", "____-01:20", "固定task"),
+        (TaskListTaskKind::Repetitive, "-", "_____-001D", "繰返task"),
+        (
+            TaskListTaskKind::NonRepetitive,
+            "-",
+            "____/__/__",
+            "単発task",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(ind, (kind, icon, deadline, task_name))| {
+        TaskListRow::Task(TaskListTaskRow {
+            ind,
+            task_id: Uuid::from_u128(ind as u128 + 1),
+            icon: icon.to_string(),
+            deadline: deadline.to_string(),
+            scheduled_start,
+            scheduled_end: scheduled_start + chrono::Duration::minutes(15),
+            rank: 0,
+            estimated_minutes: 15,
+            priority: 0,
+            project_category: None,
+            task_name: task_name.to_string(),
+            kind,
+            give_up_candidate: false,
+        })
+    })
+    .collect();
+    let display = DisplayModel::TaskList(TaskListDisplay {
+        rows,
+        category_work_seconds: vec![],
+        category_denominator_seconds: 0,
+    });
+    let mut writer = TraceWriter {
+        supports_ansi_color: true,
+        ..TraceWriter::default()
+    };
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert!(writer.operations[0].contains("! \x1b[38;5;214m____-01:20\x1b[39m"));
+    assert!(writer.operations[0].ends_with("\x1b[38;5;110m固定task\x1b[39m"));
+    assert!(writer.operations[1].contains("- _____-001D"));
+    assert!(!writer.operations[1].contains("\x1b[38;5;214m"));
+    assert!(writer.operations[1].ends_with("\x1b[38;5;33m繰返task\x1b[39m"));
+    assert!(writer.operations[2].contains("- ____/__/__"));
+    assert!(writer.operations[2].ends_with("\x1b[38;5;208m単発task\x1b[39m"));
+}
+
+#[test]
+fn task_list_displayはansi無効時に従来のa_j列と完全一致する() {
+    let task_id = Uuid::parse_str("11111111-1111-1111-1111-111111111111").unwrap();
+    let row = TaskListTaskRow {
+        ind: 1,
+        task_id,
+        icon: "v".to_string(),
+        deadline: "+00:10____".to_string(),
+        scheduled_start: Local.with_ymd_and_hms(2026, 8, 23, 9, 0, 0).unwrap(),
+        scheduled_end: Local.with_ymd_and_hms(2026, 8, 23, 9, 40, 0).unwrap(),
+        rank: 0,
+        estimated_minutes: 40,
+        priority: 1,
+        project_category: Some(ProjectCategory::Sustaining),
+        task_name: "単発task".to_string(),
+        kind: TaskListTaskKind::NonRepetitive,
+        give_up_candidate: false,
+    };
+    let expected = format_task_list_task_row(&row);
+    let display = DisplayModel::TaskList(TaskListDisplay {
+        rows: vec![TaskListRow::Task(row)],
+        category_work_seconds: vec![],
+        category_denominator_seconds: 0,
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(writer.operations[0], format!("newline:{expected}"));
+    assert!(!writer.operations[0].contains("\x1b["));
+}
+
+#[test]
 fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別する() {
     let row = TaskListTaskRow {
         ind: 1,
@@ -509,6 +635,7 @@ fn task_list_icon_modeは同じgive_up候補の検索iconと表示iconを区別�
         priority: 1,
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "give-up候補".to_string(),
+        kind: TaskListTaskKind::NonRepetitive,
         give_up_candidate: true,
     };
 

@@ -2061,6 +2061,101 @@ fn show_allの製品経路はspreadsheet_formatterを使う() {
 }
 
 #[test]
+fn task_list製品経路はtask種別を帯と同じ色で表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+
+    let fixed = new_test_task_handle("固定task").unwrap();
+    fixed.set_start_time(now).unwrap();
+    fixed.set_fixed_start(true).unwrap();
+    let fixed_output = execute_command_with_ansi_color_for_test(fixed, now, None, "全", true).output;
+    assert!(
+        fixed_output.contains("\x1b[38;5;110m固定task\x1b[39m"),
+        "{fixed_output}"
+    );
+
+    let repetitive_root = new_test_task_handle("繰返root").unwrap();
+    repetitive_root.set_estimated_work_seconds(0).unwrap();
+    repetitive_root
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let repetitive = repetitive_root.create_as_last_child(new_test_task_attr("繰返task"));
+    repetitive.set_start_time(now).unwrap();
+    let repetitive_output = execute_command_with_ansi_color_for_test(
+        repetitive_root,
+        now,
+        None,
+        "全",
+        true,
+    )
+    .output;
+    assert!(
+        repetitive_output.contains("\x1b[38;5;33m【繰】(7)繰返task\x1b[39m"),
+        "{repetitive_output}"
+    );
+
+    let fixed_repetitive_root = new_test_task_handle("固定繰返root").unwrap();
+    fixed_repetitive_root
+        .set_estimated_work_seconds(0)
+        .unwrap();
+    fixed_repetitive_root
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let fixed_repetitive =
+        fixed_repetitive_root.create_as_last_child(new_test_task_attr("固定繰返task"));
+    fixed_repetitive.set_start_time(now).unwrap();
+    fixed_repetitive.set_fixed_start(true).unwrap();
+    let fixed_repetitive_output = execute_command_with_ansi_color_for_test(
+        fixed_repetitive_root,
+        now,
+        None,
+        "全",
+        true,
+    )
+    .output;
+    assert!(
+        fixed_repetitive_output.contains("\x1b[38;5;110m【繰】(7)固定繰返task\x1b[39m"),
+        "{fixed_repetitive_output}"
+    );
+
+    let non_repetitive = new_test_task_handle("単発task").unwrap();
+    non_repetitive.set_start_time(now).unwrap();
+    let non_repetitive_output = execute_command_with_ansi_color_for_test(
+        non_repetitive,
+        now,
+        None,
+        "全",
+        true,
+    )
+    .output;
+    assert!(
+        non_repetitive_output.contains("\x1b[38;5;208m単発task\x1b[39m"),
+        "{non_repetitive_output}"
+    );
+}
+
+#[test]
+fn task_list共有表示は全今尾で同じtask名配色を使う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("共有表示task").unwrap();
+    task.set_start_time(now).unwrap();
+
+    for command in ["全", "今", "尾"] {
+        let output = execute_command_with_ansi_color_for_test(
+            task.clone(),
+            now,
+            Some(task.get_id().unwrap()),
+            command,
+            true,
+        )
+        .output;
+        assert!(
+            output.contains("\x1b[38;5;208m共有表示task\x1b[39m"),
+            "{command}: {output}"
+        );
+    }
+}
+
+#[test]
 fn task_list通常表示はcategory集計後の2空行をwriter固有newlineで維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("末尾空行確認用タスク").unwrap();
@@ -4307,7 +4402,7 @@ fn test_execute_today_カテゴリ別の予定時間集計を表示する() {
     );
 
     let actual = String::from_utf8(stdout.buffer).unwrap();
-    assert!(actual.contains(" 00 資 投資タスク"));
+    assert!(actual.contains(" 00 資 \x1b[38;5;208m投資タスク\x1b[39m"));
     assert!(actual.contains(
         "予定カテゴリ: 獲得 0.0時間(0% | 0%) / 維持 0.0時間(0% | 0%) / 回復 0.0時間(0% | 0%) / 投資 1.0時間(200% | 200%) / 消費 0.0時間(0% | 200%) / 未分類 0.0時間(0% | 200%)"
     ));
