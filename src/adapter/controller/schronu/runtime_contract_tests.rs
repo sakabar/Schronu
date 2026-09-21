@@ -2173,7 +2173,7 @@ fn task_list製品経路は犠牲候補iconを端末だけ紫で表示する() {
     )
     .output;
     assert!(
-        terminal_output.contains("\x1b[38;5;135mA\x1b[39m"),
+        terminal_output.contains("\x1b[38;5;129mA\x1b[39m"),
         "{terminal_output}"
     );
 

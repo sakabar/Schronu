@@ -539,7 +539,7 @@ const NON_REPETITIVE_COLOR: u8 = 208;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
 const DEADLINE_TODAY_COLOR: u8 = 214;
 const FUTURE_DEADLINE_COLOR: u8 = 34;
-const GIVE_UP_CANDIDATE_COLOR: u8 = 135;
+const GIVE_UP_CANDIDATE_COLOR: u8 = 129;
 
 fn render_band_display(
     writer: &mut dyn SchronuWriter,

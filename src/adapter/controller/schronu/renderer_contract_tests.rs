@@ -645,7 +645,7 @@ fn task_list_displayは警告iconだけを意味別の色で表示する() {
         writer.operations[1].contains("\x1b[38;5;214m!\x1b[39m \x1b[38;5;214m____-01:20\x1b[39m")
     );
     assert!(
-        writer.operations[2].contains("\x1b[38;5;135mA\x1b[39m \x1b[38;5;196m+00:10____\x1b[39m")
+        writer.operations[2].contains("\x1b[38;5;129mA\x1b[39m \x1b[38;5;196m+00:10____\x1b[39m")
     );
     assert!(writer.operations[3].contains(" / ____/__/__"));
     assert!(writer.operations[4].contains(" - ____/__/__"));
