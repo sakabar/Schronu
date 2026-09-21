@@ -1134,7 +1134,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         if has_task_list_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
-                    } else if pattern == "v" {
+                    } else if matches!(pattern.as_str(), "v" | "超") {
                         if icon == breaking_deadline_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
