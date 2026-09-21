@@ -2179,7 +2179,7 @@ fn task_list検索はtyped_a_i列と名前の代表patternを製品経路で照�
 }
 
 #[test]
-fn 全vは締切超過iconだけを表示し全締切filterは既存対象を維持する() {
+fn 全vと全超は締切超過iconだけを表示し全締切filterは既存対象を維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root_task = new_test_task_handle("締切filter root").unwrap();
     let _ = root_task.sync_clock(now);
@@ -2209,6 +2209,13 @@ fn 全vは締切超過iconだけを表示し全締切filterは既存対象を維
     let name_match_task = root_task.create_as_last_child(name_match_attr);
     let _ = name_match_task.sync_clock(now);
 
+    let mut japanese_alias_name_match_attr = new_test_task_attr("超重要だが間に合うtask");
+    japanese_alias_name_match_attr.set_estimated_work_seconds(10 * 60);
+    japanese_alias_name_match_attr.set_start_time(now);
+    let japanese_alias_name_match_task =
+        root_task.create_as_last_child(japanese_alias_name_match_attr);
+    let _ = japanese_alias_name_match_task.sync_clock(now);
+
     let overdue_result = execute_command_for_test(root_task.clone(), now, None, "全 v");
     assert!(
         overdue_result.output.contains("予定上の締切超過task"),
@@ -2224,6 +2231,22 @@ fn 全vは締切超過iconだけを表示し全締切filterは既存対象を維
         !overdue_result.output.contains("saveを含む通常task"),
         "task名中のvを検索一致させない: {}",
         overdue_result.output
+    );
+    assert!(
+        !overdue_result.output.contains("超重要だが間に合うtask"),
+        "締切超過しないtaskを除外する: {}",
+        overdue_result.output
+    );
+
+    let japanese_alias_result =
+        execute_command_for_test(root_task.clone(), now, None, "全 超");
+    assert_eq!(japanese_alias_result.output, overdue_result.output);
+    assert!(
+        !japanese_alias_result
+            .output
+            .contains("超重要だが間に合うtask"),
+        "task名中の超を検索一致させない: {}",
+        japanese_alias_result.output
     );
 
     let deadline_result = execute_command_for_test(root_task, now, None, "全 〆");
@@ -6182,7 +6205,7 @@ fn test_execute_calendarとband_締切日の見積合計超過だけでは締切
 fn test_execute_calendarとband_日次容量に余裕があってもscheduled_endが明日締切を超えれば警告する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let tomorrow_deadline = Local.with_ymd_and_hms(2026, 8, 12, 14, 0, 0).unwrap();
-    let expected = "[Warn] 【明日の】〆切に間に合わないタスクが1件あります。対象日: 2026-08-12, 最大超過: 2時間00分。【今日中に】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。";
+    let expected = "[Warn] 【明日の】〆切に間に合わないタスクが1件あります。対象日: 2026-08-12, 最大超過: 2時間00分。【今日中に】`全 超`で対象を確認し、予定を前倒しするか〆切を調整してください。";
 
     for command in ["暦", "帯"] {
         let root = new_test_task_handle("明日締切超過fixture").unwrap();
@@ -6205,7 +6228,7 @@ fn test_execute_calendarとband_日次容量に余裕があってもscheduled_en
 #[test]
 fn test_execute_calendarとband_過去と今日の締切超過をtask単位で今日までcritへ集約する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let expected = "[Crit] 【今日までの】〆切に間に合わないタスクが2件あります。最初の対象日: 2026-08-10, 最大超過: 25時間00分。【ただちに】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。";
+    let expected = "[Crit] 【今日までの】〆切に間に合わないタスクが2件あります。最初の対象日: 2026-08-10, 最大超過: 25時間00分。【ただちに】`全 超`で対象を確認し、予定を前倒しするか〆切を調整してください。";
 
     for command in ["暦", "帯"] {
         let root = new_test_task_handle("今日までの締切超過fixture").unwrap();
@@ -6293,7 +6316,7 @@ fn test_execute_calendarとband_分割taskの最終終了を一件として締�
 #[test]
 fn test_execute_calendarとband_6日後の締切超過だけを7日以内warnへ含める() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let expected = "[Warn] 【7日以内の】〆切に間に合わないタスクが1件あります。最初の対象日: 2026-08-17, 最大超過: 2時間00分。【近々】`全 v`で対象を確認し、予定を前倒しするか〆切を調整してください。";
+    let expected = "[Warn] 【7日以内の】〆切に間に合わないタスクが1件あります。最初の対象日: 2026-08-17, 最大超過: 2時間00分。【近々】`全 超`で対象を確認し、予定を前倒しするか〆切を調整してください。";
 
     for command in ["暦", "帯"] {
         let root = new_test_task_handle("7日境界fixture").unwrap();
