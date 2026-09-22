@@ -265,7 +265,7 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
 
 #[test]
 fn 全件pageは同じtaskの分割segmentを別行にし予定なしtaskを除く() {
-    let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 20, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.sync_clock(now).unwrap();
@@ -277,7 +277,7 @@ fn 全件pageは同じtaskの分割segmentを別行にし予定なしtaskを除�
     split.set_priority(88).unwrap();
     repository.start_new_project(split).unwrap();
     let interrupt = TaskHandle::with_identity("interrupt", Uuid::from_u128(30_002), now).unwrap();
-    interrupt.set_start_time(now + Duration::hours(6)).unwrap();
+    interrupt.set_start_time(now + Duration::hours(9)).unwrap();
     interrupt.set_estimated_work_seconds(3600).unwrap();
     interrupt.set_priority(89).unwrap();
     repository.start_new_project(interrupt).unwrap();
@@ -314,7 +314,13 @@ fn 全件pageは同じtaskの分割segmentを別行にし予定なしtaskを除�
             .collect::<Vec<_>>(),
         vec![0, 1, 2]
     );
-    assert!(page.rows.iter().all(|row| !row.schedule_date.is_empty()));
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.schedule_date.as_str())
+            .collect::<Vec<_>>(),
+        vec!["2026-09-05", "2026-09-05", "2026-09-06"]
+    );
 }
 
 #[test]
