@@ -521,7 +521,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 ### 7.3 一覧画面
 
 - `全て`buttonは`曜 今日`の左に置く。初期化、reload、tab切替では全件を取得せず、押下時だけWeb専用の`list_all_tasks_page(cursor)`を最大500件ずつcursorがなくなるまで呼ぶ。途中で失敗した場合は部分一覧を捨てて再試行を表示し、全ページ成功後だけ検索とtableを有効にする。
-- 全件は完了済みを除くTodo・Pendingの親と末端を1タスク1行で表示する。予定列は最も早い計算上の予定segmentのlogical dateを`YYYY/MM/DD(曜日)`で示し、segmentがない場合は`—`とする。列順は日付別と同じだが、全件側の操作列はセッション追加のみとし、Todoかつschedule rank 0のtaskにだけ表示する。締切はbrowser localの`MM/DD HH:MM`とし、予定列を広げる分は操作列を44pxへ縮める。
+- 全件の正本はCLI `全`と同じapplicationの`get_schedule`とする。CLIの空き時間行・要約は除き、返された実task予定segmentを反転・再sort・状態filterせずに1segment 1行で表示する。CLIはこの列を逆順に表示し、Webは反転前の直近segmentを先頭に置く。同一taskの複数segmentは別行とし、予定segmentのないtaskは表示しない。各segmentの開始時刻からapplication共通処理で得たlogical dateを予定列へ`YYYY/MM/DD(曜日)`で示す。page境界をまたぐ同一taskの行もsegment indexで一意に識別する。列順は日付別と同じだが、全件側の操作列はセッション追加のみとし、Todoかつschedule rank 0のtaskにだけ表示する。締切はbrowser localの`MM/DD HH:MM`とし、予定列を広げる分は操作列を44pxへ縮める。
 - 全件側の検索は既存と同じtask名条件を取得済み全件へclient内で適用し、最初の500行と「さらに表示」ごとに500行を描画する。全件と全件側の検索文字列はmemory専用で、reloadでは日付別の保存一覧・検索だけを復元する。server側task更新が成功した時点で全件cacheを破棄し、次の`全て`押下まで再取得しない。
 - 曜日button列とtask名cell内の横scrollは維持し、全件側の列幅変更でviewport全体に新たな横scrollを生じさせない。
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
@@ -676,7 +676,7 @@ OperationHistoryEntry {
 - 睡眠時間表示: buffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
-- read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
+- read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。全件pageではCLI `全`と同じsegment列、予定なしの除外、同一taskの複数行、500行境界、複数利用者のcursor継続を確認する。
 
 ### 12.2 CLI互換性
 
@@ -723,7 +723,7 @@ OperationHistoryEntry {
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
-- 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
+- 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。全件側は全page取得後にだけ検索可能とし、未描画のsegmentも検索対象に含め、同一taskの行keyをsegmentごとに区別する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 一覧、選択tab、検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。

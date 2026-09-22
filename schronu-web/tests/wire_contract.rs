@@ -8,7 +8,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
 
 #[test]
-fn 全件pageのrequestとresponseはcursorと予定なしを保持する() {
+fn 全件pageのrequestとresponseはcursorと予定日を保持する() {
     assert_json_round_trip(
         &ListAllTasksPageRequest {
             cursor: Some("next".to_owned()),

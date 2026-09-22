@@ -299,6 +299,7 @@ fn 全件pageの大規模fixture取得時間と応答量を計測する() {
         repository.start_new_project(root).unwrap();
     }
     repository.save().unwrap();
+    let expected_segments = get_schedule(&repository).unwrap().len();
     drop(repository);
 
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
@@ -322,11 +323,11 @@ fn 全件pageの大規模fixture取得時間と応答量を計測する() {
         }
     }
     eprintln!(
-        "all-task fixture projects={PROJECTS} tasks={} pages={pages} rows={rows} first_page_ms={first_page_ms} total_ms={} response_bytes={response_bytes}",
+        "all-task fixture projects={PROJECTS} tasks={} expected_segments={expected_segments} pages={pages} rows={rows} first_page_ms={first_page_ms} total_ms={} response_bytes={response_bytes}",
         PROJECTS * (CHILDREN_PER_PROJECT + 1),
         started.elapsed().as_millis()
     );
-    assert_eq!(rows as u128, PROJECTS * (CHILDREN_PER_PROJECT + 1));
+    assert_eq!(rows, expected_segments);
 }
 
 #[test]
