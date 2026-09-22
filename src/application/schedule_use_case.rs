@@ -27,7 +27,7 @@ pub struct ScheduledTaskView {
 }
 
 impl ScheduledTaskView {
-    pub fn is_leaf(&self) -> bool {
+    pub(crate) fn is_leaf(&self) -> bool {
         self.rank == 0
     }
 }
