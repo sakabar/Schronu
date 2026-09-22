@@ -18,13 +18,10 @@ pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     #[props(default)] all_rows: Vec<ListRowViewModel>,
-    #[props(default)] show_all_button: bool,
     #[props(default)] all_selected: bool,
     #[props(default)] all_loaded: bool,
     #[props(default)] all_loading: bool,
     #[props(default)] all_error: bool,
-    #[props(default)] all_visible_count: usize,
-    #[props(default)] all_rows_prepared: bool,
     #[props(default)] all_has_more: bool,
     active_task_ids: Vec<String>,
     date_input_text: String,
@@ -47,34 +44,19 @@ pub fn ListView(
     let task_name_matches = |task_name: &str| {
         normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
     };
-    let filtered_rows = if all_selected && all_rows_prepared {
+    let filtered_rows = if all_selected {
         all_rows
     } else {
-        (if all_selected { all_rows } else { rows })
-            .into_iter()
+        rows.into_iter()
             .filter(|row| task_name_matches(&row.task.task_name))
             .collect::<Vec<_>>()
     };
     let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
-    let has_more = all_selected
-        && if all_rows_prepared {
-            all_has_more
-        } else {
-            filtered_rows.len() > all_visible_count
-        };
-    let visible_rows = if all_selected && !all_rows_prepared {
-        filtered_rows
-            .into_iter()
-            .take(all_visible_count)
-            .collect::<Vec<_>>()
-    } else {
-        filtered_rows
-    };
+    let has_more = all_selected && all_has_more;
 
     rsx! {
         section { class: if all_selected { "task-list-view is-all-tasks" } else { "task-list-view" },
             nav { class: "date-pills", aria_label: "logical date",
-                if show_all_button {
                 button {
                     class: if all_selected { "date-pill is-selected" } else { "date-pill" },
                     r#type: "button",
@@ -82,7 +64,6 @@ pub fn ListView(
                     disabled: server_actions_blocked || all_loading,
                     onclick: move |_| on_select_all.call(()),
                     "全て"
-                }
                 }
                 for date in dates {
                     DateButton { date, disabled: server_actions_blocked || all_loading, on_select_date }
@@ -173,7 +154,7 @@ pub fn ListView(
                             }
                         }
                         tbody {
-                            for row in visible_rows {
+                            for row in filtered_rows {
                                 TaskRow {
                                     key: "{row.row_key}",
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),

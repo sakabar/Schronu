@@ -77,11 +77,8 @@ fn all_perf_root(props: RootProps) -> Element {
             dates: Vec::new(),
             rows: Vec::new(),
             all_rows: props.rows,
-            show_all_button: true,
             all_selected: true,
             all_loaded: true,
-            all_rows_prepared: true,
-            all_visible_count: 500,
             active_task_ids: Vec::new(),
             date_input_text: String::new(),
             date_input_error: None,
@@ -176,7 +173,7 @@ fn mutation_safety全体停止は先送りbuttonを無効化する() {
     assert!(!html.contains("class=\"session-start\" disabled"), "{html}");
     assert!(html.contains("先送り\" disabled=true"), "{html}");
 
-    dispatch_click(&dom, listeners[1]);
+    dispatch_click(&dom, listeners[2]);
     assert!(events.lock().unwrap().is_empty());
 }
 
@@ -391,7 +388,6 @@ fn all_root(props: AllRootProps) -> Element {
             dates: eight_dates(),
             rows: vec![row("daily", false, true)],
             all_rows: props.rows,
-            show_all_button: true,
             all_selected: true,
             all_loaded: true,
             all_has_more: props.has_more,
@@ -684,7 +680,7 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&date_dom, date_listeners[0]);
+    dispatch_click(&date_dom, date_listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["date:2026-09-12"]);
 
     events.lock().unwrap().clear();
@@ -695,11 +691,11 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&task_dom, task_listeners[0]);
+    dispatch_click(&task_dom, task_listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
 
     events.lock().unwrap().clear();
-    dispatch_click(&task_dom, task_listeners[1]);
+    dispatch_click(&task_dom, task_listeners[2]);
     assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
 }
 
@@ -716,7 +712,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&cancel_dom, initial_ids[1]);
+    dispatch_click(&cancel_dom, initial_ids[2]);
     let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
     let html = dioxus::ssr::render(&cancel_dom);
     assert!(events.lock().unwrap().is_empty());
@@ -741,7 +737,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&confirm_dom, initial_ids[1]);
+    dispatch_click(&confirm_dom, initial_ids[2]);
     let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
     let html = dioxus::ssr::render(&confirm_dom);
     assert!(html.contains("次の周期へ送ります"), "{html}");
@@ -798,7 +794,7 @@ fn row差替えで先送り確認stateを別taskへ継承しない() {
         },
     );
     let initial_ids = rebuild_with_click_listeners(&mut dom);
-    dispatch_click(&dom, initial_ids[2]);
+    dispatch_click(&dom, initial_ids[3]);
     dom.render_immediate_to_vec();
     assert!(dioxus::ssr::render(&dom).contains("task firstは締切までの余裕がありません"));
 
@@ -821,7 +817,7 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
         events: Arc::clone(&events),
     });
 
-    assert!(listeners.is_empty());
+    assert_eq!(listeners.len(), 1, "全てbuttonだけがclick listenerを持つ");
     assert!(!dioxus::ssr::render(&dom).contains("session-start"));
     assert!(
         dioxus::ssr::render(&dom).contains("class=\"session-cell\"></td>"),
@@ -1029,8 +1025,8 @@ fn clear_buttonは入力中だけ表示して空文字を一度通知する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("aria-label=\"検索文字列をクリア\""), "{html}");
-    assert_eq!(listeners.len(), 1);
-    dispatch_click(&dom, listeners[0]);
+    assert_eq!(listeners.len(), 2);
+    dispatch_click(&dom, listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["filter:"]);
 
     let (empty_dom, _) = build(RootProps {
@@ -1058,7 +1054,7 @@ fn filter一致なしはstatusを表示してtask操作を生成しない() {
     assert!(html.contains("role=\"status\""), "{html}");
     assert!(html.contains("一致するタスクがありません。"), "{html}");
     assert!(!html.contains("session-start"), "{html}");
-    assert_eq!(listeners.len(), 1, "input listener is not a click listener");
+    assert_eq!(listeners.len(), 2, "input listener is not a click listener");
 }
 
 #[test]
@@ -1215,8 +1211,8 @@ fn 日付入力は正規化後もtab往復で保持され日付buttonでclearさ
         "{restored_html}"
     );
 
-    assert_eq!(restored_click_ids.len(), 1);
-    dispatch_click(&dom, restored_click_ids[0]);
+    assert_eq!(restored_click_ids.len(), 2);
+    dispatch_click(&dom, restored_click_ids[1]);
     dom.render_immediate_to_vec();
     let cleared_html = dioxus::ssr::render(&dom);
     assert!(cleared_html.contains("class=\"date-jump-input\" type=\"text\" value=\"\""));
@@ -1261,7 +1257,7 @@ fn background更新中は日付buttonとenter送信をuiで拒否する() {
     );
     let listeners = rebuild_with_named_event_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
-    assert_eq!(html.matches("disabled").count(), 3, "{html}");
+    assert_eq!(html.matches("disabled").count(), 4, "{html}");
 
     let submit_id = listeners
         .iter()
@@ -1357,8 +1353,8 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
     assert!(events.borrow().is_empty());
 
     assert_eq!(clear_ids.len(), 1);
-    assert_eq!(restored_clear_ids.len(), 1);
-    dispatch_click(&dom, restored_clear_ids[0]);
+    assert_eq!(restored_clear_ids.len(), 2);
+    dispatch_click(&dom, restored_clear_ids[1]);
     render_with_click_listeners(&mut dom);
     let cleared_html = dioxus::ssr::render(&dom);
     assert!(cleared_html.contains("画面設計"), "{cleared_html}");

@@ -87,7 +87,6 @@ pub(super) fn BrowserApp() -> Element {
         all_loaded,
         all_loading,
         all_error,
-        all_visible_count,
         all_has_more,
         all_rows,
     ) = {
@@ -105,7 +104,6 @@ pub(super) fn BrowserApp() -> Element {
             client.all_task_rows().is_some(),
             client.all_loading(),
             client.all_error(),
-            client.all_visible_count(),
             client.all_has_more(),
             if client.all_selected() {
                 project_all_task_rows_for_browser(
@@ -190,14 +188,11 @@ pub(super) fn BrowserApp() -> Element {
                 ListView {
                     dates,
                     rows,
-                    show_all_button: true,
                     all_rows,
                     all_selected,
                     all_loaded,
                     all_loading,
                     all_error,
-                    all_visible_count,
-                    all_rows_prepared: true,
                     all_has_more,
                     active_task_ids,
                     date_input_text,
