@@ -228,12 +228,24 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     let mut cursor = None;
     let mut actual_names = Vec::new();
     let mut page_count = 0;
+    let mut action_flags = Vec::new();
     loop {
         let page = service.list_all_tasks_page_at(now, cursor).unwrap();
         assert!(page.rows.len() <= 500);
         if page.next_cursor.is_some() {
             assert_eq!(page.rows.len(), 500);
         }
+        action_flags.extend(
+            page.rows
+                .iter()
+                .filter(|row| {
+                    matches!(
+                        row.task.task_name.as_str(),
+                        "project 1" | "project 2" | "child"
+                    )
+                })
+                .map(|row| (row.task.task_name.clone(), row.can_start_session)),
+        );
         actual_names.extend(page.rows.into_iter().map(|row| row.task.task_name));
         page_count += 1;
         cursor = page.next_cursor;
@@ -244,6 +256,9 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     assert!(page_count > 1);
     assert_eq!(actual_names, expected_names);
     assert!(!actual_names.iter().any(|name| name == "project 501"));
+    assert!(action_flags.contains(&("project 1".to_owned(), false)));
+    assert!(action_flags.contains(&("project 2".to_owned(), false)));
+    assert!(action_flags.contains(&("child".to_owned(), true)));
     assert_ne!(
         actual_names,
         expected_names.into_iter().rev().collect::<Vec<_>>()
