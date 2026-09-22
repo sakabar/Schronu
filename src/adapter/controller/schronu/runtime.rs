@@ -484,15 +484,49 @@ fn extract_url(s: &str) -> Option<String> {
 enum ResolvedExternalRequest {
     BrowserUrl(String),
     ObsidianUrl(String),
+    TimerUrl(String),
+    Message(&'static str),
+}
+
+fn resolve_timer_shortcut(
+    focused_task_opt: &Option<TaskHandle>,
+    focus_started_at: DateTime<Local>,
+    now: DateTime<Local>,
+) -> Result<ResolvedExternalRequest, ApplicationError> {
+    let Some(task) = focused_task_opt else {
+        return Ok(ResolvedExternalRequest::Message(
+            "フォーカス中のタスクがありません",
+        ));
+    };
+    let estimated = task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let actual = task
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let elapsed = (now - focus_started_at).num_seconds().max(0);
+    let remaining = i128::from(estimated) - i128::from(actual) - i128::from(elapsed);
+    if remaining <= 0 {
+        return Ok(ResolvedExternalRequest::Message(
+            "見積もりの残り時間はありません",
+        ));
+    }
+    Ok(ResolvedExternalRequest::TimerUrl(format!(
+        "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={remaining}"
+    )))
 }
 
 fn resolve_external_request(
     request: ExternalRequest,
     focused_task_opt: &Option<TaskHandle>,
     config: &SchronuConfig,
+    focus_started_at: DateTime<Local>,
+    now: DateTime<Local>,
 ) -> Result<Option<ResolvedExternalRequest>, ApplicationError> {
     match request {
-        ExternalRequest::TimerShortcut => Ok(None),
+        ExternalRequest::TimerShortcut => {
+            resolve_timer_shortcut(focused_task_opt, focus_started_at, now).map(Some)
+        }
         ExternalRequest::OpenFocusedLink => {
             let mut task_opt = focused_task_opt.clone();
             while let Some(task) = &task_opt {
@@ -521,6 +555,39 @@ fn resolve_external_request(
 fn execute_open_link(url: &str) -> Result<(), CommandError> {
     webbrowser::open(url).map_err(|source| external_open_error("browser", source))?;
     Ok(())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn shortcut_open_command(url: &str) -> process::Command {
+    let mut command = process::Command::new("open");
+    command.arg(url);
+    command
+}
+
+fn execute_open_timer_shortcut(url: &str) -> Result<(), CommandError> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = shortcut_open_command(url)
+            .status()
+            .map_err(|source| external_open_error("Shortcuts", source))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(external_open_error(
+                "Shortcuts",
+                std::io::Error::other(format!("open exited with status {status}")),
+            ))
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = url;
+        Err(external_open_error(
+            "Shortcuts",
+            std::io::Error::other("macOS専用です"),
+        ))
+    }
 }
 
 fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String {
@@ -630,6 +697,7 @@ fn execute_parsed(
                 OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
                 outcome,
                 active_config(),
+                *focus_started_datetime,
             )
         }
         application_mode @ (OutcomeApplicationMode::Flushed
@@ -642,6 +710,7 @@ fn execute_parsed(
                 application_mode,
                 outcome,
                 active_config(),
+                *focus_started_datetime,
             )?;
             captured_output_result(&mut output)
         }
@@ -727,6 +796,7 @@ fn apply_command_outcome(
     mut application_mode: OutcomeApplicationMode<'_>,
     outcome: CommandOutcome,
     config: &SchronuConfig,
+    focus_started_datetime: DateTime<Local>,
 ) -> Result<(), CommandError> {
     if !outcome.display.is_empty() {
         render_display_model_with_mode(stdout, &outcome.display, RenderMode::Unflushed)
@@ -734,19 +804,37 @@ fn apply_command_outcome(
     }
 
     if let Some(request) = outcome.external_request {
+        let operation_now = task_repository.get_last_synced_time();
         let focused_task_opt = match focused_task_id_opt {
             Some(task_id) => task_repository
                 .get_by_id(*task_id)
                 .map_err(ApplicationError::TaskTree)?,
             None => None,
         };
-        if let Some(resolved_request) =
-            resolve_external_request(request, &focused_task_opt, config)?
-        {
+        let resolved_request = resolve_external_request(
+            request,
+            &focused_task_opt,
+            config,
+            focus_started_datetime,
+            operation_now,
+        )?;
+        if let Some(resolved_request) = resolved_request {
             match resolved_request {
                 ResolvedExternalRequest::BrowserUrl(url) => execute_open_link(&url)?,
                 ResolvedExternalRequest::ObsidianUrl(url) => {
                     execute_open_obsidian_root_task_search_with_config(&url)?
+                }
+                ResolvedExternalRequest::TimerUrl(url) => execute_open_timer_shortcut(&url)?,
+                ResolvedExternalRequest::Message(text) => {
+                    render_display_model_with_mode(
+                        stdout,
+                        &DisplayModel::Message {
+                            level: MessageLevel::Plain,
+                            text: text.to_string(),
+                        },
+                        RenderMode::Unflushed,
+                    )
+                    .map_err(CommandError::Output)?;
                 }
             }
         }

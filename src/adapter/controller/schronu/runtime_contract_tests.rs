@@ -4754,6 +4754,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         OutcomeApplicationMode::Flushed,
         open_outcome,
         active_config(),
+        now,
     )
     .unwrap();
 
@@ -4774,6 +4775,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         OutcomeApplicationMode::Flushed,
         noop_outcome,
         active_config(),
+        now,
     )
     .unwrap();
     assert_eq!(noop_output.flush_count, 0);
@@ -4791,6 +4793,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         OutcomeApplicationMode::InteractiveUnflushed(&mut focus_selection_mode),
         focus_outcome,
         active_config(),
+        now,
     )
     .unwrap();
 
@@ -4815,6 +4818,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         OutcomeApplicationMode::InteractiveUnflushed(&mut clear_selection_mode),
         clear_outcome,
         active_config(),
+        now,
     )
     .unwrap();
 
@@ -4839,6 +4843,7 @@ fn runtime外部ioとoutcome調停は共通境界に集約する() {
         OutcomeApplicationMode::InteractiveUnflushed(&mut low_selection_mode),
         low_outcome,
         active_config(),
+        now,
     )
     .unwrap();
 
@@ -4897,12 +4902,15 @@ fn external_requestは副作用なしでtyped_targetへ解決する() {
         obsidian_vault_name: "Work & Notes".to_string(),
         ..SchronuConfig::default()
     };
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
 
     assert_eq!(
         resolve_external_request(
             ExternalRequest::OpenFocusedLink,
             &focused_task_opt,
             &config,
+            now,
+            now,
         )
         .unwrap(),
         Some(ResolvedExternalRequest::BrowserUrl(
@@ -4914,6 +4922,8 @@ fn external_requestは副作用なしでtyped_targetへ解決する() {
             ExternalRequest::OpenObsidianRootSearch,
             &focused_task_opt,
             &config,
+            now,
+            now,
         )
         .unwrap(),
         Some(ResolvedExternalRequest::ObsidianUrl(format!(
@@ -4976,6 +4986,30 @@ fn timer_shortcutのopen_commandはurlを単一引数にする() {
     let command = shortcut_open_command(url);
     assert_eq!(command.get_program(), std::ffi::OsStr::new("open"));
     assert_eq!(command.get_args().collect::<Vec<_>>(), vec![url]);
+}
+
+#[test]
+fn timer_commandはfocusなしと残り0秒を案内しtaskを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("timer task").unwrap();
+    task.set_estimated_work_seconds(901).unwrap();
+    task.set_actual_work_seconds(182).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let no_focus = execute_command_for_test(task.clone(), now, None, "計");
+    assert!(no_focus.output.contains("フォーカス中のタスクがありません"));
+    assert_eq!(no_focus.focused_task_id_opt, None);
+
+    let elapsed = execute_command_with_focus_started_for_test(
+        task,
+        now + Duration::seconds(719),
+        now,
+        Some(task_id),
+        "timer",
+    );
+    assert!(elapsed.output.contains("見積もりの残り時間はありません"));
+    assert_eq!(elapsed.focused_task_id_opt, Some(task_id));
+    assert_eq!(elapsed.task.get_actual_work_seconds().unwrap(), 182);
 }
 
 #[test]
