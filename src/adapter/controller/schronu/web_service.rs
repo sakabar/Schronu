@@ -34,8 +34,11 @@ use crate::application::task_use_case::{
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use uuid::Uuid;
+
+const MAX_ALL_TASK_SNAPSHOTS: usize = 8;
 
 pub struct WebService {
     storage_directory: PathBuf,
@@ -44,7 +47,7 @@ pub struct WebService {
     config: SchronuConfig,
     repository_state_uncertain: bool,
     mutation_repository_factory: Box<dyn Fn(&str) -> TaskRepository>,
-    all_schedule_cache: Option<AllScheduleCache>,
+    all_schedule_cache: VecDeque<AllScheduleCache>,
 }
 
 struct AllScheduleCache {
@@ -80,7 +83,7 @@ impl WebService {
             config,
             repository_state_uncertain: false,
             mutation_repository_factory: Box::new(TaskRepository::new),
-            all_schedule_cache: None,
+            all_schedule_cache: VecDeque::new(),
         }
     }
 
@@ -122,17 +125,18 @@ impl WebService {
         operation_now: DateTime<Local>,
         cursor: Option<String>,
     ) -> Result<AllTaskPageDto, WebReadError> {
-        let cached_schedule = self.all_schedule_cache.take();
-        let result = self.run_at(operation_now, move |repository, _, _| {
+        let mut cached_schedules = std::mem::take(&mut self.all_schedule_cache);
+        let result = self.run_at(operation_now, |repository, _, _| {
             let revision = repository.repository_revision();
+            cached_schedules.retain(|cache| cache.repository_revision == revision);
             let (cache, start) = match cursor {
                 Some(cursor) => {
                     let (token, start) = parse_all_cursor(&cursor)?;
-                    let cache = cached_schedule.ok_or_else(invalid_all_cursor)?;
-                    if cache.token != token
-                        || cache.repository_revision != revision
-                        || start >= cache.rows.len()
-                    {
+                    let cache = cached_schedules
+                        .iter()
+                        .find(|cache| cache.token == token)
+                        .ok_or_else(invalid_all_cursor)?;
+                    if start >= cache.rows.len() {
                         return Err(invalid_all_cursor());
                     }
                     (cache, start)
@@ -142,14 +146,15 @@ impl WebService {
                         get_schedule(repository).map_err(WebReadCoreError::Application)?;
                     let dates = scheduled_logical_dates(&schedule)
                         .map_err(WebReadCoreError::Application)?;
-                    (
-                        AllScheduleCache {
-                            token: Uuid::new_v4(),
-                            repository_revision: revision,
-                            rows: read_model::build_all_task_rows(&schedule, &dates),
-                        },
-                        0,
-                    )
+                    if cached_schedules.len() == MAX_ALL_TASK_SNAPSHOTS {
+                        cached_schedules.pop_front();
+                    }
+                    cached_schedules.push_back(AllScheduleCache {
+                        token: Uuid::new_v4(),
+                        repository_revision: revision,
+                        rows: read_model::build_all_task_rows(&schedule, &dates),
+                    });
+                    (cached_schedules.back().expect("snapshot was inserted"), 0)
                 }
             };
             let end = start
@@ -159,12 +164,10 @@ impl WebService {
                 rows: cache.rows[start..end].to_vec(),
                 next_cursor: (end < cache.rows.len()).then(|| format!("{}:{end}", cache.token)),
             };
-            Ok((page, cache))
+            Ok(page)
         });
-        result.map(|(page, cache)| {
-            self.all_schedule_cache = Some(cache);
-            page
-        })
+        self.all_schedule_cache = cached_schedules;
+        result
     }
 
     pub fn auto_session_at(

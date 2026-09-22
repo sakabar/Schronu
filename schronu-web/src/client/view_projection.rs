@@ -108,7 +108,7 @@ fn project_all_task_rows_with(
                 .map(|date| date.format("%m/%d %H:%M").to_string())
                 .unwrap_or_else(|| "—".to_owned());
             ListRowViewModel {
-                row_key: row.task.task_id.clone(),
+                row_key: format!("all-segment:{}", row.segment_index),
                 task: row.task.clone(),
                 deadline_label,
                 schedule_label,
