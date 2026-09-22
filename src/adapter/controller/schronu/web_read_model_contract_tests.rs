@@ -1,6 +1,9 @@
-use super::web_service::{build_auto_session_dto, build_scheduled_task_rows, DeferModeDto};
+use super::web_service::{
+    build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows, DeferModeDto,
+};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
+use crate::application::task_use_case::{list_tasks_page, ListTasksFilter, ListTasksPageRequest};
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{Duration, Local, NaiveDate, TimeZone};
@@ -67,6 +70,117 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         rows[0].schedule_start_epoch_ms,
         rows[1].schedule_start_epoch_ms
     );
+}
+
+#[test]
+fn all_listは未完了の親と保留を含み最初の予定日だけを返す() {
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let parent = TaskHandle::with_identity("parent", Uuid::from_u128(401), start).unwrap();
+    let child = parent.create_as_last_child(crate::test_support::new_task_attr_at("child", start));
+    let pending = TaskHandle::with_identity("pending", Uuid::from_u128(402), start).unwrap();
+    pending.set_orig_status(Status::Pending).unwrap();
+    let done = TaskHandle::with_identity("done", Uuid::from_u128(403), start).unwrap();
+    done.set_orig_status(Status::Done).unwrap();
+    let repository = TestTaskRepository::new(vec![parent.clone(), pending, done], start);
+    let child_view = get_task(&repository, child.get_id().unwrap())
+        .unwrap()
+        .unwrap();
+    let schedule = vec![
+        ScheduledTaskView {
+            task: child_view.clone(),
+            first_available_time: start,
+            scheduled_start: start + Duration::days(2),
+            scheduled_end: start + Duration::days(2) + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 1_200,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            task: child_view,
+            first_available_time: start,
+            scheduled_start: start + Duration::days(1),
+            scheduled_end: start + Duration::days(1) + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 1_200,
+            rank: 0,
+        },
+    ];
+    let page = list_tasks_page(
+        &repository,
+        ListTasksPageRequest {
+            filter: ListTasksFilter {
+                period: None,
+                statuses: vec![Status::Todo, Status::Pending],
+                categories: vec![],
+            },
+            query: None,
+            root_task_id: None,
+            limit: Some(500),
+            cursor: None,
+        },
+    )
+    .unwrap();
+    let rows = build_all_task_rows(page.tasks, &schedule).unwrap();
+
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].task.task_name, "parent");
+    assert_eq!(rows[0].schedule_date, None);
+    assert!(!rows[0].can_start_session);
+    assert_eq!(rows[1].task.task_name, "child");
+    assert_eq!(rows[1].schedule_date.as_deref(), Some("2026-09-06"));
+    assert!(rows[1].can_start_session);
+    assert_eq!(rows[2].task.task_name, "pending");
+    assert_eq!(rows[2].schedule_date, None);
+    assert!(!rows[2].can_start_session);
+}
+
+#[test]
+fn all_listは500件境界を越えて全件を一度ずつ返す() {
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let roots = (1..=501)
+        .map(|index| {
+            let name = format!("task {index}");
+            TaskHandle::with_identity(
+                &name,
+                Uuid::from_u128(1_000 + index),
+                start,
+            )
+            .unwrap()
+        })
+        .collect();
+    let repository = TestTaskRepository::new(roots, start);
+    let mut cursor = None;
+    let mut names = Vec::new();
+    loop {
+        let page = list_tasks_page(
+            &repository,
+            ListTasksPageRequest {
+                filter: ListTasksFilter {
+                    period: None,
+                    statuses: vec![Status::Todo, Status::Pending],
+                    categories: vec![],
+                },
+                query: None,
+                root_task_id: None,
+                limit: Some(500),
+                cursor,
+            },
+        )
+        .unwrap();
+        names.extend(
+            build_all_task_rows(page.tasks, &[])
+                .unwrap()
+                .into_iter()
+                .map(|row| row.task.task_name),
+        );
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(names.len(), 501);
+    assert_eq!(names.first().unwrap(), "task 1");
+    assert_eq!(names.last().unwrap(), "task 501");
 }
 
 #[test]
