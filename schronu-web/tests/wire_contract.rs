@@ -24,7 +24,8 @@ fn 全件pageのrequestとresponseはcursorと予定なしを保持する() {
                     estimated_work_seconds: 600,
                     actual_work_seconds: 0,
                 },
-                schedule_date: None,
+                segment_index: 7,
+                schedule_date: Some("2026-09-05".to_owned()),
                 deadline_epoch_ms: None,
                 can_start_session: false,
             }],
@@ -33,7 +34,7 @@ fn 全件pageのrequestとresponseはcursorと予定なしを保持する() {
         json!({
             "rows": [{
                 "task": {"task_id": "id", "task_name": "pending", "estimated_work_seconds": 600, "actual_work_seconds": 0},
-                "schedule_date": null, "deadline_epoch_ms": null, "can_start_session": false
+                "segment_index": 7, "schedule_date": "2026-09-05", "deadline_epoch_ms": null, "can_start_session": false
             }],
             "next_cursor": null
         }),

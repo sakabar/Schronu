@@ -9,51 +9,38 @@ use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
-    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan, TaskView,
+    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
 use crate::entity::task::Status;
 use chrono::{DateTime, Local, NaiveDate};
-use std::collections::HashMap;
-use uuid::Uuid;
 
 pub(in crate::adapter::controller) fn build_all_task_rows(
-    tasks: Vec<TaskView>,
     schedule: &[ScheduledTaskView],
-) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
-    let mut earliest = HashMap::<Uuid, (NaiveDate, bool)>::new();
-    for segment in schedule {
-        let date =
-            try_logical_date(segment.scheduled_start).map_err(WebReadCoreError::Application)?;
-        earliest
-            .entry(segment.task.id)
-            .and_modify(|existing| {
-                if date < existing.0 {
-                    existing.0 = date;
-                }
-                existing.1 |= segment.rank == 0;
-            })
-            .or_insert((date, segment.rank == 0));
-    }
-    Ok(tasks
-        .into_iter()
-        .map(|task| {
-            let first = earliest.get(&task.id);
+    logical_dates: &[NaiveDate],
+) -> Vec<AllTaskRowDto> {
+    assert_eq!(schedule.len(), logical_dates.len());
+    schedule
+        .iter()
+        .zip(logical_dates)
+        .enumerate()
+        .map(|(segment_index, (segment, date))| {
+            let task = &segment.task;
             AllTaskRowDto {
                 task: session_task_dto(
                     task.id.hyphenated().to_string(),
-                    task.name,
+                    task.name.clone(),
                     task.estimated_work_seconds,
                     task.actual_work_seconds,
                 ),
-                schedule_date: first.map(|(date, _)| date.format("%Y-%m-%d").to_string()),
+                segment_index,
+                schedule_date: Some(date.format("%Y-%m-%d").to_string()),
                 deadline_epoch_ms: task
                     .deadline_time
                     .map(|deadline| deadline.timestamp_millis()),
-                can_start_session: task.status == Status::Todo
-                    && first.is_some_and(|(_, rank_zero)| *rank_zero),
+                can_start_session: task.status == Status::Todo && segment.rank == 0,
             }
         })
-        .collect())
+        .collect()
 }
 
 #[cfg(test)]

@@ -246,7 +246,10 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     }
     assert!(page_count > 1);
     assert_eq!(actual_names, expected_names);
-    assert_ne!(actual_names, expected_names.into_iter().rev().collect::<Vec<_>>());
+    assert_ne!(
+        actual_names,
+        expected_names.into_iter().rev().collect::<Vec<_>>()
+    );
 }
 
 #[test]

@@ -16,7 +16,9 @@ fn 一覧用の予定logical_dateは06時境界で全segmentに対応する() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 5, 59, 0).unwrap();
     let task = crate::test_support::new_task_handle("予定").unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], now);
-    let view = get_task(&repository, task.get_id().unwrap()).unwrap().unwrap();
+    let view = get_task(&repository, task.get_id().unwrap())
+        .unwrap()
+        .unwrap();
     let schedule = [
         ScheduledTaskView {
             task: view.clone(),

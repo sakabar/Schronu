@@ -15,7 +15,7 @@ const START_EPOCH_MS: i64 = 1_788_568_200_000; // 2026-09-05 00:30 UTC
 const JST_OFFSET_MINUTES: i32 = 9 * 60;
 
 #[test]
-fn 全件rowは最初の予定日とbrowser_timezoneの締切を表示する() {
+fn 全件segmentは予定logical_dateとbrowser_timezoneの締切を表示する() {
     let rows = project_all_task_rows(
         &[AllTaskRow {
             task: SessionTask {
@@ -24,6 +24,7 @@ fn 全件rowは最初の予定日とbrowser_timezoneの締切を表示する() {
                 estimated_work_seconds: 600,
                 actual_work_seconds: 0,
             },
+            segment_index: 0,
             schedule_date: Some("2026-09-05".to_owned()),
             deadline_epoch_ms: Some(START_EPOCH_MS),
             can_start_session: true,

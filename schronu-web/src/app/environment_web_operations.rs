@@ -161,6 +161,7 @@ impl From<AllTaskRowDto> for AllTaskRow {
     fn from(row: AllTaskRowDto) -> Self {
         Self {
             task: row.task.into(),
+            segment_index: row.segment_index,
             schedule_date: row.schedule_date,
             deadline_epoch_ms: row.deadline_epoch_ms,
             can_start_session: row.can_start_session,

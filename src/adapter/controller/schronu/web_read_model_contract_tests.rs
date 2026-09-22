@@ -1,9 +1,8 @@
 use super::web_service::{
     build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows, DeferModeDto,
 };
-use crate::application::schedule_use_case::ScheduledTaskView;
+use crate::application::schedule_use_case::{scheduled_logical_dates, ScheduledTaskView};
 use crate::application::task_use_case::get_task;
-use crate::application::task_use_case::{list_tasks_page, ListTasksFilter, ListTasksPageRequest};
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{Duration, Local, NaiveDate, TimeZone};
@@ -105,22 +104,8 @@ fn all_listは予定segmentだけを予定順に返し同じtaskを集約しな�
             rank: 0,
         },
     ];
-    let page = list_tasks_page(
-        &repository,
-        ListTasksPageRequest {
-            filter: ListTasksFilter {
-                period: None,
-                statuses: vec![Status::Todo, Status::Pending],
-                categories: vec![],
-            },
-            query: None,
-            root_task_id: None,
-            limit: Some(500),
-            cursor: None,
-        },
-    )
-    .unwrap();
-    let rows = build_all_task_rows(page.tasks, &schedule).unwrap();
+    let dates = scheduled_logical_dates(&schedule).unwrap();
+    let rows = build_all_task_rows(&schedule, &dates);
 
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| row.task.task_name == "child"));
@@ -131,26 +116,7 @@ fn all_listは予定segmentだけを予定順に返し同じtaskを集約しな�
 
 #[test]
 fn all_listは予定のないtaskを表示しない() {
-    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
-    let root = TaskHandle::with_identity("予定なし", Uuid::from_u128(1_001), start).unwrap();
-    let repository = TestTaskRepository::new(vec![root], start);
-    let page = list_tasks_page(
-        &repository,
-        ListTasksPageRequest {
-            filter: ListTasksFilter {
-                period: None,
-                statuses: vec![Status::Todo, Status::Pending],
-                categories: vec![],
-            },
-            query: None,
-            root_task_id: None,
-            limit: Some(500),
-            cursor: None,
-        },
-    )
-    .unwrap();
-    assert_eq!(page.tasks.len(), 1);
-    assert!(build_all_task_rows(page.tasks, &[]).unwrap().is_empty());
+    assert!(build_all_task_rows(&[], &[]).is_empty());
 }
 
 #[test]
