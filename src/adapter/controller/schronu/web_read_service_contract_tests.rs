@@ -250,6 +250,19 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
         actual_names,
         expected_names.into_iter().rev().collect::<Vec<_>>()
     );
+
+    let first_a = service.list_all_tasks_page_at(now, None).unwrap();
+    let first_b = service.list_all_tasks_page_at(now, None).unwrap();
+    assert!(service
+        .list_all_tasks_page_at(now, Some("invalid cursor".to_owned()))
+        .is_err());
+    let second_a = service
+        .list_all_tasks_page_at(now, first_a.next_cursor)
+        .unwrap();
+    let second_b = service
+        .list_all_tasks_page_at(now, first_b.next_cursor)
+        .unwrap();
+    assert_eq!(second_a.rows, second_b.rows);
 }
 
 #[test]
