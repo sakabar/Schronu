@@ -12,7 +12,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは6操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは7操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -50,6 +50,15 @@ fn workerは6操作を送信順に専用threadで実行してpayloadを保持す
             Ok(WebSuccess {
                 snapshot: snapshot(2),
                 data: Vec::new(),
+            })
+        );
+        assert_eq!(
+            worker
+                .list_all_tasks_page(schronu_web::ListAllTasksPageRequest { cursor: None })
+                .await,
+            Ok(schronu_web::AllTaskPage {
+                rows: Vec::new(),
+                next_cursor: None
             })
         );
         assert_eq!(
@@ -96,6 +105,7 @@ fn workerは6操作を送信順に専用threadで実行してpayloadを保持す
         &[
             Event::Bootstrap,
             Event::List("2026-09-05".to_owned()),
+            Event::ListAll(None),
             Event::Auto,
             Event::Record(123, 456),
             Event::Complete(123, 456, false),
@@ -150,6 +160,7 @@ enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
     List(String),
+    ListAll(Option<String>),
     Auto,
     Defer(String),
     Record(i64, i64),
@@ -175,6 +186,13 @@ impl WebOperations for StackWorkloadOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_all_tasks_page(
+        &mut self,
+        _request: schronu_web::ListAllTasksPageRequest,
+    ) -> Result<schronu_web::AllTaskPage, WebError> {
         unreachable!()
     }
 
@@ -213,6 +231,13 @@ impl WebOperations for PanickingOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_all_tasks_page(
+        &mut self,
+        _request: schronu_web::ListAllTasksPageRequest,
+    ) -> Result<schronu_web::AllTaskPage, WebError> {
         unreachable!()
     }
 
@@ -259,6 +284,20 @@ impl WebOperations for RecordingOperations {
         Ok(WebSuccess {
             snapshot: snapshot(2),
             data: Vec::new(),
+        })
+    }
+
+    fn list_all_tasks_page(
+        &mut self,
+        request: schronu_web::ListAllTasksPageRequest,
+    ) -> Result<schronu_web::AllTaskPage, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::ListAll(request.cursor));
+        Ok(schronu_web::AllTaskPage {
+            rows: Vec::new(),
+            next_cursor: None,
         })
     }
 

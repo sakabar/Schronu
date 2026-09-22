@@ -7,11 +7,12 @@ mod read_model;
 
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, WebSuccess,
 };
-pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
 #[cfg(test)]
-pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
+pub(super) use read_model::{build_all_task_rows, build_server_snapshot, calculate_buffer_seconds};
+pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
 
 use super::web_session_write::{
     prepare_add_actual_work_input, prepare_complete_task_input, prepare_defer_task_input,
@@ -29,6 +30,10 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, execute_defer_task_plan, TaskFactory,
 };
+use crate::application::task_use_case::{
+    list_tasks_page, ListTasksFilter, ListTasksPageRequest, LIST_TASKS_MAX_PAGE_SIZE,
+};
+use crate::entity::task::Status;
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
@@ -86,6 +91,36 @@ impl WebService {
                 offset,
             )?;
             Ok(WebSuccess { snapshot, data })
+        })
+    }
+
+    pub fn list_all_tasks_page_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        cursor: Option<String>,
+    ) -> Result<AllTaskPageDto, WebReadError> {
+        self.run_at(operation_now, |repository, _, _| {
+            let page = list_tasks_page(
+                repository,
+                ListTasksPageRequest {
+                    filter: ListTasksFilter {
+                        period: None,
+                        statuses: vec![Status::Todo, Status::Pending],
+                        categories: vec![],
+                    },
+                    query: None,
+                    root_task_id: None,
+                    limit: Some(LIST_TASKS_MAX_PAGE_SIZE),
+                    cursor,
+                },
+            )
+            .map_err(WebReadCoreError::Application)?;
+            let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
+            let rows = read_model::build_all_task_rows(page.tasks, &schedule)?;
+            Ok(AllTaskPageDto {
+                rows,
+                next_cursor: page.next_cursor,
+            })
         })
     }
 

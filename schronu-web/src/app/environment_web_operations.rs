@@ -1,16 +1,16 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
-    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
-    WebWorkerHandle,
+    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
+    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksPageRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
-    resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
-    DeferModeDto, DeferPlanRequest as CoreDeferPlanRequest,
-    DeferTaskRequest as CoreDeferTaskRequest, RecordSessionRequest as CoreRecordSessionRequest,
-    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
-    WebSuccess as CoreWebSuccess,
+    resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto,
+    CompleteSessionRequest as CoreCompleteSessionRequest, DeferModeDto,
+    DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
+    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
@@ -98,6 +98,17 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn list_all_tasks_page(
+        &mut self,
+        request: ListAllTasksPageRequest,
+    ) -> Result<AllTaskPage, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .list_all_tasks_page_at(operation_now, request.cursor)
+            .map(Into::into)
+            .map_err(Into::into)
+    }
+
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         let operation_now = self.clock.now();
         self.service()?
@@ -134,6 +145,26 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .complete_session_at(operation_now, request.into())
             .map(Into::into)
             .map_err(Into::into)
+    }
+}
+
+impl From<AllTaskPageDto> for AllTaskPage {
+    fn from(page: AllTaskPageDto) -> Self {
+        Self {
+            rows: page.rows.into_iter().map(Into::into).collect(),
+            next_cursor: page.next_cursor,
+        }
+    }
+}
+
+impl From<AllTaskRowDto> for AllTaskRow {
+    fn from(row: AllTaskRowDto) -> Self {
+        Self {
+            task: row.task.into(),
+            schedule_date: row.schedule_date,
+            deadline_epoch_ms: row.deadline_epoch_ms,
+            can_start_session: row.can_start_session,
+        }
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksPageRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -29,6 +29,18 @@ pub async fn list_tasks(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_all_tasks_page")]
+pub async fn list_all_tasks_page(
+    request: ListAllTasksPageRequest,
+) -> Result<WebOperationResult<AllTaskPage>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_all_tasks_page(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -104,6 +116,14 @@ async fn dispatch_list_tasks(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_list_all_tasks_page(
+    worker: WebWorkerHandle,
+    request: ListAllTasksPageRequest,
+) -> WebOperationResult<AllTaskPage> {
+    worker.list_all_tasks_page(request).await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_auto_session(
     worker: WebWorkerHandle,
 ) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
@@ -141,9 +161,10 @@ mod tests {
         dispatch_list_tasks, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-        RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-        SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+        ListAllTasksPageRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+        WebSuccess, WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -261,6 +282,17 @@ mod tests {
             Ok(WebSuccess {
                 snapshot: snapshot(),
                 data: Vec::new(),
+            })
+        }
+
+        fn list_all_tasks_page(
+            &mut self,
+            _request: ListAllTasksPageRequest,
+        ) -> Result<AllTaskPage, WebError> {
+            self.count();
+            Ok(AllTaskPage {
+                rows: Vec::new(),
+                next_cursor: None,
             })
         }
 

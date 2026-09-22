@@ -1,10 +1,44 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
-    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
+    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksPageRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
+
+#[test]
+fn 全件pageのrequestとresponseはcursorと予定なしを保持する() {
+    assert_json_round_trip(
+        &ListAllTasksPageRequest {
+            cursor: Some("next".to_owned()),
+        },
+        json!({"cursor": "next"}),
+    );
+    assert_json_round_trip(
+        &AllTaskPage {
+            rows: vec![AllTaskRow {
+                task: SessionTask {
+                    task_id: "id".to_owned(),
+                    task_name: "pending".to_owned(),
+                    estimated_work_seconds: 600,
+                    actual_work_seconds: 0,
+                },
+                schedule_date: None,
+                deadline_epoch_ms: None,
+                can_start_session: false,
+            }],
+            next_cursor: None,
+        },
+        json!({
+            "rows": [{
+                "task": {"task_id": "id", "task_name": "pending", "estimated_work_seconds": 600, "actual_work_seconds": 0},
+                "schedule_date": null, "deadline_epoch_ms": null, "can_start_session": false
+            }],
+            "next_cursor": null
+        }),
+    );
+}
 
 #[test]
 fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {

@@ -45,6 +45,6 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, defer_task, list_tasks, record_session,
-    WebOperationResult,
+    auto_session, bootstrap, complete_session, defer_task, list_all_tasks_page, list_tasks,
+    record_session, WebOperationResult,
 };

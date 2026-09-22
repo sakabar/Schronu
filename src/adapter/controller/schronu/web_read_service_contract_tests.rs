@@ -159,6 +159,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     let listed = service
         .list_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
         .unwrap();
+    let all_page = service.list_all_tasks_page_at(operation_now, None).unwrap();
     let selected = service.auto_session_at(operation_now).unwrap();
 
     assert_eq!(
@@ -168,6 +169,16 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(bootstrap.logical_date, "2026-09-05");
     assert_eq!(bootstrap.buffer_seconds, 20_041);
     assert_eq!(listed.snapshot, bootstrap);
+    assert_eq!(all_page.rows.len(), 1);
+    assert_eq!(all_page.next_cursor, None);
+    assert_eq!(
+        all_page.rows[0].task.task_id,
+        task_id.hyphenated().to_string()
+    );
+    assert_eq!(
+        all_page.rows[0].schedule_date.as_deref(),
+        Some("2026-09-05")
+    );
     assert_eq!(selected.snapshot, bootstrap);
     assert_eq!(listed.data.len(), 1);
     assert_eq!(

@@ -29,6 +29,25 @@ pub struct ScheduledTaskRow {
     pub defer_plan: DeferPlan,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskRow {
+    pub task: SessionTask,
+    pub schedule_date: Option<String>,
+    pub deadline_epoch_ms: Option<i64>,
+    pub can_start_session: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskPage {
+    pub rows: Vec<AllTaskRow>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListAllTasksPageRequest {
+    pub cursor: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeferMode {

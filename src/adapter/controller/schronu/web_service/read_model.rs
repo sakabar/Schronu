@@ -1,6 +1,6 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
 };
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
@@ -9,9 +9,52 @@ use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
-    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
+    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan, TaskView,
 };
+use crate::entity::task::Status;
 use chrono::{DateTime, Local, NaiveDate};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+pub(in crate::adapter::controller) fn build_all_task_rows(
+    tasks: Vec<TaskView>,
+    schedule: &[ScheduledTaskView],
+) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
+    let mut earliest = HashMap::<Uuid, (NaiveDate, bool)>::new();
+    for segment in schedule {
+        let date =
+            try_logical_date(segment.scheduled_start).map_err(WebReadCoreError::Application)?;
+        earliest
+            .entry(segment.task.id)
+            .and_modify(|existing| {
+                if date < existing.0 {
+                    existing.0 = date;
+                }
+                existing.1 |= segment.rank == 0;
+            })
+            .or_insert((date, segment.rank == 0));
+    }
+    Ok(tasks
+        .into_iter()
+        .map(|task| {
+            let first = earliest.get(&task.id);
+            AllTaskRowDto {
+                task: session_task_dto(
+                    task.id.hyphenated().to_string(),
+                    task.name,
+                    task.estimated_work_seconds,
+                    task.actual_work_seconds,
+                ),
+                schedule_date: first.map(|(date, _)| date.format("%Y-%m-%d").to_string()),
+                deadline_epoch_ms: task
+                    .deadline_time
+                    .map(|deadline| deadline.timestamp_millis()),
+                can_start_session: task.status == Status::Todo
+                    && first.is_some_and(|(_, rank_zero)| *rank_zero),
+            }
+        })
+        .collect())
+}
 
 #[cfg(test)]
 pub(in crate::adapter::controller) fn build_server_snapshot<R, F>(

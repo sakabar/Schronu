@@ -1,7 +1,8 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    DeferTaskRequest, ListAllTasksPageRequest, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -15,6 +16,10 @@ pub trait WebOperations: 'static {
         &mut self,
         request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>;
+    fn list_all_tasks_page(
+        &mut self,
+        request: ListAllTasksPageRequest,
+    ) -> Result<AllTaskPage, WebError>;
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
     fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError>;
     fn record_session(
@@ -39,6 +44,10 @@ enum WebWorkerCommand {
     ListTasks {
         request: ListTasksRequest,
         response: oneshot::Sender<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>>,
+    },
+    ListAllTasksPage {
+        request: ListAllTasksPageRequest,
+        response: oneshot::Sender<Result<AllTaskPage, WebError>>,
     },
     AutoSession {
         response: oneshot::Sender<Result<WebSuccess<Option<SessionTask>>, WebError>>,
@@ -91,6 +100,17 @@ impl WebWorkerHandle {
         receiver.await.map_err(|_| unavailable_error())?
     }
 
+    pub async fn list_all_tasks_page(
+        &self,
+        request: ListAllTasksPageRequest,
+    ) -> Result<AllTaskPage, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::ListAllTasksPage { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
     pub async fn auto_session(&self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands
@@ -138,6 +158,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::ListTasks { request, response } => {
                 let _ = response.send(operations.list_tasks(request));
+            }
+            WebWorkerCommand::ListAllTasksPage { request, response } => {
+                let _ = response.send(operations.list_all_tasks_page(request));
             }
             WebWorkerCommand::AutoSession { response } => {
                 let _ = response.send(operations.auto_session());
