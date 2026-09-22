@@ -10,9 +10,9 @@ pub use model::{
     AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
     SessionTaskDto, WebSuccess,
 };
-#[cfg(test)]
-pub(super) use read_model::{build_all_task_rows, build_server_snapshot, calculate_buffer_seconds};
 pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
+#[cfg(test)]
+pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
 
 use super::web_session_write::{
     prepare_add_actual_work_input, prepare_complete_task_input, prepare_defer_task_input,

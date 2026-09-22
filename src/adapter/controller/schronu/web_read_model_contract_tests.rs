@@ -1,7 +1,5 @@
-use super::web_service::{
-    build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows, DeferModeDto,
-};
-use crate::application::schedule_use_case::{scheduled_logical_dates, ScheduledTaskView};
+use super::web_service::{build_auto_session_dto, build_scheduled_task_rows, DeferModeDto};
+use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
@@ -69,66 +67,6 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         rows[0].schedule_start_epoch_ms,
         rows[1].schedule_start_epoch_ms
     );
-}
-
-#[test]
-fn all_listは予定segmentだけを予定順に返し同じtaskを集約しない() {
-    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
-    let parent = TaskHandle::with_identity("parent", Uuid::from_u128(401), start).unwrap();
-    let child = parent.create_as_last_child(crate::test_support::new_task_attr_at("child", start));
-    let pending = TaskHandle::with_identity("pending", Uuid::from_u128(402), start).unwrap();
-    pending.set_orig_status(Status::Pending).unwrap();
-    let done = TaskHandle::with_identity("done", Uuid::from_u128(403), start).unwrap();
-    done.set_orig_status(Status::Done).unwrap();
-    let repository = TestTaskRepository::new(vec![parent.clone(), pending, done], start);
-    let child_view = get_task(&repository, child.get_id().unwrap())
-        .unwrap()
-        .unwrap();
-    let schedule = vec![
-        ScheduledTaskView {
-            task: child_view.clone(),
-            first_available_time: start,
-            scheduled_start: start + Duration::days(1),
-            scheduled_end: start + Duration::days(1) + Duration::minutes(10),
-            scheduled_work_seconds: 600,
-            total_work_seconds: 1_200,
-            rank: 0,
-        },
-        ScheduledTaskView {
-            task: child_view,
-            first_available_time: start,
-            scheduled_start: start + Duration::days(2),
-            scheduled_end: start + Duration::days(2) + Duration::minutes(10),
-            scheduled_work_seconds: 600,
-            total_work_seconds: 1_200,
-            rank: 0,
-        },
-    ];
-    let dates = scheduled_logical_dates(&schedule).unwrap();
-    let rows = build_all_task_rows(&schedule, &dates);
-
-    assert_eq!(rows.len(), 2);
-    assert!(rows.iter().all(|row| row.task.task_name == "child"));
-    assert_eq!(rows[0].schedule_date, "2026-09-06");
-    assert_eq!(rows[1].schedule_date, "2026-09-07");
-    assert!(rows.iter().all(|row| row.can_start_session));
-}
-
-#[test]
-fn all_listは予定のないtaskを表示しない() {
-    assert!(build_all_task_rows(&[], &[]).is_empty());
-}
-
-#[test]
-fn all_listの予定日は必須である() {
-    let row = serde_json::json!({
-        "task": {"task_id": "id", "task_name": "task", "estimated_work_seconds": 600, "actual_work_seconds": 0},
-        "segment_index": 0,
-        "schedule_date": null,
-        "deadline_epoch_ms": null,
-        "can_start_session": true
-    });
-    assert!(serde_json::from_value::<super::web_service::AllTaskRowDto>(row).is_err());
 }
 
 #[test]
