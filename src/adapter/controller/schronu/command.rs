@@ -171,6 +171,7 @@ pub(super) enum CommandAction {
         kind: CommandKind,
         canonical_name: &'static str,
     },
+    TimerForget,
     NewProject {
         kind: CommandKind,
         canonical_name: &'static str,
@@ -289,6 +290,7 @@ impl CommandAction {
             | Self::OptionalInteger { kind, .. }
             | Self::ClearOrGather { kind, .. }
             | Self::FocusMode { kind, .. } => *kind,
+            Self::TimerForget => CommandKind::Timer,
             Self::Sequential { .. } => CommandKind::Sequential,
             Self::Repeat { .. } => CommandKind::Repeat,
             Self::Pick { .. } => CommandKind::Pick,
@@ -882,6 +884,21 @@ fn parse_action(
                 recent_days,
             }
         }
+        CommandKind::Timer => match arguments.first().map(String::as_str) {
+            None => CommandAction::NoArguments {
+                kind,
+                canonical_name,
+            },
+            Some("忘" | "forget") => CommandAction::TimerForget,
+            Some(_) => {
+                return Err(parse_error(
+                    canonical_name,
+                    "arguments",
+                    "忘またはforgetで指定してください",
+                    definition.usage,
+                ));
+            }
+        },
         CommandKind::Tree
         | CommandKind::Ancestor
         | CommandKind::Root
@@ -891,7 +908,6 @@ fn parse_action(
         | CommandKind::Calendar
         | CommandKind::Band
         | CommandKind::Open
-        | CommandKind::Timer
         | CommandKind::Obsidian
         | CommandKind::Unfocus
         | CommandKind::Parent
@@ -1036,7 +1052,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         }
         "選" | "pick" => CommandDefinition::new(Kind::Pick, "選", "選 [task_id]", 0, Some(1)),
         "開" | "open" | "op" => CommandDefinition::new(Kind::Open, "開", "開", 0, Some(0)),
-        "計" | "timer" => CommandDefinition::new(Kind::Timer, "計", "計", 0, Some(0)),
+        "計" | "timer" => CommandDefinition::new(Kind::Timer, "計", "計 [忘]", 0, Some(1)),
         "黒" | "obs" => CommandDefinition::new(Kind::Obsidian, "黒", "黒", 0, Some(0)),
         "外" | "unfocus" | "ufc" => CommandDefinition::new(Kind::Unfocus, "外", "外", 0, Some(0)),
         "親" | "parent" => CommandDefinition::new(Kind::Parent, "親", "親", 0, Some(0)),
