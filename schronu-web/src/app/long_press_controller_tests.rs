@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use super::long_press_controller::{
     LongPressController, LongPressScheduler, LongPressSchedulerHandle, LongPressSource,
-    LongPressTracker, LONG_PRESS_MILLIS,
+    LongPressTracker,
 };
 use super::view_test_support::{
     dispatch_platform_event, rebuild_with_event_listeners, render_with_click_listeners,
@@ -50,7 +50,7 @@ fn controller(
 }
 
 #[test]
-fn componentが使うcontrollerは1200ms後に一度だけarmする() {
+fn componentが使うcontrollerは1000ms後に一度だけarmする() {
     let scheduler = FakeScheduler::default();
     let holding = Rc::new(RefCell::new(Vec::new()));
     let arm_count = Rc::new(Cell::new(0));
@@ -62,7 +62,7 @@ fn componentが使うcontrollerは1200ms後に一度だけarmする() {
 
     controller.start(LongPressSource::Pointer);
     assert_eq!(holding.borrow().as_slice(), [true]);
-    assert_eq!(scheduler.scheduled.borrow()[0].0, LONG_PRESS_MILLIS);
+    assert_eq!(scheduler.scheduled.borrow()[0].0, 1_000);
     assert_eq!(arm_count.get(), 0);
 
     assert!(scheduler.run_next());
@@ -213,7 +213,7 @@ fn pointerdown_handlerは同じcontrollerとschedulerを経てarmする() {
     );
     render_with_click_listeners(&mut dom);
     assert!(dioxus::ssr::render(&dom).contains("carry-lock-hold is-pressing"));
-    assert_eq!(scheduler.scheduled.borrow()[0].0, LONG_PRESS_MILLIS);
+    assert_eq!(scheduler.scheduled.borrow()[0].0, 1_000);
     assert_eq!(arm_count.get(), 0);
 
     assert!(scheduler.run_next());

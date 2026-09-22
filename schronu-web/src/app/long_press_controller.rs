@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-pub(crate) const LONG_PRESS_MILLIS: u32 = 1_200;
+pub(crate) const LONG_PRESS_MILLIS: u32 = 1_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LongPressSource {
