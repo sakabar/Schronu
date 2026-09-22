@@ -4989,6 +4989,75 @@ fn timer_shortcutのopen_commandはurlを単一引数にする() {
 }
 
 #[test]
+fn timer_shortcutは同じtaskの予定終了時刻まで重複起動しない() {
+    let task_id = Uuid::new_v4();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let mut timers = HashMap::new();
+    let mut urls = Vec::new();
+    for (now, expected) in [
+        (started_at, TimerLaunchOutcome::Started),
+        (started_at + Duration::milliseconds(595_999), TimerLaunchOutcome::AlreadyRunning),
+        (started_at + Duration::seconds(596), TimerLaunchOutcome::Started),
+    ] {
+        assert_eq!(
+            launch_timer_shortcut_for_session(&mut timers, task_id, 596, now, |url| {
+                urls.push(url.to_string());
+                Ok(())
+            })
+            .unwrap(),
+            expected
+        );
+    }
+    assert_eq!(urls, vec![
+        "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text=596";
+        2
+    ]);
+}
+
+#[test]
+fn timer_shortcutは別taskの実行中を案内し期限切れだけを除外する() {
+    let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let expired_id = Uuid::new_v4();
+    let active_id = Uuid::new_v4();
+    let next_id = Uuid::new_v4();
+    let mut timers = HashMap::from([
+        (expired_id, (started_at, 1)),
+        (active_id, (started_at, 600)),
+    ]);
+    let mut launches = 0;
+    assert_eq!(
+        launch_timer_shortcut_for_session(
+            &mut timers,
+            next_id,
+            596,
+            started_at + Duration::seconds(2),
+            |_| { launches += 1; Ok(()) },
+        ).unwrap(),
+        TimerLaunchOutcome::StartedAlongsideAnother
+    );
+    assert_eq!(launches, 1);
+    assert!(!timers.contains_key(&expired_id));
+    assert!(timers.contains_key(&active_id));
+    assert!(timers.contains_key(&next_id));
+}
+
+#[test]
+fn timer_shortcutは起動失敗を記録しない() {
+    let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let task_id = Uuid::new_v4();
+    let mut timers = HashMap::new();
+    let result = launch_timer_shortcut_for_session(&mut timers, task_id, 596, started_at, |_| {
+        Err(external_open_error("Shortcuts", std::io::Error::other("failed")))
+    });
+    assert!(result.is_err());
+    assert!(!timers.contains_key(&task_id));
+    assert_eq!(
+        launch_timer_shortcut_for_session(&mut timers, task_id, 596, started_at, |_| Ok(())).unwrap(),
+        TimerLaunchOutcome::Started
+    );
+}
+
+#[test]
 fn timer_commandはfocusなしと残り0秒を案内しtaskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
     let task = new_test_task_handle("timer task").unwrap();
