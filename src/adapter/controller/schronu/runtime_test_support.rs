@@ -488,6 +488,7 @@ fn run_interactive_runtime_for_test(
                     last_focused_task_id_opt,
                     focus_started_datetime,
                     focus_selection_mode,
+                    timer_sessions: None,
                 },
                 event,
             )

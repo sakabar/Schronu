@@ -1760,6 +1760,7 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
             &mut focused_task_id_opt,
             &now,
             &mut focus_selection_mode,
+            None,
             now,
             command,
         )
@@ -1785,6 +1786,7 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "後 abc 日 extra",
     );
@@ -1817,6 +1819,7 @@ fn defer系の通常interactive_commandはflushしshortcutはflushしない() {
             &mut focused_task_id_opt,
             &now,
             &mut focus_selection_mode,
+            None,
             now,
             command,
         )
@@ -1849,6 +1852,7 @@ fn interactive低優先度modeは共通outcome経路でfocusと表示を更新�
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "低 3",
     )
@@ -1893,6 +1897,7 @@ fn interactive高優先度modeはmessage出力失敗時に状態を変更せずe
             &mut focused_task_id_opt,
             &now,
             &mut focus_selection_mode,
+            None,
             now,
             "高",
         );
@@ -4102,6 +4107,7 @@ fn interactive_deadlineは日付と時刻の両順序を製品経路で設定す
             &mut focused_task_id_opt,
             &now,
             &mut focus_selection_mode,
+            None,
             now,
             command,
         )
@@ -4937,6 +4943,7 @@ fn timer_shortcutは秒境界を丸めずurlへ渡す() {
     let task = new_test_task_handle("timer task").unwrap();
     task.set_estimated_work_seconds(901).unwrap();
     task.set_actual_work_seconds(182).unwrap();
+    let task_id = task.get_id().unwrap();
     let focused_task_opt = Some(task);
     let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
 
@@ -4949,9 +4956,7 @@ fn timer_shortcutは秒境界を丸めずurlへ渡す() {
         let now = started_at + Duration::milliseconds(elapsed_millis);
         assert_eq!(
             resolve_timer_shortcut(&focused_task_opt, started_at, now).unwrap(),
-            ResolvedExternalRequest::TimerUrl(format!(
-                "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}"
-            ))
+            ResolvedExternalRequest::TimerUrl { task_id, seconds }
         );
     }
 }
@@ -5055,6 +5060,34 @@ fn timer_shortcutは起動失敗を記録しない() {
         launch_timer_shortcut_for_session(&mut timers, task_id, 596, started_at, |_| Ok(())).unwrap(),
         TimerLaunchOutcome::Started
     );
+}
+
+#[test]
+fn timer_commandは対話中の同一taskの重複起動を案内する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("timer task").unwrap();
+    task.set_estimated_work_seconds(901).unwrap();
+    task.set_actual_work_seconds(182).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut focused_task_id_opt = Some(task_id);
+    let mut selection = FocusSelectionMode::highest_priority();
+    let mut timers = HashMap::from([(task_id, (now - Duration::seconds(1), 596))]);
+    let parsed = parse_command("計", ParseMode::Interactive).unwrap();
+    let outcome = super::handler::handle(&parsed).unwrap();
+    let mut output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut output,
+        &mut repository,
+        &mut focused_task_id_opt,
+        OutcomeApplicationMode::InteractiveTimerFlushed(&mut selection, &mut timers),
+        outcome,
+        active_config(),
+        now - Duration::seconds(123),
+    ).unwrap();
+    assert!(String::from_utf8(output.buffer).unwrap().contains("このタスクのタイマーは実行中です"));
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(timers.len(), 1);
 }
 
 #[test]
@@ -7788,6 +7821,7 @@ fn test_低優先度modeで外したfocusは低優先度候補を再選択する
         &mut focused_task_id_opt,
         &focus_started_datetime,
         &mut focus_selection_mode,
+        None,
         now,
         "外",
     )
@@ -7830,6 +7864,7 @@ fn test_tuck_awayは高低mode内でtaskを伏せて見は除外を維持した�
                 &mut focused_task_id_opt,
                 &now,
                 &mut focus_selection_mode,
+                None,
                 now,
                 $command,
             )
@@ -7889,6 +7924,7 @@ fn test_明示focus中の_tuck_awayはtaskを伏せて元modeへ戻る() {
             &mut focused_task_id_opt,
             &now,
             &mut focus_selection_mode,
+            None,
             now,
             &command,
         )
@@ -7921,6 +7957,7 @@ fn test_明示focus中の手動navigationは明示状態を維持する() {
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         &format!("見 {child_id}"),
     )
@@ -7932,6 +7969,7 @@ fn test_明示focus中の手動navigationは明示状態を維持する() {
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "親",
     )
@@ -7965,6 +8003,7 @@ fn test_明示focus中に終了したらhandlerの次focusではなく元modeか
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         &format!("見 {explicit_task_id}"),
     )
@@ -7976,6 +8015,7 @@ fn test_明示focus中に終了したらhandlerの次focusではなく元modeか
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "終 今",
     )
@@ -8006,6 +8046,7 @@ fn test_明示focus中の終不正入力はerrorを表示してfocusと伏せた
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         &format!("見 {task_id}"),
     )
@@ -8019,6 +8060,7 @@ fn test_明示focus中の終不正入力はerrorを表示してfocusと伏せた
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "終 invalid",
     )
@@ -8053,6 +8095,7 @@ fn test_interactive_task属性更新_不正deadlineはfield付きerrorを表示�
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "〆 invalid",
     )
@@ -8093,6 +8136,7 @@ fn test_interactive_submitは製品event経路でload実行保存する() {
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Submit { line: " 予 45 " },
     );
@@ -8143,6 +8187,7 @@ fn test_interactive_submit製品経路は再描画対象commandを完了outcome�
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         "全",
         now,
@@ -8196,6 +8241,7 @@ fn interactive_backupはsnapshot後のreloadでfocusを再調整する() {
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         &format!("backup {}", snapshot.display()),
         now,
@@ -8249,6 +8295,7 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         &command,
         now,
@@ -8278,6 +8325,7 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: None,
             },
             &command,
             now,
@@ -8299,6 +8347,7 @@ fn interactive_backup_verifyはcurrent_storage非依存で成功とsnapshot_erro
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         &command,
         now,
@@ -8399,6 +8448,7 @@ fn interactive_storage_maintenanceの引数errorはcurrent_storageより先に�
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: None,
             },
             command,
             now,
@@ -8447,6 +8497,7 @@ fn test_interactive_verifyは出力errorを分類してtransactionを継続す�
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: None,
             },
             "検証",
             operation_now,
@@ -8490,6 +8541,7 @@ fn test_interactive_verifyは本文なしで1回だけflushする() {
         &mut focused_task_id_opt,
         &now,
         &mut focus_selection_mode,
+        None,
         now,
         "検証",
     )
@@ -8530,6 +8582,7 @@ fn test_interactive_submitとnoninteractive実行は共通command_transaction経
                     last_focused_task_id_opt: &mut last_focused_task_id_opt,
                     focus_started_datetime: &mut focus_started_datetime,
                     focus_selection_mode: &mut focus_selection_mode,
+                    timer_sessions: None,
                 },
                 " estimate 45 ",
                 now,
@@ -8596,6 +8649,7 @@ fn test_interactive_submitはoperation時刻をcommandと直後renderへ共有�
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         " 新 interactive_snapshot 30 ",
         operation_now,
@@ -8663,6 +8717,7 @@ fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Submit { line: &command },
     );
@@ -8682,6 +8737,7 @@ fn test_interactive_submitの見は完了済みtaskへの明示focusを更新後
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Refresh,
     );
@@ -8723,6 +8779,7 @@ fn test_interactive_submitは外部完了によるfocus切替時に開始時刻�
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Submit { line: "" },
     );
@@ -8769,6 +8826,7 @@ fn test_interactive_refreshとctrl_dは外部完了によるfocus切替時に開
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: None,
             },
             event,
         );
@@ -8810,6 +8868,7 @@ fn test_interactive_commandによるfocus切替は次のrender時刻を開始時
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Submit { line: "高" },
     );
@@ -8868,6 +8927,7 @@ fn test_interactive_submitはload失敗ならretryしsave失敗ならfatalにす
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: None,
             },
             InteractiveRepositoryEvent::Submit { line: "予 45" },
         );
@@ -8920,6 +8980,7 @@ fn test_interactive_refreshは再読込後にlockを解放する() {
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Refresh,
     );
@@ -8963,6 +9024,7 @@ fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了す
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Submit { line: "予 45" },
     );
@@ -8975,6 +9037,7 @@ fn test_interactive_ctrl_cは成功済みcommandを再保存せずfatal終了す
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Interrupted,
     );
@@ -9015,6 +9078,7 @@ fn test_interactive_input切断はreload後に保存してfatal終了する() {
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::InputDisconnected,
     );
@@ -9053,6 +9117,7 @@ fn test_interactive_ctrl_dは製品event経路でreload後に保存して終了�
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::Exit,
     );
@@ -9088,6 +9153,7 @@ fn test_interactive_input読込errorは製品event経路でreload後に保存し
             last_focused_task_id_opt: &mut last_focused_task_id_opt,
             focus_started_datetime: &mut focus_started_datetime,
             focus_selection_mode: &mut focus_selection_mode,
+            timer_sessions: None,
         },
         InteractiveRepositoryEvent::InputRead(std::io::Error::new(
             std::io::ErrorKind::BrokenPipe,
