@@ -177,10 +177,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
         all_page.rows[0].task.task_id,
         task_id.hyphenated().to_string()
     );
-    assert_eq!(
-        all_page.rows[0].schedule_date.as_deref(),
-        Some("2026-09-05")
-    );
+    assert_eq!(all_page.rows[0].schedule_date, "2026-09-05");
     assert_eq!(selected.snapshot, bootstrap);
     assert_eq!(listed.data.len(), 1);
     assert_eq!(

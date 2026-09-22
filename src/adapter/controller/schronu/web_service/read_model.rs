@@ -33,7 +33,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                     task.actual_work_seconds,
                 ),
                 segment_index,
-                schedule_date: Some(date.format("%Y-%m-%d").to_string()),
+                schedule_date: date.format("%Y-%m-%d").to_string(),
                 deadline_epoch_ms: task
                     .deadline_time
                     .map(|deadline| deadline.timestamp_millis()),

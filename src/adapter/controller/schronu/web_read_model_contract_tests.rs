@@ -109,8 +109,8 @@ fn all_listは予定segmentだけを予定順に返し同じtaskを集約しな�
 
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|row| row.task.task_name == "child"));
-    assert_eq!(rows[0].schedule_date.as_deref(), Some("2026-09-06"));
-    assert_eq!(rows[1].schedule_date.as_deref(), Some("2026-09-07"));
+    assert_eq!(rows[0].schedule_date, "2026-09-06");
+    assert_eq!(rows[1].schedule_date, "2026-09-07");
     assert!(rows.iter().all(|row| row.can_start_session));
 }
 

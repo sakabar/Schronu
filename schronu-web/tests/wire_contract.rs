@@ -25,7 +25,7 @@ fn 全件pageのrequestとresponseはcursorと予定日を保持する() {
                     actual_work_seconds: 0,
                 },
                 segment_index: 7,
-                schedule_date: Some("2026-09-05".to_owned()),
+                schedule_date: "2026-09-05".to_owned(),
                 deadline_epoch_ms: None,
                 can_start_session: false,
             }],

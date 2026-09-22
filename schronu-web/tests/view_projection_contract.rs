@@ -25,7 +25,7 @@ fn 全件segmentは予定logical_dateとbrowser_timezoneの締切を表示する
                 actual_work_seconds: 0,
             },
             segment_index: 0,
-            schedule_date: Some("2026-09-05".to_owned()),
+            schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: Some(START_EPOCH_MS),
             can_start_session: true,
         }],
@@ -49,7 +49,7 @@ fn 全件の同一taskに属するsegmentは別行として識別できる() {
             actual_work_seconds: 0,
         },
         segment_index: 499,
-        schedule_date: Some("2026-09-05".to_owned()),
+        schedule_date: "2026-09-05".to_owned(),
         deadline_epoch_ms: None,
         can_start_session: true,
     };
@@ -58,7 +58,7 @@ fn 全件の同一taskに属するsegmentは別行として識別できる() {
             segment.clone(),
             AllTaskRow {
                 segment_index: 500,
-                schedule_date: Some("2026-09-06".to_owned()),
+                schedule_date: "2026-09-06".to_owned(),
                 ..segment
             },
         ],
@@ -70,6 +70,27 @@ fn 全件の同一taskに属するsegmentは別行として識別できる() {
     assert_eq!(rows[0].schedule_label, "2026/09/05(土)");
     assert_eq!(rows[1].schedule_label, "2026/09/06(日)");
     assert_eq!(rows[0].task.task_id, rows[1].task.task_id);
+}
+
+#[test]
+fn 全件segmentの不正な予定日は安全な代替表示にする() {
+    let rows = project_all_task_rows(
+        &[AllTaskRow {
+            task: SessionTask {
+                task_id: TASK_ID.to_owned(),
+                task_name: "実装".to_owned(),
+                estimated_work_seconds: 600,
+                actual_work_seconds: 0,
+            },
+            segment_index: 0,
+            schedule_date: "invalid".to_owned(),
+            deadline_epoch_ms: None,
+            can_start_session: true,
+        }],
+        JST_OFFSET_MINUTES,
+        START_EPOCH_MS,
+    );
+    assert_eq!(rows[0].schedule_label, "—");
 }
 
 #[test]

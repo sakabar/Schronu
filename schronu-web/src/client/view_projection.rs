@@ -87,10 +87,8 @@ fn project_all_task_rows_with(
 ) -> Vec<ListRowViewModel> {
     rows.iter()
         .map(|row| {
-            let schedule_label = row
-                .schedule_date
-                .as_deref()
-                .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+            let schedule_label = chrono::NaiveDate::parse_from_str(&row.schedule_date, "%Y-%m-%d")
+                .ok()
                 .map(|date| {
                     let weekday = ["月", "火", "水", "木", "金", "土", "日"]
                         [date.weekday().num_days_from_monday() as usize];

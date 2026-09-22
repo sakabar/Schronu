@@ -49,7 +49,7 @@ pub struct ScheduledTaskRowDto {
 pub struct AllTaskRowDto {
     pub task: SessionTaskDto,
     pub segment_index: usize,
-    pub schedule_date: Option<String>,
+    pub schedule_date: String,
     pub deadline_epoch_ms: Option<i64>,
     pub can_start_session: bool,
 }

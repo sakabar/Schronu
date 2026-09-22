@@ -37,7 +37,7 @@ fn 全件は明示選択まで取得せずreloadでも自動復元しない() {
     let load_id = orchestrator.select_all_tasks().expect("明示選択で取得を開始");
     assert!(orchestrator.all_loading());
     orchestrator.apply_all_task_result(load_id, Ok(vec![AllTaskRow {
-        task: task(RECORD_ID), schedule_date: Some("2026-09-05".to_owned()),
+        task: task(RECORD_ID), schedule_date: "2026-09-05".to_owned(),
         segment_index: 0,
         deadline_epoch_ms: None, can_start_session: true,
     }]));
@@ -93,7 +93,7 @@ fn 全件表示は検索結果を保持し表示分だけ取り出す() {
         .map(|index| AllTaskRow {
             task: task(&format!("{index:04}")),
             segment_index: index,
-            schedule_date: None,
+            schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: None,
             can_start_session: true,
         })
@@ -135,7 +135,7 @@ fn 全件検索と500行投影の大規模fixture時間を計測する() {
         .map(|index| AllTaskRow {
             task: task(&format!("{index:05}")),
             segment_index: index,
-            schedule_date: Some("2026-09-05".to_owned()),
+            schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: None,
             can_start_session: true,
         })
