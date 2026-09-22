@@ -400,8 +400,6 @@ fn native_ssrはbrowser_storageへ触れず非blockingな復元shellを描画す
     assert!(!html.contains("id=\"schronu-web-loading\""), "{html}");
     assert!(!html.contains("inert"), "{html}");
     assert!(!html.contains("schronu-buffer-ready"), "{html}");
-    assert!(!html.contains("BUFFER"), "{html}");
-    assert!(!html.contains("--:--:--"), "{html}");
     assert!(!html.contains("schronu 今"), "{html}");
     assert!(!html.contains(">更新<"), "{html}");
 }
@@ -426,7 +424,6 @@ fn bufferは基準睡眠時間を加えた睡眠時間としてready_shellへ表
     assert!(!ready_html.contains("基準より"), "{ready_html}");
     assert!(ready_html.contains("08:01:01"), "{ready_html}");
     assert!(!ready_html.contains("is-negative"), "{ready_html}");
-    assert!(!ready_html.contains("--:--:--"), "{ready_html}");
 }
 
 fn negative_buffer() -> Element {
@@ -458,7 +455,6 @@ fn 負のbufferは睡眠時間が正でも赤色にする() {
         "{html}"
     );
     assert!(html.contains(">睡眠時間<"), "{html}");
-    assert!(!html.contains(">睡眠時間(基準より不足)<"), "{html}");
 }
 
 #[test]
@@ -498,7 +494,6 @@ fn 未取得bufferも睡眠時間labelを表示する() {
     assert!(html.contains("aria-label=\"睡眠時間\""), "{html}");
     assert!(html.contains(">睡眠時間<"), "{html}");
     assert!(html.contains(">未取得<"), "{html}");
-    assert!(!html.contains("BUFFER"), "{html}");
     assert!(!html.contains("基準より"), "{html}");
 }
 

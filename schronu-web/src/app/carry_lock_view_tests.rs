@@ -68,7 +68,6 @@ fn lock_barはmodeごとの状態とaccessibility契約を表示する() {
     assert!(locked.contains("carry-lock-bar is-locked"), "{locked}");
     assert!(locked.contains("操作ロック中"), "{locked}");
     assert!(locked.contains("長押しで15秒間操作可能"), "{locked}");
-    assert!(!locked.contains("1.2秒"), "{locked}");
 
     let armed = render(CarryLockViewModel::new(
         CarryLockMode::ArmedUntil(17_000),

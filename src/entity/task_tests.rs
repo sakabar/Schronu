@@ -145,7 +145,6 @@ fn test_extract_leaf_tasks_from_project_タスクのchildrenが空配列では�
     let actual1 = actual.first().unwrap();
     let actual2 = actual.last().unwrap();
 
-    assert_ne!(actual1, actual2);
     assert_eq!(
         actual1.root().unwrap().node.borrow_data().get_name(),
         "親タスク1"

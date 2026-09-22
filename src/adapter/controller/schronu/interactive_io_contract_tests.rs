@@ -51,6 +51,7 @@ fn test_interactive出力failureは成功済みcommandだけを保存済みに�
                     last_focused_task_id_opt: &mut last_focused_task_id_opt,
                     focus_started_datetime: &mut focus_started_datetime,
                     focus_selection_mode: &mut focus_selection_mode,
+                    timer_sessions: None,
                 },
                 repository_event,
             ) {
@@ -186,6 +187,7 @@ fn test_interactive_ctrl_dのsaveと診断出力が共に失敗してもsave_err
                     last_focused_task_id_opt: &mut last_focused_task_id_opt,
                     focus_started_datetime: &mut focus_started_datetime,
                     focus_selection_mode: &mut focus_selection_mode,
+                    timer_sessions: None,
                 },
                 repository_event,
             ) {

@@ -70,6 +70,41 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
 }
 
 #[test]
+fn timerは両modeで引数なしの同一commandとして解釈する() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for alias in ["計", "timer"] {
+            assert_eq!(
+                parse_command(alias, mode).unwrap(),
+                Command::Action(CommandAction::NoArguments {
+                    kind: CommandKind::Timer,
+                    canonical_name: "計",
+                })
+            );
+            let error = parse_command(&format!("{alias} 1"), mode).unwrap_err();
+            assert_eq!(error.field(), "arguments");
+            assert_eq!(error.usage(), "計 [忘]");
+        }
+    }
+}
+
+#[test]
+fn timerの忘は両modeで記録解除として解釈し他の引数を拒否する() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for input in ["計 忘", "timer forget", "計 forget", "timer 忘"] {
+            assert_eq!(
+                parse_command(input, mode).unwrap(),
+                Command::Action(CommandAction::TimerForget),
+                "input: {input}"
+            );
+        }
+        for input in ["計 --force", "計 1", "timer other", "計 忘 extra"] {
+            let error = parse_command(input, mode).unwrap_err();
+            assert_eq!(error.usage(), "計 [忘]", "input: {input}");
+        }
+    }
+}
+
+#[test]
 fn parser_converts_command_fields_to_typed_values() {
     assert_eq!(
         parse_command("予 45", ParseMode::NonInteractive).unwrap(),
