@@ -70,6 +70,24 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
 }
 
 #[test]
+fn timerは両modeで引数なしの同一commandとして解釈する() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for alias in ["計", "timer"] {
+            assert_eq!(
+                parse_command(alias, mode).unwrap(),
+                Command::Action(CommandAction::NoArguments {
+                    kind: CommandKind::Timer,
+                    canonical_name: "計",
+                })
+            );
+            let error = parse_command(&format!("{alias} 1"), mode).unwrap_err();
+            assert_eq!(error.field(), "arguments");
+            assert_eq!(error.usage(), "計");
+        }
+    }
+}
+
+#[test]
 fn parser_converts_command_fields_to_typed_values() {
     assert_eq!(
         parse_command("予 45", ParseMode::NonInteractive).unwrap(),

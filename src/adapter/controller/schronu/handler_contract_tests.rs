@@ -126,6 +126,12 @@ fn handler_returns_structured_external_requests_without_opening_them() {
     );
     assert_eq!(obsidian.focus_change, FocusChange::Keep);
     assert!(obsidian.display.is_empty());
+
+    let timer = handle(&no_arguments(CommandKind::Timer, "計")).expect("timer is handled");
+    assert_eq!(timer.kind, CommandKind::Timer);
+    assert_eq!(timer.external_request, Some(ExternalRequest::OpenTimerShortcut));
+    assert_eq!(timer.focus_change, FocusChange::Keep);
+    assert!(timer.display.is_empty());
 }
 
 #[test]
