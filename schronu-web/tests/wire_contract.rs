@@ -27,14 +27,14 @@ fn 全件pageのrequestとresponseはcursorと予定日を保持する() {
                 segment_index: 7,
                 schedule_date: "2026-09-05".to_owned(),
                 deadline_epoch_ms: None,
-                can_start_session: false,
+                is_leaf: false,
             }],
             next_cursor: None,
         },
         json!({
             "rows": [{
                 "task": {"task_id": "id", "task_name": "pending", "estimated_work_seconds": 600, "actual_work_seconds": 0},
-                "segment_index": 7, "schedule_date": "2026-09-05", "deadline_epoch_ms": null, "can_start_session": false
+                "segment_index": 7, "schedule_date": "2026-09-05", "deadline_epoch_ms": null, "is_leaf": false
             }],
             "next_cursor": null
         }),
@@ -48,7 +48,7 @@ fn 全件segmentの予定日は必須である() {
         "segment_index": 0,
         "schedule_date": "2026-09-05",
         "deadline_epoch_ms": null,
-        "can_start_session": true
+        "is_leaf": true
     });
     assert!(serde_json::from_value::<AllTaskRow>(row.clone()).is_ok());
     let mut no_date = row.as_object().unwrap().clone();

@@ -27,7 +27,7 @@ fn 全件segmentは予定logical_dateとbrowser_timezoneの締切を表示する
             segment_index: 0,
             schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: Some(START_EPOCH_MS),
-            can_start_session: true,
+            is_leaf: true,
         }],
         JST_OFFSET_MINUTES,
         START_EPOCH_MS + 1,
@@ -51,7 +51,7 @@ fn 全件の同一taskに属するsegmentは別行として識別できる() {
         segment_index: 499,
         schedule_date: "2026-09-05".to_owned(),
         deadline_epoch_ms: None,
-        can_start_session: true,
+        is_leaf: true,
     };
     let rows = project_all_task_rows(
         &[
@@ -85,7 +85,7 @@ fn 全件segmentの不正な予定日は安全な代替表示にする() {
             segment_index: 0,
             schedule_date: "invalid".to_owned(),
             deadline_epoch_ms: None,
-            can_start_session: true,
+            is_leaf: true,
         }],
         JST_OFFSET_MINUTES,
         START_EPOCH_MS,

@@ -123,7 +123,7 @@ fn project_all_task_rows_with(
                 misses_deadline: row
                     .deadline_epoch_ms
                     .is_some_and(|deadline| deadline < now_epoch_ms),
-                is_leaf: row.can_start_session,
+                is_leaf: row.is_leaf,
                 defer_plan: None,
                 defer_confirmation: None,
             }

@@ -51,7 +51,7 @@ pub struct AllTaskRowDto {
     pub segment_index: usize,
     pub schedule_date: String,
     pub deadline_epoch_ms: Option<i64>,
-    pub can_start_session: bool,
+    pub is_leaf: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

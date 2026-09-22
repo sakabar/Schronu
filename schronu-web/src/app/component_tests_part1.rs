@@ -52,7 +52,7 @@ fn 全件は明示選択まで取得せずreloadでも自動復元しない() {
     orchestrator.apply_all_task_result(load_id, Ok(vec![AllTaskRow {
         task: task(RECORD_ID), schedule_date: "2026-09-05".to_owned(),
         segment_index: 0,
-        deadline_epoch_ms: None, can_start_session: true,
+        deadline_epoch_ms: None, is_leaf: true,
     }]));
     assert_eq!(orchestrator.all_task_rows().unwrap().len(), 1);
     orchestrator.edit_task_name_filter(&storage, "全件検索".to_owned());
@@ -108,7 +108,7 @@ fn 全件表示は検索結果を保持し表示分だけ取り出す() {
             segment_index: index,
             schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: None,
-            can_start_session: true,
+            is_leaf: true,
         })
         .collect();
     orchestrator.apply_all_task_result(load_id, Ok(rows));
@@ -150,7 +150,7 @@ fn 全件検索と500行投影の大規模fixture時間を計測する() {
             segment_index: index,
             schedule_date: "2026-09-05".to_owned(),
             deadline_epoch_ms: None,
-            can_start_session: true,
+            is_leaf: true,
         })
         .collect();
     orchestrator.apply_all_task_result(load_id, Ok(rows));

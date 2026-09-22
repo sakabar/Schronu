@@ -11,7 +11,6 @@ use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
-use crate::entity::task::Status;
 use chrono::{DateTime, Local, NaiveDate};
 
 pub(in crate::adapter::controller) fn build_all_task_rows(
@@ -37,7 +36,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 deadline_epoch_ms: task
                     .deadline_time
                     .map(|deadline| deadline.timestamp_millis()),
-                can_start_session: task.status == Status::Todo && segment.rank == 0,
+                is_leaf: segment.is_leaf(),
             }
         })
         .collect()
@@ -177,7 +176,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
-                is_leaf: segment.rank == 0,
+                is_leaf: segment.is_leaf(),
                 defer_plan: defer_plan_dto(
                     plan_defer_task(repository, segment.task.id, logical_date)
                         .map_err(WebReadCoreError::Application)?,

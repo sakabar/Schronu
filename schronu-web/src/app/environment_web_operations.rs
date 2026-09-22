@@ -164,7 +164,7 @@ impl From<AllTaskRowDto> for AllTaskRow {
             segment_index: row.segment_index,
             schedule_date: row.schedule_date,
             deadline_epoch_ms: row.deadline_epoch_ms,
-            can_start_session: row.can_start_session,
+            is_leaf: row.is_leaf,
         }
     }
 }

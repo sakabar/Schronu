@@ -522,7 +522,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 - `全て`buttonは`曜 今日`の左に置く。初期化、reload、tab切替では全件を取得せず、押下時だけWeb専用の`list_all_tasks_page(cursor)`を最大500件ずつcursorがなくなるまで呼ぶ。途中で失敗した場合は部分一覧を捨てて再試行を表示し、全ページ成功後だけ検索とtableを有効にする。
 - serverは同一repository revisionの取得snapshotを最大8件保持する。別の利用者の取得開始で最古のsnapshotが破棄された場合、古いcursorは入力errorとなり、clientは部分一覧を表示せず再試行する。
-- 全件の正本はCLI `全`と同じapplicationの`get_schedule`とする。CLIの空き時間行・要約は除き、返された実task予定segmentを反転・再sort・状態filterせずに1segment 1行で表示する。CLIはこの列を逆順に表示し、Webは反転前の直近segmentを先頭に置く。同一taskの複数segmentは別行とし、予定segmentのないtaskは表示しない。各segmentの開始時刻からapplication共通処理で得たlogical dateを予定列へ`YYYY/MM/DD(曜日)`で示す。page境界をまたぐ同一taskの行もsegment indexで一意に識別する。列順は日付別と同じだが、全件側の操作列はセッション追加のみとし、Todoかつschedule rank 0のtaskにだけ表示する。締切はbrowser localの`MM/DD HH:MM`とし、予定列を広げる分は操作列を44pxへ縮める。
+- 全件の正本はCLI `全`と同じapplicationの`get_schedule`とする。CLIの空き時間行・要約は除き、返された実task予定segmentを反転・再sort・状態filterせずに1segment 1行で表示する。CLIはこの列を逆順に表示し、Webは反転前の直近segmentを先頭に置く。同一taskの複数segmentは別行とし、予定segmentのないtaskは表示しない。各segmentの開始時刻からapplication共通処理で得たlogical dateを予定列へ`YYYY/MM/DD(曜日)`で示す。page境界をまたぐ同一taskの行もsegment indexで一意に識別する。列順は日付別と同じだが、全件側の操作列はセッション追加のみとし、日付別と共通の葉判定によるschedule rank 0のtaskにstatusを問わず表示する。締切はbrowser localの`MM/DD HH:MM`とし、予定列を広げる分は操作列を44pxへ縮める。
 - 全件行のwire `schedule_date`は必須の`YYYY-MM-DD`文字列とし、`null`と欠落を受理しない。不正な日付文字列を受けた表示側は`—`を示す。
 - 全件側の検索は日付別と共通のtask名照合条件を取得済み全件へclient内で適用する。`ComponentOrchestrator`が検索と500行単位の表示範囲を決め、`ListView`は渡された全件行を再検索・再切り詰めせず描画する。全件と全件側の検索文字列はmemory専用で、reloadでは日付別の保存一覧・検索だけを復元する。server側task更新が成功した時点で全件cacheを破棄し、次の`全て`押下まで再取得しない。
 - 曜日button列とtask名cell内の横scrollは維持し、全件側の列幅変更でviewport全体に新たな横scrollを生じさせない。

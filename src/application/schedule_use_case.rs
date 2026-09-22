@@ -26,6 +26,12 @@ pub struct ScheduledTaskView {
     pub rank: usize,
 }
 
+impl ScheduledTaskView {
+    pub fn is_leaf(&self) -> bool {
+        self.rank == 0
+    }
+}
+
 pub(crate) fn scheduled_end_by_task(
     schedule: &[ScheduledTaskView],
 ) -> HashMap<Uuid, DateTime<Local>> {
