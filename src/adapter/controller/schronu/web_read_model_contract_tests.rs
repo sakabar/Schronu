@@ -73,7 +73,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
 }
 
 #[test]
-fn all_listは未完了の親と保留を含み最初の予定日だけを返す() {
+fn all_listは予定segmentだけを予定順に返し同じtaskを集約しない() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let parent = TaskHandle::with_identity("parent", Uuid::from_u128(401), start).unwrap();
     let child = parent.create_as_last_child(crate::test_support::new_task_attr_at("child", start));
@@ -89,8 +89,8 @@ fn all_listは未完了の親と保留を含み最初の予定日だけを返す
         ScheduledTaskView {
             task: child_view.clone(),
             first_available_time: start,
-            scheduled_start: start + Duration::days(2),
-            scheduled_end: start + Duration::days(2) + Duration::minutes(10),
+            scheduled_start: start + Duration::days(1),
+            scheduled_end: start + Duration::days(1) + Duration::minutes(10),
             scheduled_work_seconds: 600,
             total_work_seconds: 1_200,
             rank: 0,
@@ -98,8 +98,8 @@ fn all_listは未完了の親と保留を含み最初の予定日だけを返す
         ScheduledTaskView {
             task: child_view,
             first_available_time: start,
-            scheduled_start: start + Duration::days(1),
-            scheduled_end: start + Duration::days(1) + Duration::minutes(10),
+            scheduled_start: start + Duration::days(2),
+            scheduled_end: start + Duration::days(2) + Duration::minutes(10),
             scheduled_work_seconds: 600,
             total_work_seconds: 1_200,
             rank: 0,
@@ -122,60 +122,35 @@ fn all_listは未完了の親と保留を含み最初の予定日だけを返す
     .unwrap();
     let rows = build_all_task_rows(page.tasks, &schedule).unwrap();
 
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].task.task_name, "parent");
-    assert_eq!(rows[0].schedule_date, None);
-    assert!(!rows[0].can_start_session);
-    assert_eq!(rows[1].task.task_name, "child");
-    assert_eq!(rows[1].schedule_date.as_deref(), Some("2026-09-06"));
-    assert!(rows[1].can_start_session);
-    assert_eq!(rows[2].task.task_name, "pending");
-    assert_eq!(rows[2].schedule_date, None);
-    assert!(!rows[2].can_start_session);
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.task.task_name == "child"));
+    assert_eq!(rows[0].schedule_date.as_deref(), Some("2026-09-06"));
+    assert_eq!(rows[1].schedule_date.as_deref(), Some("2026-09-07"));
+    assert!(rows.iter().all(|row| row.can_start_session));
 }
 
 #[test]
-fn all_listは500件境界を越えて全件を一度ずつ返す() {
+fn all_listは予定のないtaskを表示しない() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
-    let roots = (1..=501)
-        .map(|index| {
-            let name = format!("task {index}");
-            TaskHandle::with_identity(&name, Uuid::from_u128(1_000 + index), start).unwrap()
-        })
-        .collect();
-    let repository = TestTaskRepository::new(roots, start);
-    let mut cursor = None;
-    let mut names = Vec::new();
-    loop {
-        let page = list_tasks_page(
-            &repository,
-            ListTasksPageRequest {
-                filter: ListTasksFilter {
-                    period: None,
-                    statuses: vec![Status::Todo, Status::Pending],
-                    categories: vec![],
-                },
-                query: None,
-                root_task_id: None,
-                limit: Some(500),
-                cursor,
+    let root = TaskHandle::with_identity("予定なし", Uuid::from_u128(1_001), start).unwrap();
+    let repository = TestTaskRepository::new(vec![root], start);
+    let page = list_tasks_page(
+        &repository,
+        ListTasksPageRequest {
+            filter: ListTasksFilter {
+                period: None,
+                statuses: vec![Status::Todo, Status::Pending],
+                categories: vec![],
             },
-        )
-        .unwrap();
-        names.extend(
-            build_all_task_rows(page.tasks, &[])
-                .unwrap()
-                .into_iter()
-                .map(|row| row.task.task_name),
-        );
-        cursor = page.next_cursor;
-        if cursor.is_none() {
-            break;
-        }
-    }
-    assert_eq!(names.len(), 501);
-    assert_eq!(names.first().unwrap(), "task 1");
-    assert_eq!(names.last().unwrap(), "task 501");
+            query: None,
+            root_task_id: None,
+            limit: Some(500),
+            cursor: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(page.tasks.len(), 1);
+    assert!(build_all_task_rows(page.tasks, &[]).unwrap().is_empty());
 }
 
 #[test]

@@ -9,6 +9,7 @@ use crate::adapter::gateway::storage_transaction_test_support::{
 };
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::DeferMode;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
@@ -199,7 +200,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
 }
 
 #[test]
-fn 全件pageは実storageの親と保留を含め完了を除き500件境界を連結できる() {
+fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
@@ -220,27 +221,32 @@ fn 全件pageは実storageの親と保留を含め完了を除き500件境界を
         repository.start_new_project(root).unwrap();
     }
     repository.save().unwrap();
-    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
-    let first = service.list_all_tasks_page_at(now, None).unwrap();
-    assert_eq!(first.rows.len(), 500);
-    let second = service
-        .list_all_tasks_page_at(now, first.next_cursor)
-        .unwrap();
-    assert_eq!(second.rows.len(), 1);
-    assert!(second.next_cursor.is_none());
-    let rows = first
-        .rows
+    let expected_names = get_schedule(&repository)
+        .unwrap()
         .into_iter()
-        .chain(second.rows)
+        .map(|segment| segment.task.name)
         .collect::<Vec<_>>();
-    assert!(rows
-        .iter()
-        .any(|row| row.task.task_name == "project 1" && !row.can_start_session));
-    assert!(rows
-        .iter()
-        .any(|row| row.task.task_name == "project 2" && !row.can_start_session));
-    assert!(rows.iter().any(|row| row.task.task_name == "child"));
-    assert!(!rows.iter().any(|row| row.task.task_name == "project 501"));
+    assert!(expected_names.len() > 500);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let mut cursor = None;
+    let mut actual_names = Vec::new();
+    let mut page_count = 0;
+    loop {
+        let page = service.list_all_tasks_page_at(now, cursor).unwrap();
+        assert!(page.rows.len() <= 500);
+        if page.next_cursor.is_some() {
+            assert_eq!(page.rows.len(), 500);
+        }
+        actual_names.extend(page.rows.into_iter().map(|row| row.task.task_name));
+        page_count += 1;
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert!(page_count > 1);
+    assert_eq!(actual_names, expected_names);
+    assert_ne!(actual_names, expected_names.into_iter().rev().collect::<Vec<_>>());
 }
 
 #[test]
