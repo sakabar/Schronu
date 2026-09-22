@@ -247,7 +247,7 @@ impl ComponentOrchestrator {
         self.all_error
     }
 
-    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    #[cfg(test)]
     pub fn all_visible_count(&self) -> usize {
         self.all_visible_count
     }
