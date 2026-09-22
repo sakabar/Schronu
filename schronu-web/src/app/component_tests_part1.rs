@@ -71,6 +71,44 @@ fn 全件取得失敗は部分結果を破棄して再試行できる() {
     assert!(orchestrator.all_task_rows().is_none());
     assert!(orchestrator.select_all_tasks().is_some());
 }
+
+#[test]
+fn 全件表示は検索結果を保持し表示分だけ取り出す() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let request_id = match orchestrator.mount(&storage, 1_000) {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        _ => unreachable!(),
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id,
+            result: Ok(snapshot(1_000)),
+        },
+    );
+    let load_id = orchestrator.select_all_tasks().unwrap();
+    let rows = (0..501)
+        .map(|index| AllTaskRow {
+            task: task(&format!("{index:04}")),
+            schedule_date: None,
+            deadline_epoch_ms: None,
+            can_start_session: true,
+        })
+        .collect();
+    orchestrator.apply_all_task_result(load_id, Ok(rows));
+    assert_eq!(orchestrator.visible_all_task_rows().len(), 500);
+    assert!(orchestrator.all_has_more());
+    orchestrator.show_more_all_tasks();
+    assert_eq!(orchestrator.visible_all_task_rows().len(), 501);
+    assert!(!orchestrator.all_has_more());
+
+    orchestrator.edit_task_name_filter(&storage, "  TASK 0500  ".to_owned());
+    let visible = orchestrator.visible_all_task_rows();
+    assert_eq!(visible.len(), 1);
+    assert_eq!(visible[0].task.task_name, "task 0500");
+    assert!(!orchestrator.all_has_more());
+}
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
 use dioxus::prelude::*;

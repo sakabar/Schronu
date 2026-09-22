@@ -24,6 +24,8 @@ pub fn ListView(
     #[props(default)] all_loading: bool,
     #[props(default)] all_error: bool,
     #[props(default)] all_visible_count: usize,
+    #[props(default)] all_rows_prepared: bool,
+    #[props(default)] all_has_more: bool,
     active_task_ids: Vec<String>,
     date_input_text: String,
     date_input_error: Option<String>,
@@ -45,13 +47,22 @@ pub fn ListView(
     let task_name_matches = |task_name: &str| {
         normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
     };
-    let filtered_rows = if all_selected { all_rows } else { rows }
-        .into_iter()
-        .filter(|row| task_name_matches(&row.task.task_name))
-        .collect::<Vec<_>>();
+    let filtered_rows = if all_selected && all_rows_prepared {
+        all_rows
+    } else {
+        (if all_selected { all_rows } else { rows })
+            .into_iter()
+            .filter(|row| task_name_matches(&row.task.task_name))
+            .collect::<Vec<_>>()
+    };
     let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
-    let has_more = all_selected && filtered_rows.len() > all_visible_count;
-    let visible_rows = if all_selected {
+    let has_more = all_selected
+        && if all_rows_prepared {
+            all_has_more
+        } else {
+            filtered_rows.len() > all_visible_count
+        };
+    let visible_rows = if all_selected && !all_rows_prepared {
         filtered_rows
             .into_iter()
             .take(all_visible_count)

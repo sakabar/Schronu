@@ -88,6 +88,7 @@ pub(super) fn BrowserApp() -> Element {
         all_loading,
         all_error,
         all_visible_count,
+        all_has_more,
         all_rows,
     ) = {
         let client = client.read();
@@ -105,10 +106,15 @@ pub(super) fn BrowserApp() -> Element {
             client.all_loading(),
             client.all_error(),
             client.all_visible_count(),
-            project_all_task_rows_for_browser(
-                client.all_task_rows().unwrap_or(&[]),
-                browser_now_epoch_ms(),
-            ),
+            client.all_has_more(),
+            if client.all_selected() {
+                project_all_task_rows_for_browser(
+                    &client.visible_all_task_rows(),
+                    browser_now_epoch_ms(),
+                )
+            } else {
+                Vec::new()
+            },
         )
     };
     let dates = dates
@@ -191,6 +197,8 @@ pub(super) fn BrowserApp() -> Element {
                     all_loading,
                     all_error,
                     all_visible_count,
+                    all_rows_prepared: true,
+                    all_has_more,
                     active_task_ids,
                     date_input_text,
                     date_input_error,

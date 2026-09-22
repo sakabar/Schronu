@@ -130,6 +130,7 @@ pub(crate) struct ComponentOrchestrator {
     all_task_filter: String,
     all_selected: bool,
     all_task_rows: Option<Vec<AllTaskRow>>,
+    all_filtered_indices: Vec<usize>,
     all_load_request: Option<u64>,
     all_next_request: u64,
     all_error: bool,
@@ -156,6 +157,7 @@ impl ComponentOrchestrator {
             all_task_filter: String::new(),
             all_selected: false,
             all_task_rows: None,
+            all_filtered_indices: Vec::new(),
             all_load_request: None,
             all_next_request: 1,
             all_error: false,
@@ -206,6 +208,37 @@ impl ComponentOrchestrator {
         self.all_task_rows.as_deref()
     }
 
+    pub fn visible_all_task_rows(&self) -> Vec<AllTaskRow> {
+        let Some(rows) = self.all_task_rows.as_ref() else {
+            return Vec::new();
+        };
+        self.all_filtered_indices
+            .iter()
+            .take(self.all_visible_count)
+            .map(|&index| rows[index].clone())
+            .collect()
+    }
+
+    pub fn all_has_more(&self) -> bool {
+        self.all_filtered_indices.len() > self.all_visible_count
+    }
+
+    fn refresh_all_filter(&mut self) {
+        self.all_filtered_indices.clear();
+        let Some(rows) = self.all_task_rows.as_ref() else {
+            return;
+        };
+        let filter = self.all_task_filter.trim().to_lowercase();
+        self.all_filtered_indices.extend(
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| {
+                    filter.is_empty() || row.task.task_name.to_lowercase().contains(&filter)
+                })
+                .map(|(index, _)| index),
+        );
+    }
+
     pub fn all_loading(&self) -> bool {
         self.all_load_request.is_some()
     }
@@ -244,10 +277,12 @@ impl ComponentOrchestrator {
         match result {
             Ok(rows) => {
                 self.all_task_rows = Some(rows);
+                self.refresh_all_filter();
                 self.all_error = false;
             }
             Err(()) => {
                 self.all_task_rows = None;
+                self.all_filtered_indices.clear();
                 self.all_error = true;
             }
         }
@@ -297,6 +332,7 @@ impl ComponentOrchestrator {
         if self.all_selected {
             self.all_task_filter = text;
             self.all_visible_count = 500;
+            self.refresh_all_filter();
             return;
         }
         self.task_name_filter = text;
@@ -403,6 +439,9 @@ impl ComponentOrchestrator {
             previous_session_count,
             current_session_count,
         );
+        if self.all_selected {
+            self.refresh_all_filter();
+        }
         self.persist_view_state(storage);
         effect
     }
@@ -419,6 +458,7 @@ impl ComponentOrchestrator {
                 | ClientResponse::CompleteSession { result: Ok(_), .. }
         ) {
             self.all_task_rows = None;
+            self.all_filtered_indices.clear();
             self.all_error = false;
         }
         let refresh_result = match (&self.refresh_state, &response) {
