@@ -71,29 +71,6 @@ fn root(props: RootProps) -> Element {
     }
 }
 
-fn all_perf_root(props: RootProps) -> Element {
-    rsx! {
-        ListView {
-            dates: Vec::new(),
-            rows: props.rows,
-            all_selected: true,
-            all_loaded: true,
-            active_task_ids: Vec::new(),
-            date_input_text: String::new(),
-            date_input_error: None,
-            filter_text: String::new(),
-            on_select_date: move |_| {},
-            on_select_all: move |_| {},
-            on_show_more: move |_| {},
-            on_date_input_change: move |_| {},
-            on_submit_date_input: move |_| {},
-            on_start_session: move |_| {},
-            on_defer_task: move |_| {},
-            on_filter_change: move |_| {},
-        }
-    }
-}
-
 #[test]
 #[ignore = "manual 500-row render performance measurement"]
 fn 全件500行の仮想domとssr描画時間を計測する() {
@@ -108,13 +85,12 @@ fn 全件500行の仮想domとssr描画時間を計測する() {
         })
         .collect();
     let mut dom = VirtualDom::new_with_props(
-        all_perf_root,
-        RootProps {
+        all_root,
+        AllRootProps {
             dates: Vec::new(),
             rows,
-            active_task_ids: Vec::new(),
-            filter_text: String::new(),
-            events: Arc::new(Mutex::new(Vec::new())),
+            filter: String::new(),
+            has_more: false,
         },
     );
     let rebuild_started = Instant::now();
@@ -376,6 +352,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 
 #[derive(Clone)]
 struct AllRootProps {
+    dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
     filter: String,
     has_more: bool,
@@ -384,7 +361,7 @@ struct AllRootProps {
 fn all_root(props: AllRootProps) -> Element {
     rsx! {
         ListView {
-            dates: eight_dates(),
+            dates: props.dates,
             rows: props.rows,
             all_selected: true,
             all_loaded: true,
@@ -422,6 +399,7 @@ fn all_buttonは今日の左で準備済み500行と検索済み行を描画す�
     let mut dom = VirtualDom::new_with_props(
         all_root,
         AllRootProps {
+            dates: eight_dates(),
             rows: rows[..500].to_vec(),
             filter: String::new(),
             has_more: true,
@@ -439,6 +417,7 @@ fn all_buttonは今日の左で準備済み500行と検索済み行を描画す�
     let mut filtered = VirtualDom::new_with_props(
         all_root,
         AllRootProps {
+            dates: eight_dates(),
             rows: vec![rows[500].clone()],
             filter: "task 501".to_owned(),
             has_more: false,
