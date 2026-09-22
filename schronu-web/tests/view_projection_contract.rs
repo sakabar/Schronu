@@ -1,9 +1,11 @@
 use schronu_web::client::state::load_client_state;
 use schronu_web::client::view_projection::{
-    format_local_hh_mm, project_list_rows, project_session_cards, DeferConfirmationKind,
+    format_local_hh_mm, project_all_task_rows, project_list_rows, project_session_cards,
+    DeferConfirmationKind,
 };
 use schronu_web::{
-    DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask, WebSuccess,
+    AllTaskRow, DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask,
+    WebSuccess,
 };
 
 mod client_state_support;
@@ -11,6 +13,30 @@ use client_state_support::*;
 
 const START_EPOCH_MS: i64 = 1_788_568_200_000; // 2026-09-05 00:30 UTC
 const JST_OFFSET_MINUTES: i32 = 9 * 60;
+
+#[test]
+fn 全件rowは最初の予定日とbrowser_timezoneの締切を表示する() {
+    let rows = project_all_task_rows(
+        &[AllTaskRow {
+            task: SessionTask {
+                task_id: TASK_ID.to_owned(),
+                task_name: "実装".to_owned(),
+                estimated_work_seconds: 600,
+                actual_work_seconds: 0,
+            },
+            schedule_date: Some("2026-09-05".to_owned()),
+            deadline_epoch_ms: Some(START_EPOCH_MS),
+            can_start_session: true,
+        }],
+        JST_OFFSET_MINUTES,
+        START_EPOCH_MS + 1,
+    );
+    assert_eq!(rows[0].schedule_label, "2026/09/05(土)");
+    assert_eq!(rows[0].deadline_label, "09/05 09:30");
+    assert!(rows[0].misses_deadline);
+    assert!(rows[0].is_leaf);
+    assert!(rows[0].defer_plan.is_none());
+}
 
 #[test]
 fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止する() {
@@ -175,12 +201,18 @@ fn listの先送り確認はserverのplanだけから生成する() {
     );
 
     let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
-    assert_eq!(rows[0].defer_plan.mode, DeferMode::DeadlineLimited);
+    assert_eq!(
+        rows[0].defer_plan.as_ref().unwrap().mode,
+        DeferMode::DeadlineLimited
+    );
     assert_eq!(
         rows[0].defer_confirmation.as_ref().unwrap().kind,
         DeferConfirmationKind::DeadlineLimited
     );
-    assert_eq!(rows[1].defer_plan.mode, DeferMode::RoutinePeriod);
+    assert_eq!(
+        rows[1].defer_plan.as_ref().unwrap().mode,
+        DeferMode::RoutinePeriod
+    );
     assert_eq!(
         rows[1].defer_confirmation.as_ref().unwrap().detail_label,
         "7日"

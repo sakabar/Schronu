@@ -231,12 +231,12 @@ fn named_row(
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
-        defer_plan: crate::DeferPlan {
+        defer_plan: Some(crate::DeferPlan {
             mode: DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
         defer_confirmation: None,
     }
 }
@@ -247,7 +247,7 @@ fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewMo
         kind,
         detail_label: "9/12 05:59".to_owned(),
     });
-    row.defer_plan.mode = match kind {
+    row.defer_plan.as_mut().unwrap().mode = match kind {
         DeferConfirmationKind::DeadlineLimited => DeferMode::DeadlineLimited,
         DeferConfirmationKind::RoutinePeriod => DeferMode::RoutinePeriod,
     };
@@ -312,6 +312,85 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     );
     assert!(!html.contains("<a"));
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[derive(Clone)]
+struct AllRootProps {
+    rows: Vec<ListRowViewModel>,
+    filter: String,
+    visible: usize,
+}
+
+fn all_root(props: AllRootProps) -> Element {
+    rsx! {
+        ListView {
+            dates: eight_dates(),
+            rows: vec![row("daily", false, true)],
+            all_rows: props.rows,
+            show_all_button: true,
+            all_selected: true,
+            all_loaded: true,
+            all_visible_count: props.visible,
+            active_task_ids: vec![],
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: props.filter,
+            on_select_date: move |_| {},
+            on_select_all: move |_| {},
+            on_show_more: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn all_buttonは今日の左で全件は500行ずつ表示し未表示行も検索する() {
+    let rows = (1..=501)
+        .map(|index| {
+            let mut item = named_row(
+                &format!("id-{index}"),
+                &format!("task {index}"),
+                false,
+                true,
+            );
+            item.schedule_label = "2026/09/05(土)".to_owned();
+            item.defer_plan = None;
+            item
+        })
+        .collect::<Vec<_>>();
+    let mut dom = VirtualDom::new_with_props(
+        all_root,
+        AllRootProps {
+            rows: rows.clone(),
+            filter: String::new(),
+            visible: 500,
+        },
+    );
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.find(">全て</button>").unwrap() < html.find("土 今日").unwrap());
+    assert_eq!(html.matches("class=\"task-row\"").count(), 500);
+    assert!(html.contains("さらに表示"));
+    assert!(!html.contains("task 501"));
+    assert!(!html.contains("task-defer"));
+    assert!(html.contains("2026/09/05(土)"));
+
+    let mut filtered = VirtualDom::new_with_props(
+        all_root,
+        AllRootProps {
+            rows,
+            filter: "task 501".to_owned(),
+            visible: 500,
+        },
+    );
+    filtered.rebuild_in_place();
+    let filtered_html = dioxus::ssr::render(&filtered);
+    assert_eq!(filtered_html.matches("class=\"task-row\"").count(), 1);
+    assert!(filtered_html.contains("task 501"));
+    assert!(!filtered_html.contains("さらに表示"));
 }
 
 #[test]

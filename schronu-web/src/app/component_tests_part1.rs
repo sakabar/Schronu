@@ -18,9 +18,59 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    web_error_codes, AllTaskRow, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, WebError, WebSuccess,
 };
+
+#[test]
+fn 全件は明示選択まで取得せずreloadでも自動復元しない() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap = orchestrator.mount(&storage, 1_000);
+    assert!(!orchestrator.all_selected());
+    assert!(orchestrator.all_task_rows().is_none());
+    assert!(orchestrator.select_all_tasks().is_none());
+    let request_id = match bootstrap { ClientEffect::Bootstrap { request_id } => request_id, _ => unreachable!() };
+    orchestrator.apply_response(&storage, ClientResponse::Bootstrap {
+        request_id, result: Ok(snapshot(1_000)),
+    });
+    let load_id = orchestrator.select_all_tasks().expect("明示選択で取得を開始");
+    assert!(orchestrator.all_loading());
+    orchestrator.apply_all_task_result(load_id, Ok(vec![AllTaskRow {
+        task: task(RECORD_ID), schedule_date: Some("2026-09-05".to_owned()),
+        deadline_epoch_ms: None, can_start_session: true,
+    }]));
+    assert_eq!(orchestrator.all_task_rows().unwrap().len(), 1);
+    orchestrator.edit_task_name_filter(&storage, "全件検索".to_owned());
+    assert_eq!(orchestrator.task_name_filter(), "全件検索");
+    orchestrator.show_more_all_tasks();
+    assert_eq!(orchestrator.all_visible_count(), 1_000);
+    orchestrator.edit_task_name_filter(&storage, "再検索".to_owned());
+    assert_eq!(orchestrator.all_visible_count(), 500);
+
+    let mut reloaded = ComponentOrchestrator::new();
+    assert!(matches!(reloaded.mount(&storage, 2_000), ClientEffect::Bootstrap { .. }));
+    assert!(!reloaded.all_selected());
+    assert!(reloaded.all_task_rows().is_none());
+    assert_eq!(reloaded.task_name_filter(), "");
+}
+
+#[test]
+fn 全件取得失敗は部分結果を破棄して再試行できる() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let request_id = match orchestrator.mount(&storage, 1_000) {
+        ClientEffect::Bootstrap { request_id } => request_id, _ => unreachable!(),
+    };
+    orchestrator.apply_response(&storage, ClientResponse::Bootstrap {
+        request_id, result: Ok(snapshot(1_000)),
+    });
+    let load_id = orchestrator.select_all_tasks().unwrap();
+    orchestrator.apply_all_task_result(load_id, Err(()));
+    assert!(orchestrator.all_error());
+    assert!(orchestrator.all_task_rows().is_none());
+    assert!(orchestrator.select_all_tasks().is_some());
+}
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
 use dioxus::prelude::*;
