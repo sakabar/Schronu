@@ -3,6 +3,7 @@ use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Local};
 use std::collections::HashMap;
+#[cfg(any(target_os = "macos", test))]
 use std::process;
 use uuid::Uuid;
 
