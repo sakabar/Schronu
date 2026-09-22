@@ -29,12 +29,9 @@ fn scheduled_segment_metadataは06時境界と入力順とrankに対応する() 
         vec![task_with_schedule("metadata", boundary, 15 * 60, 1)],
         boundary,
     );
-    let task = get_task(
-        &repository,
-        repository.projects()[0].get_id().unwrap(),
-    )
-    .unwrap()
-    .unwrap();
+    let task = get_task(&repository, repository.projects()[0].get_id().unwrap())
+        .unwrap()
+        .unwrap();
     let segment = |scheduled_start, rank| ScheduledTaskView {
         task: task.clone(),
         first_available_time: scheduled_start,

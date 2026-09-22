@@ -147,7 +147,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
-                is_leaf: segment.rank == 0,
+                is_leaf: segment.is_leaf(),
                 defer_plan: defer_plan_dto(
                     plan_defer_task(repository, segment.task.id, logical_date)
                         .map_err(WebReadCoreError::Application)?,

@@ -20,7 +20,9 @@ use crate::application::daily_capacity::{
     try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use crate::application::schedule_use_case::{get_schedule, scheduled_end_by_task};
+use crate::application::schedule_use_case::{
+    get_schedule, scheduled_end_by_task, scheduled_logical_dates,
+};
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
     extract_leaf_tasks_from_project, round_up_sec_as_minute, ProjectCategory, TaskHandle,
@@ -814,6 +816,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         })
         .transpose()?;
     let scheduled_tasks = get_schedule(task_repository)?;
+    let scheduled_logical_dates = scheduled_logical_dates(&scheduled_tasks)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
     let mut available_biggest_task_estimate_work_seconds = 0;
@@ -865,7 +868,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let integer_reg = Regex::new(r"^\d+$").unwrap();
     let days_of_week = ["月", "火", "水", "木", "金", "土", "日"];
 
-    for (ind, scheduled_task) in scheduled_tasks.iter().enumerate() {
+    for (ind, (scheduled_task, logical_naive_date)) in scheduled_tasks
+        .iter()
+        .zip(&scheduled_logical_dates)
+        .enumerate()
+    {
         let dt = &scheduled_task.first_available_time;
         let scheduled_start = &scheduled_task.scheduled_start;
         let scheduled_end = &scheduled_task.scheduled_end;
@@ -874,7 +881,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let rank = &scheduled_task.rank;
         let deadline_time_opt = &scheduled_task.task.deadline_time;
         let id = &scheduled_task.task.id;
-        let logical_naive_date = try_logical_date(*scheduled_start)?;
+        let logical_naive_date = *logical_naive_date;
         let needs_scheduled_boundary = pattern_opt.as_ref().is_some_and(|pattern| {
             pattern == "今"
                 || pattern == "明"
@@ -1087,7 +1094,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 && task_deadline_time_opt.unwrap() < next_logical_date_start
             {
                 &deadline_icon
-            } else if rank == &0 && scheduled_start < &eod {
+            } else if scheduled_task.is_leaf() && scheduled_start < &eod {
                 &today_leaf_icon
             } else {
                 // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
@@ -1133,14 +1140,14 @@ pub(super) fn build_show_all_tasks_display_with_config(
             match pattern_opt {
                 Some(pattern) => {
                     if pattern == "葉" {
-                        if rank == &0
+                        if scheduled_task.is_leaf()
                             || task_deadline_time_opt.is_some()
                                 && task_deadline_time_opt.unwrap() < next_logical_date_start
                         {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "枝" {
-                        if rank > &0 {
+                        if !scheduled_task.is_leaf() {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "印" {
@@ -1267,7 +1274,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             continue;
                         }
 
-                        if *rank == 0
+                        if scheduled_task.is_leaf()
                             && !is_on_other_side
                             && estimated_work_seconds < target_free_time_seconds
                             && estimated_work_seconds > available_biggest_task_estimate_work_seconds
