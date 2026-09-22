@@ -1,5 +1,6 @@
 use crate::client::date_input::DateInputState;
 use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
+use crate::client::view_projection::{normalize_task_name_filter, task_name_matches_normalized};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
 use crate::{AllTaskRow, DeferPlan, ListAllTasksPageRequest, SessionTask};
@@ -228,13 +229,11 @@ impl ComponentOrchestrator {
         let Some(rows) = self.all_task_rows.as_ref() else {
             return;
         };
-        let filter = self.all_task_filter.trim().to_lowercase();
+        let filter = normalize_task_name_filter(&self.all_task_filter);
         self.all_filtered_indices.extend(
             rows.iter()
                 .enumerate()
-                .filter(|(_, row)| {
-                    filter.is_empty() || row.task.task_name.to_lowercase().contains(&filter)
-                })
+                .filter(|(_, row)| task_name_matches_normalized(&filter, &row.task.task_name))
                 .map(|(index, _)| index),
         );
     }

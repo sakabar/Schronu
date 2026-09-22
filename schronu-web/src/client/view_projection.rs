@@ -5,6 +5,16 @@ use chrono::{DateTime, Datelike, FixedOffset, Utc};
 
 const INVALID_TIME: &str = "--:--";
 
+#[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
+pub(crate) fn normalize_task_name_filter(filter: &str) -> String {
+    filter.trim().to_lowercase()
+}
+
+#[cfg_attr(not(any(test, target_arch = "wasm32")), allow(dead_code))]
+pub(crate) fn task_name_matches_normalized(normalized_filter: &str, task_name: &str) -> bool {
+    normalized_filter.is_empty() || task_name.to_lowercase().contains(normalized_filter)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionCardViewModel {
     pub task_id: String,

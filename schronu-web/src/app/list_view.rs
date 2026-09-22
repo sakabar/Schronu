@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
+use crate::client::view_projection::{normalize_task_name_filter, task_name_matches_normalized};
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::{DeferPlan, SessionTask};
 
@@ -40,15 +41,12 @@ pub fn ListView(
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
-    let normalized_filter = filter_text.trim().to_lowercase();
-    let task_name_matches = |task_name: &str| {
-        normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
-    };
+    let normalized_filter = normalize_task_name_filter(&filter_text);
     let filtered_rows = if all_selected {
         all_rows
     } else {
         rows.into_iter()
-            .filter(|row| task_name_matches(&row.task.task_name))
+            .filter(|row| task_name_matches_normalized(&normalized_filter, &row.task.task_name))
             .collect::<Vec<_>>()
     };
     let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
