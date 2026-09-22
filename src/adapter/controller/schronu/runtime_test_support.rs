@@ -678,10 +678,25 @@ fn execute_command_for_test(
     focused_task_id_opt: Option<Uuid>,
     command: &str,
 ) -> CommandTestResult {
+    execute_command_with_ansi_color_for_test(task, now, focused_task_id_opt, command, false)
+}
+
+#[cfg(test)]
+fn execute_command_with_ansi_color_for_test(
+    task: TaskHandle,
+    now: DateTime<Local>,
+    focused_task_id_opt: Option<Uuid>,
+    command: &str,
+    supports_ansi_color: bool,
+) -> CommandTestResult {
     let mut task_repository = TestTaskRepository::new(task, now);
     let mut free_time_manager = TestFreeTimeManager::default();
     let mut focused_task_id_opt = focused_task_id_opt;
-    let mut stdout = TestWriter::new();
+    let mut stdout = if supports_ansi_color {
+        TestWriter::new()
+    } else {
+        TestWriter::new_for_pipe()
+    };
 
     if let Err(error) = execute(
         &mut stdout,
@@ -1439,6 +1454,8 @@ impl TaskListDisplayRow {
                     priority,
                     project_category: project_category_opt,
                     task_name,
+                    kind: super::renderer::TaskListTaskKind::NonRepetitive,
+                    has_deadline: false,
                     give_up_candidate: false,
                 },
             ),

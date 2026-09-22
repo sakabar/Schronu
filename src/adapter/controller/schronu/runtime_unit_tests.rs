@@ -734,6 +734,8 @@ fn test_replace_task_list_icon_アイコン列だけを置き換える() {
         priority: 5,
         project_category: Some(ProjectCategory::Investment),
         task_name: "夕食  の 準備".to_string(),
+        kind: super::super::renderer::TaskListTaskKind::NonRepetitive,
+        has_deadline: false,
         give_up_candidate: false,
     };
 
@@ -802,6 +804,8 @@ fn test_task_list_search_textは旧a_j列の代表patternをtyped_fieldから構
         priority: 8,
         project_category: Some(ProjectCategory::Sustaining),
         task_name: "検索 対象task".to_string(),
+        kind: super::super::renderer::TaskListTaskKind::NonRepetitive,
+        has_deadline: true,
         give_up_candidate: false,
     };
 

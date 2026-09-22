@@ -8,7 +8,8 @@ use super::renderer::{
     BandDisplay, BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow,
     CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow,
     MessageLevel, SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListMetricsDisplay, TaskListRow, TaskListTaskRow, TreeDisplay, BAND_SECONDS_PER_DAY,
+    TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
+    BAND_SECONDS_PER_DAY,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
@@ -939,6 +940,16 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let task_project_category_opt = task
                 .get_project_category_opt()
                 .map_err(ApplicationError::TaskTree)?;
+            let task_kind = if task
+                .fixed_start_applies_to_schedule()
+                .map_err(ApplicationError::TaskTree)?
+            {
+                TaskListTaskKind::Fixed
+            } else if inherited_repetition_interval_days_opt.is_some() {
+                TaskListTaskKind::Repetitive
+            } else {
+                TaskListTaskKind::NonRepetitive
+            };
 
             if !adjustable_prefix_label.is_empty() {
                 adjustable_estimated_work_seconds_map
@@ -1101,6 +1112,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 priority: task_priority,
                 project_category: task_project_category_opt,
                 task_name: shorten_name,
+                kind: task_kind,
+                has_deadline: task_deadline_time_opt.is_some(),
                 give_up_candidate: false,
             };
             let task_search_text = task_list_search_text(&task_row);

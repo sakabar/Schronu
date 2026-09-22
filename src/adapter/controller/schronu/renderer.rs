@@ -110,7 +110,16 @@ pub(super) struct TaskListTaskRow {
     pub(super) priority: i64,
     pub(super) project_category: Option<ProjectCategory>,
     pub(super) task_name: String,
+    pub(super) kind: TaskListTaskKind,
+    pub(super) has_deadline: bool,
     pub(super) give_up_candidate: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum TaskListTaskKind {
+    Fixed,
+    Repetitive,
+    NonRepetitive,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -434,8 +443,9 @@ fn render_task_list_display(
     writer: &mut dyn SchronuWriter,
     display: &TaskListDisplay,
 ) -> Result<(), std::io::Error> {
+    let supports_ansi_color = writer.supports_ansi_color();
     for row in &display.rows {
-        writer.writeln_newline(&format_task_list_row(row))?;
+        writer.writeln_newline(&format_task_list_row_for_display(row, supports_ansi_color))?;
     }
     writer.writeln_newline("")?;
     writer.writeln_newline(&format_task_category_summary(
@@ -523,6 +533,13 @@ fn render_calendar_display(
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
 pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
+const FIXED_COLOR: u8 = 110;
+const REPETITIVE_COLOR: u8 = 33;
+const NON_REPETITIVE_COLOR: u8 = 208;
+const DEADLINE_OVERRUN_COLOR: u8 = 196;
+const DEADLINE_TODAY_COLOR: u8 = 214;
+const FUTURE_DEADLINE_COLOR: u8 = 34;
+const GIVE_UP_CANDIDATE_COLOR: u8 = 129;
 
 fn render_band_display(
     writer: &mut dyn SchronuWriter,
@@ -557,19 +574,30 @@ fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) ->
         return symbol.to_string().repeat(count);
     }
     let color_value = match symbol {
-        '#' => 110,
+        '#' => FIXED_COLOR,
         'x' => 244,
-        '=' => 33,
-        '-' => 208,
+        '=' => REPETITIVE_COLOR,
+        '-' => NON_REPETITIVE_COLOR,
         ':' => 28,
         '.' => 34,
-        '>' => 196,
+        '>' => DEADLINE_OVERRUN_COLOR,
         _ => return symbol.to_string().repeat(count),
     };
+    ansi_foreground(
+        &symbol.to_string().repeat(count),
+        color_value,
+        supports_ansi_color,
+    )
+}
+
+fn ansi_foreground(value: &str, color_value: u8, supports_ansi_color: bool) -> String {
+    if !supports_ansi_color {
+        return value.to_string();
+    }
     format!(
         "{}{}{}",
         color::Fg(color::AnsiValue(color_value)),
-        symbol.to_string().repeat(count),
+        value,
         color::Fg(color::Reset)
     )
 }
@@ -1032,6 +1060,40 @@ pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
             "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
         ),
         TaskListRow::Message { text } => text.clone(),
+    }
+}
+
+fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool) -> String {
+    match row {
+        TaskListRow::Task(row) => {
+            let mut columns = task_list_columns(row, TaskListIconMode::ApplyGiveUpCandidate);
+            let task_color = match row.kind {
+                TaskListTaskKind::Fixed => FIXED_COLOR,
+                TaskListTaskKind::Repetitive => REPETITIVE_COLOR,
+                TaskListTaskKind::NonRepetitive => NON_REPETITIVE_COLOR,
+            };
+            columns.task_name =
+                ansi_foreground(&columns.task_name, task_color, supports_ansi_color);
+            if let Some(icon_color) = match columns.icon.as_str() {
+                "v" => Some(DEADLINE_OVERRUN_COLOR),
+                "!" => Some(DEADLINE_TODAY_COLOR),
+                "A" => Some(GIVE_UP_CANDIDATE_COLOR),
+                _ => None,
+            } {
+                columns.icon = ansi_foreground(&columns.icon, icon_color, supports_ansi_color);
+            }
+            if let Some(deadline_color) = match row.icon.as_str() {
+                "v" => Some(DEADLINE_OVERRUN_COLOR),
+                "!" => Some(DEADLINE_TODAY_COLOR),
+                _ if row.has_deadline => Some(FUTURE_DEADLINE_COLOR),
+                _ => None,
+            } {
+                columns.deadline =
+                    ansi_foreground(&columns.deadline, deadline_color, supports_ansi_color);
+            }
+            format_task_list_columns(&columns)
+        }
+        _ => format_task_list_row(row),
     }
 }
 
