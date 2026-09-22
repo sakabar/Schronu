@@ -1,5 +1,5 @@
 use super::interface::TaskRepositoryTrait;
-use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use super::schedule_use_case::{get_schedule, scheduled_logical_dates, ScheduledTaskView};
 use super::task_use_case::{get_task, ApplicationError};
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
@@ -9,6 +9,42 @@ use uuid::Uuid;
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+}
+
+#[test]
+fn 一覧用の予定logical_dateは06時境界で全segmentに対応する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 5, 59, 0).unwrap();
+    let task = crate::test_support::new_task_handle("予定").unwrap();
+    let repository = TestTaskRepository::new(vec![task.clone()], now);
+    let view = get_task(&repository, task.get_id().unwrap()).unwrap().unwrap();
+    let schedule = [
+        ScheduledTaskView {
+            task: view.clone(),
+            first_available_time: now,
+            scheduled_start: now,
+            scheduled_end: now + Duration::minutes(1),
+            scheduled_work_seconds: 60,
+            total_work_seconds: 120,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            task: view,
+            first_available_time: now,
+            scheduled_start: now + Duration::minutes(2),
+            scheduled_end: now + Duration::minutes(3),
+            scheduled_work_seconds: 60,
+            total_work_seconds: 120,
+            rank: 0,
+        },
+    ];
+
+    assert_eq!(
+        scheduled_logical_dates(&schedule).unwrap(),
+        vec![
+            NaiveDate::from_ymd_opt(2026, 9, 4).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 9, 5).unwrap(),
+        ]
+    );
 }
 
 #[test]
