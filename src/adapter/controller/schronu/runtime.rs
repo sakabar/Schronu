@@ -530,7 +530,7 @@ fn launch_timer_shortcut_for_session(
     task_id: Uuid,
     seconds: i128,
     now: DateTime<Local>,
-    launch: impl FnOnce(&str) -> Result<(), CommandError>,
+    launch: impl FnOnce(&str) -> Result<DateTime<Local>, CommandError>,
 ) -> Result<TimerLaunchOutcome, CommandError> {
     timers.retain(|_, (started_at, duration)| {
         i128::from((now - *started_at).num_milliseconds()) < *duration * 1000
@@ -540,8 +540,8 @@ fn launch_timer_shortcut_for_session(
     }
     let alongside_another = !timers.is_empty();
     let url = format!("shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}");
-    launch(&url)?;
-    timers.insert(task_id, (now, seconds));
+    let launched_at = launch(&url)?;
+    timers.insert(task_id, (launched_at, seconds));
     Ok(if alongside_another {
         TimerLaunchOutcome::StartedAlongsideAnother
     } else {
@@ -867,7 +867,10 @@ fn apply_command_outcome(
                             task_id,
                             seconds,
                             operation_now,
-                            execute_open_timer_shortcut,
+                            |url| {
+                                execute_open_timer_shortcut(url)?;
+                                Ok(Local::now())
+                            },
                         )?
                     } else {
                         execute_open_timer_shortcut(&url)?;

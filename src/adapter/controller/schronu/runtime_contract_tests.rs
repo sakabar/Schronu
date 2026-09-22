@@ -5007,7 +5007,7 @@ fn timer_shortcutは同じtaskの予定終了時刻まで重複起動しない()
         assert_eq!(
             launch_timer_shortcut_for_session(&mut timers, task_id, 596, now, |url| {
                 urls.push(url.to_string());
-                Ok(())
+                Ok(now)
             })
             .unwrap(),
             expected
@@ -5036,7 +5036,7 @@ fn timer_shortcutは別taskの実行中を案内し期限切れだけを除外�
             next_id,
             596,
             started_at + Duration::seconds(2),
-            |_| { launches += 1; Ok(()) },
+            |_| { launches += 1; Ok(started_at + Duration::seconds(2)) },
         ).unwrap(),
         TimerLaunchOutcome::StartedAlongsideAnother
     );
@@ -5057,9 +5057,38 @@ fn timer_shortcutは起動失敗を記録しない() {
     assert!(result.is_err());
     assert!(!timers.contains_key(&task_id));
     assert_eq!(
-        launch_timer_shortcut_for_session(&mut timers, task_id, 596, started_at, |_| Ok(())).unwrap(),
+        launch_timer_shortcut_for_session(&mut timers, task_id, 596, started_at, |_| Ok(started_at)).unwrap(),
         TimerLaunchOutcome::Started
     );
+}
+
+#[test]
+fn timer_shortcutはopen成功後の時刻を予定終了の起点にする() {
+    let before_open = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let after_open = before_open + Duration::seconds(4);
+    let task_id = Uuid::new_v4();
+    let mut timers = HashMap::new();
+    assert_eq!(
+        launch_timer_shortcut_for_session(&mut timers, task_id, 596, before_open, |_| Ok(after_open)).unwrap(),
+        TimerLaunchOutcome::Started
+    );
+    let mut launches = 0;
+    assert_eq!(
+        launch_timer_shortcut_for_session(
+            &mut timers, task_id, 596, after_open + Duration::milliseconds(595_999),
+            |_| { launches += 1; Ok(after_open) },
+        ).unwrap(),
+        TimerLaunchOutcome::AlreadyRunning
+    );
+    assert_eq!(launches, 0);
+    assert_eq!(
+        launch_timer_shortcut_for_session(
+            &mut timers, task_id, 596, after_open + Duration::seconds(596),
+            |_| { launches += 1; Ok(after_open + Duration::seconds(596)) },
+        ).unwrap(),
+        TimerLaunchOutcome::Started
+    );
+    assert_eq!(launches, 1);
 }
 
 #[test]
