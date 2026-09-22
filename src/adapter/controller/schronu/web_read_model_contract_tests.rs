@@ -140,12 +140,7 @@ fn all_listは500件境界を越えて全件を一度ずつ返す() {
     let roots = (1..=501)
         .map(|index| {
             let name = format!("task {index}");
-            TaskHandle::with_identity(
-                &name,
-                Uuid::from_u128(1_000 + index),
-                start,
-            )
-            .unwrap()
+            TaskHandle::with_identity(&name, Uuid::from_u128(1_000 + index), start).unwrap()
         })
         .collect();
     let repository = TestTaskRepository::new(roots, start);

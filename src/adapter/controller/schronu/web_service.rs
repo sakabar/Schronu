@@ -26,7 +26,7 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
-use crate::application::schedule_use_case::get_schedule;
+use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_use_case::{
     add_actual_work, complete_task, execute_defer_task_plan, TaskFactory,
 };
@@ -38,6 +38,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 pub struct WebService {
     storage_directory: PathBuf,
@@ -46,6 +47,7 @@ pub struct WebService {
     config: SchronuConfig,
     repository_state_uncertain: bool,
     mutation_repository_factory: Box<dyn Fn(&str) -> TaskRepository>,
+    all_schedule_cache: Option<(Option<Uuid>, Vec<ScheduledTaskView>)>,
 }
 
 impl WebService {
@@ -58,6 +60,7 @@ impl WebService {
             config,
             repository_state_uncertain: false,
             mutation_repository_factory: Box::new(TaskRepository::new),
+            all_schedule_cache: None,
         }
     }
 
@@ -99,7 +102,10 @@ impl WebService {
         operation_now: DateTime<Local>,
         cursor: Option<String>,
     ) -> Result<AllTaskPageDto, WebReadError> {
-        self.run_at(operation_now, |repository, _, _| {
+        let continuation = cursor.is_some();
+        let cached_schedule = self.all_schedule_cache.take();
+        let result = self.run_at(operation_now, move |repository, _, _| {
+            let revision = repository.repository_revision();
             let page = list_tasks_page(
                 repository,
                 ListTasksPageRequest {
@@ -115,12 +121,27 @@ impl WebService {
                 },
             )
             .map_err(WebReadCoreError::Application)?;
-            let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
+            let schedule = match cached_schedule {
+                Some((cached_revision, schedule))
+                    if continuation && cached_revision == revision =>
+                {
+                    schedule
+                }
+                _ => get_schedule(repository).map_err(WebReadCoreError::Application)?,
+            };
             let rows = read_model::build_all_task_rows(page.tasks, &schedule)?;
-            Ok(AllTaskPageDto {
-                rows,
-                next_cursor: page.next_cursor,
-            })
+            Ok((
+                AllTaskPageDto {
+                    rows,
+                    next_cursor: page.next_cursor,
+                },
+                revision,
+                schedule,
+            ))
+        });
+        result.map(|(page, revision, schedule)| {
+            self.all_schedule_cache = Some((revision, schedule));
+            page
         })
     }
 

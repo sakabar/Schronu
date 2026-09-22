@@ -198,6 +198,51 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
 }
 
 #[test]
+fn 全件pageは実storageの親と保留を含め完了を除き500件境界を連結できる() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    for index in 1..=501 {
+        let name = format!("project {index}");
+        let root = TaskHandle::with_identity(&name, Uuid::from_u128(10_000 + index), now).unwrap();
+        if index == 1 {
+            root.set_orig_status(Status::Pending).unwrap();
+        }
+        if index == 2 {
+            root.create_as_last_child(crate::test_support::new_task_attr_at("child", now));
+        }
+        if index == 501 {
+            root.set_orig_status(Status::Done).unwrap();
+        }
+        repository.start_new_project(root).unwrap();
+    }
+    repository.save().unwrap();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let first = service.list_all_tasks_page_at(now, None).unwrap();
+    assert_eq!(first.rows.len(), 500);
+    let second = service
+        .list_all_tasks_page_at(now, first.next_cursor)
+        .unwrap();
+    assert_eq!(second.rows.len(), 1);
+    assert!(second.next_cursor.is_none());
+    let rows = first
+        .rows
+        .into_iter()
+        .chain(second.rows)
+        .collect::<Vec<_>>();
+    assert!(rows
+        .iter()
+        .any(|row| row.task.task_name == "project 1" && !row.can_start_session));
+    assert!(rows
+        .iter()
+        .any(|row| row.task.task_name == "project 2" && !row.can_start_session));
+    assert!(rows.iter().any(|row| row.task.task_name == "child"));
+    assert!(!rows.iter().any(|row| row.task.task_name == "project 501"));
+}
+
+#[test]
 fn serviceはweb_lock競合をrepository読込前にtyped_errorで返す() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let fixture = WebReadServiceFixture::new();
