@@ -4923,6 +4923,62 @@ fn external_requestは副作用なしでtyped_targetへ解決する() {
 }
 
 #[test]
+fn timer_shortcutは秒境界を丸めずurlへ渡す() {
+    let task = new_test_task_handle("timer task").unwrap();
+    task.set_estimated_work_seconds(901).unwrap();
+    task.set_actual_work_seconds(182).unwrap();
+    let focused_task_opt = Some(task);
+    let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+
+    for (elapsed_millis, seconds) in [
+        (123_000, 596),
+        (123_999, 596),
+        (124_000, 595),
+        (718_000, 1),
+    ] {
+        let now = started_at + Duration::milliseconds(elapsed_millis);
+        assert_eq!(
+            resolve_timer_shortcut(&focused_task_opt, started_at, now).unwrap(),
+            ResolvedExternalRequest::TimerUrl(format!(
+                "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}"
+            ))
+        );
+    }
+}
+
+#[test]
+fn timer_shortcutは残り0秒以下またはfocusなしでは起動しない() {
+    let task = new_test_task_handle("timer task").unwrap();
+    task.set_estimated_work_seconds(901).unwrap();
+    task.set_actual_work_seconds(182).unwrap();
+    let started_at = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+
+    for elapsed_seconds in [719, 720] {
+        assert_eq!(
+            resolve_timer_shortcut(
+                &Some(task.clone()),
+                started_at,
+                started_at + Duration::seconds(elapsed_seconds),
+            )
+            .unwrap(),
+            ResolvedExternalRequest::Message("見積もりの残り時間はありません"),
+        );
+    }
+    assert_eq!(
+        resolve_timer_shortcut(&None, started_at, started_at).unwrap(),
+        ResolvedExternalRequest::Message("フォーカス中のタスクがありません"),
+    );
+}
+
+#[test]
+fn timer_shortcutのopen_commandはurlを単一引数にする() {
+    let url = "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text=596";
+    let command = shortcut_open_command(url);
+    assert_eq!(command.get_program(), std::ffi::OsStr::new("open"));
+    assert_eq!(command.get_args().collect::<Vec<_>>(), vec![url]);
+}
+
+#[test]
 fn external_open_errorはtargetとsource_reason_chainを保持する() {
     let error = external_open_error("test-target", std::io::Error::other("test-reason"));
 
