@@ -386,8 +386,7 @@ fn all_root(props: AllRootProps) -> Element {
     rsx! {
         ListView {
             dates: eight_dates(),
-            rows: vec![row("daily", false, true)],
-            all_rows: props.rows,
+            rows: props.rows,
             all_selected: true,
             all_loaded: true,
             all_has_more: props.has_more,
