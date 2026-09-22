@@ -52,6 +52,7 @@ use chrono::{DateTime, Duration, Local};
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 #[cfg(test)]
 use regex::Regex;
+#[cfg(test)]
 use std::collections::HashMap;
 use std::env;
 use std::io::{stdout, Write};
@@ -72,6 +73,15 @@ const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 
 #[path = "runtime/storage_maintenance.rs"]
 mod storage_maintenance;
+
+#[path = "runtime/timer_session.rs"]
+mod timer_session;
+#[cfg(test)]
+use timer_session::shortcut_open_command;
+use timer_session::{
+    execute_open_timer_shortcut, launch_timer_shortcut_for_session, resolve_timer_shortcut,
+    TimerLaunchOutcome, TimerSessions,
+};
 
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
 
@@ -487,68 +497,6 @@ enum ResolvedExternalRequest {
     Message(&'static str),
 }
 
-fn resolve_timer_shortcut(
-    focused_task_opt: &Option<TaskHandle>,
-    focus_started_at: DateTime<Local>,
-    now: DateTime<Local>,
-) -> Result<ResolvedExternalRequest, ApplicationError> {
-    let Some(task) = focused_task_opt else {
-        return Ok(ResolvedExternalRequest::Message(
-            "フォーカス中のタスクがありません",
-        ));
-    };
-    let estimated = task
-        .get_estimated_work_seconds()
-        .map_err(ApplicationError::TaskTree)?;
-    let actual = task
-        .get_actual_work_seconds()
-        .map_err(ApplicationError::TaskTree)?;
-    let elapsed = (now - focus_started_at).num_seconds().max(0);
-    let remaining = i128::from(estimated) - i128::from(actual) - i128::from(elapsed);
-    if remaining <= 0 {
-        return Ok(ResolvedExternalRequest::Message(
-            "見積もりの残り時間はありません",
-        ));
-    }
-    Ok(ResolvedExternalRequest::TimerUrl {
-        task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
-        seconds: remaining,
-    })
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum TimerLaunchOutcome {
-    Started,
-    AlreadyRunning,
-    StartedAlongsideAnother,
-}
-
-type TimerSessions = HashMap<Uuid, (DateTime<Local>, i128)>;
-
-fn launch_timer_shortcut_for_session(
-    timers: &mut TimerSessions,
-    task_id: Uuid,
-    seconds: i128,
-    now: DateTime<Local>,
-    launch: impl FnOnce(&str) -> Result<DateTime<Local>, CommandError>,
-) -> Result<TimerLaunchOutcome, CommandError> {
-    timers.retain(|_, (started_at, duration)| {
-        i128::from((now - *started_at).num_milliseconds()) < *duration * 1000
-    });
-    if timers.contains_key(&task_id) {
-        return Ok(TimerLaunchOutcome::AlreadyRunning);
-    }
-    let alongside_another = !timers.is_empty();
-    let url = format!("shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}");
-    let launched_at = launch(&url)?;
-    timers.insert(task_id, (launched_at, seconds));
-    Ok(if alongside_another {
-        TimerLaunchOutcome::StartedAlongsideAnother
-    } else {
-        TimerLaunchOutcome::Started
-    })
-}
-
 fn resolve_external_request(
     request: ExternalRequest,
     focused_task_opt: &Option<TaskHandle>,
@@ -588,39 +536,6 @@ fn resolve_external_request(
 fn execute_open_link(url: &str) -> Result<(), CommandError> {
     webbrowser::open(url).map_err(|source| external_open_error("browser", source))?;
     Ok(())
-}
-
-#[cfg(any(target_os = "macos", test))]
-fn shortcut_open_command(url: &str) -> process::Command {
-    let mut command = process::Command::new("open");
-    command.arg(url);
-    command
-}
-
-fn execute_open_timer_shortcut(url: &str) -> Result<(), CommandError> {
-    #[cfg(target_os = "macos")]
-    {
-        let status = shortcut_open_command(url)
-            .status()
-            .map_err(|source| external_open_error("Shortcuts", source))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(external_open_error(
-                "Shortcuts",
-                std::io::Error::other(format!("open exited with status {status}")),
-            ))
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = url;
-        Err(external_open_error(
-            "Shortcuts",
-            std::io::Error::other("macOS専用です"),
-        ))
-    }
 }
 
 fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String {
