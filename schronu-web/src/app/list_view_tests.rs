@@ -407,7 +407,7 @@ fn all_root(props: AllRootProps) -> Element {
 }
 
 #[test]
-fn all_buttonは今日の左で全件は500行ずつ表示し未表示行も検索する() {
+fn all_buttonは今日の左で準備済み500行と検索済み行を描画する() {
     let rows = (1..=501)
         .map(|index| {
             let mut item = named_row(
