@@ -5120,6 +5120,74 @@ fn timer_commandは対話中の同一taskの重複起動を案内する() {
 }
 
 #[test]
+fn timer_forgetは現在のtaskだけ消し次の起動を許す() {
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("timer task").unwrap();
+    task.set_estimated_work_seconds(901).unwrap();
+    task.set_actual_work_seconds(182).unwrap();
+    let task_id = task.get_id().unwrap();
+    let other_id = Uuid::new_v4();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut focus = Some(task_id);
+    let mut selection = FocusSelectionMode::highest_priority();
+    let mut timers = HashMap::from([
+        (task_id, (now - Duration::seconds(1), 596)),
+        (other_id, (now - Duration::seconds(1), 300)),
+    ]);
+    let command = parse_command("計 忘", ParseMode::Interactive).unwrap();
+    let mut output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut output,
+        &mut repository,
+        &mut focus,
+        OutcomeApplicationMode::InteractiveTimerFlushed(&mut selection, &mut timers),
+        super::handler::handle(&command).unwrap(),
+        active_config(),
+        now - Duration::seconds(123),
+    ).unwrap();
+    assert!(String::from_utf8(output.buffer).unwrap().contains("タイマー記録を忘れました"));
+    assert!(!timers.contains_key(&task_id));
+    assert!(timers.contains_key(&other_id));
+    assert_eq!(focus, Some(task_id));
+    assert_eq!(repository.task.get_actual_work_seconds().unwrap(), 182);
+
+    let mut launched_url = String::new();
+    assert_eq!(
+        launch_timer_shortcut_for_session(&mut timers, task_id, 596, now, |url| {
+            launched_url = url.to_string();
+            Ok(now)
+        }).unwrap(),
+        TimerLaunchOutcome::StartedAlongsideAnother
+    );
+    assert!(launched_url.ends_with("text=596"));
+}
+
+#[test]
+fn timer_forgetは記録なし期限切れfocusなし非対話を案内する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("timer task").unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(task, now);
+    let mut selection = FocusSelectionMode::highest_priority();
+    let mut timers = HashMap::from([(task_id, (now - Duration::seconds(10), 10))]);
+    let command = parse_command("timer forget", ParseMode::Interactive).unwrap();
+    let mut focus = Some(task_id);
+    let mut output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut output, &mut repository, &mut focus,
+        OutcomeApplicationMode::InteractiveTimerFlushed(&mut selection, &mut timers),
+        super::handler::handle(&command).unwrap(), active_config(), now,
+    ).unwrap();
+    assert!(String::from_utf8(output.buffer).unwrap().contains("消すタイマー記録がありません"));
+    assert!(timers.is_empty());
+
+    let no_focus = execute_command_for_test(repository.task.clone(), now, None, "計 忘");
+    assert!(no_focus.output.contains("フォーカス中のタスクがありません"));
+    let noninteractive = execute_command_for_test(repository.task.clone(), now, Some(task_id), "timer forget");
+    assert!(noninteractive.output.contains("対話中のタイマー記録はありません"));
+}
+
+#[test]
 fn timer_commandはfocusなしと残り0秒を案内しtaskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 9, 22, 12, 0, 0).unwrap();
     let task = new_test_task_handle("timer task").unwrap();
