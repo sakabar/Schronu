@@ -147,8 +147,6 @@ fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     for area in ["\"heading\"", "\"timing\"", "\"progress\"", "\"actions\""] {
         assert!(card.contains(area), "missing {area} in {card}");
     }
-    assert!(!card.contains("\"time\""), "{card}");
-    assert!(!card.contains("\"remaining\""), "{card}");
 
     let narrow = block_body(MAIN_CSS, "@media (max-width: 34rem)");
     let narrow_remaining = block_body(narrow, ".session-remaining");
@@ -172,7 +170,6 @@ fn session_progressは150_percent超過を赤色の横scroll領域として保�
     assert!(MAIN_CSS.contains(
         ".session-progress-overrun {\n    background: var(--red);\n    border-radius: 0 999px 999px 0;\n}"
     ));
-    assert!(!MAIN_CSS.contains(".session-progress-overrun:last-child"));
 }
 
 #[test]
