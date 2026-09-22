@@ -42,6 +42,24 @@ fn 全件pageのrequestとresponseはcursorと予定日を保持する() {
 }
 
 #[test]
+fn 全件segmentの予定日は必須である() {
+    let row = json!({
+        "task": {"task_id": "id", "task_name": "task", "estimated_work_seconds": 600, "actual_work_seconds": 0},
+        "segment_index": 0,
+        "schedule_date": "2026-09-05",
+        "deadline_epoch_ms": null,
+        "can_start_session": true
+    });
+    assert!(serde_json::from_value::<AllTaskRow>(row.clone()).is_ok());
+    let mut no_date = row.as_object().unwrap().clone();
+    no_date.remove("schedule_date");
+    assert!(serde_json::from_value::<AllTaskRow>(json!(no_date)).is_err());
+    let mut null_date = row;
+    null_date["schedule_date"] = serde_json::Value::Null;
+    assert!(serde_json::from_value::<AllTaskRow>(null_date).is_err());
+}
+
+#[test]
 fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
     let snapshot = ServerSnapshot {
         observed_at_epoch_ms: 1_788_565_500_123,

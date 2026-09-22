@@ -120,6 +120,18 @@ fn all_listは予定のないtaskを表示しない() {
 }
 
 #[test]
+fn all_listの予定日は必須である() {
+    let row = serde_json::json!({
+        "task": {"task_id": "id", "task_name": "task", "estimated_work_seconds": 600, "actual_work_seconds": 0},
+        "segment_index": 0,
+        "schedule_date": null,
+        "deadline_epoch_ms": null,
+        "can_start_session": true
+    });
+    assert!(serde_json::from_value::<super::web_service::AllTaskRowDto>(row).is_err());
+}
+
+#[test]
 fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() {
     let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
     let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
