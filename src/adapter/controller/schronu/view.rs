@@ -102,10 +102,10 @@ pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
-    rank: usize,
+    is_leaf: bool,
     last_synced_time: DateTime<Local>,
 ) -> Result<String, ApplicationError> {
-    if rank != 0
+    if !is_leaf
         || task
             .get_is_on_other_side()
             .map_err(ApplicationError::TaskTree)?
@@ -935,8 +935,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
             }
 
             // 前倒し可能なタスクの見積もり時間をカウントする
-            let adjustable_prefix_label =
-                get_adjustable_prefix_label(&task, *dt, *rank, last_synced_time)?;
+            let adjustable_prefix_label = get_adjustable_prefix_label(
+                &task,
+                *dt,
+                scheduled_task.is_leaf(),
+                last_synced_time,
+            )?;
             let task_estimated_work_seconds = task
                 .get_estimated_work_seconds()
                 .map_err(ApplicationError::TaskTree)?;

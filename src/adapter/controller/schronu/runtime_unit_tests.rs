@@ -13,7 +13,7 @@ fn test_get_adjustable_prefix_label_前倒し可能日数を表示する() {
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, true, last_synced_time).unwrap();
 
     assert_eq!(actual, "【前3】");
 }
@@ -25,7 +25,7 @@ fn test_get_adjustable_prefix_label_今日より前には戻さない() {
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, true, last_synced_time).unwrap();
 
     assert_eq!(actual, "【前3】");
 }
@@ -37,7 +37,7 @@ fn test_get_adjustable_prefix_label_同日着手可能なら表示しない() {
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 18, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, true, last_synced_time).unwrap();
 
     assert_eq!(actual, "");
 }
@@ -49,7 +49,7 @@ fn test_get_adjustable_prefix_label_今日と予定日が同じなら過去の�
     let dt = Local.with_ymd_and_hms(2026, 5, 7, 18, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, true, last_synced_time).unwrap();
 
     assert_eq!(actual, "");
 }
@@ -62,7 +62,7 @@ fn test_get_adjustable_prefix_label_相手待ちは表示しない() {
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 0, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, true, last_synced_time).unwrap();
 
     assert_eq!(actual, "");
 }
@@ -74,7 +74,7 @@ fn test_get_adjustable_prefix_label_葉以外は表示しない() {
     let dt = Local.with_ymd_and_hms(2026, 5, 10, 12, 0, 0).unwrap();
     let last_synced_time = Local.with_ymd_and_hms(2026, 5, 7, 12, 0, 0).unwrap();
 
-    let actual = get_adjustable_prefix_label(&task, dt, 1, last_synced_time).unwrap();
+    let actual = get_adjustable_prefix_label(&task, dt, false, last_synced_time).unwrap();
 
     assert_eq!(actual, "");
 }

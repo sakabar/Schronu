@@ -7,7 +7,9 @@ use crate::adapter::controller::deadline_display::{
 };
 use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
+use crate::application::schedule_use_case::{
+    get_schedule, scheduled_logical_dates, ScheduledTaskView,
+};
 use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
@@ -87,14 +89,13 @@ where
         .map_err(WebReadCoreError::Application)?;
         free_time_manager.get_free_seconds(&start, &end)
     };
-    let scheduled_segments = schedule
-        .iter()
-        .map(|segment| {
-            try_logical_date(segment.scheduled_start)
-                .map(|date| (date, segment.scheduled_work_seconds))
-                .map_err(WebReadCoreError::Application)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let segment_logical_dates =
+        scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let scheduled_segments = segment_logical_dates
+        .into_iter()
+        .zip(schedule)
+        .map(|(date, segment)| (date, segment.scheduled_work_seconds))
+        .collect::<Vec<_>>();
     let buffer_seconds = calculate_buffer_seconds(
         logical_date,
         remaining_capacity_seconds,
@@ -114,14 +115,12 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     logical_date: NaiveDate,
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<ScheduledTaskRowDto>, WebReadCoreError> {
-    let mut dated_segments = schedule
-        .iter()
-        .map(|segment| {
-            try_logical_date(segment.scheduled_start)
-                .map(|date| (date, segment))
-                .map_err(WebReadCoreError::Application)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let segment_logical_dates =
+        scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let mut dated_segments = segment_logical_dates
+        .into_iter()
+        .zip(schedule)
+        .collect::<Vec<_>>();
     dated_segments.retain(|(date, _)| *date == logical_date);
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 

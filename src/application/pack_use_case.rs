@@ -308,7 +308,7 @@ fn collect_candidates(
         if !seen_ids.insert(scheduled.task.id) {
             continue;
         }
-        if scheduled.rank != 0
+        if !scheduled.is_leaf()
             || scheduled.task.status != Status::Pending
             || scheduled.task.is_on_other_side
             || scheduled.total_work_seconds <= 0
