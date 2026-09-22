@@ -343,9 +343,10 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 
     assert_eq!(
         html.matches("<button class=\"date-pill").count(),
-        8,
+        9,
         "{html}"
     );
+    assert!(html.find(">全て</button>").unwrap() < html.find("土 今日").unwrap());
     assert!(html.contains("土 今日"));
     assert!(html.contains("日 明日"));
     assert!(html.contains("date-pill is-selected"));
@@ -381,7 +382,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 struct AllRootProps {
     rows: Vec<ListRowViewModel>,
     filter: String,
-    visible: usize,
+    has_more: bool,
 }
 
 fn all_root(props: AllRootProps) -> Element {
@@ -393,7 +394,7 @@ fn all_root(props: AllRootProps) -> Element {
             show_all_button: true,
             all_selected: true,
             all_loaded: true,
-            all_visible_count: props.visible,
+            all_has_more: props.has_more,
             active_task_ids: vec![],
             date_input_text: String::new(),
             date_input_error: None,
@@ -427,9 +428,9 @@ fn all_buttonは今日の左で全件は500行ずつ表示し未表示行も検�
     let mut dom = VirtualDom::new_with_props(
         all_root,
         AllRootProps {
-            rows: rows.clone(),
+            rows: rows[..500].to_vec(),
             filter: String::new(),
-            visible: 500,
+            has_more: true,
         },
     );
     dom.rebuild_in_place();
@@ -444,9 +445,9 @@ fn all_buttonは今日の左で全件は500行ずつ表示し未表示行も検�
     let mut filtered = VirtualDom::new_with_props(
         all_root,
         AllRootProps {
-            rows,
+            rows: vec![rows[500].clone()],
             filter: "task 501".to_owned(),
-            visible: 500,
+            has_more: false,
         },
     );
     filtered.rebuild_in_place();
