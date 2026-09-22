@@ -243,6 +243,7 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     }
     assert!(page_count > 1);
     assert_eq!(actual_names, expected_names);
+    assert!(!actual_names.iter().any(|name| name == "project 501"));
     assert_ne!(
         actual_names,
         expected_names.into_iter().rev().collect::<Vec<_>>()
@@ -260,6 +261,60 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
         .list_all_tasks_page_at(now, first_b.next_cursor)
         .unwrap();
     assert_eq!(second_a.rows, second_b.rows);
+}
+
+#[test]
+fn 全件pageは同じtaskの分割segmentを別行にし予定なしtaskを除く() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    let split_id = Uuid::from_u128(30_001);
+    let split = TaskHandle::with_identity("split", split_id, now).unwrap();
+    split.set_start_time(now + Duration::hours(1)).unwrap();
+    split.set_estimated_work_seconds(10 * 3600).unwrap();
+    split.set_priority(88).unwrap();
+    repository.start_new_project(split).unwrap();
+    let interrupt = TaskHandle::with_identity("interrupt", Uuid::from_u128(30_002), now).unwrap();
+    interrupt.set_start_time(now + Duration::hours(6)).unwrap();
+    interrupt.set_estimated_work_seconds(3600).unwrap();
+    interrupt.set_priority(89).unwrap();
+    repository.start_new_project(interrupt).unwrap();
+    let done = TaskHandle::with_identity("done", Uuid::from_u128(30_003), now).unwrap();
+    done.set_orig_status(Status::Done).unwrap();
+    repository.start_new_project(done).unwrap();
+    repository.save().unwrap();
+
+    let schedule = get_schedule(&repository).unwrap();
+    let expected_ids = schedule
+        .iter()
+        .map(|segment| segment.task.id.hyphenated().to_string())
+        .collect::<Vec<_>>();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let page = service.list_all_tasks_page_at(now, None).unwrap();
+    let actual_ids = page
+        .rows
+        .iter()
+        .map(|row| row.task.task_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(actual_ids, expected_ids);
+    assert_eq!(
+        actual_ids
+            .iter()
+            .filter(|id| *id == &split_id.to_string())
+            .count(),
+        2
+    );
+    assert!(!page.rows.iter().any(|row| row.task.task_name == "done"));
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.segment_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert!(page.rows.iter().all(|row| !row.schedule_date.is_empty()));
 }
 
 #[test]
