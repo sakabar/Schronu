@@ -279,7 +279,7 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
 }
 
 #[test]
-fn 全件pageは同じtaskの分割segmentを別行にし予定なしtaskを除く() {
+fn 全件pageは同じtaskの分割segmentを別行にし完了taskを除く() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 20, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
