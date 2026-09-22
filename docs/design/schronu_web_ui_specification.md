@@ -459,7 +459,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 ### 6.5 logical date buttons
 
-最新の`ServerSnapshot.logical_date`をindex 0として8日分を生成する。
+`全て`buttonの右に、最新の`ServerSnapshot.logical_date`をindex 0として8日分を生成する。
 
 - index 0: `曜 今日`
 - index 1: `曜 明日`
@@ -520,6 +520,10 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### 7.3 一覧画面
 
+- `全て`buttonは`曜 今日`の左に置く。初期化、reload、tab切替では全件を取得せず、押下時だけWeb専用の`list_all_tasks_page(cursor)`を最大500件ずつcursorがなくなるまで呼ぶ。途中で失敗した場合は部分一覧を捨てて再試行を表示し、全ページ成功後だけ検索とtableを有効にする。
+- 全件は完了済みを除くTodo・Pendingの親と末端を1タスク1行で表示する。予定列は最も早い計算上の予定segmentのlogical dateを`YYYY/MM/DD(曜日)`で示し、segmentがない場合は`—`とする。列順は日付別と同じだが、全件側の操作列はセッション追加のみとし、Todoかつschedule rank 0のtaskにだけ表示する。締切はbrowser localの`MM/DD HH:MM`とし、予定列を広げる分は操作列を44pxへ縮める。
+- 全件側の検索は既存と同じtask名条件を取得済み全件へclient内で適用し、最初の500行と「さらに表示」ごとに500行を描画する。全件と全件側の検索文字列はmemory専用で、reloadでは日付別の保存一覧・検索だけを復元する。server側task更新が成功した時点で全件cacheを破棄し、次の`全て`押下まで再取得しない。
+- 曜日button列とtask名cell内の横scrollは維持し、全件側の列幅変更でviewport全体に新たな横scrollを生じさせない。
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
 - 日付入力は`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡す。
