@@ -15,12 +15,25 @@ use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
+use crate::client::view_projection::{normalize_task_name_filter, task_name_matches_normalized};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
     web_error_codes, AllTaskRow, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, WebError, WebSuccess,
 };
+
+#[test]
+fn タスク名検索の共通条件は前後空白と英字大小を無視する() {
+    let filter = normalize_task_name_filter("  TASK  ");
+    assert!(task_name_matches_normalized(&filter, "my task"));
+    assert!(task_name_matches_normalized(&filter, "TASK 0500"));
+    assert!(!task_name_matches_normalized(&filter, "other"));
+    assert!(task_name_matches_normalized(
+        &normalize_task_name_filter("   "),
+        "任意のタスク"
+    ));
+}
 
 #[test]
 fn 全件は明示選択まで取得せずreloadでも自動復元しない() {
