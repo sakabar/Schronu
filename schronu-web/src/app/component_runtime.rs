@@ -2,7 +2,7 @@ use crate::client::date_input::DateInputState;
 use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
-use crate::{DeferPlan, SessionTask};
+use crate::{AllTaskRow, DeferPlan, ListAllTasksPageRequest, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
 use super::session_view::{SessionAction, SessionActionKind};
@@ -127,6 +127,13 @@ pub(crate) struct ComponentOrchestrator {
     refresh_state: RefreshState,
     date_input: DateInputState,
     task_name_filter: String,
+    all_task_filter: String,
+    all_selected: bool,
+    all_task_rows: Option<Vec<AllTaskRow>>,
+    all_load_request: Option<u64>,
+    all_next_request: u64,
+    all_error: bool,
+    all_visible_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,6 +153,13 @@ impl ComponentOrchestrator {
             refresh_state: RefreshState::Bootstrap(0),
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
+            all_task_filter: String::new(),
+            all_selected: false,
+            all_task_rows: None,
+            all_load_request: None,
+            all_next_request: 1,
+            all_error: false,
+            all_visible_count: 500,
         }
     }
 
@@ -177,7 +191,82 @@ impl ComponentOrchestrator {
     }
 
     pub fn task_name_filter(&self) -> &str {
-        &self.task_name_filter
+        if self.all_selected {
+            &self.all_task_filter
+        } else {
+            &self.task_name_filter
+        }
+    }
+
+    pub fn all_selected(&self) -> bool {
+        self.all_selected
+    }
+
+    pub fn all_task_rows(&self) -> Option<&[AllTaskRow]> {
+        self.all_task_rows.as_deref()
+    }
+
+    pub fn all_loading(&self) -> bool {
+        self.all_load_request.is_some()
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub fn all_error(&self) -> bool {
+        self.all_error
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub fn all_visible_count(&self) -> usize {
+        self.all_visible_count
+    }
+
+    pub fn select_all_tasks(&mut self) -> Option<u64> {
+        if self.server_actions_blocked() || self.all_load_request.is_some() {
+            return None;
+        }
+        self.all_selected = true;
+        self.all_visible_count = 500;
+        if self.all_task_rows.is_some() {
+            return None;
+        }
+        let request = self.all_next_request;
+        self.all_next_request = self.all_next_request.wrapping_add(1);
+        self.all_load_request = Some(request);
+        self.all_error = false;
+        Some(request)
+    }
+
+    pub fn apply_all_task_result(&mut self, request: u64, result: Result<Vec<AllTaskRow>, ()>) {
+        if self.all_load_request != Some(request) {
+            return;
+        }
+        self.all_load_request = None;
+        match result {
+            Ok(rows) => {
+                self.all_task_rows = Some(rows);
+                self.all_error = false;
+            }
+            Err(()) => {
+                self.all_task_rows = None;
+                self.all_error = true;
+            }
+        }
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub fn show_more_all_tasks(&mut self) {
+        self.all_visible_count = self.all_visible_count.saturating_add(500);
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub fn record_all_task_page_result(
+        &mut self,
+        request: ListAllTasksPageRequest,
+        result: Result<(), crate::client::state::ServerFailure>,
+    ) {
+        if let Some(state) = self.state.as_mut() {
+            state.record_all_task_page_result(request, result);
+        }
     }
 
     pub fn edit_date_input<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
@@ -205,6 +294,11 @@ impl ComponentOrchestrator {
     }
 
     pub fn edit_task_name_filter<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
+        if self.all_selected {
+            self.all_task_filter = text;
+            self.all_visible_count = 500;
+            return;
+        }
         self.task_name_filter = text;
         self.persist_view_state(storage);
     }
@@ -257,6 +351,9 @@ impl ComponentOrchestrator {
         monotonic_now_ms: u64,
         action: ComponentAction,
     ) -> ClientEffect {
+        if matches!(&action, ComponentAction::SelectDate(_)) {
+            self.all_selected = false;
+        }
         if matches!(action, ComponentAction::RetryRefresh) {
             if self.refresh_state != RefreshState::Failed {
                 return ClientEffect::None;
@@ -298,7 +395,11 @@ impl ComponentOrchestrator {
         );
         let current_session_count = self.state().map_or(0, |state| state.sessions().len());
         reset_task_name_filter_after_session_add(
-            &mut self.task_name_filter,
+            if self.all_selected {
+                &mut self.all_task_filter
+            } else {
+                &mut self.task_name_filter
+            },
             previous_session_count,
             current_session_count,
         );
@@ -311,6 +412,15 @@ impl ComponentOrchestrator {
         storage: &S,
         response: ClientResponse,
     ) -> ClientEffect {
+        if matches!(
+            &response,
+            ClientResponse::DeferTask { result: Ok(_), .. }
+                | ClientResponse::RecordSession { result: Ok(_), .. }
+                | ClientResponse::CompleteSession { result: Ok(_), .. }
+        ) {
+            self.all_task_rows = None;
+            self.all_error = false;
+        }
         let refresh_result = match (&self.refresh_state, &response) {
             (
                 RefreshState::Bootstrap(expected),

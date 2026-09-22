@@ -13,6 +13,7 @@ use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
 };
+use crate::ListAllTasksPageRequest;
 use crate::{ScheduledTaskRow, ServerSnapshot, WebError};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
@@ -47,6 +48,22 @@ pub struct ClientState {
 }
 
 impl ClientState {
+    pub fn record_all_task_page_result(
+        &mut self,
+        request: ListAllTasksPageRequest,
+        result: Result<(), ServerFailure>,
+    ) {
+        let invocation = ServerActionInvocation::ListAllTasksPage(request);
+        match result {
+            Ok(()) => self.record_server(
+                invocation,
+                Outcome::Success,
+                "全タスクのページを取得しました。",
+            ),
+            Err(error) => self.record_server_failure(invocation, error),
+        }
+    }
+
     fn new(
         work_sessions: WorkSessionsState,
         mutation_safety: MutationSafetyState,

@@ -1,6 +1,6 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::{DeferMode, DeferPlan, SessionTask};
+use crate::{AllTaskRow, DeferMode, DeferPlan, SessionTask};
 use chrono::{DateTime, Datelike, FixedOffset, Utc};
 
 const INVALID_TIME: &str = "--:--";
@@ -37,7 +37,7 @@ pub struct ListRowViewModel {
     pub schedule_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
-    pub defer_plan: DeferPlan,
+    pub defer_plan: Option<DeferPlan>,
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
 }
 
@@ -62,6 +62,65 @@ pub fn project_session_cards(
 
 pub fn project_list_rows(state: &ClientState, utc_offset_minutes: i32) -> Vec<ListRowViewModel> {
     project_list_rows_with(state, |_| Some(utc_offset_minutes))
+}
+
+pub fn project_all_task_rows(
+    rows: &[AllTaskRow],
+    utc_offset_minutes: i32,
+    now_epoch_ms: i64,
+) -> Vec<ListRowViewModel> {
+    project_all_task_rows_with(rows, now_epoch_ms, |_| Some(utc_offset_minutes))
+}
+
+#[cfg(feature = "web")]
+pub fn project_all_task_rows_for_browser(
+    rows: &[AllTaskRow],
+    now_epoch_ms: i64,
+) -> Vec<ListRowViewModel> {
+    project_all_task_rows_with(rows, now_epoch_ms, browser_utc_offset_minutes)
+}
+
+fn project_all_task_rows_with(
+    rows: &[AllTaskRow],
+    now_epoch_ms: i64,
+    offset_at: impl Fn(i64) -> Option<i32>,
+) -> Vec<ListRowViewModel> {
+    rows.iter()
+        .map(|row| {
+            let schedule_label = row
+                .schedule_date
+                .as_deref()
+                .and_then(|date| chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+                .map(|date| {
+                    let weekday = ["月", "火", "水", "木", "金", "土", "日"]
+                        [date.weekday().num_days_from_monday() as usize];
+                    format!(
+                        "{:04}/{:02}/{:02}({weekday})",
+                        date.year(),
+                        date.month(),
+                        date.day()
+                    )
+                })
+                .unwrap_or_else(|| "—".to_owned());
+            let deadline_label = row
+                .deadline_epoch_ms
+                .and_then(|epoch| offset_at(epoch).and_then(|offset| local_datetime(epoch, offset)))
+                .map(|date| date.format("%m/%d %H:%M").to_string())
+                .unwrap_or_else(|| "—".to_owned());
+            ListRowViewModel {
+                row_key: row.task.task_id.clone(),
+                task: row.task.clone(),
+                deadline_label,
+                schedule_label,
+                misses_deadline: row
+                    .deadline_epoch_ms
+                    .is_some_and(|deadline| deadline < now_epoch_ms),
+                is_leaf: row.can_start_session,
+                defer_plan: None,
+                defer_confirmation: None,
+            }
+        })
+        .collect()
 }
 
 pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
@@ -198,7 +257,7 @@ fn project_list_rows_with(
                 ),
                 misses_deadline: row.misses_deadline,
                 is_leaf: row.is_leaf,
-                defer_plan: row.defer_plan.clone(),
+                defer_plan: Some(row.defer_plan.clone()),
                 defer_confirmation,
             }
         })

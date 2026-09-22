@@ -17,6 +17,13 @@ pub struct DateButtonViewModel {
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
+    #[props(default)] all_rows: Vec<ListRowViewModel>,
+    #[props(default)] show_all_button: bool,
+    #[props(default)] all_selected: bool,
+    #[props(default)] all_loaded: bool,
+    #[props(default)] all_loading: bool,
+    #[props(default)] all_error: bool,
+    #[props(default)] all_visible_count: usize,
     active_task_ids: Vec<String>,
     date_input_text: String,
     date_input_error: Option<String>,
@@ -25,6 +32,8 @@ pub fn ListView(
     #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
+    #[props(default)] on_select_all: EventHandler<()>,
+    #[props(default)] on_show_more: EventHandler<()>,
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
@@ -36,17 +45,36 @@ pub fn ListView(
     let task_name_matches = |task_name: &str| {
         normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
     };
-    let filtered_rows = rows
+    let filtered_rows = if all_selected { all_rows } else { rows }
         .into_iter()
         .filter(|row| task_name_matches(&row.task.task_name))
         .collect::<Vec<_>>();
     let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
+    let has_more = all_selected && filtered_rows.len() > all_visible_count;
+    let visible_rows = if all_selected {
+        filtered_rows
+            .into_iter()
+            .take(all_visible_count)
+            .collect::<Vec<_>>()
+    } else {
+        filtered_rows
+    };
 
     rsx! {
-        section { class: "task-list-view",
+        section { class: if all_selected { "task-list-view is-all-tasks" } else { "task-list-view" },
             nav { class: "date-pills", aria_label: "logical date",
+                if show_all_button {
+                button {
+                    class: if all_selected { "date-pill is-selected" } else { "date-pill" },
+                    r#type: "button",
+                    aria_pressed: all_selected,
+                    disabled: server_actions_blocked || all_loading,
+                    onclick: move |_| on_select_all.call(()),
+                    "全て"
+                }
+                }
                 for date in dates {
-                    DateButton { date, disabled: server_actions_blocked, on_select_date }
+                    DateButton { date, disabled: server_actions_blocked || all_loading, on_select_date }
                 }
             }
             div { class: "list-controls",
@@ -89,6 +117,7 @@ pub fn ListView(
                         class: "task-name-filter-input",
                         r#type: "text",
                         value: filter_text.clone(),
+                        disabled: all_selected && !all_loaded,
                         aria_label: "タスク名を検索",
                         placeholder: "タスク名を検索",
                         onmounted: move |element| filter_input.set(Some(element.data())),
@@ -110,7 +139,16 @@ pub fn ListView(
                     }
                 }
             }
-            if no_matches {
+            if all_selected && all_loading {
+                p { role: "status", "全タスクを取得中…" }
+            } else if all_selected && all_error {
+                div { role: "alert",
+                    p { "全タスクを取得できませんでした。" }
+                    button { r#type: "button", onclick: move |_| on_select_all.call(()), "再試行" }
+                }
+            } else if all_selected && !all_loaded {
+                p { role: "status", "全タスクの一覧は更新されました。「全て」を押して再取得してください。" }
+            } else if no_matches {
                 p { class: "task-filter-empty", role: "status", "一致するタスクがありません。" }
             } else {
                 div { class: "task-table-scroll",
@@ -124,7 +162,7 @@ pub fn ListView(
                             }
                         }
                         tbody {
-                            for row in filtered_rows {
+                            for row in visible_rows {
                                 TaskRow {
                                     key: "{row.row_key}",
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
@@ -139,6 +177,9 @@ pub fn ListView(
                         }
                     }
                 }
+            }
+            if has_more && !all_loading && !all_error {
+                button { class: "all-tasks-more", r#type: "button", onclick: move |_| on_show_more.call(()), "さらに表示" }
             }
         }
     }
@@ -234,6 +275,7 @@ fn TaskRow(
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
                     }
+                    if let Some(defer_plan) = defer_plan {
                     button {
                         class: "task-defer",
                         r#type: "button",
@@ -250,6 +292,7 @@ fn TaskRow(
                         },
                         span { class: "task-defer-full-label", "先送り" }
                         span { class: "task-defer-compact-label", aria_hidden: "true", "→" }
+                    }
                     }
                 }
             }
@@ -289,7 +332,9 @@ fn TaskRow(
                                 onclick: move |_| {
                                     if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                         confirming_defer.set(false);
-                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_plan_on_confirm.clone()));
+                                        if let Some(plan) = defer_plan_on_confirm.clone() {
+                                            on_defer_task.call((defer_task_id_on_confirm.clone(), plan));
+                                        }
                                     }
                                 },
                                 "先送りする"

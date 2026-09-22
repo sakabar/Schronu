@@ -1,6 +1,6 @@
 use super::super::carry_lock_view::CarryLockBar;
 use super::super::component_dispatch::{
-    dispatch_action, dispatch_action_effect, dispatch_session_action,
+    dispatch_action, dispatch_action_effect, dispatch_select_all_tasks, dispatch_session_action,
 };
 use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
@@ -16,6 +16,7 @@ use super::{
     RestoringShell, SessionChrome, UnavailableBufferPanel,
 };
 use crate::client::state::{ActiveTab, ClientState};
+use crate::client::view_projection::project_all_task_rows_for_browser;
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
 
@@ -82,6 +83,12 @@ pub(super) fn BrowserApp() -> Element {
         date_input_text,
         date_input_error,
         filter_text,
+        all_selected,
+        all_loaded,
+        all_loading,
+        all_error,
+        all_visible_count,
+        all_rows,
     ) = {
         let client = client.read();
         (
@@ -93,8 +100,26 @@ pub(super) fn BrowserApp() -> Element {
             client.date_input().text().to_owned(),
             client.date_input().error().map(|error| error.to_string()),
             client.task_name_filter().to_owned(),
+            client.all_selected(),
+            client.all_task_rows().is_some(),
+            client.all_loading(),
+            client.all_error(),
+            client.all_visible_count(),
+            project_all_task_rows_for_browser(
+                client.all_task_rows().unwrap_or(&[]),
+                browser_now_epoch_ms(),
+            ),
         )
     };
+    let dates = dates
+        .into_iter()
+        .map(|mut date| {
+            if all_selected {
+                date.selected = false;
+            }
+            date
+        })
+        .collect::<Vec<_>>();
 
     rsx! {
         InteractiveShell {
@@ -159,6 +184,13 @@ pub(super) fn BrowserApp() -> Element {
                 ListView {
                     dates,
                     rows,
+                    show_all_button: true,
+                    all_rows,
+                    all_selected,
+                    all_loaded,
+                    all_loading,
+                    all_error,
+                    all_visible_count,
                     active_task_ids,
                     date_input_text,
                     date_input_error,
@@ -170,6 +202,8 @@ pub(super) fn BrowserApp() -> Element {
                         client.write().clear_date_input(&BrowserLocalStorage);
                         dispatch_action(client, ComponentAction::SelectDate(date));
                     },
+                    on_select_all: move |_| dispatch_select_all_tasks(client),
+                    on_show_more: move |_| client.write().show_more_all_tasks(),
                     on_date_input_change: move |text| {
                         client.write().edit_date_input(&BrowserLocalStorage, text);
                     },

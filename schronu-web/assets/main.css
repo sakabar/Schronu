@@ -745,6 +745,15 @@ button:disabled {
     grid-template-areas: "action schedule deadline task";
 }
 
+.is-all-tasks .task-table thead tr,
+.is-all-tasks .task-row {
+    grid-template-columns: 44px 7rem 5.5rem minmax(0, 1fr);
+}
+
+.is-all-tasks .schedule-time {
+    font-size: 0.58rem;
+}
+
 .task-table thead tr {
     min-height: 1.75rem;
     align-items: center;
