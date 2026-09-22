@@ -45,7 +45,7 @@ pub struct ScheduledTaskRowDto {
     pub defer_plan: DeferPlanDto,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AllTaskRowDto {
     pub task: SessionTaskDto,
     pub segment_index: usize,
@@ -54,7 +54,7 @@ pub struct AllTaskRowDto {
     pub can_start_session: bool,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AllTaskPageDto {
     pub rows: Vec<AllTaskRowDto>,
     pub next_cursor: Option<String>,
