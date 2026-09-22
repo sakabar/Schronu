@@ -111,7 +111,7 @@ pub(crate) fn CarryLockBar(
                         class: if pressing() { "carry-lock-hold is-pressing" } else { "carry-lock-hold" },
                         style: "touch-action: pan-y;",
                         r#type: "button",
-                        aria_label: "1.2秒長押しで15秒間操作可能",
+                        aria_label: "長押しで15秒間操作可能",
                         onpointerdown: move |event: PointerEvent| {
                             if accepts_long_press_pointer(
                                 &event.pointer_type(),
@@ -136,7 +136,7 @@ pub(crate) fn CarryLockBar(
                             blur_controller.cancel_keyboard();
                         },
                         strong { "操作ロック中" }
-                        span { "1.2秒長押しで15秒間操作可能" }
+                        span { "長押しで15秒間操作可能" }
                     }
                     DisableCarryLockDetails { on_disable }
                 },
