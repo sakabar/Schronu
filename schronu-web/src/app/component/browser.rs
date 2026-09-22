@@ -124,6 +124,7 @@ pub(super) fn BrowserApp() -> Element {
             date
         })
         .collect::<Vec<_>>();
+    let rows = if all_selected { all_rows } else { rows };
 
     rsx! {
         InteractiveShell {
@@ -188,7 +189,6 @@ pub(super) fn BrowserApp() -> Element {
                 ListView {
                     dates,
                     rows,
-                    all_rows,
                     all_selected,
                     all_loaded,
                     all_loading,

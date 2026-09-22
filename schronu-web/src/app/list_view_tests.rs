@@ -75,8 +75,7 @@ fn all_perf_root(props: RootProps) -> Element {
     rsx! {
         ListView {
             dates: Vec::new(),
-            rows: Vec::new(),
-            all_rows: props.rows,
+            rows: props.rows,
             all_selected: true,
             all_loaded: true,
             active_task_ids: Vec::new(),

@@ -18,7 +18,6 @@ pub struct DateButtonViewModel {
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
-    #[props(default)] all_rows: Vec<ListRowViewModel>,
     #[props(default)] all_selected: bool,
     #[props(default)] all_loaded: bool,
     #[props(default)] all_loading: bool,
@@ -43,7 +42,7 @@ pub fn ListView(
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
     let normalized_filter = normalize_task_name_filter(&filter_text);
     let filtered_rows = if all_selected {
-        all_rows
+        rows
     } else {
         rows.into_iter()
             .filter(|row| task_name_matches_normalized(&normalized_filter, &row.task.task_name))
