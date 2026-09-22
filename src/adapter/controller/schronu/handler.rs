@@ -27,6 +27,7 @@ const HOBBY_PROJECT_INITIAL_DEFER_DAYS: i64 = 1400;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ExternalRequest {
     OpenFocusedLink,
+    TimerShortcut,
     OpenObsidianRootSearch,
 }
 
@@ -268,6 +269,10 @@ pub(super) fn handle(command: &Command) -> Option<CommandOutcome> {
             kind: CommandKind::Open,
             ..
         }) => outcome.external_request = Some(ExternalRequest::OpenFocusedLink),
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::Timer,
+            ..
+        }) => outcome.external_request = Some(ExternalRequest::TimerShortcut),
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Obsidian,
             ..

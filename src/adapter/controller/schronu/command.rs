@@ -38,6 +38,7 @@ pub(super) enum CommandKind {
     Focus,
     Pick,
     Open,
+    Timer,
     Obsidian,
     Unfocus,
     Parent,
@@ -890,6 +891,7 @@ fn parse_action(
         | CommandKind::Calendar
         | CommandKind::Band
         | CommandKind::Open
+        | CommandKind::Timer
         | CommandKind::Obsidian
         | CommandKind::Unfocus
         | CommandKind::Parent
@@ -1034,6 +1036,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         }
         "選" | "pick" => CommandDefinition::new(Kind::Pick, "選", "選 [task_id]", 0, Some(1)),
         "開" | "open" | "op" => CommandDefinition::new(Kind::Open, "開", "開", 0, Some(0)),
+        "計" | "timer" => CommandDefinition::new(Kind::Timer, "計", "計", 0, Some(0)),
         "黒" | "obs" => CommandDefinition::new(Kind::Obsidian, "黒", "黒", 0, Some(0)),
         "外" | "unfocus" | "ufc" => CommandDefinition::new(Kind::Unfocus, "外", "外", 0, Some(0)),
         "親" | "parent" => CommandDefinition::new(Kind::Parent, "親", "親", 0, Some(0)),
@@ -1138,9 +1141,9 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
 pub(super) fn representative_valid_commands() -> Vec<Command> {
     let names = [
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
-        "暦", "帯", "見", "選", "開", "黒", "外", "親", "子", "深", "上", "下", "割", "待", "〆",
-        "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集", "終",
-        "高", "低", "backup", "検証",
+        "暦", "帯", "見", "選", "開", "計", "黒", "外", "親", "子", "深", "上", "下", "割", "待",
+        "〆", "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集",
+        "終", "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

@@ -492,6 +492,7 @@ fn resolve_external_request(
     config: &SchronuConfig,
 ) -> Result<Option<ResolvedExternalRequest>, ApplicationError> {
     match request {
+        ExternalRequest::TimerShortcut => Ok(None),
         ExternalRequest::OpenFocusedLink => {
             let mut task_opt = focused_task_opt.clone();
             while let Some(task) = &task_opt {
