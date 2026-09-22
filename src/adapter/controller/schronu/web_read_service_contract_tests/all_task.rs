@@ -59,7 +59,7 @@ fn 全件pageはcliの予定segment順を500行境界でも維持する() {
     assert!(page_count > 1);
     assert_eq!(actual_names, expected_names);
     assert!(!actual_names.iter().any(|name| name == "project 501"));
-    assert!(action_flags.contains(&("project 1".to_owned(), false)));
+    assert!(action_flags.contains(&("project 1".to_owned(), true)));
     assert!(action_flags.contains(&("project 2".to_owned(), false)));
     assert!(action_flags.contains(&("child".to_owned(), true)));
     assert_ne!(
