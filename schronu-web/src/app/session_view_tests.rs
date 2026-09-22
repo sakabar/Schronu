@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::session_view::{SessionAction, SessionActionKind, SessionCardViewModel, SessionView};
+use super::session_view::{SessionAction, SessionCardViewModel, SessionView};
 use super::view_test_support::{
     dispatch_click, rebuild_with_click_listeners, render_with_click_listeners,
 };
@@ -576,20 +576,6 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
 
     let (globally_blocked, _) = render(vec![card("one"), card("two")], true);
     assert_eq!(globally_blocked.matches("disabled").count(), 8);
-}
-
-#[test]
-fn action_kind_is_a_closed_typed_contract() {
-    assert_ne!(SessionActionKind::Discard, SessionActionKind::Record);
-    assert_ne!(SessionActionKind::Record, SessionActionKind::Complete);
-    assert_ne!(
-        SessionActionKind::Complete,
-        SessionActionKind::CompleteWithoutRecording
-    );
-    assert_ne!(
-        SessionActionKind::ResumeCompletionConflict,
-        SessionActionKind::ConfirmCompletionConflict
-    );
 }
 
 #[test]

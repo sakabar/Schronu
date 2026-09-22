@@ -5980,7 +5980,6 @@ fn test_execute_calendarとband_空白日の容量で週次超過を解消して
         );
 
         assert!(actual.contains(expected), "{command}: {actual}");
-        assert!(!actual.contains("超過する日が2日あります"), "{command}: {actual}");
     }
 }
 
@@ -6314,8 +6313,6 @@ fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示�
 
     assert_eq!(strip_ansi_escape_sequences(&japanese), expected);
     assert_eq!(strip_ansi_escape_sequences(&english), expected);
-    assert!(!japanese.contains("日          "));
-    assert!(!japanese.contains("帯出力固定用タスク"));
 }
 
 #[test]

@@ -302,7 +302,6 @@ pub(super) fn sorted_object_keys(value: &serde_json::Value) -> Vec<&str> {
 pub(super) fn assert_tool_result_content_matches_structured(response: &serde_json::Value) {
     assert_eq!(response["result"]["content"][0]["type"], "text");
     let content = response["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(!content.is_empty());
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(content).unwrap(),
         response["result"]["structuredContent"]
@@ -321,7 +320,6 @@ pub(super) fn assert_repository_state_uncertain_response(
     assert_eq!(error["code"], "repository_state_uncertain");
     assert_eq!(error["recovery"], "restart_server");
     let message = error["message"].as_str().unwrap();
-    assert!(!message.is_empty());
     assert!(
         message.to_ascii_lowercase().contains("restart"),
         "{message}"

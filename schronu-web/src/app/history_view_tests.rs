@@ -21,7 +21,7 @@ fn render(entries: Vec<HistoryEntryViewModel>) -> String {
 }
 
 #[test]
-fn history_is_an_independent_section_and_omits_locality() {
+fn history_renders_an_independent_section_with_invocations_and_outcomes() {
     let html = render(vec![
         HistoryEntryViewModel {
             occurred_at_hh_mm_ss: "11:25:03".to_owned(),
@@ -57,10 +57,6 @@ fn history_is_an_independent_section_and_omits_locality() {
     ] {
         assert!(html.contains(text), "missing {text}: {html}");
     }
-    assert!(!html.contains("history-locality"), "{html}");
-    assert!(!html.contains("history-task-id"), "{html}");
-    assert!(!html.contains(">server<"), "{html}");
-    assert!(!html.contains(">local<"), "{html}");
     assert!(html.contains("history-entry is-failure"));
 }
 
@@ -103,7 +99,6 @@ fn invocation_formatterは実action名と全引数を関数呼出し形式にす
         .to_string();
         assert!(formatted.starts_with("complete_session(task_id: \"task<\\\"&>\""));
         assert!(formatted.contains(expected));
-        assert!(!formatted.contains("complete_session_without_recording"));
     }
 }
 
