@@ -45,6 +45,21 @@ pub(super) enum TimerLaunchOutcome {
 
 pub(super) type TimerSessions = HashMap<Uuid, (DateTime<Local>, i128)>;
 
+fn retain_active_timers(timers: &mut TimerSessions, now: DateTime<Local>) {
+    timers.retain(|_, (started_at, duration)| {
+        i128::from((now - *started_at).num_milliseconds()) < *duration * 1000
+    });
+}
+
+pub(super) fn forget_timer_for_session(
+    timers: &mut TimerSessions,
+    task_id: Uuid,
+    now: DateTime<Local>,
+) -> bool {
+    retain_active_timers(timers, now);
+    timers.remove(&task_id).is_some()
+}
+
 pub(super) fn launch_timer_shortcut_for_session(
     timers: &mut TimerSessions,
     task_id: Uuid,
@@ -52,9 +67,7 @@ pub(super) fn launch_timer_shortcut_for_session(
     now: DateTime<Local>,
     launch: impl FnOnce(&str) -> Result<DateTime<Local>, CommandError>,
 ) -> Result<TimerLaunchOutcome, CommandError> {
-    timers.retain(|_, (started_at, duration)| {
-        i128::from((now - *started_at).num_milliseconds()) < *duration * 1000
-    });
+    retain_active_timers(timers, now);
     if timers.contains_key(&task_id) {
         return Ok(TimerLaunchOutcome::AlreadyRunning);
     }

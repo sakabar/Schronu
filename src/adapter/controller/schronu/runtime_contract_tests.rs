@@ -5181,10 +5181,36 @@ fn timer_forgetは記録なし期限切れfocusなし非対話を案内する() 
     assert!(String::from_utf8(output.buffer).unwrap().contains("消すタイマー記録がありません"));
     assert!(timers.is_empty());
 
+    let mut no_record_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut no_record_output, &mut repository, &mut focus,
+        OutcomeApplicationMode::InteractiveTimerFlushed(&mut selection, &mut timers),
+        super::handler::handle(&command).unwrap(), active_config(), now,
+    ).unwrap();
+    assert!(String::from_utf8(no_record_output.buffer).unwrap().contains("消すタイマー記録がありません"));
+
+    timers.insert(task_id, (now, 596));
+    focus = None;
+    let mut no_focus_output = FlushTrackingWriter::successful(false);
+    apply_command_outcome(
+        &mut no_focus_output, &mut repository, &mut focus,
+        OutcomeApplicationMode::InteractiveTimerFlushed(&mut selection, &mut timers),
+        super::handler::handle(&command).unwrap(), active_config(), now,
+    ).unwrap();
+    assert!(String::from_utf8(no_focus_output.buffer).unwrap().contains("フォーカス中のタスクがありません"));
+    assert!(timers.contains_key(&task_id));
+
     let no_focus = execute_command_for_test(repository.task.clone(), now, None, "計 忘");
     assert!(no_focus.output.contains("フォーカス中のタスクがありません"));
     let noninteractive = execute_command_for_test(repository.task.clone(), now, Some(task_id), "timer forget");
     assert!(noninteractive.output.contains("対話中のタイマー記録はありません"));
+
+    repository.task.set_estimated_work_seconds(901).unwrap();
+    repository.task.set_actual_work_seconds(182).unwrap();
+    assert_eq!(
+        resolve_timer_shortcut(&Some(repository.task.clone()), now, now + Duration::seconds(719)).unwrap(),
+        ResolvedExternalRequest::Message("見積もりの残り時間はありません")
+    );
 }
 
 #[test]

@@ -79,8 +79,8 @@ mod timer_session;
 #[cfg(test)]
 use timer_session::shortcut_open_command;
 use timer_session::{
-    execute_open_timer_shortcut, launch_timer_shortcut_for_session, resolve_timer_shortcut,
-    TimerLaunchOutcome, TimerSessions,
+    execute_open_timer_shortcut, forget_timer_for_session, launch_timer_shortcut_for_session,
+    resolve_timer_shortcut, TimerLaunchOutcome, TimerSessions,
 };
 
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
@@ -494,6 +494,7 @@ enum ResolvedExternalRequest {
     BrowserUrl(String),
     ObsidianUrl(String),
     TimerUrl { task_id: Uuid, seconds: i128 },
+    ForgetTimerRecord { task_id: Uuid },
     Message(&'static str),
 }
 
@@ -508,6 +509,17 @@ fn resolve_external_request(
         ExternalRequest::TimerShortcut => {
             resolve_timer_shortcut(focused_task_opt, focus_started_at, now).map(Some)
         }
+        ExternalRequest::ForgetTimerRecord => focused_task_opt
+            .as_ref()
+            .map(|task| {
+                task.get_id()
+                    .map(|task_id| ResolvedExternalRequest::ForgetTimerRecord { task_id })
+                    .map_err(ApplicationError::TaskTree)
+            })
+            .unwrap_or(Ok(ResolvedExternalRequest::Message(
+                "フォーカス中のタスクがありません",
+            )))
+            .map(Some),
         ExternalRequest::OpenFocusedLink => {
             let mut task_opt = focused_task_opt.clone();
             while let Some(task) = &task_opt {
@@ -811,6 +823,26 @@ fn apply_command_outcome(
                         )
                         .map_err(CommandError::Output)?;
                     }
+                }
+                ResolvedExternalRequest::ForgetTimerRecord { task_id } => {
+                    let text = if let Some(timers) = application_mode.timer_sessions_mut() {
+                        if forget_timer_for_session(timers, task_id, operation_now) {
+                            "このタスクのタイマー記録を忘れました"
+                        } else {
+                            "消すタイマー記録がありません"
+                        }
+                    } else {
+                        "対話中のタイマー記録はありません"
+                    };
+                    render_display_model_with_mode(
+                        stdout,
+                        &DisplayModel::Message {
+                            level: MessageLevel::Plain,
+                            text: text.to_string(),
+                        },
+                        RenderMode::Unflushed,
+                    )
+                    .map_err(CommandError::Output)?;
                 }
                 ResolvedExternalRequest::Message(text) => {
                     render_display_model_with_mode(

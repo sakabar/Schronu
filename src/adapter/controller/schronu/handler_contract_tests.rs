@@ -136,10 +136,13 @@ fn handler_returns_structured_external_requests_without_opening_them() {
 
 #[test]
 fn timer_forget_routes_to_record_removal_without_changing_focus() {
-    let outcome = handle(&Command::Action(CommandAction::TimerForget))
-        .expect("timer forget is handled");
+    let outcome =
+        handle(&Command::Action(CommandAction::TimerForget)).expect("timer forget is handled");
     assert_eq!(outcome.kind, CommandKind::Timer);
-    assert_eq!(outcome.external_request, Some(ExternalRequest::ForgetTimerRecord));
+    assert_eq!(
+        outcome.external_request,
+        Some(ExternalRequest::ForgetTimerRecord)
+    );
     assert_eq!(outcome.focus_change, FocusChange::Keep);
     assert!(outcome.display.is_empty());
 }
