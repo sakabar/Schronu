@@ -82,7 +82,24 @@ fn timerは両modeで引数なしの同一commandとして解釈する() {
             );
             let error = parse_command(&format!("{alias} 1"), mode).unwrap_err();
             assert_eq!(error.field(), "arguments");
-            assert_eq!(error.usage(), "計");
+            assert_eq!(error.usage(), "計 [忘]");
+        }
+    }
+}
+
+#[test]
+fn timerの忘は両modeで記録解除として解釈し他の引数を拒否する() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for input in ["計 忘", "timer forget", "計 forget", "timer 忘"] {
+            assert_eq!(
+                parse_command(input, mode).unwrap(),
+                Command::Action(CommandAction::TimerForget),
+                "input: {input}"
+            );
+        }
+        for input in ["計 --force", "計 1", "timer other", "計 忘 extra"] {
+            let error = parse_command(input, mode).unwrap_err();
+            assert_eq!(error.usage(), "計 [忘]", "input: {input}");
         }
     }
 }
