@@ -74,6 +74,15 @@ const CLI_LOCK_TIMEOUT: StdDuration = StdDuration::from_secs(1);
 #[path = "runtime/storage_maintenance.rs"]
 mod storage_maintenance;
 
+#[path = "runtime/timer_session.rs"]
+mod timer_session;
+#[cfg(test)]
+use timer_session::shortcut_open_command;
+use timer_session::{
+    execute_open_timer_shortcut, forget_timer_for_session, launch_timer_shortcut_for_session,
+    resolve_timer_shortcut, TimerLaunchOutcome, TimerSessions,
+};
+
 static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
 
 pub(super) fn active_config() -> &'static SchronuConfig {
@@ -484,14 +493,33 @@ fn extract_url(s: &str) -> Option<String> {
 enum ResolvedExternalRequest {
     BrowserUrl(String),
     ObsidianUrl(String),
+    TimerUrl { task_id: Uuid, seconds: i128 },
+    ForgetTimerRecord { task_id: Uuid },
+    Message(&'static str),
 }
 
 fn resolve_external_request(
     request: ExternalRequest,
     focused_task_opt: &Option<TaskHandle>,
     config: &SchronuConfig,
+    focus_started_at: DateTime<Local>,
+    now: DateTime<Local>,
 ) -> Result<Option<ResolvedExternalRequest>, ApplicationError> {
     match request {
+        ExternalRequest::TimerShortcut => {
+            resolve_timer_shortcut(focused_task_opt, focus_started_at, now).map(Some)
+        }
+        ExternalRequest::ForgetTimerRecord => focused_task_opt
+            .as_ref()
+            .map(|task| {
+                task.get_id()
+                    .map(|task_id| ResolvedExternalRequest::ForgetTimerRecord { task_id })
+                    .map_err(ApplicationError::TaskTree)
+            })
+            .unwrap_or(Ok(ResolvedExternalRequest::Message(
+                "フォーカス中のタスクがありません",
+            )))
+            .map(Some),
         ExternalRequest::OpenFocusedLink => {
             let mut task_opt = focused_task_opt.clone();
             while let Some(task) = &task_opt {
@@ -621,18 +649,19 @@ fn execute_parsed(
         }
     }
     match application_mode {
-        OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
-            apply_command_outcome(
-                stdout,
-                task_repository,
-                focused_task_id_opt,
-                OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
-                outcome,
-                active_config(),
-            )
-        }
+        application_mode @ (OutcomeApplicationMode::InteractiveUnflushed(_)
+        | OutcomeApplicationMode::InteractiveTimerUnflushed(_, _)) => apply_command_outcome(
+            stdout,
+            task_repository,
+            focused_task_id_opt,
+            application_mode,
+            outcome,
+            active_config(),
+            *focus_started_datetime,
+        ),
         application_mode @ (OutcomeApplicationMode::Flushed
-        | OutcomeApplicationMode::InteractiveFlushed(_)) => {
+        | OutcomeApplicationMode::InteractiveFlushed(_)
+        | OutcomeApplicationMode::InteractiveTimerFlushed(_, _)) => {
             let mut output = ErrorCapturingWriter::new(stdout);
             apply_command_outcome(
                 &mut output,
@@ -641,6 +670,7 @@ fn execute_parsed(
                 application_mode,
                 outcome,
                 active_config(),
+                *focus_started_datetime,
             )?;
             captured_output_result(&mut output)
         }
@@ -726,6 +756,7 @@ fn apply_command_outcome(
     mut application_mode: OutcomeApplicationMode<'_>,
     outcome: CommandOutcome,
     config: &SchronuConfig,
+    focus_started_datetime: DateTime<Local>,
 ) -> Result<(), CommandError> {
     if !outcome.display.is_empty() {
         render_display_model_with_mode(stdout, &outcome.display, RenderMode::Unflushed)
@@ -733,19 +764,96 @@ fn apply_command_outcome(
     }
 
     if let Some(request) = outcome.external_request {
+        let operation_now = task_repository.get_last_synced_time();
         let focused_task_opt = match focused_task_id_opt {
             Some(task_id) => task_repository
                 .get_by_id(*task_id)
                 .map_err(ApplicationError::TaskTree)?,
             None => None,
         };
-        if let Some(resolved_request) =
-            resolve_external_request(request, &focused_task_opt, config)?
-        {
+        let resolved_request = resolve_external_request(
+            request,
+            &focused_task_opt,
+            config,
+            focus_started_datetime,
+            operation_now,
+        )?;
+        if let Some(resolved_request) = resolved_request {
             match resolved_request {
                 ResolvedExternalRequest::BrowserUrl(url) => execute_open_link(&url)?,
                 ResolvedExternalRequest::ObsidianUrl(url) => {
                     execute_open_obsidian_root_task_search_with_config(&url)?
+                }
+                ResolvedExternalRequest::TimerUrl { task_id, seconds } => {
+                    let url = format!(
+                        "shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}"
+                    );
+                    let outcome = if let Some(timers) = application_mode.timer_sessions_mut() {
+                        launch_timer_shortcut_for_session(
+                            timers,
+                            task_id,
+                            seconds,
+                            operation_now,
+                            |url| {
+                                execute_open_timer_shortcut(url)?;
+                                Ok(Local::now())
+                            },
+                        )?
+                    } else {
+                        execute_open_timer_shortcut(&url)?;
+                        TimerLaunchOutcome::Started
+                    };
+                    let message = match outcome {
+                        TimerLaunchOutcome::Started => None,
+                        TimerLaunchOutcome::AlreadyRunning => {
+                            Some("このタスクのタイマーは実行中です。新たには起動しません")
+                        }
+                        TimerLaunchOutcome::StartedAlongsideAnother => {
+                            Some("別のタスクのタイマーも実行中です")
+                        }
+                    };
+                    if let Some(text) = message {
+                        render_display_model_with_mode(
+                            stdout,
+                            &DisplayModel::Message {
+                                level: MessageLevel::Plain,
+                                text: text.to_string(),
+                            },
+                            RenderMode::Unflushed,
+                        )
+                        .map_err(CommandError::Output)?;
+                    }
+                }
+                ResolvedExternalRequest::ForgetTimerRecord { task_id } => {
+                    let text = if let Some(timers) = application_mode.timer_sessions_mut() {
+                        if forget_timer_for_session(timers, task_id, operation_now) {
+                            "このタスクのタイマー記録を忘れました"
+                        } else {
+                            "消すタイマー記録がありません"
+                        }
+                    } else {
+                        "対話中のタイマー記録はありません"
+                    };
+                    render_display_model_with_mode(
+                        stdout,
+                        &DisplayModel::Message {
+                            level: MessageLevel::Plain,
+                            text: text.to_string(),
+                        },
+                        RenderMode::Unflushed,
+                    )
+                    .map_err(CommandError::Output)?;
+                }
+                ResolvedExternalRequest::Message(text) => {
+                    render_display_model_with_mode(
+                        stdout,
+                        &DisplayModel::Message {
+                            level: MessageLevel::Plain,
+                            text: text.to_string(),
+                        },
+                        RenderMode::Unflushed,
+                    )
+                    .map_err(CommandError::Output)?;
                 }
             }
         }
@@ -756,7 +864,9 @@ fn apply_command_outcome(
         FocusChange::Clear => {
             *focused_task_id_opt = None;
             if let OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
-            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) =
+            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode)
+            | OutcomeApplicationMode::InteractiveTimerFlushed(focus_selection_mode, _)
+            | OutcomeApplicationMode::InteractiveTimerUnflushed(focus_selection_mode, _) =
                 &mut application_mode
             {
                 focus_selection_mode.set_explicit(false);
@@ -765,7 +875,9 @@ fn apply_command_outcome(
         FocusChange::Set(task_id) => {
             *focused_task_id_opt = Some(task_id);
             if let OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
-            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) =
+            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode)
+            | OutcomeApplicationMode::InteractiveTimerFlushed(focus_selection_mode, _)
+            | OutcomeApplicationMode::InteractiveTimerUnflushed(focus_selection_mode, _) =
                 &mut application_mode
             {
                 focus_selection_mode.set_explicit(true);
@@ -773,7 +885,9 @@ fn apply_command_outcome(
         }
         FocusChange::SelectionMode(selection) => match &mut application_mode {
             OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
-            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode) => {
+            | OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode)
+            | OutcomeApplicationMode::InteractiveTimerFlushed(focus_selection_mode, _)
+            | OutcomeApplicationMode::InteractiveTimerUnflushed(focus_selection_mode, _) => {
                 **focus_selection_mode = focus_selection_mode_from_selection(selection);
                 *focused_task_id_opt = None;
             }
@@ -785,7 +899,9 @@ fn apply_command_outcome(
 
     if matches!(
         &application_mode,
-        OutcomeApplicationMode::Flushed | OutcomeApplicationMode::InteractiveFlushed(_)
+        OutcomeApplicationMode::Flushed
+            | OutcomeApplicationMode::InteractiveFlushed(_)
+            | OutcomeApplicationMode::InteractiveTimerFlushed(_, _)
     ) && outcome.kind != CommandKind::Noop
     {
         render_display_model_with_mode(stdout, &DisplayModel::empty(), RenderMode::Flushed)
@@ -798,17 +914,33 @@ enum OutcomeApplicationMode<'a> {
     Flushed,
     InteractiveFlushed(&'a mut FocusSelectionMode),
     InteractiveUnflushed(&'a mut FocusSelectionMode),
+    InteractiveTimerFlushed(&'a mut FocusSelectionMode, &'a mut TimerSessions),
+    InteractiveTimerUnflushed(&'a mut FocusSelectionMode, &'a mut TimerSessions),
 }
 
 impl OutcomeApplicationMode<'_> {
     fn propagates_error(&self) -> bool {
-        matches!(self, Self::InteractiveUnflushed(_))
+        matches!(
+            self,
+            Self::InteractiveUnflushed(_) | Self::InteractiveTimerUnflushed(_, _)
+        )
     }
 
     fn focus_selection_mode_mut(&mut self) -> Option<&mut FocusSelectionMode> {
         match self {
-            Self::InteractiveFlushed(mode) | Self::InteractiveUnflushed(mode) => Some(*mode),
+            Self::InteractiveFlushed(mode)
+            | Self::InteractiveUnflushed(mode)
+            | Self::InteractiveTimerFlushed(mode, _)
+            | Self::InteractiveTimerUnflushed(mode, _) => Some(*mode),
             Self::Flushed => None,
+        }
+    }
+
+    fn timer_sessions_mut(&mut self) -> Option<&mut TimerSessions> {
+        match self {
+            Self::InteractiveTimerFlushed(_, timers)
+            | Self::InteractiveTimerUnflushed(_, timers) => Some(*timers),
+            _ => None,
         }
     }
 }
@@ -1243,6 +1375,7 @@ struct InteractiveCommandExecution {
 fn interactive_outcome_application_mode<'a>(
     command: &Command,
     focus_selection_mode: &'a mut FocusSelectionMode,
+    timer_sessions: Option<&'a mut TimerSessions>,
 ) -> OutcomeApplicationMode<'a> {
     if matches!(
         command,
@@ -1254,9 +1387,19 @@ fn interactive_outcome_application_mode<'a>(
             | CommandKind::FocusHighest
             | CommandKind::FocusLowest
     ) {
-        OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode)
+        match timer_sessions {
+            Some(timers) => {
+                OutcomeApplicationMode::InteractiveTimerUnflushed(focus_selection_mode, timers)
+            }
+            None => OutcomeApplicationMode::InteractiveUnflushed(focus_selection_mode),
+        }
     } else {
-        OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode)
+        match timer_sessions {
+            Some(timers) => {
+                OutcomeApplicationMode::InteractiveTimerFlushed(focus_selection_mode, timers)
+            }
+            None => OutcomeApplicationMode::InteractiveFlushed(focus_selection_mode),
+        }
     }
 }
 
@@ -1268,6 +1411,7 @@ fn execute_interactive_command(
     focused_task_id_opt: &mut Option<Uuid>,
     focus_started_datetime: &DateTime<Local>,
     focus_selection_mode: &mut FocusSelectionMode,
+    timer_sessions: Option<&mut TimerSessions>,
     operation_now: DateTime<Local>,
     command: &str,
 ) -> Result<InteractiveCommandExecution, CommandError> {
@@ -1286,8 +1430,11 @@ fn execute_interactive_command(
             false,
         )
     } else {
-        let application_mode =
-            interactive_outcome_application_mode(&parsed_command, focus_selection_mode);
+        let application_mode = interactive_outcome_application_mode(
+            &parsed_command,
+            focus_selection_mode,
+            timer_sessions,
+        );
         let propagates_error = application_mode.propagates_error();
         (
             execute_parsed(
@@ -1327,6 +1474,7 @@ struct InteractiveRepositoryState<'a> {
     last_focused_task_id_opt: &'a mut Option<Uuid>,
     focus_started_datetime: &'a mut DateTime<Local>,
     focus_selection_mode: &'a mut FocusSelectionMode,
+    timer_sessions: Option<&'a mut TimerSessions>,
 }
 
 enum InteractiveRepositoryEvent<'a> {
@@ -1393,6 +1541,7 @@ fn handle_interactive_submit_at(
                 state.focused_task_id_opt,
                 state.focus_started_datetime,
                 state.focus_selection_mode,
+                state.timer_sessions.as_deref_mut(),
                 operation_now,
                 &command,
             )?;
@@ -1525,6 +1674,7 @@ struct InteractiveDriverState<'a> {
     last_focused_task_id_opt: &'a mut Option<Uuid>,
     focus_started_datetime: &'a mut DateTime<Local>,
     focus_selection_mode: &'a mut FocusSelectionMode,
+    timer_sessions: Option<&'a mut TimerSessions>,
 }
 
 fn handle_interactive_driver_event(
@@ -1569,6 +1719,7 @@ fn handle_interactive_driver_event(
             last_focused_task_id_opt: state.last_focused_task_id_opt,
             focus_started_datetime: state.focus_started_datetime,
             focus_selection_mode: state.focus_selection_mode,
+            timer_sessions: state.timer_sessions,
         },
         repository_event,
     );
@@ -1619,6 +1770,7 @@ fn interactive_application(
     )?;
 
     let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    let mut timer_sessions = TimerSessions::new();
     let mut focused_task_id_opt = select_focus_task_id(task_repository, &focus_selection_mode)
         .map_err(CommandError::from)
         .map_err(RunError::from)?;
@@ -1635,6 +1787,7 @@ fn interactive_application(
                 last_focused_task_id_opt: &mut last_focused_task_id_opt,
                 focus_started_datetime: &mut focus_started_datetime,
                 focus_selection_mode: &mut focus_selection_mode,
+                timer_sessions: Some(&mut timer_sessions),
             },
             event,
         )
