@@ -109,6 +109,52 @@ fn 全件表示は検索結果を保持し表示分だけ取り出す() {
     assert_eq!(visible[0].task.task_name, "task 0500");
     assert!(!orchestrator.all_has_more());
 }
+
+#[test]
+#[ignore = "manual large-fixture performance measurement"]
+fn 全件検索と500行投影の大規模fixture時間を計測する() {
+    use std::time::Instant;
+
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let request_id = match orchestrator.mount(&storage, 1_000) {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        _ => unreachable!(),
+    };
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id,
+            result: Ok(snapshot(1_000)),
+        },
+    );
+    let load_id = orchestrator.select_all_tasks().unwrap();
+    let rows = (0..26_808)
+        .map(|index| AllTaskRow {
+            task: task(&format!("{index:05}")),
+            schedule_date: Some("2026-09-05".to_owned()),
+            deadline_epoch_ms: None,
+            can_start_session: true,
+        })
+        .collect();
+    orchestrator.apply_all_task_result(load_id, Ok(rows));
+
+    let search_started = Instant::now();
+    orchestrator.edit_task_name_filter(&storage, "task".to_owned());
+    let search_micros = search_started.elapsed().as_micros();
+    let projection_started = Instant::now();
+    let visible = crate::client::view_projection::project_all_task_rows(
+        &orchestrator.visible_all_task_rows(),
+        540,
+        0,
+    );
+    let projection_micros = projection_started.elapsed().as_micros();
+    eprintln!(
+        "all-task client rows=26808 search_us={search_micros} visible_projection_us={projection_micros} visible_rows={}",
+        visible.len()
+    );
+    assert_eq!(visible.len(), 500);
+}
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
 use dioxus::prelude::*;

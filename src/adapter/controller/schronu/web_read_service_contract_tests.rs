@@ -15,6 +15,7 @@ use chrono::{Duration, Local, NaiveDate, TimeZone};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use uuid::Uuid;
 
 struct WebReadServiceFixture {
@@ -240,6 +241,70 @@ fn 全件pageは実storageの親と保留を含め完了を除き500件境界を
         .any(|row| row.task.task_name == "project 2" && !row.can_start_session));
     assert!(rows.iter().any(|row| row.task.task_name == "child"));
     assert!(!rows.iter().any(|row| row.task.task_name == "project 501"));
+}
+
+#[test]
+#[ignore = "manual large-fixture performance measurement"]
+fn 全件pageの大規模fixture取得時間と応答量を計測する() {
+    const PROJECTS: u128 = 2_234;
+    const CHILDREN_PER_PROJECT: u128 = 11;
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    for project_index in 0..PROJECTS {
+        let root = TaskHandle::with_identity(
+            &format!("project {project_index}"),
+            Uuid::from_u128(100_000 + project_index),
+            now,
+        )
+        .unwrap();
+        for child_index in 0..CHILDREN_PER_PROJECT {
+            let index = project_index * CHILDREN_PER_PROJECT + child_index;
+            let child = root
+                .create_child(TaskAttr::with_identity(
+                    &format!("task {index}"),
+                    Uuid::from_u128(1_000_000 + index),
+                    now,
+                ))
+                .unwrap();
+            child.set_estimated_work_seconds(300).unwrap();
+            if index >= 700 {
+                child.set_orig_status(Status::Pending).unwrap();
+            }
+        }
+        repository.start_new_project(root).unwrap();
+    }
+    repository.save().unwrap();
+    drop(repository);
+
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let started = Instant::now();
+    let mut cursor = None;
+    let mut rows = 0;
+    let mut pages = 0;
+    let mut response_bytes = 0;
+    let mut first_page_ms = 0;
+    loop {
+        let page = service.list_all_tasks_page_at(now, cursor).unwrap();
+        if pages == 0 {
+            first_page_ms = started.elapsed().as_millis();
+        }
+        response_bytes += serde_json::to_vec(&page).unwrap().len();
+        rows += page.rows.len();
+        pages += 1;
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    eprintln!(
+        "all-task fixture projects={PROJECTS} tasks={} pages={pages} rows={rows} first_page_ms={first_page_ms} total_ms={} response_bytes={response_bytes}",
+        PROJECTS * (CHILDREN_PER_PROJECT + 1),
+        started.elapsed().as_millis()
+    );
+    assert_eq!(rows as u128, PROJECTS * (CHILDREN_PER_PROJECT + 1));
 }
 
 #[test]

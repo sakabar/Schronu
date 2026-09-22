@@ -71,6 +71,69 @@ fn root(props: RootProps) -> Element {
     }
 }
 
+fn all_perf_root(props: RootProps) -> Element {
+    rsx! {
+        ListView {
+            dates: Vec::new(),
+            rows: Vec::new(),
+            all_rows: props.rows,
+            show_all_button: true,
+            all_selected: true,
+            all_loaded: true,
+            all_rows_prepared: true,
+            all_visible_count: 500,
+            active_task_ids: Vec::new(),
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: String::new(),
+            on_select_date: move |_| {},
+            on_select_all: move |_| {},
+            on_show_more: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_defer_task: move |_| {},
+            on_filter_change: move |_| {},
+        }
+    }
+}
+
+#[test]
+#[ignore = "manual 500-row render performance measurement"]
+fn 全件500行の仮想domとssr描画時間を計測する() {
+    use std::time::Instant;
+
+    let rows = (0..500)
+        .map(|index| {
+            let mut row = row(&format!("{index:04}"), false, true);
+            row.defer_plan = None;
+            row.schedule_label = "2026/09/05(土)".to_owned();
+            row
+        })
+        .collect();
+    let mut dom = VirtualDom::new_with_props(
+        all_perf_root,
+        RootProps {
+            dates: Vec::new(),
+            rows,
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::new(Mutex::new(Vec::new())),
+        },
+    );
+    let rebuild_started = Instant::now();
+    dom.rebuild_in_place();
+    let rebuild_micros = rebuild_started.elapsed().as_micros();
+    let ssr_started = Instant::now();
+    let html = dioxus::ssr::render(&dom);
+    eprintln!(
+        "all-task rows=500 virtual_dom_us={rebuild_micros} ssr_us={} html_bytes={}",
+        ssr_started.elapsed().as_micros(),
+        html.len()
+    );
+    assert!(html.contains("2026/09/05(土)"));
+}
+
 fn globally_blocked_root(props: RootProps) -> Element {
     let defer_events = Arc::clone(&props.events);
     rsx! {
