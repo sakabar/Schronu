@@ -70,6 +70,10 @@ mod web_read_buffer_contract_tests;
 mod web_read_model_contract_tests;
 
 #[cfg(test)]
+#[path = "schronu/web_all_tasks_contract_tests.rs"]
+mod web_all_tasks_contract_tests;
+
+#[cfg(test)]
 #[path = "schronu/web_read_service_contract_tests.rs"]
 mod web_read_service_contract_tests;
 
