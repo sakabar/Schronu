@@ -44,6 +44,7 @@ pub(crate) struct TestTaskRepository {
     projects: Vec<TaskHandle>,
     now: DateTime<Local>,
     highest_priority_leaf_task_id: Option<Uuid>,
+    get_by_id_count: Cell<usize>,
     save_count: Cell<usize>,
     registration_error: Option<ProjectRegistrationError>,
     save_failure_disposition: Cell<Option<TaskRepositorySaveFailureDisposition>>,
@@ -55,6 +56,7 @@ impl TestTaskRepository {
             projects,
             now,
             highest_priority_leaf_task_id: None,
+            get_by_id_count: Cell::new(0),
             save_count: Cell::new(0),
             registration_error: None,
             save_failure_disposition: Cell::new(None),
@@ -67,6 +69,14 @@ impl TestTaskRepository {
 
     pub(crate) fn save_count(&self) -> usize {
         self.save_count.get()
+    }
+
+    pub(crate) fn get_by_id_count(&self) -> usize {
+        self.get_by_id_count.get()
+    }
+
+    pub(crate) fn reset_get_by_id_count(&self) {
+        self.get_by_id_count.set(0);
     }
 
     pub(crate) fn set_highest_priority_leaf_task_id(&mut self, task_id: Option<Uuid>) {
@@ -150,6 +160,7 @@ impl TaskRepositoryTrait for TestTaskRepository {
     }
 
     fn get_by_id(&self, id: Uuid) -> Result<Option<TaskHandle>, TaskTreeError> {
+        self.get_by_id_count.set(self.get_by_id_count.get() + 1);
         for task in &self.projects {
             if let Some(found) = task.get_by_id(id)? {
                 return Ok(Some(found));

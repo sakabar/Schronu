@@ -8,7 +8,7 @@ use chrono::{Duration, Local, TimeZone};
 use uuid::Uuid;
 
 #[test]
-fn all_task_rowはschedule順とsegment情報を保持する() {
+fn all_task_rowはschedule順とsegment情報を保持し同一task分類を1回だけ解決する() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 5, 59, 0).unwrap();
     let task_id = Uuid::from_u128(41);
     let handle = TaskHandle::with_identity("multi segment", task_id, start).unwrap();
@@ -38,10 +38,12 @@ fn all_task_rowはschedule順とsegment情報を保持する() {
             rank: 0,
         },
     ];
+    repository.reset_get_by_id_count();
 
     let rows = build_all_task_rows(&repository, &schedule, start).unwrap();
 
     assert_eq!(rows.len(), 2);
+    assert_eq!(repository.get_by_id_count(), 1);
     assert_eq!(rows[0].segment_index, 0);
     assert_eq!(rows[1].segment_index, 1);
     assert_eq!(rows[0].task.task_id, rows[1].task.task_id);
