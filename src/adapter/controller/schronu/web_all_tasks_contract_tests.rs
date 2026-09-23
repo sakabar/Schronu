@@ -1,5 +1,5 @@
 use super::web_service::build_all_task_rows;
-use super::{AllTaskRowDto, WebReadError};
+use super::{AllTaskRowDto, DeadlineDisplayKind, TaskDisplayKind, WebReadError};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::TaskHandle;
@@ -39,7 +39,7 @@ fn all_task_rowはschedule順とsegment情報を保持する() {
         },
     ];
 
-    let rows = build_all_task_rows(&schedule, start).unwrap();
+    let rows = build_all_task_rows(&repository, &schedule, start).unwrap();
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].segment_index, 0);
@@ -52,6 +52,9 @@ fn all_task_rowはschedule順とsegment情報を保持する() {
     assert_eq!(rows[0].deadline_epoch_ms, rows[1].deadline_epoch_ms);
     assert_eq!(rows[0].deadline_label, "____-00:55");
     assert!(!rows[0].misses_deadline);
+    assert_eq!(rows[0].task_display_kind, TaskDisplayKind::NonRepetitive);
+    assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Today);
+    assert_eq!(rows[0].task_display_kind, rows[1].task_display_kind);
     let round_trip: AllTaskRowDto =
         serde_json::from_str(&serde_json::to_string(&rows[0]).unwrap()).unwrap();
     assert_eq!(round_trip, rows[0]);

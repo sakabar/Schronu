@@ -1,4 +1,7 @@
-use super::web_service::{build_auto_session_dto, build_scheduled_task_rows, DeferModeDto};
+use super::web_service::{
+    build_auto_session_dto, build_scheduled_task_rows, DeadlineDisplayKind, DeferModeDto,
+    TaskDisplayKind,
+};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::{Status, TaskHandle};
@@ -201,6 +204,100 @@ fn listのdtoは予定終了が締切を過ぎる場合だけmisses_deadlineに�
         assert_eq!(row.deadline_label, expected_label);
         assert_eq!(row.misses_deadline, expected_miss);
     }
+}
+
+#[test]
+fn listは固定・祖先から継承した繰返・単発を分類する() {
+    let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixed = TaskHandle::with_identity("fixed", Uuid::from_u128(201), start).unwrap();
+    fixed.set_fixed_start(true).unwrap();
+    let repetitive = TaskHandle::with_identity("repetitive", Uuid::from_u128(202), start).unwrap();
+    repetitive.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let repetitive_child = repetitive
+        .create_as_last_child(crate::test_support::new_task_attr_at("child", start));
+    let plain = TaskHandle::with_identity("plain", Uuid::from_u128(203), start).unwrap();
+    let ids = [
+        fixed.get_id().unwrap(),
+        repetitive_child.get_id().unwrap(),
+        plain.get_id().unwrap(),
+    ];
+    let repository = TestTaskRepository::new(vec![fixed, repetitive, plain], start);
+    let schedule = ids
+        .into_iter()
+        .enumerate()
+        .map(|(index, id)| ScheduledTaskView {
+            task: get_task(&repository, id).unwrap().unwrap(),
+            first_available_time: start,
+            scheduled_start: start + Duration::minutes(index as i64 * 10),
+            scheduled_end: start + Duration::minutes(index as i64 * 10 + 5),
+            scheduled_work_seconds: 300,
+            total_work_seconds: 300,
+            rank: 0,
+        })
+        .collect::<Vec<_>>();
+
+    let rows = build_scheduled_task_rows(&repository, &schedule, date, start).unwrap();
+
+    assert_eq!(rows[0].task_display_kind, TaskDisplayKind::Fixed);
+    assert_eq!(rows[1].task_display_kind, TaskDisplayKind::Repetitive);
+    assert_eq!(
+        rows[2].task_display_kind,
+        TaskDisplayKind::NonRepetitive
+    );
+}
+
+#[test]
+fn listは締切なし・超過・当日・将来をlogical_date境界で分類する() {
+    let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let scheduled_end = start + Duration::hours(1);
+    let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 6, 6, 0, 0).unwrap();
+    let deadlines = [
+        None,
+        Some(scheduled_end - Duration::seconds(1)),
+        Some(next_logical_date_start - Duration::seconds(1)),
+        Some(next_logical_date_start),
+    ];
+    let handles = deadlines
+        .iter()
+        .enumerate()
+        .map(|(index, deadline)| {
+            let task = TaskHandle::with_identity(
+                "deadline kind",
+                Uuid::from_u128(210 + index as u128),
+                start,
+            )
+            .unwrap();
+            task.set_deadline_time_opt(*deadline).unwrap();
+            task
+        })
+        .collect::<Vec<_>>();
+    let repository = TestTaskRepository::new(handles.clone(), start);
+    let schedule = handles
+        .iter()
+        .map(|handle| ScheduledTaskView {
+            task: get_task(&repository, handle.get_id().unwrap())
+                .unwrap()
+                .unwrap(),
+            first_available_time: start,
+            scheduled_start: start,
+            scheduled_end,
+            scheduled_work_seconds: 3_600,
+            total_work_seconds: 3_600,
+            rank: 0,
+        })
+        .collect::<Vec<_>>();
+
+    let rows = build_scheduled_task_rows(&repository, &schedule, date, start).unwrap();
+
+    assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::None);
+    assert_eq!(
+        rows[1].deadline_display_kind,
+        DeadlineDisplayKind::Overrun
+    );
+    assert_eq!(rows[2].deadline_display_kind, DeadlineDisplayKind::Today);
+    assert_eq!(rows[3].deadline_display_kind, DeadlineDisplayKind::Future);
 }
 
 #[test]
