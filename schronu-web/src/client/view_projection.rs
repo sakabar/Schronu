@@ -41,6 +41,12 @@ pub struct ListRowViewModel {
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisibleAllTaskRows {
+    pub rows: Vec<ListRowViewModel>,
+    pub has_more: bool,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeferConfirmationKind {
     DeadlineLimited,
@@ -65,23 +71,44 @@ pub fn project_list_rows(state: &ClientState, utc_offset_minutes: i32) -> Vec<Li
 }
 
 pub fn project_all_task_rows(rows: &[AllTaskRow]) -> Vec<ListRowViewModel> {
-    rows.iter()
-        .map(|row| ListRowViewModel {
-            row_key: format!("all:{}", row.segment_index),
-            task: row.task.clone(),
-            deadline_label: row.deadline_label.clone(),
-            schedule_label: all_task_schedule_label(&row.schedule_date),
-            misses_deadline: row.misses_deadline,
-            is_leaf: row.is_leaf,
-            defer_plan: None,
-            defer_confirmation: None,
-        })
-        .collect()
+    rows.iter().map(project_all_task_row).collect()
+}
+
+pub fn project_visible_all_task_rows(
+    rows: &[AllTaskRow],
+    filter: &str,
+    visible_limit: usize,
+) -> VisibleAllTaskRows {
+    let mut matching_rows = rows
+        .iter()
+        .filter(|row| task_name_matches(filter, &row.task.task_name));
+    let rows = matching_rows
+        .by_ref()
+        .take(visible_limit)
+        .map(project_all_task_row)
+        .collect();
+    VisibleAllTaskRows {
+        rows,
+        has_more: matching_rows.next().is_some(),
+    }
 }
 
 pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
     let normalized_filter = filter.trim().to_lowercase();
     normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
+}
+
+fn project_all_task_row(row: &AllTaskRow) -> ListRowViewModel {
+    ListRowViewModel {
+        row_key: format!("all:{}", row.segment_index),
+        task: row.task.clone(),
+        deadline_label: row.deadline_label.clone(),
+        schedule_label: all_task_schedule_label(&row.schedule_date),
+        misses_deadline: row.misses_deadline,
+        is_leaf: row.is_leaf,
+        defer_plan: None,
+        defer_confirmation: None,
+    }
 }
 
 pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {

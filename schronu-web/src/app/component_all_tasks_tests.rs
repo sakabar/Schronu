@@ -246,3 +246,29 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     assert_eq!(rows[1].row_key, "all:13");
     assert!(!rows[2].is_leaf);
 }
+
+#[test]
+fn all生rowは検索後に表示上限までだけprojectionする() {
+    use crate::client::view_projection::project_visible_all_task_rows;
+
+    let rows = (0..20_000)
+        .map(|index| {
+            all_row(
+                index,
+                &format!("task-{index}"),
+                if index % 2 == 0 {
+                    "検索対象 TASK"
+                } else {
+                    "通常タスク"
+                },
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let projected = project_visible_all_task_rows(&rows, "  検索対象 task  ", 500);
+    assert_eq!(projected.rows.len(), 500);
+    assert!(projected.has_more);
+    assert_eq!(projected.rows[0].row_key, "all:0");
+    assert_eq!(projected.rows[499].row_key, "all:998");
+}

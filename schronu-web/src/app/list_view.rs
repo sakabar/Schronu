@@ -33,6 +33,7 @@ pub fn ListView(
     filter_text: String,
     #[props(default)] all_tasks_status: Option<AllTasksViewStatus>,
     #[props(default)] visible_row_limit: Option<usize>,
+    #[props(default)] has_more_rows: Option<bool>,
     #[props(default)] mutations_locked: bool,
     #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
@@ -60,7 +61,7 @@ pub fn ListView(
     } else {
         usize::MAX
     };
-    let has_more = matching_rows.len() > visible_limit;
+    let has_more = has_more_rows.unwrap_or(matching_rows.len() > visible_limit);
     let filtered_rows = matching_rows
         .into_iter()
         .take(visible_limit)

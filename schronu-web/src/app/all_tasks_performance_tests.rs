@@ -3,7 +3,9 @@
 //! 契約testとは分離し、release buildで明示的に指定した場合だけ実行する。
 
 use super::list_view::{AllTasksViewStatus, ListView};
-use crate::client::view_projection::{project_all_task_rows, task_name_matches, ListRowViewModel};
+use crate::client::view_projection::{
+    project_visible_all_task_rows, task_name_matches, ListRowViewModel,
+};
 use crate::{AllTaskRow, SessionTask};
 use dioxus::prelude::*;
 use std::time::{Duration, Instant};
@@ -49,16 +51,16 @@ fn measure_all_task_client_performance() {
         });
         assert_eq!(matched_rows, segment_count.div_ceil(10));
 
-        let projection_input = &rows[..500];
-        let (projection_time, projected_rows) =
-            median_sample(|| project_all_task_rows(projection_input));
-        assert_eq!(projected_rows.len(), 500);
+        let (projection_time, projected) =
+            median_sample(|| project_visible_all_task_rows(&rows, "  検索対象 task  ", 500));
+        assert_eq!(projected.rows.len(), segment_count.div_ceil(10).min(500));
+        assert_eq!(projected.has_more, matched_rows > 500);
 
         let (render_time, rendered_bytes) = median_sample(|| {
             let mut dom = VirtualDom::new_with_props(
                 render_harness,
                 RenderHarnessProps {
-                    rows: projected_rows.clone(),
+                    rows: projected.rows.clone(),
                 },
             );
             dom.rebuild_in_place();
