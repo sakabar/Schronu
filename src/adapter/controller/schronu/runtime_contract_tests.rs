@@ -2606,8 +2606,16 @@ fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示す
         task.set_fixed_start(true).unwrap();
     }
 
-    let result = execute_command_for_test(root, now, None, "全 境界対象");
     let date_boundary = "-".repeat(157);
+    let unfiltered = execute_command_for_test(root.clone(), now, None, "全");
+    assert!(unfiltered.output.contains(&date_boundary));
+    assert!(unfiltered.output.contains("2日間の空き時間"));
+
+    let tail = execute_command_for_test(root.clone(), now, None, "尾 週");
+    assert!(!tail.output.contains(&date_boundary));
+    assert!(!tail.output.contains("日間の空き時間"));
+
+    let result = execute_command_for_test(root, now, None, "全 境界対象");
     let relevant_lines = result
         .output
         .lines()
