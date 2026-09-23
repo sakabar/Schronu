@@ -103,6 +103,11 @@ pub(crate) enum ClientResponse {
         requested_date: String,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     },
+    ListAllTasks {
+        request_id: u64,
+        request: ListAllTasksRequest,
+        result: Result<WebSuccess<AllTaskPage>, ServerFailure>,
+    },
     AutoSession {
         request_id: u64,
         result: Result<WebSuccess<Option<SessionTask>>, ServerFailure>,
@@ -142,6 +147,14 @@ pub(crate) async fn execute_effect<G: WebGateway>(
                 result: normalize_endpoint_result(gateway.list_tasks(request).await),
             })
         }
+        ClientEffect::ListAllTasks {
+            request_id,
+            request,
+        } => Some(ClientResponse::ListAllTasks {
+            request_id,
+            request: request.clone(),
+            result: normalize_endpoint_result(gateway.list_all_tasks(request).await),
+        }),
         ClientEffect::AutoSession { request_id } => Some(ClientResponse::AutoSession {
             request_id,
             result: normalize_endpoint_result(gateway.auto_session().await),
@@ -210,6 +223,11 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
                 state.apply_list_result(request_id, &requested_date, result)
             }
         }
+        ClientResponse::ListAllTasks {
+            request_id,
+            request,
+            result,
+        } => state.apply_all_tasks_result(request_id, request, result),
         ClientResponse::AutoSession { request_id, result } => {
             state.apply_auto_session_result(storage, request_id, result)
         }

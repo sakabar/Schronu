@@ -1,3 +1,4 @@
+mod all_tasks;
 mod diagnostics;
 mod read_state;
 mod session_state;
@@ -14,6 +15,7 @@ use super::work_sessions::{
     WorkSessionsState,
 };
 use crate::{ScheduledTaskRow, ServerSnapshot, WebError};
+pub use all_tasks::{AllTasksStatus, ListSelection};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
 use read_state::ReadState;
@@ -38,6 +40,7 @@ pub enum ServerFailure {
 pub struct ClientState {
     active_tab: ActiveTab,
     read: ReadState,
+    all_tasks: all_tasks::AllTasksState,
     sessions: SessionState,
     diagnostics: DiagnosticsState,
     carry_lock: CarryLockState,
@@ -56,6 +59,7 @@ impl ClientState {
         Self {
             active_tab: ActiveTab::Session,
             read: ReadState::new(),
+            all_tasks: all_tasks::AllTasksState::new(),
             sessions: SessionState::new(work_sessions, mutation_safety),
             diagnostics: DiagnosticsState::new(),
             carry_lock,

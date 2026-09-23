@@ -1,4 +1,7 @@
-use crate::{CompleteSessionRequest, DeferTaskRequest, ListTasksRequest, RecordSessionRequest};
+use crate::{
+    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
+    RecordSessionRequest,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientEffect {
@@ -9,6 +12,10 @@ pub enum ClientEffect {
     ListTasks {
         request_id: u64,
         request: ListTasksRequest,
+    },
+    ListAllTasks {
+        request_id: u64,
+        request: ListAllTasksRequest,
     },
     AutoSession {
         request_id: u64,

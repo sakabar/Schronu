@@ -29,7 +29,7 @@ fn gatewayはopaqueなall_task_cursorを保持する() {
 }
 
 #[test]
-fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
+fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
     let gateway = FakeGateway::default();
     let request = RecordSessionRequest {
         task_id: "task".to_owned(),
@@ -53,6 +53,16 @@ fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
                     request_id: 11,
                     request: ListTasksRequest {
                         logical_date: "2026-09-05".to_owned(),
+                    },
+                },
+            )
+            .await,
+            execute_effect(
+                &gateway,
+                ClientEffect::ListAllTasks {
+                    request_id: 16,
+                    request: ListAllTasksRequest {
+                        cursor: Some("opaque".to_owned()),
                     },
                 },
             )
@@ -105,18 +115,26 @@ fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
     ));
     assert!(matches!(
         responses[2],
-        Some(ClientResponse::AutoSession { request_id: 12, .. })
+        Some(ClientResponse::ListAllTasks {
+            request_id: 16,
+            request: ListAllTasksRequest { ref cursor },
+            ..
+        }) if cursor.as_deref() == Some("opaque")
     ));
     assert!(matches!(
         responses[3],
-        Some(ClientResponse::DeferTask { request_id: 13, .. })
+        Some(ClientResponse::AutoSession { request_id: 12, .. })
     ));
     assert!(matches!(
         responses[4],
-        Some(ClientResponse::RecordSession { request_id: 14, .. })
+        Some(ClientResponse::DeferTask { request_id: 13, .. })
     ));
     assert!(matches!(
         responses[5],
+        Some(ClientResponse::RecordSession { request_id: 14, .. })
+    ));
+    assert!(matches!(
+        responses[6],
         Some(ClientResponse::CompleteSession { request_id: 15, .. })
     ));
     assert_eq!(
@@ -124,6 +142,7 @@ fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         [
             "bootstrap",
             "list:2026-09-05",
+            "list_all:Some(\"opaque\")",
             "auto",
             "defer:task",
             "record:task",
@@ -134,7 +153,7 @@ fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         futures::executor::block_on(execute_effect(&gateway, ClientEffect::None)),
         None
     );
-    assert_eq!(gateway.calls.borrow().len(), 6);
+    assert_eq!(gateway.calls.borrow().len(), 7);
 }
 
 #[test]

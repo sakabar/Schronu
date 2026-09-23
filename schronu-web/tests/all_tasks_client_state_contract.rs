@@ -1,13 +1,13 @@
 use schronu_web::client::state::{
-    load_client_state, AllTasksStatus, ClientEffect, ListSelection, Outcome, ServerActionInvocation,
-    ServerFailure,
+    load_client_state, AllTasksStatus, ClientEffect, ListSelection, Outcome,
+    ServerActionInvocation, ServerFailure,
 };
 use schronu_web::{
-    AllTaskPage, AllTaskRow, ListAllTasksRequest, SessionTask, WebSuccess,
+    AllTaskPage, AllTaskRow, DeferMode, DeferPlan, ListAllTasksRequest, SessionTask, WebSuccess,
 };
 
 mod client_state_support;
-use client_state_support::{snapshot, FakeStorage, TASK_ID};
+use client_state_support::{row, snapshot, FakeStorage, TASK_ID};
 
 fn all_row(segment_index: usize) -> AllTaskRow {
     AllTaskRow {
@@ -60,6 +60,7 @@ fn all一覧は全page成功まで行を公開せず順序どおりatomicに公�
     assert_eq!(first_request.cursor, None);
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Loading);
     assert_eq!(state.all_task_rows(), None);
+    assert_eq!(state.select_all_tasks(), ClientEffect::None);
 
     let follow_up = state.apply_all_tasks_result(
         first_id,
@@ -72,11 +73,7 @@ fn all一覧は全page成功まで行を公開せず順序どおりatomicに公�
     assert_eq!(state.all_task_rows(), None);
 
     assert_eq!(
-        state.apply_all_tasks_result(
-            second_id,
-            second_request,
-            Ok(page(vec![all_row(2)], None)),
-        ),
+        state.apply_all_tasks_result(second_id, second_request, Ok(page(vec![all_row(2)], None)),),
         ClientEffect::None
     );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
@@ -125,13 +122,36 @@ fn 日付選択中もall取得を継続し古いresponseは履歴だけに残す
     let date_effect = state.select_logical_date("2026-09-06");
     assert!(matches!(date_effect, ClientEffect::ListTasks { .. }));
     assert_eq!(state.list_selection(), ListSelection::Date);
-    state.apply_all_tasks_result(request_id, request.clone(), Ok(page(vec![all_row(0)], None)));
+    state.apply_all_tasks_result(
+        request_id,
+        request.clone(),
+        Ok(page(vec![all_row(0)], None)),
+    );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
     assert_eq!(state.list_selection(), ListSelection::Date);
     assert_eq!(state.select_all_tasks(), ClientEffect::None);
 
-    state.invalidate_all_tasks();
-    state.apply_all_tasks_result(request_id, request.clone(), Ok(page(vec![all_row(1)], None)));
+    let defer = state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-06",
+        DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
+    );
+    let defer_id = match defer {
+        ClientEffect::DeferTask { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    state.apply_defer_task_result(&storage, defer_id, Ok(snapshot("2026-09-05", 2)));
+    state.apply_all_tasks_result(
+        request_id,
+        request.clone(),
+        Ok(page(vec![all_row(1)], None)),
+    );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
     let history = state.history().back().unwrap();
     assert_eq!(
@@ -142,3 +162,50 @@ fn 日付選択中もall取得を継続し古いresponseは履歴だけに残す
     assert!(history.summary.contains("古い応答"));
 }
 
+#[test]
+fn local_session操作は取得済みall一覧を無効化しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let (request_id, request) = all_effect(state.select_all_tasks());
+    state.apply_all_tasks_result(request_id, request, Ok(page(vec![all_row(0)], None)));
+
+    state.add_session_from_row(&storage, &row(TASK_ID, 0));
+    assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
+    state.tick(1_000);
+    state.restart_session_without_recording(&storage, TASK_ID);
+    assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
+    state.discard_session(&storage, TASK_ID);
+    assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
+    assert_eq!(state.all_task_rows().unwrap(), [all_row(0)]);
+}
+
+#[test]
+fn mutation成功は取得中allを無効化して遅延responseを適用しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let (request_id, request) = all_effect(state.select_all_tasks());
+    let defer = state.request_defer_task(
+        &storage,
+        TASK_ID,
+        "2026-09-06",
+        DeferPlan {
+            mode: DeferMode::Normal,
+            requested_pending_until_epoch_ms: 1_000,
+            effective_pending_until_epoch_ms: None,
+            repetition_interval_days: None,
+        },
+    );
+    let defer_id = match defer {
+        ClientEffect::DeferTask { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    state.apply_defer_task_result(&storage, defer_id, Ok(snapshot("2026-09-05", 2)));
+    assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
+
+    state.apply_all_tasks_result(request_id, request, Ok(page(vec![all_row(0)], None)));
+    assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
+    assert_eq!(state.all_task_rows(), None);
+
+    let (_, retry) = all_effect(state.select_all_tasks());
+    assert_eq!(retry.cursor, None);
+}

@@ -104,7 +104,10 @@ impl DisplayError {
 pub(super) fn is_read_operation(operation: Operation) -> bool {
     matches!(
         operation,
-        Operation::Bootstrap | Operation::ListTasks | Operation::AutoSession
+        Operation::Bootstrap
+            | Operation::ListTasks
+            | Operation::ListAllTasks
+            | Operation::AutoSession
     )
 }
 

@@ -300,6 +300,7 @@ impl ClientState {
         &mut self,
         snapshot: ServerSnapshot,
     ) -> ClientEffect {
+        self.invalidate_all_tasks();
         let _ = self.apply_snapshot_metadata(snapshot);
         self.request_selected_or_current_list()
     }
@@ -314,7 +315,7 @@ impl ClientState {
         logical_date.map_or(ClientEffect::None, |date| self.request_list(&date))
     }
 
-    fn apply_snapshot_metadata(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
+    pub(super) fn apply_snapshot_metadata(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
         if self
             .read
             .snapshot
@@ -336,7 +337,7 @@ impl ClientState {
         Some(changed)
     }
 
-    fn allocate_read_request_id(&mut self) -> Option<u64> {
+    pub(super) fn allocate_read_request_id(&mut self) -> Option<u64> {
         let request_id = self.read.next_request_id;
         self.read.next_request_id = request_id.checked_add(1)?;
         Some(request_id)

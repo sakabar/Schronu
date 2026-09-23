@@ -14,6 +14,10 @@ pub(crate) enum ComponentAction {
         wall_now_epoch_ms: i64,
     },
     SelectDate(String),
+    #[allow(dead_code)]
+    SelectAllTasks,
+    #[allow(dead_code)]
+    RetryAllTasks,
     AutoSession,
     AddSession {
         task: SessionTask,
@@ -354,15 +358,17 @@ impl ComponentOrchestrator {
     }
 
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
-        matches!(
-            (self.refresh_state, effect),
-            (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
-                if expected == *request_id
-        ) || matches!(
-            (self.refresh_state, effect),
-            (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
-                if expected == *request_id
-        )
+        matches!(effect, ClientEffect::ListAllTasks { .. })
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
+                    if expected == *request_id
+            )
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
+                    if expected == *request_id
+            )
     }
 
     fn persist_view_state<S: KeyValueStorage>(&mut self, storage: &S) {
@@ -442,7 +448,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::RetryRefresh => ClientEffect::None,
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
-        ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
+        ComponentAction::SelectDate(logical_date) => state.select_logical_date(&logical_date),
+        ComponentAction::SelectAllTasks => state.select_all_tasks(),
+        ComponentAction::RetryAllTasks => state.retry_all_tasks(),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::DeferTask {
             task_id,
