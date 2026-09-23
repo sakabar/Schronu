@@ -655,6 +655,7 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         "grid-template-areas: \"action schedule deadline task\";",
         ".task-row {\n    min-height: 32px;",
         ".task-row:not(:last-child) {\n    border-bottom: 1px solid var(--line);",
+        ".task-row:has(+ .task-row.has-logical-date-boundary) {\n    border-bottom: 0;",
         ".task-row.has-logical-date-boundary {\n    border-top: 2px solid var(--muted);",
         ".task-gap-row {\n    display: block;\n    min-height: 32px;",
         ".task-table .task-gap-row td {\n    display: flex;\n    min-height: 32px;\n    align-items: center;\n    justify-content: center;",
