@@ -22,7 +22,7 @@ Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml
 
 ### schronu-web
 
-`schronu-web`は、複数の作業セッションと8 logical dates分のtask一覧を扱うDioxus fullstack applicationです。Web UIのセッションはSchronu本体のcurrent taskとは独立しており、複数taskのtimerを同時に進められます。セッションと1日のbufferはbrowser内で1秒ごとに再計算し、このtickだけではserver通信を行いません。
+`schronu-web`は、複数の作業セッション、8 logical dates分の日付別task一覧、全schedule segmentのオンデマンド一覧を扱うDioxus fullstack applicationです。Web UIのセッションはSchronu本体のcurrent taskとは独立しており、複数taskのtimerを同時に進められます。セッションと1日のbufferはbrowser内で1秒ごとに再計算し、このtickだけではserver通信を行いません。
 
 開発環境にはDioxus CLI 0.7.10とWASM targetが必要です。
 
@@ -50,9 +50,15 @@ rm -rf target/dx/schronu-web
 
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
-初回表示ではlogical date、buffer、日付選択肢を取得します。前回表示がlocalStorageにあれば、直前の1日分の一覧、選択tab、検索文字列、日付入力と作業中セッションを先に復元し、背景で最新状態を確認します。保存一覧は確認に失敗しても消さず、保存日付の`list_tasks`が成功した時だけresponse全体で置換します。古いversionや不正な保存表示は破棄し、`bootstrap`後に現在logical dateの一覧を新規取得します。保存表示がない場合も通常shellを表示し、睡眠時間と一覧を未取得として扱います。セッション画面の睡眠時間は、Web表示用の基準睡眠時間420分へ現在のbufferを加えた値です。bufferが負なら、加算後の睡眠時間が正でも赤く表示します。以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、自動セッションを選定するとき、一覧からtaskを先送りするとき、セッションを解除するとき、taskを完了するときだけです。先送りまたは4種類のセッション終了操作が成功すると、選択中の日付のtask一覧を続けて取得します。tab切替、timer更新、一覧からのセッション追加と追加成功後のセッションtabへの切替、先送りの確認とキャンセル、「計測を破棄して再開」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても保存一覧を先に消しません。
+初回表示ではlogical date、buffer、日付選択肢を取得します。前回表示がlocalStorageにあれば、直前の1日分の一覧、選択tab、日付別検索文字列、日付入力と作業中セッションを先に復元し、背景で最新状態を確認します。保存一覧は確認に失敗しても消さず、保存日付の`list_tasks`が成功した時だけresponse全体で置換します。「全て」の選択、取得結果、取得状態、検索文字列は保存せず、reload後は保存済みの日付別選択へ戻ります。古いversionや不正な保存表示は破棄し、`bootstrap`後に現在logical dateの一覧を新規取得します。保存表示がない場合も通常shellを表示し、睡眠時間と一覧を未取得として扱います。セッション画面の睡眠時間は、Web表示用の基準睡眠時間420分へ現在のbufferを加えた値です。bufferが負なら、加算後の睡眠時間が正でも赤く表示します。
 
-利用者が開始したserver通信では、responseを待つ間は画面全体に「通信中…」とスピナーを表示し、背面の操作を無効にします。reload直後の背景更新では全面overlayを出さず、tab切替、検索・日付入力、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロックなどlocalだけの操作を利用できます。日付取得、自動セッション、先送り、記録・完了・競合再送、および一覧再取得を伴う「計測を破棄して解除」は最新確認が終わるまで無効です。
+一覧tabでは8日分の日付buttonの先頭に「全て」を表示します。「全て」を初めて選択した時と、task更新で無効化された後に選択した時だけ全件取得を開始します。`get_schedule`の全segmentを500行単位で取得して一時bufferへ連結し、全pageが成功した時だけ検索欄とtableを公開します。取得中、失敗、無効化は一覧内へ表示し、失敗時の「再試行」はcursorなしの先頭pageから取得し直します。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得を継続します。
+
+日付別と全件の検索は、前後空白を除いたUnicode小文字化によるtask名の部分一致です。全件検索はmemory内だけに保持し、日付別との往復と無効化後も維持しますが、reloadでは空に戻ります。全件一覧は検索後の先頭500行を表示し、「さらに表示」で500行ずつ増やします。検索条件を変更またはclearすると表示上限を500行へ戻します。「全て」の表示中も日付入力を使用でき、妥当な日付を送信すると日付別一覧へ切り替わります。
+
+以後server通信が起きるのは、日付を選んでtask一覧を取得するとき、「全て」のpageを取得するとき、自動セッションを選定するとき、一覧からtaskを先送りするとき、セッションを解除するとき、taskを完了するときだけです。先送りまたは4種類のセッション終了操作が成功すると、選択中の日付のtask一覧を続けて取得します。tab切替、timer更新、日付別・全件検索、「さらに表示」、一覧からのセッション追加と追加成功後のセッションtabへの切替、先送りの確認とキャンセル、「計測を破棄して再開」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても保存一覧を先に消しません。
+
+利用者が開始したserver通信では、responseを待つ間は画面全体に「通信中…」とスピナーを表示し、背面の操作を無効にします。ただし「全て」のpage取得は全面overlayの対象外で、一覧内の進捗だけを表示します。reload直後の背景更新でも全面overlayを出さず、tab切替、検索・日付入力、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロックなどlocalだけの操作を利用できます。日付取得、自動セッション、先送り、記録・完了・競合再送、および一覧再取得を伴う「計測を破棄して解除」は最新確認が終わるまで無効です。
 
 作業中のセッションは`schronu_web.work_sessions.v1`、表示状態は`schronu_web.view_state.v1`、変更系requestの送信中を示す安全状態は`schronu_web.mutation_safety.v1`としてlocalStorageへ分離保存します。reload後は保存した開始時刻を基準にtimerを復元します。先送り、記録または完了のresponseを確定できないままreloadした場合、二重適用を避けるため変更系操作を停止します。repositoryの状態を別の手段で確認してから、画面の確認操作で停止を解除してください。
 
@@ -64,7 +70,11 @@ rm -rf target/dx/schronu-web
 - `計測を破棄して完了`: カード内の確認後、セッションの経過秒を加算せず、確定click時刻を完了時刻としてtaskを完了してから、セッションを削除する。
 - `記録して完了`: click時刻で計測を停止し、それまでの完了済み整数秒を加算して、click時刻でtaskを完了してからセッションを削除する。
 
-一覧のleaf taskには「セッション」と「先送り」を表示します。46rem以下では「＋/✓」と「→」で表示します。先送り先は、表示日と現在のlogical dateの遅い方から数えた翌日06:00です。serverがdeadline余裕を判定し、余裕があれば1tapでCLIの`d`相当を実行します。余裕がない通常taskは実際の期限上限を確認してからそこまでPendingにし、余裕がないルーチンtaskは反復日数を確認してからCLIの`W`相当で次周期へ移動します。期限上限は既存方針の`deadline - 見積時間 - 5分`であり、実施済み時間を考慮する修正はTD-043として分離しています。実行直前にmode、希望日時、実効日時、反復日数のいずれかが変わっていた場合は保存せず、選択中の一覧を再取得します。実行中セッションと同じtaskは先送りできません。成功後は同じtaskの全segmentを除去して一覧を再取得し、検索と日付入力は維持します。
+日付別一覧のleaf taskには「セッション」と「先送り」を表示します。46rem以下では「＋/✓」と「→」で表示します。全件一覧のleaf taskには「セッション」だけを表示し、先送りは表示しません。どちらも親taskの操作欄は空にし、同一taskのセッションが存在する場合は、そのUUIDを持つ全segmentを追加済みとして表示します。全件一覧からセッションを追加できた場合は全件検索だけを消去し、日付別検索は維持します。日付別一覧から追加した場合は日付別検索だけを消去します。
+
+日付別一覧の先送り先は、表示日と現在のlogical dateの遅い方から数えた翌日06:00です。serverがdeadline余裕を判定し、余裕があれば1tapでCLIの`d`相当を実行します。余裕がない通常taskは実際の期限上限を確認してからそこまでPendingにし、余裕がないルーチンtaskは反復日数を確認してからCLIの`W`相当で次周期へ移動します。期限上限は既存方針の`deadline - 見積時間 - 5分`であり、実施済み時間を考慮する修正はTD-043として分離しています。実行直前にmode、希望日時、実効日時、反復日数のいずれかが変わっていた場合は保存せず、選択中の一覧を再取得します。実行中セッションと同じtaskは先送りできません。成功後は同じtaskの全segmentを除去して一覧を再取得し、検索と日付入力は維持します。
+
+先送り、記録、完了が成功すると、取得中または取得済みの全件一覧を無効化し、遅れて届いた全件responseで古い一覧を復活させません。localだけのセッション追加、「計測を破棄して解除」、「計測を破棄して再開」では全件一覧を無効化しません。
 
 先送りは記録・完了と同じmutation safetyの対象です。通信結果からrepositoryへの反映有無を確定できない場合は自動再送せず、repositoryの手動確認を求めます。
 
@@ -342,7 +352,7 @@ write toolの保存に失敗すると、memory上のrepositoryとfileの状態�
 
 ### CLI・MCP・Webの排他lock
 
-CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、repository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。Web serverはbootstrap、task一覧取得、自動セッション選定、実績記録、task完了の各操作でlockを取得します。読み取り操作はresponse構築後、変更操作はtransaction保存後にlockを解放します。各processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`、`mcp`、`web`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
+CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lockを取得します。CLIは起動時、60秒ごとの再描画、command実行時だけlockを取得します。command実行時はrepository cacheの確認、command実行、saveまで保持してから解放し、成功したcommandは即時保存します。MCP serverは`tools/call`ごとにlockを取得し、直前の操作からの短時間なlock引継ぎは最大100ms待機します。100msを超えて競合が続く場合は従来どおり`repository_lock_contended`を返します。取得後はrepository cacheの確認、tool実行、必要ならsave、response構築まで保持してから解放します。Web serverはbootstrap、task一覧取得、自動セッション選定、実績記録、task完了の各操作でlockを取得します。読み取り操作はresponse構築後、変更操作はtransaction保存後にlockを解放します。各processはidle中に共存でき、storage操作だけが直列化されます。`.lock`には`pid`、`started_at`、`mode`(`cli`、`mcp`、`web`)が記録され、`started_at`はそのstorage操作がlockを取得した時刻です。
 
 新規projectのdirectory名は`YYYYMMDD-{project名}-{root UUID}`形式です。project名部分は可読性のための補助情報であり、URL以降の除去、`/`から`-`への置換、filesystemのcomponent長に収めるためのUTF-8境界での短縮を行います。一意なidentityには省略しないhyphenated形式のroot UUIDを使用するため、同日・同名や変換後に同名となるprojectも別directoryへ保存されます。従来の`YYYYMMDD-{project名}`形式もそのまま読み込み、既存directoryを新形式へ自動renameしません。
 
@@ -350,7 +360,7 @@ CLI、MCP server、Web serverは保存先直下の`.lock`へ同じOS advisory lo
 
 各processは起動後の最初のstorage操作では必ずtransaction recoveryを行ってから全projectをloadします。reload時もrevision判定より前にrecoveryを行います。commit markerがない未完transactionは、live targetが未変更のためstagingを破棄して旧snapshotを維持します。markerがあるtransactionはcommit済みとし、project適用の途中や`.revision`更新の前後でprocessが終了していても、manifestに従って常に新snapshotへidempotentにroll-forwardし、最後に`.revision`を対応値へ揃えます。write対象の長さとchecksumはimmutable manifestへ記録され、recoveryは全entryについてlive targetまたはstaged fileの内容を照合してからlive targetを変更します。既に正しい内容のlive targetは適用済みとして扱い、対応するstaged fileが欠落していても残りのentryをroll-forwardできます。2回目以降はrecovery後の`.revision`が前回値と一致すればmemory上のtask treeを再利用し、現在時刻へのclock同期だけを行います。他processが保存して`.revision`が変わった場合は、次のCLI command、MCP `tools/call`、またはCLIの60秒ごとの再描画で全projectを1回loadし直します。稼働中の`project.yaml`直接編集は`.revision`を更新しないため検出対象外です。
 
-CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力とEnterを押した時点のカーソル位置を保持するため、競合解消後にEnterで再試行できます。この入力状態の保持は、load失敗を含む全Submit Retryに適用します。MCP callは競合時に待機せず`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
+CLIはlock競合時に最大1秒、10ms間隔で取得を再試行します。timeoutしたcommandは実行も保存もせず、入力とEnterを押した時点のカーソル位置を保持するため、競合解消後にEnterで再試行できます。この入力状態の保持は、load失敗を含む全Submit Retryに適用します。MCP callはlockの引継ぎを最大100ms待機し、それでも競合が続く場合は`repository_lock_contended`と`recovery: "retry"`を返します。競合中のstorage操作が終わった後に再試行してください。`.lock` fileはprocess終了後も残りますが、fileの存在だけではlock中を意味しません。OS lockを取得できるかどうかで、実際のlock状態を判定します。取得成功時にmetadataは上書きされます。
 
 CLIのCtrl-Cは未送信の入力だけを破棄します。既に成功したcommandは保存済みであり、session全体をrollbackしません。CLI commandのsaveに失敗した場合は、memoryとfileの状態が一致している保証がないためCLIを終了します。保存先を確認・修復してからCLIを再起動してください。
 
