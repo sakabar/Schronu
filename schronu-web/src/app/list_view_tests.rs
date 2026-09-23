@@ -229,6 +229,7 @@ fn named_row(
         task: task(task_id, task_name),
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
+        gap_before: None,
         misses_deadline,
         is_leaf,
         defer_plan: Some(crate::DeferPlan {
@@ -239,6 +240,33 @@ fn named_row(
         }),
         defer_confirmation: None,
     }
+}
+
+#[test]
+fn 空き時間行は4列を結合し検索中は表示しない() {
+    let mut gap_row = row("gap", false, true);
+    gap_row.gap_before = Some("15分間の空き時間".to_owned());
+    let render = |filter_text: &str| {
+        let (dom, _) = build(RootProps {
+            dates: Vec::new(),
+            rows: vec![gap_row.clone()],
+            active_task_ids: Vec::new(),
+            filter_text: filter_text.to_owned(),
+            events: Arc::new(Mutex::new(Vec::new())),
+        });
+        dioxus::ssr::render(&dom)
+    };
+
+    let unfiltered = render("");
+    assert!(
+        unfiltered.contains("class=\"task-gap-row\""),
+        "{unfiltered}"
+    );
+    assert!(unfiltered.contains("colspan=\"4\""), "{unfiltered}");
+    assert!(unfiltered.contains("15分間の空き時間"), "{unfiltered}");
+
+    let filtered = render("task");
+    assert!(!filtered.contains("task-gap-row"), "{filtered}");
 }
 
 fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
@@ -592,6 +620,8 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         "grid-template-areas: \"action schedule deadline task\";",
         ".task-row {\n    min-height: 32px;",
         ".task-row:not(:last-child) {\n    border-bottom: 1px solid var(--line);",
+        ".task-gap-row {\n    display: block;\n    min-height: 32px;",
+        ".task-table .task-gap-row td {\n    display: flex;\n    min-height: 32px;\n    align-items: center;\n    justify-content: center;",
         ".task-table td {\n    display: flex;\n    min-width: 0;\n    align-items: center;\n    padding: 0.125rem 0.35rem;",
         ".task-table .session-cell {\n    padding: 0;",
         ".deadline,\n.schedule-time {\n    font-size: 0.68rem;",

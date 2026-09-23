@@ -138,6 +138,69 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
 }
 
 #[test]
+fn 日付別listは今日の現在時刻とtask間の1分以上の空きを表示する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", START_EPOCH_MS)));
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+
+    let mut first = session_row();
+    first.schedule_start_epoch_ms = START_EPOCH_MS + 90_000;
+    first.schedule_end_epoch_ms = START_EPOCH_MS + 10 * 60_000;
+    let mut overlapping = session_row();
+    overlapping.task.task_id = OTHER_TASK_ID.to_owned();
+    overlapping.schedule_start_epoch_ms = START_EPOCH_MS + 9 * 60_000;
+    overlapping.schedule_end_epoch_ms = START_EPOCH_MS + 20 * 60_000;
+    let mut next = session_row();
+    next.task.task_id = "33333333-3333-3333-3333-333333333333".to_owned();
+    next.schedule_start_epoch_ms = START_EPOCH_MS + 21 * 60_000 + 59_000;
+    next.schedule_end_epoch_ms = START_EPOCH_MS + 30 * 60_000;
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+            data: vec![first, overlapping, next],
+        }),
+    );
+
+    let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
+    assert_eq!(rows[0].gap_before.as_deref(), Some("1分間の空き時間"));
+    assert_eq!(rows[1].gap_before, None);
+    assert_eq!(rows[2].gap_before.as_deref(), Some("1分間の空き時間"));
+}
+
+#[test]
+fn 日付別listは今日以外の先頭と1分未満の空きを表示しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", START_EPOCH_MS)));
+    let (request_id, request) = list_effect(state.request_list("2026-09-06"));
+
+    let mut first = session_row();
+    first.schedule_start_epoch_ms = START_EPOCH_MS + 24 * 60 * 60_000;
+    first.schedule_end_epoch_ms = first.schedule_start_epoch_ms + 10 * 60_000;
+    let mut next = session_row();
+    next.task.task_id = OTHER_TASK_ID.to_owned();
+    next.schedule_start_epoch_ms = first.schedule_end_epoch_ms + 59_999;
+    next.schedule_end_epoch_ms = next.schedule_start_epoch_ms + 10 * 60_000;
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+            data: vec![first, next],
+        }),
+    );
+
+    let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
+    assert_eq!(rows[0].gap_before, None);
+    assert_eq!(rows[1].gap_before, None);
+}
+
+#[test]
 fn invalid_epochとoffsetはplaceholderへ安全に退避する() {
     assert_eq!(format_local_hh_mm(i64::MAX, JST_OFFSET_MINUTES), "--:--");
     assert_eq!(format_local_hh_mm(START_EPOCH_MS, i32::MAX), "--:--");

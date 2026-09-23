@@ -583,6 +583,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。日付別検索だけをview stateとしてlocalStorageへ保存し、全件検索は保存しない。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - rowは締切、予定`HH:MM-HH:MM`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。ARIA labelはtask名とセッション追加操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
+- 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
@@ -591,12 +592,15 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
+- 全件一覧はserver順の隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。同日、翌日、不正日付、非昇順では表示しない。空き行はtask行の500件表示上限、cursor、`segment_index`に含めない。
+- 日付別・全件ともtrim後のtask名検索文字列が空でない間は空き行を描画せず、検索解除後に取得済み行のprojectionから再表示する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
 - 全幅でheaderとrowを操作、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。table全体の横スクロールを解除し、viewport幅にかかわらず`88px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
 - 全件一覧は`all-task-table` modifierを付け、viewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`の4列gridにする。320px、360px、46rem、1024pxの各幅でこの列幅と日付別の既存列幅を維持する。
 - rowは全幅で32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0で幅44px・高さ32pxの「＋/✓」と「→」を並べ、rank非0で空cellとする。
+- 空き時間行は4列を結合した32px以上の非操作rowとし、muted背景と中央寄せ文言だけを持たせる。task操作、締切、予定、task名、event listenerは生成しない。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、既存formatを省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
 ### 7.4 操作結果
@@ -794,6 +798,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
+- 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、500/501件境界を確認する。両一覧で検索中の空き行非表示とclear後の再表示、4列結合、非操作性をcomponent・CSS contract testで固定する。
 - 日付別一覧、選択tab、日付別検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。「全て」は日付別へ戻り、全件行と全件検索が復元されないことも確認する。
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化と更新、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 全件検索の前後空白、Unicode小文字化、部分一致、空検索、日付別検索との独立、日付往復・無効化後の保持、reload時の消去を確認する。検索変更で描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。

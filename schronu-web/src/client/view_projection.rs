@@ -35,6 +35,7 @@ pub struct ListRowViewModel {
     pub task: SessionTask,
     pub deadline_label: String,
     pub schedule_label: String,
+    pub gap_before: Option<String>,
     pub misses_deadline: bool,
     pub is_leaf: bool,
     pub defer_plan: Option<DeferPlan>,
@@ -71,7 +72,7 @@ pub fn project_list_rows(state: &ClientState, utc_offset_minutes: i32) -> Vec<Li
 }
 
 pub fn project_all_task_rows(rows: &[AllTaskRow]) -> Vec<ListRowViewModel> {
-    rows.iter().map(project_all_task_row).collect()
+    project_visible_all_task_rows(rows, "", usize::MAX).rows
 }
 
 pub fn project_visible_all_task_rows(
@@ -79,17 +80,33 @@ pub fn project_visible_all_task_rows(
     filter: &str,
     visible_limit: usize,
 ) -> VisibleAllTaskRows {
-    let mut matching_rows = rows
-        .iter()
-        .filter(|row| task_name_matches(filter, &row.task.task_name));
-    let rows = matching_rows
-        .by_ref()
-        .take(visible_limit)
-        .map(project_all_task_row)
-        .collect();
+    let show_gaps = filter.trim().is_empty();
+    let mut previous_date = None;
+    let mut projected_rows = Vec::with_capacity(visible_limit.min(rows.len()));
+    let mut has_more = false;
+    for row in rows {
+        let current_date = NaiveDate::parse_from_str(&row.schedule_date, "%Y-%m-%d").ok();
+        let gap_before = show_gaps
+            .then(|| date_gap_label(previous_date, current_date))
+            .flatten();
+        previous_date = current_date.map(|date| {
+            previous_date
+                .map(|previous| previous.max(date))
+                .unwrap_or(date)
+        });
+
+        if !task_name_matches(filter, &row.task.task_name) {
+            continue;
+        }
+        if projected_rows.len() == visible_limit {
+            has_more = true;
+            break;
+        }
+        projected_rows.push(project_all_task_row(row, gap_before));
+    }
     VisibleAllTaskRows {
-        rows,
-        has_more: matching_rows.next().is_some(),
+        rows: projected_rows,
+        has_more,
     }
 }
 
@@ -98,12 +115,13 @@ pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
     normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
 }
 
-fn project_all_task_row(row: &AllTaskRow) -> ListRowViewModel {
+fn project_all_task_row(row: &AllTaskRow, gap_before: Option<String>) -> ListRowViewModel {
     ListRowViewModel {
         row_key: format!("all:{}", row.segment_index),
         task: row.task.clone(),
         deadline_label: row.deadline_label.clone(),
         schedule_label: all_task_schedule_label(&row.schedule_date),
+        gap_before,
         misses_deadline: row.misses_deadline,
         is_leaf: row.is_leaf,
         defer_plan: None,
@@ -205,10 +223,22 @@ fn project_list_rows_with(
     state: &ClientState,
     offset_at: impl Fn(i64) -> Option<i32>,
 ) -> Vec<ListRowViewModel> {
+    let mut display_cursor_epoch_ms = match (state.selected_logical_date(), state.snapshot()) {
+        (Some(selected_date), Some(snapshot)) if selected_date == snapshot.logical_date => {
+            Some(snapshot.observed_at_epoch_ms)
+        }
+        _ => None,
+    };
     state
         .scheduled_rows()
         .iter()
         .map(|row| {
+            let gap_before = minute_gap_label(display_cursor_epoch_ms, row.schedule_start_epoch_ms);
+            display_cursor_epoch_ms = Some(
+                display_cursor_epoch_ms
+                    .map(|cursor| cursor.max(row.schedule_end_epoch_ms))
+                    .unwrap_or(row.schedule_end_epoch_ms),
+            );
             let defer_confirmation = match row.defer_plan.mode {
                 DeferMode::Normal => None,
                 DeferMode::DeadlineLimited => Some(DeferConfirmationViewModel {
@@ -243,6 +273,7 @@ fn project_list_rows_with(
                     format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
                     format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
                 ),
+                gap_before,
                 misses_deadline: row.misses_deadline,
                 is_leaf: row.is_leaf,
                 defer_plan: Some(row.defer_plan.clone()),
@@ -250,6 +281,24 @@ fn project_list_rows_with(
             }
         })
         .collect()
+}
+
+fn minute_gap_label(cursor_epoch_ms: Option<i64>, next_start_epoch_ms: i64) -> Option<String> {
+    let gap_minutes = next_start_epoch_ms
+        .checked_sub(cursor_epoch_ms?)?
+        .checked_div(60_000)?;
+    (gap_minutes > 0).then(|| format!("{gap_minutes}分間の空き時間"))
+}
+
+fn date_gap_label(
+    previous_date: Option<NaiveDate>,
+    current_date: Option<NaiveDate>,
+) -> Option<String> {
+    let gap_days = current_date?
+        .signed_duration_since(previous_date?)
+        .num_days()
+        - 1;
+    (gap_days > 0).then(|| format!("{gap_days}日間の空き時間"))
 }
 
 fn all_task_schedule_label(schedule_date: &str) -> String {
