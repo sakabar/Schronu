@@ -13,8 +13,8 @@ mod all_tasks_performance_tests;
 
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
-    SessionTaskDto, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows,
@@ -79,7 +79,8 @@ impl WebService {
         let (snapshot, rows) =
             self.run_at(operation_now, |repository, free_time_manager, offset| {
                 let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
-                let rows = build_all_task_rows(&schedule, repository.get_last_synced_time())?;
+                let rows =
+                    build_all_task_rows(repository, &schedule, repository.get_last_synced_time())?;
                 let snapshot = build_server_snapshot_from_schedule(
                     repository,
                     free_time_manager,

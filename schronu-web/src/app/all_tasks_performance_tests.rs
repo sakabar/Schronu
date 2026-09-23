@@ -102,6 +102,8 @@ fn all_task_rows(count: usize) -> Vec<AllTaskRow> {
             deadline_epoch_ms: None,
             deadline_label: "____-01:00".to_owned(),
             misses_deadline: false,
+            task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+            deadline_display_kind: crate::DeadlineDisplayKind::None,
             is_leaf: index % 7 != 0,
         })
         .collect()

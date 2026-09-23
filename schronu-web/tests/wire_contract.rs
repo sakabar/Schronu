@@ -1,8 +1,8 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
-    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -27,6 +27,8 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         deadline_epoch_ms: Some(1_788_566_400_000),
         deadline_label: "____-00:05".to_owned(),
         misses_deadline: false,
+        task_display_kind: TaskDisplayKind::Fixed,
+        deadline_display_kind: DeadlineDisplayKind::Future,
         is_leaf: true,
         defer_plan: DeferPlan {
             mode: DeferMode::DeadlineLimited,
@@ -88,6 +90,8 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                     deadline_epoch_ms: None,
                     deadline_label: "____/__/__".to_owned(),
                     misses_deadline: false,
+                    task_display_kind: TaskDisplayKind::NonRepetitive,
+                    deadline_display_kind: DeadlineDisplayKind::None,
                     is_leaf: true,
                 }],
                 next_cursor: None,
@@ -112,6 +116,8 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                     "deadline_epoch_ms": null,
                     "deadline_label": "____/__/__",
                     "misses_deadline": false,
+                    "task_display_kind": "non_repetitive",
+                    "deadline_display_kind": "none",
                     "is_leaf": true
                 }],
                 "next_cursor": null
@@ -141,6 +147,8 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                 "deadline_epoch_ms": 1_788_566_400_000_i64,
                 "deadline_label": "____-00:05",
                 "misses_deadline": false,
+                "task_display_kind": "fixed",
+                "deadline_display_kind": "future",
                 "is_leaf": true,
                 "defer_plan": {
                     "mode": "deadline_limited",
@@ -227,6 +235,32 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
             "buffer_seconds": -61
         }),
     );
+}
+
+#[test]
+fn 旧一覧payloadは表示分類fieldがなくてもdeserializeできる() {
+    let scheduled: ScheduledTaskRow = serde_json::from_value(json!({
+        "task": {
+            "task_id": "00000000-0000-0000-0000-000000000001",
+            "task_name": "legacy",
+            "estimated_work_seconds": 1,
+            "actual_work_seconds": 0
+        },
+        "schedule_start_epoch_ms": 1,
+        "schedule_end_epoch_ms": 2,
+        "deadline_epoch_ms": 1,
+        "deadline_label": "+00:01____",
+        "misses_deadline": true,
+        "is_leaf": true,
+        "defer_plan": {
+            "mode": "normal",
+            "requested_pending_until_epoch_ms": 3
+        }
+    }))
+    .unwrap();
+    assert_eq!(scheduled.task_display_kind, TaskDisplayKind::NonRepetitive);
+    assert_eq!(scheduled.deadline_display_kind, DeadlineDisplayKind::None);
+    assert!(scheduled.misses_deadline);
 }
 
 #[test]

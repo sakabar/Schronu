@@ -17,6 +17,25 @@ pub struct SessionTask {
     pub actual_work_seconds: i64,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskDisplayKind {
+    Fixed,
+    Repetitive,
+    #[default]
+    NonRepetitive,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeadlineDisplayKind {
+    #[default]
+    None,
+    Overrun,
+    Today,
+    Future,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskRow {
     pub task: SessionTask,
@@ -25,6 +44,10 @@ pub struct ScheduledTaskRow {
     pub deadline_epoch_ms: Option<i64>,
     pub deadline_label: String,
     pub misses_deadline: bool,
+    #[serde(default)]
+    pub task_display_kind: TaskDisplayKind,
+    #[serde(default)]
+    pub deadline_display_kind: DeadlineDisplayKind,
     pub is_leaf: bool,
     pub defer_plan: DeferPlan,
 }
@@ -37,6 +60,10 @@ pub struct AllTaskRow {
     pub deadline_epoch_ms: Option<i64>,
     pub deadline_label: String,
     pub misses_deadline: bool,
+    #[serde(default)]
+    pub task_display_kind: TaskDisplayKind,
+    #[serde(default)]
+    pub deadline_display_kind: DeadlineDisplayKind,
     pub is_leaf: bool,
 }
 
@@ -108,6 +135,8 @@ mod all_task_contract_tests {
             deadline_epoch_ms: None,
             deadline_label: "____/__/__".to_owned(),
             misses_deadline: false,
+            task_display_kind: TaskDisplayKind::NonRepetitive,
+            deadline_display_kind: DeadlineDisplayKind::None,
             is_leaf: true,
         };
         let page = AllTaskPage {

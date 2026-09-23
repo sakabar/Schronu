@@ -42,6 +42,8 @@ fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) 
         deadline_epoch_ms: Some(1_000),
         deadline_label: "2026-09-06 07:00".to_owned(),
         misses_deadline: false,
+        task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: crate::DeadlineDisplayKind::Future,
         is_leaf,
     }
 }
@@ -252,16 +254,43 @@ fn allからsession追加成功した時だけall検索をclearする() {
 fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     use crate::client::view_projection::project_all_task_rows;
 
-    let rows = project_all_task_rows(&[
-        all_row(12, "same", "設計", true),
-        all_row(13, "same", "設計", true),
-        all_row(14, "parent", "親", false),
-    ]);
+    let mut fixed = all_row(12, "same", "設計", true);
+    fixed.task_display_kind = crate::TaskDisplayKind::Fixed;
+    fixed.deadline_display_kind = crate::DeadlineDisplayKind::Today;
+    let mut repetitive = all_row(13, "same", "設計", true);
+    repetitive.task_display_kind = crate::TaskDisplayKind::Repetitive;
+    repetitive.deadline_display_kind = crate::DeadlineDisplayKind::Future;
+    let mut parent = all_row(14, "parent", "親", false);
+    parent.misses_deadline = true;
+    parent.deadline_display_kind = crate::DeadlineDisplayKind::None;
+    let rows = project_all_task_rows(&[fixed, repetitive, parent]);
     assert_eq!(rows[0].row_key, "all:12");
     assert_eq!(rows[0].schedule_label, "2026/09/06(日)");
     assert!(rows[0].defer_plan.is_none());
     assert_eq!(rows[1].row_key, "all:13");
     assert!(!rows[2].is_leaf);
+    assert_eq!(rows[0].task_display_kind, crate::TaskDisplayKind::Fixed);
+    assert_eq!(
+        rows[0].deadline_display_kind,
+        crate::DeadlineDisplayKind::Today
+    );
+    assert_eq!(
+        rows[1].task_display_kind,
+        crate::TaskDisplayKind::Repetitive
+    );
+    assert_eq!(
+        rows[1].deadline_display_kind,
+        crate::DeadlineDisplayKind::Future
+    );
+    assert_eq!(
+        rows[2].task_display_kind,
+        crate::TaskDisplayKind::NonRepetitive
+    );
+    assert!(rows[2].misses_deadline);
+    assert_eq!(
+        rows[2].deadline_display_kind,
+        crate::DeadlineDisplayKind::None
+    );
 }
 
 #[test]

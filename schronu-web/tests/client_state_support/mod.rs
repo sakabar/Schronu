@@ -112,6 +112,8 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: schronu_web::DeferPlan {
             mode: schronu_web::DeferMode::Normal,
