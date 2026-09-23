@@ -286,9 +286,10 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
         rows[2].task_display_kind,
         crate::TaskDisplayKind::NonRepetitive
     );
+    assert!(rows[2].misses_deadline);
     assert_eq!(
         rows[2].deadline_display_kind,
-        crate::DeadlineDisplayKind::Overrun
+        crate::DeadlineDisplayKind::None
     );
 }
 

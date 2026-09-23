@@ -108,10 +108,7 @@ fn project_all_task_row(row: &AllTaskRow) -> ListRowViewModel {
         schedule_label: all_task_schedule_label(&row.schedule_date),
         misses_deadline: row.misses_deadline,
         task_display_kind: row.task_display_kind,
-        deadline_display_kind: effective_deadline_display_kind(
-            row.deadline_display_kind,
-            row.misses_deadline,
-        ),
+        deadline_display_kind: row.deadline_display_kind,
         is_leaf: row.is_leaf,
         defer_plan: None,
         defer_confirmation: None,
