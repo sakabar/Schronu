@@ -7,6 +7,10 @@ mod model;
 #[path = "web_service/read_model.rs"]
 mod read_model;
 
+#[cfg(test)]
+#[path = "all_tasks_performance_tests.rs"]
+mod all_tasks_performance_tests;
+
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
     AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,

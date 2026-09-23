@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod all_tasks_performance_tests;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod carry_lock_view;
 #[cfg(test)]
