@@ -291,6 +291,7 @@ fn all一覧は先頭buttonとinline状態を表示する() {
     let all_position = html.find("全て").unwrap();
     let today_position = html.find("土 今日").unwrap();
     assert!(all_position < today_position, "{html}");
+    assert_eq!(html.matches("aria-pressed=true").count(), 1, "{html}");
     assert!(html.contains("全てのタスクを取得中です。"), "{html}");
     assert!(html.contains("class=\"date-jump-form\""), "{html}");
     assert!(!html.contains("class=\"task-name-filter\""), "{html}");

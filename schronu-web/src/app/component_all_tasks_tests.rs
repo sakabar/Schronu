@@ -187,6 +187,23 @@ fn all検索変更は表示上限を500へ戻す() {
 }
 
 #[test]
+fn all選択中は製品orchestratorの全日付buttonを非選択にする() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let _ = orchestrator.mount(&storage, 0);
+    let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
+
+    assert_eq!(
+        orchestrator.state().unwrap().list_selection(),
+        ListSelection::All
+    );
+    assert!(orchestrator
+        .date_button_models()
+        .iter()
+        .all(|date| !date.selected));
+}
+
+#[test]
 fn allからsession追加成功した時だけall検索をclearする() {
     let storage = MemoryStorage::default();
     let mut orchestrator = ComponentOrchestrator::new();

@@ -72,6 +72,15 @@ pub fn ListView(
     } else {
         "task-table"
     };
+    let dates = dates
+        .into_iter()
+        .map(|mut date| {
+            if all_selected {
+                date.selected = false;
+            }
+            date
+        })
+        .collect::<Vec<_>>();
 
     rsx! {
         section { class: "task-list-view",

@@ -1,4 +1,5 @@
 use super::carry_lock_view::CarryLockViewModel;
+use super::component_runtime::project_date_button_models;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection, Outcome};
@@ -73,15 +74,7 @@ impl BrowserPageModel {
                 .iter()
                 .map(|session| session.task_id.clone())
                 .collect(),
-            dates: state
-                .date_buttons()
-                .iter()
-                .map(|date| DateButtonViewModel {
-                    logical_date: date.logical_date.clone(),
-                    label: date.label.clone(),
-                    selected: state.selected_logical_date() == Some(date.logical_date.as_str()),
-                })
-                .collect(),
+            dates: project_date_button_models(state),
             history: history_view_models(state),
             warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),

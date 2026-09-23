@@ -7,6 +7,7 @@ use crate::client::work_sessions::KeyValueStorage;
 use crate::{DeferPlan, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
+use super::list_view::DateButtonViewModel;
 use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
@@ -199,6 +200,12 @@ impl ComponentOrchestrator {
 
     pub fn all_tasks_visible_limit(&self) -> usize {
         self.all_tasks_visible_limit
+    }
+
+    pub fn date_button_models(&self) -> Vec<DateButtonViewModel> {
+        self.state()
+            .map(project_date_button_models)
+            .unwrap_or_default()
     }
 
     pub fn show_more_all_tasks(&mut self) {
@@ -437,6 +444,20 @@ impl ComponentOrchestrator {
             state.set_view_state_warning(warning);
         }
     }
+}
+
+pub(crate) fn project_date_button_models(state: &ClientState) -> Vec<DateButtonViewModel> {
+    let all_selected = state.list_selection() == ListSelection::All;
+    state
+        .date_buttons()
+        .iter()
+        .map(|date| DateButtonViewModel {
+            logical_date: date.logical_date.clone(),
+            label: date.label.clone(),
+            selected: !all_selected
+                && state.selected_logical_date() == Some(date.logical_date.as_str()),
+        })
+        .collect()
 }
 
 fn background_state_for_effect(effect: &ClientEffect) -> Option<RefreshState> {
