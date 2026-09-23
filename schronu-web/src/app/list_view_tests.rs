@@ -18,7 +18,7 @@ use super::view_test_support::{
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::client::date_input::DateInputState;
-use crate::{DeferMode, SessionTask};
+use crate::{DeadlineDisplayKind, DeferMode, SessionTask, TaskDisplayKind};
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
 
@@ -230,6 +230,12 @@ fn named_row(
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
+        task_display_kind: TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: if misses_deadline {
+            DeadlineDisplayKind::Overrun
+        } else {
+            DeadlineDisplayKind::None
+        },
         is_leaf,
         defer_plan: Some(crate::DeferPlan {
             mode: DeferMode::Normal,
@@ -239,6 +245,69 @@ fn named_row(
         }),
         defer_confirmation: None,
     }
+}
+
+#[test]
+fn listはtask種類と締切種類を親子にかかわらずclassへ反映する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut fixed = named_row("fixed", "fixed leaf", false, true);
+    fixed.task_display_kind = TaskDisplayKind::Fixed;
+    fixed.deadline_display_kind = DeadlineDisplayKind::None;
+    let mut repetitive = named_row("repetitive", "repetitive parent", false, false);
+    repetitive.task_display_kind = TaskDisplayKind::Repetitive;
+    repetitive.deadline_display_kind = DeadlineDisplayKind::Today;
+    let mut non_repetitive = named_row("one-shot", "one-shot leaf", false, true);
+    non_repetitive.task_display_kind = TaskDisplayKind::NonRepetitive;
+    non_repetitive.deadline_display_kind = DeadlineDisplayKind::Future;
+    let mut legacy_overrun = named_row("legacy", "legacy parent", true, false);
+    legacy_overrun.deadline_display_kind = DeadlineDisplayKind::None;
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![fixed, repetitive, non_repetitive, legacy_overrun],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("class=\"task-name task-kind-fixed is-leaf\""), "{html}");
+    assert!(html.contains("class=\"task-name task-kind-repetitive\""), "{html}");
+    assert!(
+        html.contains("class=\"task-name task-kind-non-repetitive is-leaf\""),
+        "{html}"
+    );
+    assert!(html.contains("class=\"deadline deadline-kind-today\""), "{html}");
+    assert!(html.contains("class=\"deadline deadline-kind-future\""), "{html}");
+    assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1, "{html}");
+}
+
+#[test]
+fn list配色は意味別tokenを使いleafは太字だけを担う() {
+    let css = include_str!("../../assets/main.css");
+    for token in [
+        "--task-fixed: #516f82;",
+        "--task-repetitive: #0069c2;",
+        "--task-non-repetitive: #a44a00;",
+        "--deadline-today: #9a5a00;",
+        "--deadline-future: #196846;",
+    ] {
+        assert!(css.contains(token), "missing token: {token}");
+    }
+    assert!(css.contains(".deadline.deadline-kind-overrun {\n    color: var(--red);"));
+    assert!(css.contains(".task-name.task-kind-fixed {\n    color: var(--task-fixed);"));
+    assert!(css.contains(".task-name.task-kind-repetitive {\n    color: var(--task-repetitive);"));
+    assert!(css.contains(
+        ".task-name.task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"
+    ));
+    let leaf_rule = css
+        .split_once(".task-name.is-leaf {")
+        .expect("leaf rule")
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert!(leaf_rule.contains("font-weight: 750;"));
+    assert!(!leaf_rule.contains("color:"), "{leaf_rule}");
 }
 
 fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
@@ -495,7 +564,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("date-pill is-selected"));
     assert!(html.contains("____-01:00"));
     assert!(html.contains("11:25-11:28"));
-    assert!(html.contains("task-name is-leaf"));
+    assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
     assert_eq!(html.matches("deadline is-overdue").count(), 1);
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
     assert!(
