@@ -592,8 +592,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
-- 全件一覧はserver順の隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。同日、翌日、不正日付、非昇順では表示しない。空き行はtask行の500件表示上限、cursor、`segment_index`に含めない。
-- 日付別・全件ともtrim後のtask名検索文字列が空でない間は空き行を描画せず、検索解除後に取得済み行のprojectionから再表示する。
+- 全件一覧はserver順の隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。同日、不正日付、非昇順ではどちらも表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めない。
+- 日付別・全件ともtrim後のtask名検索文字列が空でない間は空き行とlogical date境界線を描画せず、検索解除後に取得済み行のprojectionから再表示する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。

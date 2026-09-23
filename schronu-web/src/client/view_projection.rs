@@ -36,6 +36,7 @@ pub struct ListRowViewModel {
     pub deadline_label: String,
     pub schedule_label: String,
     pub gap_before: Option<String>,
+    pub date_boundary_before: bool,
     pub misses_deadline: bool,
     pub is_leaf: bool,
     pub defer_plan: Option<DeferPlan>,
@@ -89,6 +90,9 @@ pub fn project_visible_all_task_rows(
         let gap_before = show_gaps
             .then(|| date_gap_label(previous_date, current_date))
             .flatten();
+        let date_boundary_before = show_gaps
+            && logical_dates_are_adjacent(previous_date, current_date)
+            && gap_before.is_none();
         previous_date = current_date.map(|date| {
             previous_date
                 .map(|previous| previous.max(date))
@@ -102,7 +106,7 @@ pub fn project_visible_all_task_rows(
             has_more = true;
             break;
         }
-        projected_rows.push(project_all_task_row(row, gap_before));
+        projected_rows.push(project_all_task_row(row, gap_before, date_boundary_before));
     }
     VisibleAllTaskRows {
         rows: projected_rows,
@@ -115,13 +119,18 @@ pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
     normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
 }
 
-fn project_all_task_row(row: &AllTaskRow, gap_before: Option<String>) -> ListRowViewModel {
+fn project_all_task_row(
+    row: &AllTaskRow,
+    gap_before: Option<String>,
+    date_boundary_before: bool,
+) -> ListRowViewModel {
     ListRowViewModel {
         row_key: format!("all:{}", row.segment_index),
         task: row.task.clone(),
         deadline_label: row.deadline_label.clone(),
         schedule_label: all_task_schedule_label(&row.schedule_date),
         gap_before,
+        date_boundary_before,
         misses_deadline: row.misses_deadline,
         is_leaf: row.is_leaf,
         defer_plan: None,
@@ -274,6 +283,7 @@ fn project_list_rows_with(
                     format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
                 ),
                 gap_before,
+                date_boundary_before: false,
                 misses_deadline: row.misses_deadline,
                 is_leaf: row.is_leaf,
                 defer_plan: Some(row.defer_plan.clone()),
@@ -299,6 +309,15 @@ fn date_gap_label(
         .num_days()
         - 1;
     (gap_days > 0).then(|| format!("{gap_days}日間の空き時間"))
+}
+
+fn logical_dates_are_adjacent(
+    previous_date: Option<NaiveDate>,
+    current_date: Option<NaiveDate>,
+) -> bool {
+    previous_date
+        .zip(current_date)
+        .is_some_and(|(previous, current)| current.signed_duration_since(previous).num_days() == 1)
 }
 
 fn all_task_schedule_label(schedule_date: &str) -> String {

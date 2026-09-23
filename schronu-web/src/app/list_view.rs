@@ -55,7 +55,7 @@ pub fn ListView(
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
-    let show_gap_rows = filter_text.trim().is_empty();
+    let show_separators = filter_text.trim().is_empty();
     let all_selected = all_tasks_status.is_some();
     let visible_limit = if all_selected {
         visible_row_limit.unwrap_or(500)
@@ -197,7 +197,7 @@ pub fn ListView(
                             for row in filtered_rows {
                                 TaskRow {
                                     key: "{row.row_key}",
-                                    show_gap_before: show_gap_rows,
+                                    show_separators,
                                     active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
                                     row,
                                     mutations_locked,
@@ -248,7 +248,7 @@ fn DateButton(
 #[component]
 fn TaskRow(
     row: ListRowViewModel,
-    show_gap_before: bool,
+    show_separators: bool,
     active: bool,
     mutations_locked: bool,
     mutation_globally_blocked: bool,
@@ -291,16 +291,21 @@ fn TaskRow(
         )
     });
     let is_leaf = row.is_leaf;
+    let row_class = if show_separators && row.date_boundary_before {
+        "task-row has-logical-date-boundary"
+    } else {
+        "task-row"
+    };
 
     rsx! {
-        if show_gap_before {
+        if show_separators {
             if let Some(gap_before) = row.gap_before.as_deref() {
                 tr { class: "task-gap-row",
                     td { colspan: "4", "{gap_before}" }
                 }
             }
         }
-        tr { class: "task-row",
+        tr { class: row_class,
             td { class: "session-cell",
                 if is_leaf {
                     button {
