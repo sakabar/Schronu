@@ -383,6 +383,35 @@ fn mcp_stdio_lock競合時はload前にerrorを返し修復後に同一session�
 }
 
 #[test]
+fn mcp_stdio_短時間のlock引継ぎは同一request内で待って成功する() {
+    let storage = TestStorageDirectory::new();
+    let mut mcp = McpSession::spawn(storage.path());
+    mcp.initialize("lock-handoff");
+
+    let cli_lock = StorageLock::acquire(storage.path(), LockMode::Cli).unwrap();
+    mcp.send(json!({
+        "jsonrpc": "2.0",
+        "id": "lock-handoff",
+        "method": "tools/call",
+        "params": {"name": "list_tasks", "arguments": {}}
+    }));
+    match mcp.responses.recv_timeout(Duration::from_millis(20)) {
+        Err(mpsc::RecvTimeoutError::Timeout) => {}
+        Ok(response) => panic!("MCP returned before the transient lock was released: {response:?}"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("MCP exited before the transient lock was released")
+        }
+    }
+    drop(cli_lock);
+    let response = mcp.read_response();
+
+    assert_eq!(response["jsonrpc"], "2.0");
+    assert_eq!(response["id"], "lock-handoff");
+    assert_eq!(response["result"]["isError"], false);
+    assert_process_succeeded(&mcp.finish());
+}
+
+#[test]
 fn mcp_stdio_壊れたrepositoryはcallでerrorとなり修復後に同一sessionで再試行できる() {
     let storage = TestStorageDirectory::new();
     let project_directory = storage.path().join("broken");
