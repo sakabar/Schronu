@@ -1,5 +1,7 @@
 use crate::client::date_input::DateInputState;
-use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
+use crate::client::state::{
+    load_client_state_for_ui, ActiveTab, ClientEffect, ClientState, ListSelection,
+};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
 use crate::{DeferPlan, SessionTask};
@@ -131,6 +133,8 @@ pub(crate) struct ComponentOrchestrator {
     refresh_state: RefreshState,
     date_input: DateInputState,
     task_name_filter: String,
+    all_task_name_filter: String,
+    all_tasks_visible_limit: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -150,6 +154,8 @@ impl ComponentOrchestrator {
             refresh_state: RefreshState::Bootstrap(0),
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
+            all_task_name_filter: String::new(),
+            all_tasks_visible_limit: 500,
         }
     }
 
@@ -181,7 +187,22 @@ impl ComponentOrchestrator {
     }
 
     pub fn task_name_filter(&self) -> &str {
-        &self.task_name_filter
+        if self
+            .state()
+            .is_some_and(|state| state.list_selection() == ListSelection::All)
+        {
+            &self.all_task_name_filter
+        } else {
+            &self.task_name_filter
+        }
+    }
+
+    pub fn all_tasks_visible_limit(&self) -> usize {
+        self.all_tasks_visible_limit
+    }
+
+    pub fn show_more_all_tasks(&mut self) {
+        self.all_tasks_visible_limit = self.all_tasks_visible_limit.saturating_add(500);
     }
 
     pub fn edit_date_input<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
@@ -209,8 +230,16 @@ impl ComponentOrchestrator {
     }
 
     pub fn edit_task_name_filter<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
-        self.task_name_filter = text;
-        self.persist_view_state(storage);
+        if self
+            .state()
+            .is_some_and(|state| state.list_selection() == ListSelection::All)
+        {
+            self.all_task_name_filter = text;
+            self.all_tasks_visible_limit = 500;
+        } else {
+            self.task_name_filter = text;
+            self.persist_view_state(storage);
+        }
     }
 
     pub fn begin_server_effect(&mut self) {
@@ -295,14 +324,20 @@ impl ComponentOrchestrator {
         is_leaf: bool,
     ) -> ClientEffect {
         let previous_session_count = self.state().map_or(0, |state| state.sessions().len());
+        let source_selection = self.state().map(ClientState::list_selection);
         let effect = self.action(
             storage,
             monotonic_now_ms,
             ComponentAction::AddSession { task, is_leaf },
         );
         let current_session_count = self.state().map_or(0, |state| state.sessions().len());
+        let filter = if source_selection == Some(ListSelection::All) {
+            &mut self.all_task_name_filter
+        } else {
+            &mut self.task_name_filter
+        };
         reset_task_name_filter_after_session_add(
-            &mut self.task_name_filter,
+            filter,
             previous_session_count,
             current_session_count,
         );

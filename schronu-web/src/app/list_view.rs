@@ -1,10 +1,20 @@
 use dioxus::prelude::*;
 use std::rc::Rc;
 
+use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::{DeferPlan, SessionTask};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+pub enum AllTasksViewStatus {
+    Loading,
+    Loaded,
+    Failed(String),
+    Invalidated,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DateButtonViewModel {
@@ -21,10 +31,15 @@ pub fn ListView(
     date_input_text: String,
     date_input_error: Option<String>,
     filter_text: String,
+    #[props(default)] all_tasks_status: Option<AllTasksViewStatus>,
+    #[props(default)] visible_row_limit: Option<usize>,
     #[props(default)] mutations_locked: bool,
     #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
     on_select_date: EventHandler<String>,
+    #[props(default)] on_select_all_tasks: EventHandler<()>,
+    #[props(default)] on_retry_all_tasks: EventHandler<()>,
+    #[props(default)] on_show_more: EventHandler<()>,
     on_date_input_change: EventHandler<String>,
     on_submit_date_input: EventHandler<()>,
     on_start_session: EventHandler<(SessionTask, bool)>,
@@ -32,19 +47,37 @@ pub fn ListView(
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
-    let normalized_filter = filter_text.trim().to_lowercase();
-    let task_name_matches = |task_name: &str| {
-        normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
-    };
-    let filtered_rows = rows
+    let search_available = all_tasks_status
+        .as_ref()
+        .is_none_or(|status| matches!(status, AllTasksViewStatus::Loaded));
+    let matching_rows = rows
         .into_iter()
-        .filter(|row| task_name_matches(&row.task.task_name))
+        .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
-    let no_matches = !normalized_filter.is_empty() && filtered_rows.is_empty();
+    let visible_limit = visible_row_limit.unwrap_or(500);
+    let has_more = matching_rows.len() > visible_limit;
+    let filtered_rows = matching_rows
+        .into_iter()
+        .take(visible_limit)
+        .collect::<Vec<_>>();
+    let no_matches = !filter_text.trim().is_empty() && filtered_rows.is_empty();
+    let all_selected = all_tasks_status.is_some();
+    let table_class = if all_selected {
+        "task-table all-task-table"
+    } else {
+        "task-table"
+    };
 
     rsx! {
         section { class: "task-list-view",
             nav { class: "date-pills", aria_label: "logical date",
+                button {
+                    class: if all_selected { "date-pill is-selected" } else { "date-pill" },
+                    r#type: "button",
+                    aria_pressed: all_selected,
+                    onclick: move |_| on_select_all_tasks.call(()),
+                    "全て"
+                }
                 for date in dates {
                     DateButton { date, disabled: server_actions_blocked, on_select_date }
                 }
@@ -84,7 +117,8 @@ pub fn ListView(
                         p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
                     }
                 }
-                div { class: "task-name-filter", role: "search",
+                if search_available {
+                    div { class: "task-name-filter", role: "search",
                     input {
                         class: "task-name-filter-input",
                         r#type: "text",
@@ -108,13 +142,34 @@ pub fn ListView(
                             "×"
                         }
                     }
+                    }
                 }
             }
-            if no_matches {
+            if let Some(status) = all_tasks_status.as_ref() {
+                match status {
+                    AllTasksViewStatus::Loading => rsx! {
+                        p { class: "all-tasks-status", role: "status", "全てのタスクを取得中です。" }
+                    },
+                    AllTasksViewStatus::Failed(message) => rsx! {
+                        div { class: "all-tasks-status", role: "alert",
+                            p { "{message}" }
+                            button { r#type: "button", onclick: move |_| on_retry_all_tasks.call(()), "再試行" }
+                        }
+                    },
+                    AllTasksViewStatus::Invalidated => rsx! {
+                        div { class: "all-tasks-status", role: "status",
+                            p { "タスクが更新されました。" }
+                            button { r#type: "button", onclick: move |_| on_select_all_tasks.call(()), "更新" }
+                        }
+                    },
+                    AllTasksViewStatus::Loaded => rsx! {},
+                }
+            }
+            if search_available && no_matches {
                 p { class: "task-filter-empty", role: "status", "一致するタスクがありません。" }
-            } else {
+            } else if search_available {
                 div { class: "task-table-scroll",
-                    table { class: "task-table",
+                    table { class: table_class,
                         thead {
                             tr {
                                 th { class: "session-heading", aria_label: "task操作", "" }
@@ -138,6 +193,9 @@ pub fn ListView(
                             }
                         }
                     }
+                }
+                if has_more {
+                    button { class: "all-tasks-more", r#type: "button", onclick: move |_| on_show_more.call(()), "さらに表示" }
                 }
             }
         }
@@ -234,22 +292,24 @@ fn TaskRow(
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
                     }
-                    button {
-                        class: "task-defer",
-                        r#type: "button",
-                        aria_label: format!("{}: 先送り", row.task.task_name),
-                        disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
-                        onclick: move |_| {
-                            if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
-                                if defer_confirmation.is_some() {
-                                    confirming_defer.set(true);
-                                } else {
-                                    on_defer_task.call((defer_task_id.clone(), defer_plan.clone()));
+                    if let Some(defer_plan) = defer_plan {
+                        button {
+                            class: "task-defer",
+                            r#type: "button",
+                            aria_label: format!("{}: 先送り", row.task.task_name),
+                            disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
+                            onclick: move |_| {
+                                if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
+                                    if defer_confirmation.is_some() {
+                                        confirming_defer.set(true);
+                                    } else {
+                                        on_defer_task.call((defer_task_id.clone(), defer_plan.clone()));
+                                    }
                                 }
-                            }
-                        },
-                        span { class: "task-defer-full-label", "先送り" }
-                        span { class: "task-defer-compact-label", aria_hidden: "true", "→" }
+                            },
+                            span { class: "task-defer-full-label", "先送り" }
+                            span { class: "task-defer-compact-label", aria_hidden: "true", "→" }
+                        }
                     }
                 }
             }
@@ -289,7 +349,9 @@ fn TaskRow(
                                 onclick: move |_| {
                                     if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                         confirming_defer.set(false);
-                                        on_defer_task.call((defer_task_id_on_confirm.clone(), defer_plan_on_confirm.clone()));
+                                        if let Some(plan) = defer_plan_on_confirm.clone() {
+                                            on_defer_task.call((defer_task_id_on_confirm.clone(), plan));
+                                        }
                                     }
                                 },
                                 "先送りする"

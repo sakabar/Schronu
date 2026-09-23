@@ -139,7 +139,17 @@ fn all取得はoverlay対象外で日付へ移動後もresponse_chainを継続�
 fn all検索はmemoryにだけ保持し日付検索と独立する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = ComponentOrchestrator::new();
-    let _ = orchestrator.mount(&storage, 0);
+    let bootstrap_id = match orchestrator.mount(&storage, 0) {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    let _ = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: bootstrap_id,
+            result: Ok(snapshot(1)),
+        },
+    );
 
     orchestrator.edit_task_name_filter(&storage, "date filter".to_owned());
     let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
@@ -174,6 +184,51 @@ fn all検索変更は表示上限を500へ戻す() {
     assert_eq!(orchestrator.all_tasks_visible_limit(), 1_000);
     orchestrator.edit_task_name_filter(&storage, "設計".to_owned());
     assert_eq!(orchestrator.all_tasks_visible_limit(), 500);
+}
+
+#[test]
+fn allからsession追加成功した時だけall検索をclearする() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap_id = match orchestrator.mount(&storage, 0) {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    let _ = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: bootstrap_id,
+            result: Ok(snapshot(1)),
+        },
+    );
+    orchestrator.edit_task_name_filter(&storage, "date filter".to_owned());
+    let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
+    orchestrator.edit_task_name_filter(&storage, "all filter".to_owned());
+
+    let _ = orchestrator.start_session_from_list(
+        &storage,
+        0,
+        SessionTask {
+            task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+            task_name: "task".to_owned(),
+            estimated_work_seconds: 900,
+            actual_work_seconds: 0,
+        },
+        true,
+    );
+    assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
+    assert_eq!(orchestrator.task_name_filter(), "");
+    assert_eq!(
+        orchestrator.state().unwrap().active_tab(),
+        ActiveTab::Session
+    );
+
+    let _ = orchestrator.action(
+        &storage,
+        0,
+        ComponentAction::SelectDate("2026-09-06".to_owned()),
+    );
+    assert_eq!(orchestrator.task_name_filter(), "date filter");
 }
 
 #[test]

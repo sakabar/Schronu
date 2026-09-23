@@ -268,20 +268,22 @@ fn task_name_matchesはtrim_unicode_lowercase部分一致と空検索を共有�
 fn all一覧は先頭buttonとinline状態を表示する() {
     use super::list_view::AllTasksViewStatus;
 
-    let mut dom = VirtualDom::new(|| rsx! {
-        ListView {
-            dates: eight_dates(),
-            rows: Vec::new(),
-            active_task_ids: Vec::new(),
-            date_input_text: String::new(),
-            date_input_error: None,
-            filter_text: "hidden".to_owned(),
-            all_tasks_status: Some(AllTasksViewStatus::Loading),
-            on_select_date: move |_| {},
-            on_date_input_change: move |_| {},
-            on_submit_date_input: move |_| {},
-            on_start_session: move |_| {},
-            on_filter_change: move |_| {},
+    let mut dom = VirtualDom::new(|| {
+        rsx! {
+            ListView {
+                dates: eight_dates(),
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: "hidden".to_owned(),
+                all_tasks_status: Some(AllTasksViewStatus::Loading),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
         }
     });
     dom.rebuild_in_place();
@@ -296,11 +298,84 @@ fn all一覧は先頭buttonとinline状態を表示する() {
 }
 
 #[test]
+fn all取得失敗と無効化はinlineから再試行できる() {
+    use super::list_view::AllTasksViewStatus;
+
+    #[derive(Clone)]
+    struct StatusHarnessProps {
+        status: AllTasksViewStatus,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+    fn status_harness(props: StatusHarnessProps) -> Element {
+        let retry_events = Arc::clone(&props.events);
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows: Vec::new(),
+                active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                all_tasks_status: Some(props.status),
+                on_select_date: move |_| {},
+                on_select_all_tasks: move |_| props.events.lock().unwrap().push("refresh".to_owned()),
+                on_retry_all_tasks: move |_| retry_events.lock().unwrap().push("retry".to_owned()),
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let failed_events = Arc::new(Mutex::new(Vec::new()));
+    let mut failed = VirtualDom::new_with_props(
+        status_harness,
+        StatusHarnessProps {
+            status: AllTasksViewStatus::Failed("再取得してください。".to_owned()),
+            events: Arc::clone(&failed_events),
+        },
+    );
+    let failed_ids = rebuild_with_click_listeners(&mut failed);
+    let failed_html = dioxus::ssr::render(&failed);
+    assert!(
+        failed_html.contains("再取得してください。"),
+        "{failed_html}"
+    );
+    dispatch_click(&failed, *failed_ids.last().unwrap());
+    assert_eq!(*failed_events.lock().unwrap(), ["retry"]);
+
+    let invalidated_events = Arc::new(Mutex::new(Vec::new()));
+    let mut invalidated = VirtualDom::new_with_props(
+        status_harness,
+        StatusHarnessProps {
+            status: AllTasksViewStatus::Invalidated,
+            events: Arc::clone(&invalidated_events),
+        },
+    );
+    let invalidated_ids = rebuild_with_click_listeners(&mut invalidated);
+    let invalidated_html = dioxus::ssr::render(&invalidated);
+    assert!(
+        invalidated_html.contains("タスクが更新されました。"),
+        "{invalidated_html}"
+    );
+    dispatch_click(&invalidated, *invalidated_ids.last().unwrap());
+    assert_eq!(*invalidated_events.lock().unwrap(), ["refresh"]);
+}
+
+#[test]
 fn all一覧は500行ずつ描画し親は空操作cellとなる() {
     use super::list_view::AllTasksViewStatus;
 
     let rows = (0..501)
-        .map(|index| named_row(&format!("task-{index}"), &format!("task {index}"), false, index != 500))
+        .map(|index| {
+            named_row(
+                &format!("task-{index}"),
+                &format!("task {index}"),
+                false,
+                index != 499,
+            )
+        })
         .map(|mut row| {
             row.defer_plan = None;
             row
@@ -317,7 +392,7 @@ fn all一覧は500行ずつ描画し親は空操作cellとなる() {
                 date_input_error: None,
                 filter_text: String::new(),
                 all_tasks_status: Some(AllTasksViewStatus::Loaded),
-                visible_row_limit: 500,
+                visible_row_limit: Some(500),
                 on_select_date: move |_| {},
                 on_date_input_change: move |_| {},
                 on_submit_date_input: move |_| {},
@@ -331,9 +406,13 @@ fn all一覧は500行ずつ描画し親は空操作cellとなる() {
     let html = dioxus::ssr::render(&dom);
     assert_eq!(html.matches("class=\"task-row\"").count(), 500, "{html}");
     assert!(html.contains("さらに表示"), "{html}");
-    assert!(html.contains("class=\"task-table all-task-table\""), "{html}");
+    assert!(
+        html.contains("class=\"task-table all-task-table\""),
+        "{html}"
+    );
     assert!(!html.contains("先送り"), "{html}");
     assert!(html.contains("セッション追加済み"), "{html}");
+    assert!(html.contains("<td class=\"session-cell\"></td>"), "{html}");
 }
 
 #[test]
@@ -344,7 +423,9 @@ fn all一覧の列幅はviewportによらず固定する() {
         ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 5.5rem minmax(0, 1fr);"
     ));
     for breakpoint in ["320px", "360px", "46rem", "1024px"] {
-        assert!(!css.contains(&format!("@media (max-width: {breakpoint}) {{\n    .all-task-table")));
+        assert!(!css.contains(&format!(
+            "@media (max-width: {breakpoint}) {{\n    .all-task-table"
+        )));
     }
 }
 
@@ -374,7 +455,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
 
     assert_eq!(
         html.matches("<button class=\"date-pill").count(),
-        8,
+        9,
         "{html}"
     );
     assert!(html.contains("土 今日"));
@@ -635,7 +716,7 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&date_dom, date_listeners[0]);
+    dispatch_click(&date_dom, date_listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["date:2026-09-12"]);
 
     events.lock().unwrap().clear();
@@ -646,11 +727,11 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&task_dom, task_listeners[0]);
+    dispatch_click(&task_dom, task_listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
 
     events.lock().unwrap().clear();
-    dispatch_click(&task_dom, task_listeners[1]);
+    dispatch_click(&task_dom, task_listeners[2]);
     assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
 }
 
@@ -667,7 +748,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&cancel_dom, initial_ids[1]);
+    dispatch_click(&cancel_dom, initial_ids[2]);
     let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
     let html = dioxus::ssr::render(&cancel_dom);
     assert!(events.lock().unwrap().is_empty());
@@ -692,7 +773,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&confirm_dom, initial_ids[1]);
+    dispatch_click(&confirm_dom, initial_ids[2]);
     let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
     let html = dioxus::ssr::render(&confirm_dom);
     assert!(html.contains("次の周期へ送ります"), "{html}");
@@ -749,7 +830,7 @@ fn row差替えで先送り確認stateを別taskへ継承しない() {
         },
     );
     let initial_ids = rebuild_with_click_listeners(&mut dom);
-    dispatch_click(&dom, initial_ids[2]);
+    dispatch_click(&dom, initial_ids[3]);
     dom.render_immediate_to_vec();
     assert!(dioxus::ssr::render(&dom).contains("task firstは締切までの余裕がありません"));
 
@@ -772,7 +853,7 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
         events: Arc::clone(&events),
     });
 
-    assert!(listeners.is_empty());
+    assert_eq!(listeners.len(), 1, "全てbuttonだけがclick listenerを持つ");
     assert!(!dioxus::ssr::render(&dom).contains("session-start"));
     assert!(
         dioxus::ssr::render(&dom).contains("class=\"session-cell\"></td>"),
@@ -980,8 +1061,8 @@ fn clear_buttonは入力中だけ表示して空文字を一度通知する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("aria-label=\"検索文字列をクリア\""), "{html}");
-    assert_eq!(listeners.len(), 1);
-    dispatch_click(&dom, listeners[0]);
+    assert_eq!(listeners.len(), 2);
+    dispatch_click(&dom, listeners[1]);
     assert_eq!(*events.lock().unwrap(), ["filter:"]);
 
     let (empty_dom, _) = build(RootProps {
@@ -1009,7 +1090,11 @@ fn filter一致なしはstatusを表示してtask操作を生成しない() {
     assert!(html.contains("role=\"status\""), "{html}");
     assert!(html.contains("一致するタスクがありません。"), "{html}");
     assert!(!html.contains("session-start"), "{html}");
-    assert_eq!(listeners.len(), 1, "input listener is not a click listener");
+    assert_eq!(
+        listeners.len(),
+        2,
+        "all button and clear button remain clickable"
+    );
 }
 
 #[test]
@@ -1166,8 +1251,8 @@ fn 日付入力は正規化後もtab往復で保持され日付buttonでclearさ
         "{restored_html}"
     );
 
-    assert_eq!(restored_click_ids.len(), 1);
-    dispatch_click(&dom, restored_click_ids[0]);
+    assert_eq!(restored_click_ids.len(), 2);
+    dispatch_click(&dom, *restored_click_ids.last().unwrap());
     dom.render_immediate_to_vec();
     let cleared_html = dioxus::ssr::render(&dom);
     assert!(cleared_html.contains("class=\"date-jump-input\" type=\"text\" value=\"\""));
@@ -1308,8 +1393,8 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
     assert!(events.borrow().is_empty());
 
     assert_eq!(clear_ids.len(), 1);
-    assert_eq!(restored_clear_ids.len(), 1);
-    dispatch_click(&dom, restored_clear_ids[0]);
+    assert_eq!(restored_clear_ids.len(), 2);
+    dispatch_click(&dom, *restored_clear_ids.last().unwrap());
     render_with_click_listeners(&mut dom);
     let cleared_html = dioxus::ssr::render(&dom);
     assert!(cleared_html.contains("画面設計"), "{cleared_html}");

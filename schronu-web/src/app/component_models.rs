@@ -1,10 +1,10 @@
 use super::carry_lock_view::CarryLockViewModel;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, ClientState, Outcome};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection, Outcome};
 use crate::client::view_projection::{
-    project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
-    SessionCardViewModel,
+    project_all_task_rows, project_list_rows_for_browser, project_session_cards_for_browser,
+    ListRowViewModel, SessionCardViewModel,
 };
 
 pub(crate) struct BrowserPageModel {
@@ -12,6 +12,9 @@ pub(crate) struct BrowserPageModel {
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub list_selection: ListSelection,
+    pub all_tasks_status: AllTasksStatus,
+    pub all_tasks_failure: Option<String>,
     pub active_task_ids: Vec<String>,
     pub dates: Vec<DateButtonViewModel>,
     pub history: Vec<HistoryEntryViewModel>,
@@ -36,7 +39,20 @@ impl BrowserPageModel {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
-            rows: project_list_rows_for_browser(state),
+            rows: if state.list_selection() == ListSelection::All {
+                state
+                    .all_task_rows()
+                    .map(project_all_task_rows)
+                    .unwrap_or_default()
+            } else {
+                project_list_rows_for_browser(state)
+            },
+            list_selection: state.list_selection(),
+            all_tasks_status: state.all_tasks_status(),
+            all_tasks_failure: state.all_tasks_failure().map(|failure| match failure {
+                crate::client::state::ServerFailure::Operation(error) => error.message.clone(),
+                crate::client::state::ServerFailure::Transport(message) => message.clone(),
+            }),
             active_task_ids: state
                 .sessions()
                 .iter()
