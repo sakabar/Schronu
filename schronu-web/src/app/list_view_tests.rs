@@ -231,12 +231,12 @@ fn named_row(
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
         is_leaf,
-        defer_plan: crate::DeferPlan {
+        defer_plan: Some(crate::DeferPlan {
             mode: DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
         defer_confirmation: None,
     }
 }
@@ -247,11 +247,105 @@ fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewMo
         kind,
         detail_label: "9/12 05:59".to_owned(),
     });
-    row.defer_plan.mode = match kind {
+    row.defer_plan.as_mut().unwrap().mode = match kind {
         DeferConfirmationKind::DeadlineLimited => DeferMode::DeadlineLimited,
         DeferConfirmationKind::RoutinePeriod => DeferMode::RoutinePeriod,
     };
     row
+}
+
+#[test]
+fn task_name_matchesはtrim_unicode_lowercase部分一致と空検索を共有する() {
+    use crate::client::view_projection::task_name_matches;
+
+    assert!(task_name_matches("  PLAn  ", "週次 Planning"));
+    assert!(task_name_matches("ω", "Ωタスク"));
+    assert!(task_name_matches("   ", "任意"));
+    assert!(!task_name_matches("設計", "実装"));
+}
+
+#[test]
+fn all一覧は先頭buttonとinline状態を表示する() {
+    use super::list_view::AllTasksViewStatus;
+
+    let mut dom = VirtualDom::new(|| rsx! {
+        ListView {
+            dates: eight_dates(),
+            rows: Vec::new(),
+            active_task_ids: Vec::new(),
+            date_input_text: String::new(),
+            date_input_error: None,
+            filter_text: "hidden".to_owned(),
+            all_tasks_status: Some(AllTasksViewStatus::Loading),
+            on_select_date: move |_| {},
+            on_date_input_change: move |_| {},
+            on_submit_date_input: move |_| {},
+            on_start_session: move |_| {},
+            on_filter_change: move |_| {},
+        }
+    });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let all_position = html.find("全て").unwrap();
+    let today_position = html.find("土 今日").unwrap();
+    assert!(all_position < today_position, "{html}");
+    assert!(html.contains("全てのタスクを取得中です。"), "{html}");
+    assert!(html.contains("class=\"date-jump-form\""), "{html}");
+    assert!(!html.contains("class=\"task-name-filter\""), "{html}");
+    assert!(!html.contains("class=\"task-table-scroll\""), "{html}");
+}
+
+#[test]
+fn all一覧は500行ずつ描画し親は空操作cellとなる() {
+    use super::list_view::AllTasksViewStatus;
+
+    let rows = (0..501)
+        .map(|index| named_row(&format!("task-{index}"), &format!("task {index}"), false, index != 500))
+        .map(|mut row| {
+            row.defer_plan = None;
+            row
+        })
+        .collect();
+    #[component]
+    fn AllRowsHarness(rows: Vec<ListRowViewModel>) -> Element {
+        rsx! {
+        ListView {
+                dates: Vec::new(),
+                rows,
+                active_task_ids: vec!["task-0".to_owned()],
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                all_tasks_status: Some(AllTasksViewStatus::Loaded),
+                visible_row_limit: 500,
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new_with_props(AllRowsHarness, AllRowsHarnessProps { rows });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert_eq!(html.matches("class=\"task-row\"").count(), 500, "{html}");
+    assert!(html.contains("さらに表示"), "{html}");
+    assert!(html.contains("class=\"task-table all-task-table\""), "{html}");
+    assert!(!html.contains("先送り"), "{html}");
+    assert!(html.contains("セッション追加済み"), "{html}");
+}
+
+#[test]
+fn all一覧の列幅はviewportによらず固定する() {
+    let css = include_str!("../../assets/main.css");
+    let universal = css.split_once("@media (max-width: 46rem)").unwrap().0;
+    assert!(universal.contains(
+        ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 5.5rem minmax(0, 1fr);"
+    ));
+    for breakpoint in ["320px", "360px", "46rem", "1024px"] {
+        assert!(!css.contains(&format!("@media (max-width: {breakpoint}) {{\n    .all-task-table")));
+    }
 }
 
 fn eight_dates() -> Vec<DateButtonViewModel> {

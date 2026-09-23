@@ -3,7 +3,7 @@ use super::effect_dispatcher::ClientResponse;
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientEffect, ListSelection};
 use crate::client::view_state::{store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
-use crate::{AllTaskPage, ServerSnapshot, WebSuccess};
+use crate::{AllTaskPage, AllTaskRow, ServerSnapshot, SessionTask, WebSuccess};
 use std::cell::RefCell;
 use std::collections::HashMap;
 
@@ -26,6 +26,23 @@ fn snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
         observed_at_epoch_ms,
         logical_date: "2026-09-05".to_owned(),
         buffer_seconds: 0,
+    }
+}
+
+fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) -> AllTaskRow {
+    AllTaskRow {
+        task: SessionTask {
+            task_id: task_id.to_owned(),
+            task_name: task_name.to_owned(),
+            estimated_work_seconds: 900,
+            actual_work_seconds: 300,
+        },
+        segment_index,
+        schedule_date: "2026-09-06".to_owned(),
+        deadline_epoch_ms: Some(1_000),
+        deadline_label: "2026-09-06 07:00".to_owned(),
+        misses_deadline: false,
+        is_leaf,
     }
 }
 
@@ -116,4 +133,61 @@ fn all取得はoverlay対象外で日付へ移動後もresponse_chainを継続�
         orchestrator.state().unwrap().all_tasks_status(),
         AllTasksStatus::Loading
     );
+}
+
+#[test]
+fn all検索はmemoryにだけ保持し日付検索と独立する() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let _ = orchestrator.mount(&storage, 0);
+
+    orchestrator.edit_task_name_filter(&storage, "date filter".to_owned());
+    let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
+    orchestrator.edit_task_name_filter(&storage, "all filter".to_owned());
+    assert_eq!(orchestrator.task_name_filter(), "all filter");
+
+    let _ = orchestrator.action(
+        &storage,
+        0,
+        ComponentAction::SelectDate("2026-09-06".to_owned()),
+    );
+    assert_eq!(orchestrator.task_name_filter(), "date filter");
+
+    let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
+    assert_eq!(orchestrator.task_name_filter(), "all filter");
+
+    let mut reloaded = ComponentOrchestrator::new();
+    let _ = reloaded.mount(&storage, 0);
+    let _ = reloaded.action(&storage, 0, ComponentAction::SelectAllTasks);
+    assert_eq!(reloaded.task_name_filter(), "");
+}
+
+#[test]
+fn all検索変更は表示上限を500へ戻す() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let _ = orchestrator.mount(&storage, 0);
+    let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
+
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 500);
+    orchestrator.show_more_all_tasks();
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 1_000);
+    orchestrator.edit_task_name_filter(&storage, "設計".to_owned());
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 500);
+}
+
+#[test]
+fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
+    use crate::client::view_projection::project_all_task_rows;
+
+    let rows = project_all_task_rows(&[
+        all_row(12, "same", "設計", true),
+        all_row(13, "same", "設計", true),
+        all_row(14, "parent", "親", false),
+    ]);
+    assert_eq!(rows[0].row_key, "all:12");
+    assert_eq!(rows[0].schedule_label, "2026/09/06(日)");
+    assert!(rows[0].defer_plan.is_none());
+    assert_eq!(rows[1].row_key, "all:13");
+    assert!(!rows[2].is_leaf);
 }
