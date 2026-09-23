@@ -1023,7 +1023,12 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("週次 Planning").count(), 6, "{html}");
+    assert_eq!(
+        html.matches("aria-label=\"単発タスク: 週次 Planning\"")
+            .count(),
+        2,
+        "{html}"
+    );
     assert!(!html.contains("実装"), "{html}");
 
     let (japanese_dom, _) = build(RootProps {
