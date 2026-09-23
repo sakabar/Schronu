@@ -1,7 +1,7 @@
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -29,6 +29,18 @@ pub async fn list_tasks(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_all_tasks")]
+pub async fn list_all_tasks(
+    request: ListAllTasksRequest,
+) -> Result<WebOperationResult<WebSuccess<AllTaskPage>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_all_tasks(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -104,6 +116,14 @@ async fn dispatch_list_tasks(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_list_all_tasks(
+    worker: WebWorkerHandle,
+    request: ListAllTasksRequest,
+) -> WebOperationResult<WebSuccess<AllTaskPage>> {
+    worker.list_all_tasks(request).await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_auto_session(
     worker: WebWorkerHandle,
 ) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
@@ -138,12 +158,13 @@ async fn dispatch_complete_session(
 mod tests {
     use super::{
         dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_defer_task,
-        dispatch_list_tasks, dispatch_record_session, WebOperationResult,
+        dispatch_list_all_tasks, dispatch_list_tasks, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-        RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-        SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+        WebSuccess, WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -151,7 +172,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 六endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 七endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
@@ -181,6 +202,8 @@ mod tests {
                 },
             )
             .await;
+            let _: WebOperationResult<WebSuccess<AllTaskPage>> =
+                dispatch_list_all_tasks(worker.clone(), ListAllTasksRequest { cursor: None }).await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
             let _: WebOperationResult<ServerSnapshot> = dispatch_defer_task(
@@ -204,7 +227,7 @@ mod tests {
             assert_eq!(completed, Ok(snapshot()));
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 7);
     }
 
     #[test]
@@ -261,6 +284,20 @@ mod tests {
             Ok(WebSuccess {
                 snapshot: snapshot(),
                 data: Vec::new(),
+            })
+        }
+
+        fn list_all_tasks(
+            &mut self,
+            _request: ListAllTasksRequest,
+        ) -> Result<WebSuccess<AllTaskPage>, WebError> {
+            self.count();
+            Ok(WebSuccess {
+                snapshot: snapshot(),
+                data: AllTaskPage {
+                    rows: Vec::new(),
+                    next_cursor: None,
+                },
             })
         }
 

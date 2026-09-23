@@ -1,13 +1,14 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
-    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
+    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
 
 #[test]
-fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
+fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
     let snapshot = ServerSnapshot {
         observed_at_epoch_ms: 1_788_565_500_123,
         logical_date: "2026-09-05".to_owned(),
@@ -69,6 +70,53 @@ fn six_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() 
             logical_date: "2026-09-05".to_owned(),
         },
         json!({"logical_date": "2026-09-05"}),
+    );
+    assert_json_round_trip(
+        &ListAllTasksRequest {
+            cursor: Some("00000000-0000-4000-8000-000000000001:500".to_owned()),
+        },
+        json!({"cursor": "00000000-0000-4000-8000-000000000001:500"}),
+    );
+    assert_json_round_trip(
+        &WebSuccess {
+            snapshot: snapshot.clone(),
+            data: AllTaskPage {
+                rows: vec![AllTaskRow {
+                    task: task.clone(),
+                    segment_index: 0,
+                    schedule_date: "2026-09-05".to_owned(),
+                    deadline_epoch_ms: None,
+                    deadline_label: "____/__/__".to_owned(),
+                    misses_deadline: false,
+                    is_leaf: true,
+                }],
+                next_cursor: None,
+            },
+        },
+        json!({
+            "snapshot": {
+                "observed_at_epoch_ms": 1_788_565_500_123_i64,
+                "logical_date": "2026-09-05",
+                "buffer_seconds": -61
+            },
+            "data": {
+                "rows": [{
+                    "task": {
+                        "task_id": "00000000-0000-0000-0000-000000000001",
+                        "task_name": "wire task",
+                        "estimated_work_seconds": 900,
+                        "actual_work_seconds": 300
+                    },
+                    "segment_index": 0,
+                    "schedule_date": "2026-09-05",
+                    "deadline_epoch_ms": null,
+                    "deadline_label": "____/__/__",
+                    "misses_deadline": false,
+                    "is_leaf": true
+                }],
+                "next_cursor": null
+            }
+        }),
     );
     assert_json_round_trip(
         &WebSuccess {
@@ -204,6 +252,7 @@ fn 終了時刻がない旧mutation_requestをdeserializeできる() {
 #[test]
 fn error_codeとretry_adviceはsnake_case文字列として往復する() {
     let cases = [
+        web_error_codes::INVALID_CURSOR,
         web_error_codes::INVALID_INPUT,
         web_error_codes::TASK_NOT_FOUND,
         web_error_codes::TASK_ALREADY_COMPLETED,

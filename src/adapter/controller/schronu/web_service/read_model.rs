@@ -1,6 +1,6 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
 };
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
@@ -31,6 +31,41 @@ where
         operation_now,
         crate::application::daily_capacity::END_OF_DAY_OFFSET_MINUTES,
     )
+}
+
+pub(in crate::adapter::controller) fn build_all_task_rows(
+    schedule: &[ScheduledTaskView],
+    last_synced_time: DateTime<Local>,
+) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
+    let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    logical_dates
+        .into_iter()
+        .zip(schedule)
+        .enumerate()
+        .map(|(segment_index, (logical_date, segment))| {
+            let deadline = segment.task.deadline_time;
+            let deadline_label = format_deadline_remaining_time(
+                deadline.as_ref(),
+                segment.scheduled_end,
+                last_synced_time,
+            )
+            .map_err(WebReadCoreError::Application)?;
+            Ok(AllTaskRowDto {
+                task: session_task_dto(
+                    segment.task.id.hyphenated().to_string(),
+                    segment.task.name.clone(),
+                    segment.task.estimated_work_seconds,
+                    segment.task.actual_work_seconds,
+                ),
+                segment_index,
+                schedule_date: logical_date.format("%Y-%m-%d").to_string(),
+                deadline_epoch_ms: deadline.map(|value| value.timestamp_millis()),
+                deadline_label,
+                misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
+                is_leaf: segment.is_leaf(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn build_server_snapshot_with_offset<R, F>(

@@ -147,7 +147,7 @@ fn busy_time_slots_yaml() -> String {
 }
 
 #[test]
-fn serviceの3read操作は実storageを同期して同一snapshotとtyped_dataを返し保存しない() {
+fn serviceの4read操作は実storageを同期して同一snapshotとtyped_dataを返し保存しない() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let fixture = WebReadServiceFixture::new();
@@ -159,6 +159,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     let listed = service
         .list_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
         .unwrap();
+    let all = service.list_all_tasks_at(operation_now, None).unwrap();
     let selected = service.auto_session_at(operation_now).unwrap();
 
     assert_eq!(
@@ -168,8 +169,26 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(bootstrap.logical_date, "2026-09-05");
     assert_eq!(bootstrap.buffer_seconds, 20_041);
     assert_eq!(listed.snapshot, bootstrap);
+    assert_eq!(all.snapshot, bootstrap);
     assert_eq!(selected.snapshot, bootstrap);
     assert_eq!(listed.data.len(), 1);
+    assert_eq!(all.data.rows.len(), 1);
+    assert_eq!(all.data.next_cursor, None);
+    assert_eq!(all.data.rows[0].segment_index, 0);
+    assert_eq!(all.data.rows[0].schedule_date, "2026-09-05");
+    assert_eq!(
+        all.data.rows[0].task.task_id,
+        task_id.hyphenated().to_string()
+    );
+    assert_eq!(
+        all.data.rows[0].deadline_label,
+        listed.data[0].deadline_label
+    );
+    assert_eq!(
+        all.data.rows[0].misses_deadline,
+        listed.data[0].misses_deadline
+    );
+    assert_eq!(all.data.rows[0].is_leaf, listed.data[0].is_leaf);
     assert_eq!(
         listed.data[0].task.task_id,
         task_id.hyphenated().to_string()

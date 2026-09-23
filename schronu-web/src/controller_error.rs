@@ -5,6 +5,10 @@ use schronu::application::task_use_case::ApplicationError;
 impl From<WebReadError> for WebError {
     fn from(error: WebReadError) -> Self {
         match error {
+            WebReadError::InvalidCursor => retry(
+                web_error_codes::INVALID_CURSOR,
+                "一覧の取得状態が失効しました。最初から再試行してください。",
+            ),
             WebReadError::InvalidInput(_) => manual(
                 web_error_codes::INVALID_INPUT,
                 "入力内容を確認してください。",
@@ -238,6 +242,15 @@ mod tests {
             WebReadError::RepositoryPoisoned,
             web_error_codes::REPOSITORY_STATE_UNCERTAIN,
             RetryAdvice::ManualCheck,
+        );
+    }
+
+    #[test]
+    fn 無効cursorは内部情報を隠して最初から再取得可能にする() {
+        assert_mapping(
+            WebReadError::InvalidCursor,
+            web_error_codes::INVALID_CURSOR,
+            RetryAdvice::Retry,
         );
     }
 

@@ -1,7 +1,8 @@
 use schronu_web::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
+    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -12,7 +13,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは6操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは7操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -50,6 +51,20 @@ fn workerは6操作を送信順に専用threadで実行してpayloadを保持す
             Ok(WebSuccess {
                 snapshot: snapshot(2),
                 data: Vec::new(),
+            })
+        );
+        assert_eq!(
+            worker
+                .list_all_tasks(ListAllTasksRequest {
+                    cursor: Some("cursor".to_owned()),
+                })
+                .await,
+            Ok(WebSuccess {
+                snapshot: snapshot(7),
+                data: AllTaskPage {
+                    rows: Vec::new(),
+                    next_cursor: None,
+                },
             })
         );
         assert_eq!(
@@ -96,6 +111,7 @@ fn workerは6操作を送信順に専用threadで実行してpayloadを保持す
         &[
             Event::Bootstrap,
             Event::List("2026-09-05".to_owned()),
+            Event::ListAll(Some("cursor".to_owned())),
             Event::Auto,
             Event::Record(123, 456),
             Event::Complete(123, 456, false),
@@ -150,6 +166,7 @@ enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
     List(String),
+    ListAll(Option<String>),
     Auto,
     Defer(String),
     Record(i64, i64),
@@ -179,6 +196,13 @@ impl WebOperations for StackWorkloadOperations {
     }
 
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_all_tasks(
+        &mut self,
+        _request: ListAllTasksRequest,
+    ) -> Result<WebSuccess<AllTaskPage>, WebError> {
         unreachable!()
     }
 
@@ -217,6 +241,13 @@ impl WebOperations for PanickingOperations {
     }
 
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_all_tasks(
+        &mut self,
+        _request: ListAllTasksRequest,
+    ) -> Result<WebSuccess<AllTaskPage>, WebError> {
         unreachable!()
     }
 
@@ -267,6 +298,23 @@ impl WebOperations for RecordingOperations {
         Ok(WebSuccess {
             snapshot: snapshot(3),
             data: Some(task()),
+        })
+    }
+
+    fn list_all_tasks(
+        &mut self,
+        request: ListAllTasksRequest,
+    ) -> Result<WebSuccess<AllTaskPage>, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::ListAll(request.cursor));
+        Ok(WebSuccess {
+            snapshot: snapshot(7),
+            data: AllTaskPage {
+                rows: Vec::new(),
+                next_cursor: None,
+            },
         })
     }
 

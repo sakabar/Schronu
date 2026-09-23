@@ -46,6 +46,23 @@ pub struct ScheduledTaskRowDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskRowDto {
+    pub task: SessionTaskDto,
+    pub segment_index: usize,
+    pub schedule_date: String,
+    pub deadline_epoch_ms: Option<i64>,
+    pub deadline_label: String,
+    pub misses_deadline: bool,
+    pub is_leaf: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskPageDto {
+    pub rows: Vec<AllTaskRowDto>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WebSuccess<T> {
     pub snapshot: ServerSnapshot,
     pub data: T,

@@ -29,6 +29,23 @@ pub struct ScheduledTaskRow {
     pub defer_plan: DeferPlan,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskRow {
+    pub task: SessionTask,
+    pub segment_index: usize,
+    pub schedule_date: String,
+    pub deadline_epoch_ms: Option<i64>,
+    pub deadline_label: String,
+    pub misses_deadline: bool,
+    pub is_leaf: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskPage {
+    pub rows: Vec<AllTaskRow>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeferMode {
@@ -56,6 +73,12 @@ pub struct WebSuccess<T> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListTasksRequest {
     pub logical_date: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListAllTasksRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 #[cfg(test)]
@@ -130,6 +153,7 @@ pub struct RecordSessionResult {
 }
 
 pub mod web_error_codes {
+    pub const INVALID_CURSOR: &str = "invalid_cursor";
     pub const INVALID_INPUT: &str = "invalid_input";
     pub const TASK_NOT_FOUND: &str = "task_not_found";
     pub const TASK_ALREADY_COMPLETED: &str = "task_already_completed";

@@ -1,16 +1,16 @@
 use crate::{
-    web_error_codes, CompleteSessionRequest, CompleteSessionResponse, DeferMode, DeferPlan,
-    DeferTaskRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
-    WebWorkerHandle,
+    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
+    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
-    resolve_project_storage_directory, CompleteSessionRequest as CoreCompleteSessionRequest,
-    DeferModeDto, DeferPlanRequest as CoreDeferPlanRequest,
-    DeferTaskRequest as CoreDeferTaskRequest, RecordSessionRequest as CoreRecordSessionRequest,
-    ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService,
-    WebSuccess as CoreWebSuccess,
+    resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto,
+    CompleteSessionRequest as CoreCompleteSessionRequest, DeferModeDto,
+    DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
+    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
@@ -94,6 +94,17 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(|_| invalid_input_error())?;
         self.service()?
             .list_tasks_at(operation_now, logical_date)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
+    fn list_all_tasks(
+        &mut self,
+        request: ListAllTasksRequest,
+    ) -> Result<WebSuccess<AllTaskPage>, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .list_all_tasks_at(operation_now, request.cursor)
             .map(convert_success)
             .map_err(Into::into)
     }
@@ -182,6 +193,20 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
     }
 }
 
+impl From<AllTaskRowDto> for AllTaskRow {
+    fn from(row: AllTaskRowDto) -> Self {
+        Self {
+            task: row.task.into(),
+            segment_index: row.segment_index,
+            schedule_date: row.schedule_date,
+            deadline_epoch_ms: row.deadline_epoch_ms,
+            deadline_label: row.deadline_label,
+            misses_deadline: row.misses_deadline,
+            is_leaf: row.is_leaf,
+        }
+    }
+}
+
 impl From<RecordSessionRequest> for CoreRecordSessionRequest {
     fn from(request: RecordSessionRequest) -> Self {
         Self {
@@ -241,6 +266,17 @@ impl ConvertData for Vec<ScheduledTaskRowDto> {
     }
 }
 
+impl ConvertData for AllTaskPageDto {
+    type Output = AllTaskPage;
+
+    fn convert(self) -> Self::Output {
+        AllTaskPage {
+            rows: self.rows.into_iter().map(Into::into).collect(),
+            next_cursor: self.next_cursor,
+        }
+    }
+}
+
 impl ConvertData for Option<SessionTaskDto> {
     type Output = Option<SessionTask>;
 
@@ -289,7 +325,7 @@ mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
         web_error_codes, CompleteSessionRequest, DeferMode, DeferPlan, DeferTaskRequest,
-        ListTasksRequest, RecordSessionRequest, WebOperations,
+        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use std::fs;
@@ -298,7 +334,7 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn 六操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
+    fn 七操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
         let fixture = Fixture::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -319,6 +355,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(listed.snapshot.observed_at_epoch_ms, now.timestamp_millis());
+        let all = operations
+            .list_all_tasks(ListAllTasksRequest { cursor: None })
+            .unwrap();
+        assert_eq!(all.snapshot.observed_at_epoch_ms, now.timestamp_millis());
         let selected = operations.auto_session().unwrap();
         assert_eq!(
             selected.snapshot.observed_at_epoch_ms,
@@ -368,7 +408,7 @@ mod tests {
                 .code,
             web_error_codes::INVALID_INPUT
         );
-        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 7);
     }
 
     #[test]
