@@ -213,9 +213,11 @@ fn listは固定・祖先から継承した繰返・単発を分類する() {
     let fixed = TaskHandle::with_identity("fixed", Uuid::from_u128(201), start).unwrap();
     fixed.set_fixed_start(true).unwrap();
     let repetitive = TaskHandle::with_identity("repetitive", Uuid::from_u128(202), start).unwrap();
-    repetitive.set_repetition_interval_days_opt(Some(7)).unwrap();
-    let repetitive_child = repetitive
-        .create_as_last_child(crate::test_support::new_task_attr_at("child", start));
+    repetitive
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let repetitive_child =
+        repetitive.create_as_last_child(crate::test_support::new_task_attr_at("child", start));
     let plain = TaskHandle::with_identity("plain", Uuid::from_u128(203), start).unwrap();
     let ids = [
         fixed.get_id().unwrap(),
@@ -241,10 +243,7 @@ fn listは固定・祖先から継承した繰返・単発を分類する() {
 
     assert_eq!(rows[0].task_display_kind, TaskDisplayKind::Fixed);
     assert_eq!(rows[1].task_display_kind, TaskDisplayKind::Repetitive);
-    assert_eq!(
-        rows[2].task_display_kind,
-        TaskDisplayKind::NonRepetitive
-    );
+    assert_eq!(rows[2].task_display_kind, TaskDisplayKind::NonRepetitive);
 }
 
 #[test]
@@ -292,10 +291,7 @@ fn listは締切なし・超過・当日・将来をlogical_date境界で分類�
     let rows = build_scheduled_task_rows(&repository, &schedule, date, start).unwrap();
 
     assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::None);
-    assert_eq!(
-        rows[1].deadline_display_kind,
-        DeadlineDisplayKind::Overrun
-    );
+    assert_eq!(rows[1].deadline_display_kind, DeadlineDisplayKind::Overrun);
     assert_eq!(rows[2].deadline_display_kind, DeadlineDisplayKind::Today);
     assert_eq!(rows[3].deadline_display_kind, DeadlineDisplayKind::Future);
 }

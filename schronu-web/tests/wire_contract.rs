@@ -258,14 +258,8 @@ fn 旧一覧payloadは表示分類fieldがなくてもdeserializeできる() {
         }
     }))
     .unwrap();
-    assert_eq!(
-        scheduled.task_display_kind,
-        TaskDisplayKind::NonRepetitive
-    );
-    assert_eq!(
-        scheduled.deadline_display_kind,
-        DeadlineDisplayKind::None
-    );
+    assert_eq!(scheduled.task_display_kind, TaskDisplayKind::NonRepetitive);
+    assert_eq!(scheduled.deadline_display_kind, DeadlineDisplayKind::None);
     assert!(scheduled.misses_deadline);
 }
 

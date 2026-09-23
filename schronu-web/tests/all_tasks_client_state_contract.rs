@@ -22,6 +22,8 @@ fn all_row(segment_index: usize) -> AllTaskRow {
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
     }
 }

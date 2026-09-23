@@ -114,6 +114,8 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
         deadline_epoch_ms: Some(1_788_553_800_000), // 2026-09-05 05:30 JST
         deadline_label: "server deadline label".to_owned(),
         misses_deadline: true,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::Overrun,
         is_leaf: true,
         defer_plan: DeferPlan {
             mode: DeferMode::Normal,
@@ -206,6 +208,8 @@ fn session_row() -> ScheduledTaskRow {
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: DeferPlan {
             mode: DeferMode::Normal,

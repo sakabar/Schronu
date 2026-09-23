@@ -1,16 +1,19 @@
 use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
-    DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess,
+    WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto,
-    CompleteSessionRequest as CoreCompleteSessionRequest, DeferModeDto,
+    CompleteSessionRequest as CoreCompleteSessionRequest,
+    DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
     RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
-    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, WebService, WebSuccess as CoreWebSuccess,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, TaskDisplayKind as CoreTaskDisplayKind,
+    WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
@@ -169,6 +172,27 @@ impl From<SessionTaskDto> for SessionTask {
     }
 }
 
+impl From<CoreTaskDisplayKind> for TaskDisplayKind {
+    fn from(kind: CoreTaskDisplayKind) -> Self {
+        match kind {
+            CoreTaskDisplayKind::Fixed => Self::Fixed,
+            CoreTaskDisplayKind::Repetitive => Self::Repetitive,
+            CoreTaskDisplayKind::NonRepetitive => Self::NonRepetitive,
+        }
+    }
+}
+
+impl From<CoreDeadlineDisplayKind> for DeadlineDisplayKind {
+    fn from(kind: CoreDeadlineDisplayKind) -> Self {
+        match kind {
+            CoreDeadlineDisplayKind::None => Self::None,
+            CoreDeadlineDisplayKind::Overrun => Self::Overrun,
+            CoreDeadlineDisplayKind::Today => Self::Today,
+            CoreDeadlineDisplayKind::Future => Self::Future,
+        }
+    }
+}
+
 impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
     fn from(row: ScheduledTaskRowDto) -> Self {
         Self {
@@ -178,6 +202,8 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
             deadline_epoch_ms: row.deadline_epoch_ms,
             deadline_label: row.deadline_label,
             misses_deadline: row.misses_deadline,
+            task_display_kind: row.task_display_kind.into(),
+            deadline_display_kind: row.deadline_display_kind.into(),
             is_leaf: row.is_leaf,
             defer_plan: DeferPlan {
                 mode: match row.defer_plan.mode {
@@ -202,6 +228,8 @@ impl From<AllTaskRowDto> for AllTaskRow {
             deadline_epoch_ms: row.deadline_epoch_ms,
             deadline_label: row.deadline_label,
             misses_deadline: row.misses_deadline,
+            task_display_kind: row.task_display_kind.into(),
+            deadline_display_kind: row.deadline_display_kind.into(),
             is_leaf: row.is_leaf,
         }
     }

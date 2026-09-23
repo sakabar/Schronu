@@ -27,7 +27,8 @@ fn measure_all_task_server_performance() {
         assert_eq!(schedule.len(), segment_count);
 
         let (row_time, rows) = median_sample(|| {
-            build_all_task_rows(&schedule, operation_now).expect("fixture rows are representable")
+            build_all_task_rows(&repository, &schedule, operation_now)
+                .expect("fixture rows are representable")
         });
         assert_eq!(rows.len(), segment_count);
 

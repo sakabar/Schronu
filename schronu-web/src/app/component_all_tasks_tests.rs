@@ -42,6 +42,8 @@ fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) 
         deadline_epoch_ms: Some(1_000),
         deadline_label: "2026-09-06 07:00".to_owned(),
         misses_deadline: false,
+        task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: crate::DeadlineDisplayKind::Future,
         is_leaf,
     }
 }
