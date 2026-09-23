@@ -416,6 +416,37 @@ fn all一覧は500行ずつ描画し親は空操作cellとなる() {
 }
 
 #[test]
+fn 日付別一覧は500行を超えても段階描画しない() {
+    #[component]
+    fn DailyRowsHarness(rows: Vec<ListRowViewModel>) -> Element {
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows,
+                active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let rows = (0..501)
+        .map(|index| row(&format!("daily-{index}"), false, true))
+        .collect();
+    let mut dom = VirtualDom::new_with_props(DailyRowsHarness, DailyRowsHarnessProps { rows });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert_eq!(html.matches("class=\"task-row\"").count(), 501, "{html}");
+    assert!(!html.contains("さらに表示"), "{html}");
+}
+
+#[test]
 fn all一覧の列幅はviewportによらず固定する() {
     let css = include_str!("../../assets/main.css");
     let universal = css.split_once("@media (max-width: 46rem)").unwrap().0;

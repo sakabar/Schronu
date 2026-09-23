@@ -54,14 +54,18 @@ pub fn ListView(
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
-    let visible_limit = visible_row_limit.unwrap_or(500);
+    let all_selected = all_tasks_status.is_some();
+    let visible_limit = if all_selected {
+        visible_row_limit.unwrap_or(500)
+    } else {
+        usize::MAX
+    };
     let has_more = matching_rows.len() > visible_limit;
     let filtered_rows = matching_rows
         .into_iter()
         .take(visible_limit)
         .collect::<Vec<_>>();
     let no_matches = !filter_text.trim().is_empty() && filtered_rows.is_empty();
-    let all_selected = all_tasks_status.is_some();
     let table_class = if all_selected {
         "task-table all-task-table"
     } else {

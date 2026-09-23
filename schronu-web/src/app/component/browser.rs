@@ -179,7 +179,8 @@ pub(super) fn BrowserApp() -> Element {
                     date_input_error,
                     filter_text,
                     all_tasks_status: all_tasks_view_status,
-                    visible_row_limit: Some(all_tasks_visible_limit),
+                    visible_row_limit: (list_selection == ListSelection::All)
+                        .then_some(all_tasks_visible_limit),
                     mutations_locked,
                     mutation_globally_blocked: global_blocked,
                     server_actions_blocked,
