@@ -259,26 +259,42 @@ fn listはtask種類と締切種類を親子にかかわらずclassへ反映す�
     let mut non_repetitive = named_row("one-shot", "one-shot leaf", false, true);
     non_repetitive.task_display_kind = TaskDisplayKind::NonRepetitive;
     non_repetitive.deadline_display_kind = DeadlineDisplayKind::Future;
-    let mut legacy_overrun = named_row("legacy", "legacy parent", true, false);
-    legacy_overrun.deadline_display_kind = DeadlineDisplayKind::None;
+    let mut overrun_parent = named_row("overrun", "overrun parent", true, false);
+    overrun_parent.deadline_display_kind = DeadlineDisplayKind::Overrun;
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
-        rows: vec![fixed, repetitive, non_repetitive, legacy_overrun],
+        rows: vec![fixed, repetitive, non_repetitive, overrun_parent],
         active_task_ids: Vec::new(),
         filter_text: String::new(),
         events,
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert!(html.contains("class=\"task-name task-kind-fixed is-leaf\""), "{html}");
-    assert!(html.contains("class=\"task-name task-kind-repetitive\""), "{html}");
+    assert!(
+        html.contains("class=\"task-name task-kind-fixed is-leaf\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"task-name task-kind-repetitive\""),
+        "{html}"
+    );
     assert!(
         html.contains("class=\"task-name task-kind-non-repetitive is-leaf\""),
         "{html}"
     );
-    assert!(html.contains("class=\"deadline deadline-kind-today\""), "{html}");
-    assert!(html.contains("class=\"deadline deadline-kind-future\""), "{html}");
-    assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1, "{html}");
+    assert!(
+        html.contains("class=\"deadline deadline-kind-today\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"deadline deadline-kind-future\""),
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("deadline deadline-kind-overrun").count(),
+        1,
+        "{html}"
+    );
 }
 
 #[test]
@@ -296,9 +312,8 @@ fn list配色は意味別tokenを使いleafは太字だけを担う() {
     assert!(css.contains(".deadline.deadline-kind-overrun {\n    color: var(--red);"));
     assert!(css.contains(".task-name.task-kind-fixed {\n    color: var(--task-fixed);"));
     assert!(css.contains(".task-name.task-kind-repetitive {\n    color: var(--task-repetitive);"));
-    assert!(css.contains(
-        ".task-name.task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"
-    ));
+    assert!(css
+        .contains(".task-name.task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"));
     let leaf_rule = css
         .split_once(".task-name.is-leaf {")
         .expect("leaf rule")
@@ -565,7 +580,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("____-01:00"));
     assert!(html.contains("11:25-11:28"));
     assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
-    assert_eq!(html.matches("deadline is-overdue").count(), 1);
+    assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1);
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
     assert!(
         html.contains("aria-label=\"task leaf: セッションに追加\""),
@@ -791,7 +806,7 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
 }
 
 #[test]
-fn misses_deadlineがfalseなら赤色にしない() {
+fn misses_deadlineがfalseなら超過classを付けない() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
@@ -800,7 +815,7 @@ fn misses_deadlineがfalseなら赤色にしない() {
         filter_text: String::new(),
         events,
     });
-    assert!(!dioxus::ssr::render(&dom).contains("deadline is-overdue"));
+    assert!(!dioxus::ssr::render(&dom).contains("deadline-kind-overrun"));
 }
 
 #[test]

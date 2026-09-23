@@ -117,8 +117,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-004**: 選択したlogical dateのschedule segmentを開始時刻の昇順で表示すること。
 - **REQ-LIST-005**: 各行に締切、予定時間、task名、セッション追加buttonを表示すること。viewport幅にかかわらずbuttonは左端の幅44pxかつ高さ32pxの「＋」とし、assistive technologyがtask名とセッション追加操作を識別できるlabelを持つこと。左スワイプによる直接発火は行わないこと。
 - **REQ-LIST-006**: 予定時間をlocal timeの`HH:MM-HH:MM`で表示すること。
-- **REQ-LIST-007**: 現在時刻が締切を過ぎた場合、締切を赤色で表示すること。
-- **REQ-LIST-008**: schedule rankが0であるtask(未完了の子を持たないtask)のtask名を緑色で表示すること。
+- **REQ-LIST-007**: 日付別・全件一覧の締切はserver分類に従い、予定終了が締切を超える場合を赤`#c33d43`、超過せず表示logical date内に締切が来る場合を黄`#9a5a00`、それより先を緑`#196846`で表示し、締切なしは通常色とすること。旧保存payloadで分類が欠けても`misses_deadline`が真なら赤を優先すること。
+- **REQ-LIST-008**: 日付別・全件一覧のtask名はserver分類に従い、固定を淡青`#516f82`、繰返を青`#0069c2`、単発を橙`#a44a00`で親rowにも表示すること。schedule rank 0は色分類から分離して太字と操作可否だけに用いること。
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加し、追加に成功した場合はセッションtabへ切り替えること。server通信は行わないこと。
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
@@ -133,7 +133,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-020**: 全件取得中、失敗、無効化のstatusは一覧領域内へ表示し、全面overlayと背面の`inert`を使用しないこと。全件取得中もtab、曜日button、日付入力を操作でき、日付入力は「全て」表示中も常に表示して、妥当な送信時は指定日の日付別一覧へ切り替えること。
 - **REQ-LIST-021**: 全件検索は取得完了時だけ表示し、前後空白を除外したUnicode小文字化と部分一致を日付別検索と共通化すること。文字列はmemory内だけに保持し、日付別との往復と全件一覧の無効化後も維持するが、reloadでは空にすること。日付別検索文字列とは独立させ、セッション追加成功時は操作元の検索文字列だけを消去すること。
 - **REQ-LIST-022**: 全件一覧は検索後の先頭500行だけを描画し、「さらに表示」で500行ずつ増やすこと。全件検索文字列を変更またはclearした場合は描画上限を500へ戻すこと。
-- **REQ-LIST-023**: 全件行は`get_schedule`が返す全実task segmentと1対1で、同一taskの複数segment、対応順、連続する`segment_index`を保持すること。予定列はsegmentのlogical dateを`YYYY/MM/DD(曜)`で表示し、締切label、締切超過、葉判定は日付別一覧と共通のserver計算を用いること。
+- **REQ-LIST-023**: 全件行は`get_schedule`が返す全実task segmentと1対1で、同一taskの複数segment、対応順、連続する`segment_index`を保持すること。予定列はsegmentのlogical dateを`YYYY/MM/DD(曜)`で表示し、締切label、締切・taskの表示分類、葉判定は日付別一覧と共通のserver計算を用い、clientで再分類しないこと。
 - **REQ-LIST-024**: 全件一覧ではrank 0行にセッション追加だけを表示し、先送りを表示しないこと。rank非0の操作cellは空とし、同一UUIDのセッションが存在する場合は全segmentを追加済み表示にすること。列幅はviewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`とし、日付別一覧の列幅とtask名cell内横scrollを維持すること。
 - **REQ-LIST-025**: `record_session`、`complete_session`、`defer_task`の成功時だけ全件状態を無効化し、遅延した全件responseで古い一覧を復活させないこと。localのセッション追加、破棄、再開では無効化しないこと。
 - **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。

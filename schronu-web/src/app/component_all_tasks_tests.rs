@@ -270,9 +270,18 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     assert_eq!(rows[1].row_key, "all:13");
     assert!(!rows[2].is_leaf);
     assert_eq!(rows[0].task_display_kind, crate::TaskDisplayKind::Fixed);
-    assert_eq!(rows[0].deadline_display_kind, crate::DeadlineDisplayKind::Today);
-    assert_eq!(rows[1].task_display_kind, crate::TaskDisplayKind::Repetitive);
-    assert_eq!(rows[1].deadline_display_kind, crate::DeadlineDisplayKind::Future);
+    assert_eq!(
+        rows[0].deadline_display_kind,
+        crate::DeadlineDisplayKind::Today
+    );
+    assert_eq!(
+        rows[1].task_display_kind,
+        crate::TaskDisplayKind::Repetitive
+    );
+    assert_eq!(
+        rows[1].deadline_display_kind,
+        crate::DeadlineDisplayKind::Future
+    );
     assert_eq!(
         rows[2].task_display_kind,
         crate::TaskDisplayKind::NonRepetitive

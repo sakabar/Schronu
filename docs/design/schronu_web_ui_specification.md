@@ -111,6 +111,10 @@ ScheduledTaskRow {
     schedule_start_epoch_ms: i64,
     schedule_end_epoch_ms: i64,
     deadline_epoch_ms: Option<i64>,
+    deadline_label: String,
+    misses_deadline: bool,
+    task_display_kind: Fixed | Repetitive | NonRepetitive,
+    deadline_display_kind: None | Overrun | Today | Future,
     is_leaf: bool,
     defer_plan: DeferPlan,
 }
@@ -132,6 +136,8 @@ AllTaskRow {
     deadline_epoch_ms: Option<i64>,
     deadline_label: String,
     misses_deadline: bool,
+    task_display_kind: Fixed | Repetitive | NonRepetitive,
+    deadline_display_kind: None | Overrun | Today | Future,
     is_leaf: bool,
 }
 
@@ -145,7 +151,9 @@ ListAllTasksRequest {
 }
 ```
 
-`segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、`is_leaf`は日付別read modelと同じserver helperで確定する。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
+`segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし旧保存payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`Overrun`として表示する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
+
+日付別と全件は同じ一覧componentとclass契約を使う。task名は固定`#516f82`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。`is_leaf`は太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 
