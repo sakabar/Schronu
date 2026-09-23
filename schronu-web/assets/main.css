@@ -16,6 +16,11 @@
     --blue-dark: #255d99;
     --red: #c33d43;
     --red-soft: #fff0f0;
+    --task-fixed: #516f82;
+    --task-repetitive: #0069c2;
+    --task-non-repetitive: #a44a00;
+    --deadline-today: #9a5a00;
+    --deadline-future: #196846;
     --shadow: 0 0.75rem 2rem rgb(35 65 52 / 9%);
     --bottom-navigation-height: 3.5rem;
 }
@@ -328,8 +333,7 @@ button:disabled {
 }
 
 .buffer-value.is-negative,
-.session-remaining.is-overrun,
-.deadline.is-overdue {
+.session-remaining.is-overrun {
     color: var(--red);
 }
 
@@ -657,7 +661,12 @@ button:disabled {
 }
 
 .date-jump-submit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-block: 0;
     padding-inline: 1rem;
+    line-height: 1;
 }
 
 .date-input-error {
@@ -926,8 +935,31 @@ button:disabled {
 }
 
 .task-name.is-leaf {
-    color: var(--green-dark);
     font-weight: 750;
+}
+
+.task-name.task-kind-fixed {
+    color: var(--task-fixed);
+}
+
+.task-name.task-kind-repetitive {
+    color: var(--task-repetitive);
+}
+
+.task-name.task-kind-non-repetitive {
+    color: var(--task-non-repetitive);
+}
+
+.deadline.deadline-kind-overrun {
+    color: var(--red);
+}
+
+.deadline.deadline-kind-today {
+    color: var(--deadline-today);
+}
+
+.deadline.deadline-kind-future {
+    color: var(--deadline-future);
 }
 
 .history-panel {

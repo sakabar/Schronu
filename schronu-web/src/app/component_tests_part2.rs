@@ -31,6 +31,8 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: crate::DeferPlan {
             mode: crate::DeferMode::Normal,
@@ -169,6 +171,8 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: crate::DeferPlan {
             mode: crate::DeferMode::Normal,
@@ -251,6 +255,8 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: crate::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: crate::DeferPlan {
             mode: crate::DeferMode::Normal,

@@ -18,7 +18,7 @@ use super::view_test_support::{
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::client::date_input::DateInputState;
-use crate::{DeferMode, SessionTask};
+use crate::{DeadlineDisplayKind, DeferMode, SessionTask, TaskDisplayKind};
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
 
@@ -230,6 +230,12 @@ fn named_row(
         deadline_label: "____-01:00".to_owned(),
         schedule_label: "11:25-11:28".to_owned(),
         misses_deadline,
+        task_display_kind: TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: if misses_deadline {
+            DeadlineDisplayKind::Overrun
+        } else {
+            DeadlineDisplayKind::None
+        },
         is_leaf,
         defer_plan: Some(crate::DeferPlan {
             mode: DeferMode::Normal,
@@ -239,6 +245,96 @@ fn named_row(
         }),
         defer_confirmation: None,
     }
+}
+
+#[test]
+fn listはtask種類と締切種類を親子にかかわらずclassへ反映する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut fixed = named_row("fixed", "fixed leaf", false, true);
+    fixed.task_display_kind = TaskDisplayKind::Fixed;
+    fixed.deadline_display_kind = DeadlineDisplayKind::None;
+    let mut repetitive = named_row("repetitive", "repetitive parent", false, false);
+    repetitive.task_display_kind = TaskDisplayKind::Repetitive;
+    repetitive.deadline_display_kind = DeadlineDisplayKind::Today;
+    let mut non_repetitive = named_row("one-shot", "one-shot leaf", false, true);
+    non_repetitive.task_display_kind = TaskDisplayKind::NonRepetitive;
+    non_repetitive.deadline_display_kind = DeadlineDisplayKind::Future;
+    let mut overrun_parent = named_row("overrun", "overrun parent", true, false);
+    overrun_parent.deadline_display_kind = DeadlineDisplayKind::Overrun;
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![fixed, repetitive, non_repetitive, overrun_parent],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("class=\"task-name task-kind-fixed is-leaf\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"task-name task-kind-repetitive\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"task-name task-kind-non-repetitive is-leaf\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"deadline deadline-kind-today\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"deadline deadline-kind-future\""),
+        "{html}"
+    );
+    assert_eq!(
+        html.matches("deadline deadline-kind-overrun").count(),
+        1,
+        "{html}"
+    );
+    for accessible_label in [
+        "aria-label=\"固定タスク: fixed leaf\"",
+        "aria-label=\"繰返タスク: repetitive parent\"",
+        "aria-label=\"単発タスク: one-shot leaf\"",
+        "aria-label=\"単発タスク: overrun parent\"",
+        "aria-label=\"締切なし\"",
+        "aria-label=\"当日締切: ____-01:00\"",
+        "aria-label=\"将来締切: ____-01:00\"",
+        "aria-label=\"締切超過: ____-01:00\"",
+    ] {
+        assert!(html.contains(accessible_label), "{html}");
+    }
+}
+
+#[test]
+fn list配色は意味別tokenを使いleafは太字だけを担う() {
+    let css = include_str!("../../assets/main.css");
+    for token in [
+        "--task-fixed: #516f82;",
+        "--task-repetitive: #0069c2;",
+        "--task-non-repetitive: #a44a00;",
+        "--deadline-today: #9a5a00;",
+        "--deadline-future: #196846;",
+    ] {
+        assert!(css.contains(token), "missing token: {token}");
+    }
+    assert!(css.contains(".deadline.deadline-kind-overrun {\n    color: var(--red);"));
+    assert!(css.contains(".task-name.task-kind-fixed {\n    color: var(--task-fixed);"));
+    assert!(css.contains(".task-name.task-kind-repetitive {\n    color: var(--task-repetitive);"));
+    assert!(css
+        .contains(".task-name.task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"));
+    let leaf_rule = css
+        .split_once(".task-name.is-leaf {")
+        .expect("leaf rule")
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert!(leaf_rule.contains("font-weight: 750;"));
+    assert!(!leaf_rule.contains("color:"), "{leaf_rule}");
 }
 
 fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
@@ -495,8 +591,8 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("date-pill is-selected"));
     assert!(html.contains("____-01:00"));
     assert!(html.contains("11:25-11:28"));
-    assert!(html.contains("task-name is-leaf"));
-    assert_eq!(html.matches("deadline is-overdue").count(), 1);
+    assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
+    assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1);
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
     assert!(
         html.contains("aria-label=\"task leaf: セッションに追加\""),
@@ -674,6 +770,15 @@ fn 一覧操作領域は全幅で36pxに統一する() {
 }
 
 #[test]
+fn 日付表示ボタンの文字は中央に配置する() {
+    let css = include_str!("../../assets/main.css");
+
+    assert!(css.contains(
+        ".date-jump-submit {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    padding-block: 0;\n    padding-inline: 1rem;\n    line-height: 1;\n}"
+    ));
+}
+
+#[test]
 fn 幅34rem以下はbufferと曜日間隔を圧縮する() {
     let css = include_str!("../../assets/main.css");
     let narrow_layout = css
@@ -722,7 +827,7 @@ fn active_uuid_disables_every_matching_row_but_not_other_tasks() {
 }
 
 #[test]
-fn misses_deadlineがfalseなら赤色にしない() {
+fn misses_deadlineがfalseなら超過classを付けない() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
         dates: Vec::new(),
@@ -731,7 +836,7 @@ fn misses_deadlineがfalseなら赤色にしない() {
         filter_text: String::new(),
         events,
     });
-    assert!(!dioxus::ssr::render(&dom).contains("deadline is-overdue"));
+    assert!(!dioxus::ssr::render(&dom).contains("deadline-kind-overrun"));
 }
 
 #[test]
@@ -927,7 +1032,12 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert_eq!(html.matches("週次 Planning").count(), 6, "{html}");
+    assert_eq!(
+        html.matches("aria-label=\"単発タスク: 週次 Planning\"")
+            .count(),
+        2,
+        "{html}"
+    );
     assert!(!html.contains("実装"), "{html}");
 
     let (japanese_dom, _) = build(RootProps {

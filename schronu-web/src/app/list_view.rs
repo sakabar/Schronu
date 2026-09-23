@@ -5,7 +5,7 @@ use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
-use crate::{DeferPlan, SessionTask};
+use crate::{DeadlineDisplayKind, DeferPlan, SessionTask, TaskDisplayKind};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
@@ -254,15 +254,32 @@ fn TaskRow(
     on_defer_task: EventHandler<(String, DeferPlan)>,
 ) -> Element {
     let mut confirming_defer = use_signal(|| false);
-    let deadline_class = if row.misses_deadline {
-        "deadline is-overdue"
-    } else {
-        "deadline"
+    let deadline_class = match row.deadline_display_kind {
+        DeadlineDisplayKind::None => "deadline",
+        DeadlineDisplayKind::Overrun => "deadline deadline-kind-overrun",
+        DeadlineDisplayKind::Today => "deadline deadline-kind-today",
+        DeadlineDisplayKind::Future => "deadline deadline-kind-future",
+    };
+    let deadline_accessible_label = match row.deadline_display_kind {
+        DeadlineDisplayKind::None => "締切なし".to_owned(),
+        DeadlineDisplayKind::Overrun => format!("締切超過: {}", row.deadline_label),
+        DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
+        DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
+    };
+    let task_kind_class = match row.task_display_kind {
+        TaskDisplayKind::Fixed => "task-kind-fixed",
+        TaskDisplayKind::Repetitive => "task-kind-repetitive",
+        TaskDisplayKind::NonRepetitive => "task-kind-non-repetitive",
+    };
+    let task_kind_label = match row.task_display_kind {
+        TaskDisplayKind::Fixed => "固定タスク",
+        TaskDisplayKind::Repetitive => "繰返タスク",
+        TaskDisplayKind::NonRepetitive => "単発タスク",
     };
     let task_class = if row.is_leaf {
-        "task-name is-leaf"
+        format!("task-name {task_kind_class} is-leaf")
     } else {
-        "task-name"
+        format!("task-name {task_kind_class}")
     };
     let deadline = &row.deadline_label;
     let button_label = if active {
@@ -328,8 +345,8 @@ fn TaskRow(
                 }
             }
             td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
-            td { class: deadline_class, "data-label": "締切", "{deadline}" }
-            td { class: task_class,
+            td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
+            td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.task.task_name),
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,

@@ -1,11 +1,12 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    AllTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto,
+    ServerSnapshot, SessionTaskDto, TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
 };
-use crate::application::daily_capacity::try_logical_date;
+use crate::application::daily_capacity::{try_logical_date, try_logical_date_start};
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_logical_dates, ScheduledTaskView,
@@ -14,6 +15,8 @@ use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
 use chrono::{DateTime, Local, NaiveDate};
+use std::collections::HashMap;
+use uuid::Uuid;
 
 #[cfg(test)]
 pub(in crate::adapter::controller) fn build_server_snapshot<R, F>(
@@ -34,10 +37,12 @@ where
 }
 
 pub(in crate::adapter::controller) fn build_all_task_rows(
+    repository: &dyn TaskRepositoryTrait,
     schedule: &[ScheduledTaskView],
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
     let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let mut task_kind_cache = HashMap::new();
     logical_dates
         .into_iter()
         .zip(schedule)
@@ -50,6 +55,8 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 last_synced_time,
             )
             .map_err(WebReadCoreError::Application)?;
+            let (task_display_kind, deadline_display_kind) =
+                classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(AllTaskRowDto {
                 task: session_task_dto(
                     segment.task.id.hyphenated().to_string(),
@@ -62,6 +69,8 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 deadline_epoch_ms: deadline.map(|value| value.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
+                task_display_kind,
+                deadline_display_kind,
                 is_leaf: segment.is_leaf(),
             })
         })
@@ -159,6 +168,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     dated_segments.retain(|(date, _)| *date == logical_date);
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
+    let mut task_kind_cache = HashMap::new();
     dated_segments
         .into_iter()
         .map(|(_, segment)| {
@@ -169,6 +179,8 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 last_synced_time,
             )
             .map_err(WebReadCoreError::Application)?;
+            let (task_display_kind, deadline_display_kind) =
+                classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(ScheduledTaskRowDto {
                 task: session_task_dto(
                     segment.task.id.hyphenated().to_string(),
@@ -181,6 +193,8 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
+                task_display_kind,
+                deadline_display_kind,
                 is_leaf: segment.is_leaf(),
                 defer_plan: defer_plan_dto(
                     plan_defer_task(repository, segment.task.id, logical_date)
@@ -189,6 +203,60 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
             })
         })
         .collect()
+}
+
+fn classify_display_kinds(
+    repository: &dyn TaskRepositoryTrait,
+    segment: &ScheduledTaskView,
+    logical_date: NaiveDate,
+    task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
+) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
+    let task_display_kind = if let Some(kind) = task_kind_cache.get(&segment.task.id) {
+        *kind
+    } else {
+        let task = repository
+            .get_by_id(segment.task.id)
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+            .ok_or({
+                WebReadCoreError::Application(ApplicationError::TaskNotFound(segment.task.id))
+            })?;
+        let kind = if task
+            .fixed_start_applies_to_schedule()
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+        {
+            TaskDisplayKind::Fixed
+        } else if task
+            .get_inherited_repetition_interval_days_opt()
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+            .is_some()
+        {
+            TaskDisplayKind::Repetitive
+        } else {
+            TaskDisplayKind::NonRepetitive
+        };
+        task_kind_cache.insert(segment.task.id, kind);
+        kind
+    };
+    let deadline_display_kind = match segment.task.deadline_time {
+        None => DeadlineDisplayKind::None,
+        Some(deadline) if segment.scheduled_end > deadline => DeadlineDisplayKind::Overrun,
+        Some(deadline) => {
+            let next_logical_date = logical_date.succ_opt().ok_or({
+                WebReadCoreError::Application(ApplicationError::LogicalDateStartOutOfRange {
+                    date: logical_date,
+                })
+            })?;
+            let next_logical_date_start =
+                try_logical_date_start(next_logical_date).map_err(WebReadCoreError::Application)?;
+            if deadline < next_logical_date_start {
+                DeadlineDisplayKind::Today
+            } else {
+                DeadlineDisplayKind::Future
+            }
+        }
+    };
+
+    Ok((task_display_kind, deadline_display_kind))
 }
 
 fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {

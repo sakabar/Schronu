@@ -120,6 +120,8 @@ mod tests {
             deadline_epoch_ms: None,
             deadline_label: "____/__/__".to_owned(),
             misses_deadline: false,
+            task_display_kind: super::super::model::TaskDisplayKind::NonRepetitive,
+            deadline_display_kind: super::super::model::DeadlineDisplayKind::None,
             is_leaf: true,
         }
     }

@@ -1,6 +1,6 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::{AllTaskRow, DeferMode, DeferPlan, SessionTask};
+use crate::{AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, SessionTask, TaskDisplayKind};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 
 const INVALID_TIME: &str = "--:--";
@@ -36,6 +36,8 @@ pub struct ListRowViewModel {
     pub deadline_label: String,
     pub schedule_label: String,
     pub misses_deadline: bool,
+    pub task_display_kind: TaskDisplayKind,
+    pub deadline_display_kind: DeadlineDisplayKind,
     pub is_leaf: bool,
     pub defer_plan: Option<DeferPlan>,
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
@@ -105,6 +107,8 @@ fn project_all_task_row(row: &AllTaskRow) -> ListRowViewModel {
         deadline_label: row.deadline_label.clone(),
         schedule_label: all_task_schedule_label(&row.schedule_date),
         misses_deadline: row.misses_deadline,
+        task_display_kind: row.task_display_kind,
+        deadline_display_kind: row.deadline_display_kind,
         is_leaf: row.is_leaf,
         defer_plan: None,
         defer_confirmation: None,
@@ -244,12 +248,28 @@ fn project_list_rows_with(
                     format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
                 ),
                 misses_deadline: row.misses_deadline,
+                task_display_kind: row.task_display_kind,
+                deadline_display_kind: effective_deadline_display_kind(
+                    row.deadline_display_kind,
+                    row.misses_deadline,
+                ),
                 is_leaf: row.is_leaf,
                 defer_plan: Some(row.defer_plan.clone()),
                 defer_confirmation,
             }
         })
         .collect()
+}
+
+fn effective_deadline_display_kind(
+    deadline_display_kind: DeadlineDisplayKind,
+    misses_deadline: bool,
+) -> DeadlineDisplayKind {
+    if misses_deadline && deadline_display_kind == DeadlineDisplayKind::None {
+        DeadlineDisplayKind::Overrun
+    } else {
+        deadline_display_kind
+    }
 }
 
 fn all_task_schedule_label(schedule_date: &str) -> String {

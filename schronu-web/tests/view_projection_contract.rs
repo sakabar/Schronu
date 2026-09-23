@@ -3,7 +3,8 @@ use schronu_web::client::view_projection::{
     format_local_hh_mm, project_list_rows, project_session_cards, DeferConfirmationKind,
 };
 use schronu_web::{
-    DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask, WebSuccess,
+    DeadlineDisplayKind, DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask,
+    TaskDisplayKind, WebSuccess,
 };
 
 mod client_state_support;
@@ -114,6 +115,8 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
         deadline_epoch_ms: Some(1_788_553_800_000), // 2026-09-05 05:30 JST
         deadline_label: "server deadline label".to_owned(),
         misses_deadline: true,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::Overrun,
         is_leaf: true,
         defer_plan: DeferPlan {
             mode: DeferMode::Normal,
@@ -135,6 +138,33 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     assert_eq!(rows[0].schedule_label, "09:30-10:00");
     assert_eq!(rows[0].deadline_label, "server deadline label");
     assert!(rows[0].misses_deadline);
+    assert_eq!(rows[0].task_display_kind, TaskDisplayKind::NonRepetitive);
+    assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
+}
+
+#[test]
+fn listは旧payloadの締切超過flagを表示分類より優先する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-04", START_EPOCH_MS)));
+    let (request_id, request) = list_effect(state.request_list("2026-09-04"));
+    let mut row = session_row();
+    row.misses_deadline = true;
+    row.task_display_kind = TaskDisplayKind::Fixed;
+    row.deadline_display_kind = DeadlineDisplayKind::None;
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-04", START_EPOCH_MS),
+            data: vec![row],
+        }),
+    );
+
+    let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
+    assert_eq!(rows[0].task_display_kind, TaskDisplayKind::Fixed);
+    assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
 }
 
 #[test]
@@ -206,6 +236,8 @@ fn session_row() -> ScheduledTaskRow {
         deadline_epoch_ms: None,
         deadline_label: "____/__/__".to_owned(),
         misses_deadline: false,
+        task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
+        deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
         defer_plan: DeferPlan {
             mode: DeferMode::Normal,
