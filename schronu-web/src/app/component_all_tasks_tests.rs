@@ -294,6 +294,77 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
 }
 
 #[test]
+fn all行は翌logical_dateの境界と予定のない日数を次のtaskへ付与する() {
+    use crate::client::view_projection::project_all_task_rows;
+
+    let mut first = all_row(0, "first", "先頭", true);
+    let mut same_day = all_row(1, "same", "同日", true);
+    let mut next_day = all_row(2, "next", "翌日", true);
+    next_day.schedule_date = "2026-09-07".to_owned();
+    let mut after_gap = all_row(3, "gap", "空き後", true);
+    after_gap.schedule_date = "2026-09-10".to_owned();
+    let mut invalid = all_row(4, "invalid", "不正", true);
+    invalid.schedule_date = "not-a-date".to_owned();
+    first.schedule_date = "2026-09-06".to_owned();
+    same_day.schedule_date = "2026-09-06".to_owned();
+
+    let rows = project_all_task_rows(&[first, same_day, next_day, after_gap, invalid]);
+    assert_eq!(rows[0].gap_before, None);
+    assert_eq!(rows[1].gap_before, None);
+    assert_eq!(rows[2].gap_before, None);
+    assert_eq!(rows[3].gap_before.as_deref(), Some("2日間の空き時間"));
+    assert_eq!(rows[4].gap_before, None);
+    assert!(!rows[0].date_boundary_before);
+    assert!(!rows[1].date_boundary_before);
+    assert!(rows[2].date_boundary_before);
+    assert!(!rows[3].date_boundary_before);
+    assert!(!rows[4].date_boundary_before);
+}
+
+#[test]
+fn all行は非昇順の後も既出task日を空きに数えない() {
+    use crate::client::view_projection::project_all_task_rows;
+
+    let mut september_tenth = all_row(0, "tenth", "10日", true);
+    september_tenth.schedule_date = "2026-09-10".to_owned();
+    let mut september_fifth = all_row(1, "fifth", "5日", true);
+    september_fifth.schedule_date = "2026-09-05".to_owned();
+    let mut september_twelfth = all_row(2, "twelfth", "12日", true);
+    september_twelfth.schedule_date = "2026-09-12".to_owned();
+
+    let rows = project_all_task_rows(&[september_tenth, september_fifth, september_twelfth]);
+    assert_eq!(rows[0].gap_before, None);
+    assert_eq!(rows[1].gap_before, None);
+    assert_eq!(rows[2].gap_before.as_deref(), Some("1日間の空き時間"));
+    assert!(rows.iter().all(|row| !row.date_boundary_before));
+}
+
+#[test]
+fn all行の境界はtask件数上限に含めず検索中は空きとともに非表示にする() {
+    use crate::client::view_projection::project_visible_all_task_rows;
+
+    let mut rows = (0..501)
+        .map(|index| all_row(index, &format!("task-{index}"), "検索対象", true))
+        .collect::<Vec<_>>();
+    rows[500].schedule_date = "2026-09-07".to_owned();
+
+    let first_page = project_visible_all_task_rows(&rows, "", 500);
+    assert_eq!(first_page.rows.len(), 500);
+    assert!(first_page.has_more);
+    assert!(first_page.rows.iter().all(|row| row.gap_before.is_none()));
+    assert!(first_page.rows.iter().all(|row| !row.date_boundary_before));
+
+    let expanded = project_visible_all_task_rows(&rows, "", 501);
+    assert_eq!(expanded.rows.len(), 501);
+    assert_eq!(expanded.rows[500].gap_before, None);
+    assert!(expanded.rows[500].date_boundary_before);
+
+    let filtered = project_visible_all_task_rows(&rows, "検索", 501);
+    assert!(filtered.rows.iter().all(|row| row.gap_before.is_none()));
+    assert!(filtered.rows.iter().all(|row| !row.date_boundary_before));
+}
+
+#[test]
 fn all生rowは検索後に表示上限までだけprojectionする() {
     use crate::client::view_projection::project_visible_all_task_rows;
 

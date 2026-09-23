@@ -803,6 +803,32 @@ button:disabled {
     border-bottom: 1px solid var(--line);
 }
 
+.task-row:has(+ .task-row.has-logical-date-boundary) {
+    border-bottom: 0;
+}
+
+.task-row.has-logical-date-boundary {
+    border-top: 2px solid var(--muted);
+}
+
+.task-gap-row {
+    display: block;
+    min-height: 32px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-muted);
+}
+
+.task-table .task-gap-row td {
+    display: flex;
+    min-height: 32px;
+    align-items: center;
+    justify-content: center;
+    padding: 0.125rem 0.35rem;
+    color: var(--muted);
+    font-size: 0.68rem;
+    text-align: center;
+}
+
 .deadline-heading,
 .deadline {
     grid-area: deadline;

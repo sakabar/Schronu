@@ -137,6 +137,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-024**: 全件一覧ではrank 0行にセッション追加だけを表示し、先送りを表示しないこと。rank非0の操作cellは空とし、同一UUIDのセッションが存在する場合は全segmentを追加済み表示にすること。列幅はviewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`とし、日付別一覧の列幅とtask名cell内横scrollを維持すること。
 - **REQ-LIST-025**: `record_session`、`complete_session`、`defer_task`の成功時だけ全件状態を無効化し、遅延した全件responseで古い一覧を復活させないこと。localのセッション追加、破棄、再開では無効化しないこと。
 - **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。
+- **REQ-LIST-027**: 日付別一覧は、選択日が現在logical dateならsnapshot観測時刻から先頭taskまで、および先行taskの最遅終了時刻から次task開始までの1分以上を「N分間の空き時間」として次taskの直前へ表示すること。現在日以外の先頭task前と最終task後は表示しないこと。全件一覧は隣接する実task日間の予定のないlogical date数を「N日間の空き時間」として次taskの直前へ表示し、空き日がなく翌logical dateへ変わる場合は次task行の上へ全幅の境界線を表示すること。空き時間行と境界線を500task件数、cursor、`segment_index`に含めず、trim後の検索文字列が空でない間は両方とも表示しないこと。
 
 ### 4.8 通信制限と発火履歴
 
@@ -229,3 +230,4 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-030 | 全件検索は取得完了後だけ表示され、前後空白を除外したUnicode小文字化の部分一致を日付別と共用する。日付別との往復と無効化後は全件検索を保持し、reloadでは空にする。検索変更時は500行へ戻り、「さらに表示」で500行ずつ増える。 |
 | AC-031 | 全件tableは320px、360px、46rem、1024pxで`44px 8.25rem 5.5rem minmax(0, 1fr)`を維持し、予定を`YYYY/MM/DD(曜)`で表示する。葉行はセッション追加だけ、親行は空の操作cellとなり、同一UUIDの全segmentが追加済み表示になる。 |
 | AC-032 | record、complete、defer成功後だけ全件一覧が無効状態となり、取得中だった遅延responseで古い行を復活させない。localのセッション追加、破棄、再開では無効化しない。 |
+| AC-033 | 日付別一覧は現在logical dateの現在時刻から先頭taskまでとtask間の1分以上を分単位で表示し、未来・過去日の先頭と最終task後は表示しない。全件一覧は隣接task日の間に実在する空のlogical date数を日単位で表示し、翌logical dateへ連続する境界は横線で示す。空き行と境界線は500task件数とserverのsegment対応を変えず、検索中は両方を隠してclear後に再表示する。 |
