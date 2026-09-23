@@ -260,10 +260,21 @@ fn TaskRow(
         DeadlineDisplayKind::Today => "deadline deadline-kind-today",
         DeadlineDisplayKind::Future => "deadline deadline-kind-future",
     };
+    let deadline_accessible_label = match row.deadline_display_kind {
+        DeadlineDisplayKind::None => "締切なし".to_owned(),
+        DeadlineDisplayKind::Overrun => format!("締切超過: {}", row.deadline_label),
+        DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
+        DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
+    };
     let task_kind_class = match row.task_display_kind {
         TaskDisplayKind::Fixed => "task-kind-fixed",
         TaskDisplayKind::Repetitive => "task-kind-repetitive",
         TaskDisplayKind::NonRepetitive => "task-kind-non-repetitive",
+    };
+    let task_kind_label = match row.task_display_kind {
+        TaskDisplayKind::Fixed => "固定タスク",
+        TaskDisplayKind::Repetitive => "繰返タスク",
+        TaskDisplayKind::NonRepetitive => "単発タスク",
     };
     let task_class = if row.is_leaf {
         format!("task-name {task_kind_class} is-leaf")
@@ -334,8 +345,8 @@ fn TaskRow(
                 }
             }
             td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
-            td { class: deadline_class, "data-label": "締切", "{deadline}" }
-            td { class: task_class,
+            td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
+            td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.task.task_name),
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,

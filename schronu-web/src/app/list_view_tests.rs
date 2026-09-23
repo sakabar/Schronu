@@ -295,6 +295,18 @@ fn listはtask種類と締切種類を親子にかかわらずclassへ反映す�
         1,
         "{html}"
     );
+    for accessible_label in [
+        "aria-label=\"固定タスク: fixed leaf\"",
+        "aria-label=\"繰返タスク: repetitive parent\"",
+        "aria-label=\"単発タスク: one-shot leaf\"",
+        "aria-label=\"単発タスク: overrun parent\"",
+        "aria-label=\"締切なし\"",
+        "aria-label=\"当日締切: ____-01:00\"",
+        "aria-label=\"将来締切: ____-01:00\"",
+        "aria-label=\"締切超過: ____-01:00\"",
+    ] {
+        assert!(html.contains(accessible_label), "{html}");
+    }
 }
 
 #[test]
