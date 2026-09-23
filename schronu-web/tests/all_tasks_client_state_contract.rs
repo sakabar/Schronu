@@ -107,6 +107,16 @@ fn all一覧は失敗時に途中行を破棄しretryを先頭から開始する
     );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Failed);
     assert_eq!(state.all_task_rows(), None);
+    assert_eq!(state.display_error(), None);
+    assert_eq!(
+        state.all_tasks_failure_message(),
+        Some("通信に失敗しました。時間をおいて再試行してください。")
+    );
+    assert_eq!(state.history().back().unwrap().outcome, Outcome::Failure);
+
+    let _ = state.select_logical_date("2026-09-06");
+    assert_eq!(state.list_selection(), ListSelection::Date);
+    assert_eq!(state.display_error(), None);
 
     let (_, retry) = all_effect(state.retry_all_tasks());
     assert_eq!(retry.cursor, None);

@@ -202,6 +202,7 @@ impl ComponentOrchestrator {
         self.all_tasks_visible_limit
     }
 
+    #[cfg(test)]
     pub fn date_button_models(&self) -> Vec<DateButtonViewModel> {
         self.state()
             .map(project_date_button_models)

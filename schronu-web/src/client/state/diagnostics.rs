@@ -1,5 +1,8 @@
 use super::*;
 
+pub(super) const READ_TRANSPORT_ERROR_MESSAGE: &str =
+    "通信に失敗しました。時間をおいて再試行してください。";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DisplayError {
     Operation {
@@ -23,9 +26,7 @@ impl DisplayError {
             Self::Operation { error, .. } => &error.message,
             Self::Transport { operation, .. }
                 if is_read_operation(*operation) =>
-            {
-                "通信に失敗しました。時間をおいて再試行してください。"
-            }
+            { READ_TRANSPORT_ERROR_MESSAGE }
             Self::Transport { .. } => {
                 "通信結果を確認できません。repositoryの状態を手動確認してください。"
             }

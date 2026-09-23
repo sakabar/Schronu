@@ -65,10 +65,7 @@ impl BrowserPageModel {
             has_more_rows,
             list_selection: state.list_selection(),
             all_tasks_status: state.all_tasks_status(),
-            all_tasks_failure: state.all_tasks_failure().map(|failure| match failure {
-                crate::client::state::ServerFailure::Operation(error) => error.message.clone(),
-                crate::client::state::ServerFailure::Transport(message) => message.clone(),
-            }),
+            all_tasks_failure: state.all_tasks_failure_message().map(str::to_owned),
             active_task_ids: state
                 .sessions()
                 .iter()

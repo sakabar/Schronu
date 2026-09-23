@@ -1,3 +1,4 @@
+use super::diagnostics::READ_TRANSPORT_ERROR_MESSAGE;
 use super::*;
 use crate::{AllTaskPage, AllTaskRow, ListAllTasksRequest, WebSuccess};
 
@@ -69,6 +70,16 @@ impl ClientState {
     pub fn all_tasks_failure(&self) -> Option<&ServerFailure> {
         match &self.all_tasks.load {
             AllTasksLoadState::Failed(error) => Some(error),
+            _ => None,
+        }
+    }
+
+    pub fn all_tasks_failure_message(&self) -> Option<&str> {
+        match &self.all_tasks.load {
+            AllTasksLoadState::Failed(ServerFailure::Operation(error)) => Some(&error.message),
+            AllTasksLoadState::Failed(ServerFailure::Transport(_)) => {
+                Some(READ_TRANSPORT_ERROR_MESSAGE)
+            }
             _ => None,
         }
     }
@@ -162,7 +173,11 @@ impl ClientState {
                 }
             }
             Err(error) => {
-                self.record_server_failure(invocation, error.clone());
+                self.record_server(
+                    invocation,
+                    Outcome::Failure,
+                    "全件一覧の取得に失敗しました。",
+                );
                 self.all_tasks.load = AllTasksLoadState::Failed(error);
                 ClientEffect::None
             }
