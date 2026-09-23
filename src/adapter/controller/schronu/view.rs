@@ -141,6 +141,7 @@ pub(super) struct RhoMetrics {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TaskListDisplayOrder {
     ScheduledStartDesc,
+    ScheduledStartDescWithDateGrouping,
     LowPriorityTail,
 }
 
@@ -489,7 +490,8 @@ pub(super) fn sort_task_list_display_rows(
     display_order: TaskListDisplayOrder,
 ) {
     match display_order {
-        TaskListDisplayOrder::ScheduledStartDesc => {
+        TaskListDisplayOrder::ScheduledStartDesc
+        | TaskListDisplayOrder::ScheduledStartDescWithDateGrouping => {
             rows.reverse();
         }
         TaskListDisplayOrder::LowPriorityTail => {
@@ -794,6 +796,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
     display_order: TaskListDisplayOrder,
     config: &SchronuConfig,
 ) -> Result<DisplayModel, ApplicationError> {
+    let group_logical_dates =
+        display_order == TaskListDisplayOrder::ScheduledStartDescWithDateGrouping;
     let yyyymmdd_reg = Regex::new(r"^(\d{4})/(\d{2})/(\d{2})$").unwrap();
     let yyyymmdd_pattern_date = pattern_opt
         .as_ref()
@@ -1591,10 +1595,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         )?;
         let category_work_seconds = task_category_work_seconds(project_category_summary);
         Some(DisplayModel::TaskList(TaskListDisplay {
-            rows: task_list_display_rows
-                .into_iter()
-                .map(TaskListDisplayRow::into_display_row)
-                .collect(),
+            rows: into_task_list_rows(task_list_display_rows, group_logical_dates),
             category_work_seconds,
             category_denominator_seconds: project_category_denominator_seconds,
         }))
@@ -1671,4 +1672,34 @@ pub(super) fn build_show_all_tasks_display_with_config(
         primary_display,
         trailing_display,
     ]))
+}
+
+fn into_task_list_rows(
+    rows: Vec<TaskListDisplayRow>,
+    group_logical_dates: bool,
+) -> Vec<TaskListRow> {
+    if !group_logical_dates {
+        return rows
+            .into_iter()
+            .map(TaskListDisplayRow::into_display_row)
+            .collect();
+    }
+
+    let mut previous_logical_date: Option<NaiveDate> = None;
+    let mut display_rows = Vec::with_capacity(rows.len());
+    for row in rows {
+        if let (Some(previous), Some(current)) = (previous_logical_date, row.logical_naive_date_opt)
+        {
+            match (previous - current).num_days() {
+                1 => display_rows.push(TaskListRow::DateBoundary),
+                days if days > 1 => display_rows.push(TaskListRow::DayGap { days: days - 1 }),
+                _ => {}
+            }
+        }
+        if row.logical_naive_date_opt.is_some() {
+            previous_logical_date = row.logical_naive_date_opt;
+        }
+        display_rows.push(row.into_display_row());
+    }
+    display_rows
 }

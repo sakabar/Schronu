@@ -425,6 +425,8 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 give_up_candidate: true,
             }),
             TaskListRow::Gap { minutes: 15 },
+            TaskListRow::DayGap { days: 2 },
+            TaskListRow::DateBoundary,
             TaskListRow::Message {
                 text: "予定外の案内".to_string(),
             },
@@ -476,12 +478,15 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     let mut writer = TraceWriter::default();
 
     render_display_model(&mut writer, &display).unwrap();
+    let date_boundary_operation = format!("newline:{}", "-".repeat(157));
 
     assert_eq!(
         writer.operations,
         [
             "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 夕食 の 準備",
             "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 15分間の空き時間",
+            "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間",
+            date_boundary_operation.as_str(),
             "newline:予定外の案内",
             "newline:0002 22222222-2222-2222-2222-222222222222 / ____/__/__ 08/23(日)-10:00~10:05 3 05 08 _ 短い task",
             "newline:",

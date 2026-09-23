@@ -2580,6 +2580,106 @@ fn test_execute_all_未来締切を超過する予定のiconをvにする() {
     assert_eq!(icon_for("当日締切内"), "!");
 }
 
+#[test]
+fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    for (name, start) in [
+        (
+            "境界対象 今日前半",
+            Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap(),
+        ),
+        (
+            "境界対象 今日後半",
+            Local.with_ymd_and_hms(2026, 9, 6, 11, 0, 0).unwrap(),
+        ),
+        (
+            "境界対象 翌日",
+            Local.with_ymd_and_hms(2026, 9, 7, 10, 0, 0).unwrap(),
+        ),
+        (
+            "境界対象 空き後",
+            Local.with_ymd_and_hms(2026, 9, 10, 10, 0, 0).unwrap(),
+        ),
+    ] {
+        let task = add_scheduled_child_for_test(&root, name, start, 30);
+        task.set_fixed_start(true).unwrap();
+    }
+
+    let date_boundary = "-".repeat(157);
+    let unfiltered = execute_command_for_test(root.clone(), now, None, "全");
+    assert!(unfiltered.output.contains(&date_boundary));
+    assert!(unfiltered.output.contains("2日間の空き時間"));
+
+    let tail = execute_command_for_test(root.clone(), now, None, "尾 週");
+    assert!(!tail.output.contains(&date_boundary));
+    assert!(!tail.output.contains("日間の空き時間"));
+
+    let result = execute_command_for_test(root, now, None, "全 境界対象");
+    let relevant_lines = result
+        .output
+        .lines()
+        .filter(|line| {
+            line.contains("境界対象")
+                || line.contains("日間の空き時間")
+                || *line == date_boundary.as_str()
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        relevant_lines
+            .iter()
+            .map(|line| {
+                if line.contains("日間の空き時間") || *line == date_boundary.as_str() {
+                    (*line).to_owned()
+                } else {
+                    line.split_whitespace().last().unwrap().to_string()
+                }
+            })
+            .collect::<Vec<_>>(),
+        [
+            "空き後".to_owned(),
+            "---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間".to_owned(),
+            "翌日".to_owned(),
+            "-".repeat(157),
+            "今日後半".to_owned(),
+            "今日前半".to_owned(),
+        ]
+    );
+}
+
+#[test]
+fn test_execute_all_06時をlogical_date境界として横線を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let root = new_test_task_handle("root").unwrap();
+    for (name, start) in [
+        (
+            "06時境界対象 手前",
+            Local.with_ymd_and_hms(2026, 9, 7, 5, 59, 0).unwrap(),
+        ),
+        (
+            "06時境界対象 以降",
+            Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap(),
+        ),
+    ] {
+        let task = add_scheduled_child_for_test(&root, name, start, 1);
+        task.set_fixed_start(true).unwrap();
+    }
+
+    let result = execute_command_for_test(root, now, None, "全 06時境界対象");
+    let date_boundary = "-".repeat(157);
+    let relevant_lines = result
+        .output
+        .lines()
+        .filter(|line| line.contains("06時境界対象") || *line == date_boundary.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(relevant_lines.len(), 3);
+    assert!(relevant_lines[0].contains("以降"));
+    assert_eq!(relevant_lines[1], date_boundary);
+    assert!(relevant_lines[2].contains("手前"));
+}
+
 const EXPECTED_TODAY_PLAIN_TEXT: &str = concat!(
     "0000 00000000-0000-0000-0000-000020260811 ! ____-00:30 ",
     "08/11(火)-13:00~13:30 0 30 07 資 Web表示契約task\n",

@@ -1243,9 +1243,12 @@ impl TaskTreeCommandContext for RuntimeTaskTreeCommandContext<'_, '_, '_> {
                 }
             })
             .transpose()?;
-        let order = match order {
-            TaskListOrder::ScheduledStartDesc => TaskListDisplayOrder::ScheduledStartDesc,
-            TaskListOrder::LowPriorityTail => TaskListDisplayOrder::LowPriorityTail,
+        let order = match (order, resolve_pattern) {
+            (TaskListOrder::ScheduledStartDesc, true) => {
+                TaskListDisplayOrder::ScheduledStartDescWithDateGrouping
+            }
+            (TaskListOrder::ScheduledStartDesc, false) => TaskListDisplayOrder::ScheduledStartDesc,
+            (TaskListOrder::LowPriorityTail, _) => TaskListDisplayOrder::LowPriorityTail,
         };
         build_show_all_tasks_display_with_config(
             self.focused_task_id_opt,

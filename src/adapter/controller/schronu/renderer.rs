@@ -146,6 +146,8 @@ pub(super) struct TaskListColumns {
 pub(super) enum TaskListRow {
     Task(TaskListTaskRow),
     Gap { minutes: i64 },
+    DayGap { days: i64 },
+    DateBoundary,
     Message { text: String },
 }
 
@@ -1059,6 +1061,10 @@ pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
         TaskListRow::Gap { minutes } => format!(
             "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
         ),
+        TaskListRow::DayGap { days } => format!(
+            "---- ------------------------------------ - ---------- --------------------- - -- -- {days}日間の空き時間"
+        ),
+        TaskListRow::DateBoundary => "-".repeat(157),
         TaskListRow::Message { text } => text.clone(),
     }
 }
