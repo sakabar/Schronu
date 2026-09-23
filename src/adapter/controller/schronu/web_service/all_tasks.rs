@@ -10,6 +10,7 @@ struct AllTaskSnapshot {
     id: Uuid,
     snapshot: ServerSnapshot,
     rows: Vec<AllTaskRowDto>,
+    expected_next_offset: usize,
 }
 
 #[derive(Default)]
@@ -42,6 +43,7 @@ impl AllTaskSnapshots {
             id,
             snapshot: snapshot.clone(),
             rows,
+            expected_next_offset: PAGE_SIZE,
         });
         WebSuccess {
             snapshot,
@@ -63,14 +65,16 @@ impl AllTaskSnapshots {
             .position(|snapshot| snapshot.id == id)
             .ok_or(WebReadError::InvalidCursor)?;
         let stored = &self.snapshots[index];
-        if offset >= stored.rows.len() {
+        if offset != stored.expected_next_offset || offset >= stored.rows.len() {
             return Err(WebReadError::InvalidCursor);
         }
         let end = offset.saturating_add(PAGE_SIZE).min(stored.rows.len());
         let snapshot = stored.snapshot.clone();
         let rows = stored.rows[offset..end].to_vec();
         let next_cursor = (end < stored.rows.len()).then(|| cursor(id, end));
-        if next_cursor.is_none() {
+        if next_cursor.is_some() {
+            self.snapshots[index].expected_next_offset = end;
+        } else {
             self.snapshots.remove(index);
         }
         Ok(WebSuccess {
@@ -160,6 +164,7 @@ mod tests {
             &format!("{id}:nope"),
             &format!("{id}:0"),
             &format!("{id}:1"),
+            &format!("{id}:1000"),
             &format!("{id}:1500"),
             &format!("{id}:500:extra"),
             "00000000-0000-4000-8000-000000000001:500",
@@ -169,6 +174,34 @@ mod tests {
                 "{invalid}"
             );
         }
+    }
+
+    #[test]
+    fn cursorは現在期待するoffsetだけを受理してskipとreplayを拒否する() {
+        let mut store = AllTaskSnapshots::default();
+        let first = store.first_page(snapshot(1), (0..1_001).map(row).collect());
+        let first_cursor = first.data.next_cursor.unwrap();
+        let id = first_cursor.split(':').next().unwrap();
+        assert!(matches!(
+            store.next_page(&format!("{id}:1000")),
+            Err(WebReadError::InvalidCursor)
+        ));
+
+        let second = store.next_page(&first_cursor).unwrap();
+        assert_eq!(second.data.rows[0].segment_index, 500);
+        assert!(matches!(
+            store.next_page(&first_cursor),
+            Err(WebReadError::InvalidCursor)
+        ));
+        assert_eq!(
+            store
+                .next_page(second.data.next_cursor.as_deref().unwrap())
+                .unwrap()
+                .data
+                .rows[0]
+                .segment_index,
+            1000
+        );
     }
 
     #[test]

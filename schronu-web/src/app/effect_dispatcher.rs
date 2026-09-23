@@ -2,9 +2,9 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -15,6 +15,11 @@ pub(crate) trait WebGateway {
         &self,
         request: ListTasksRequest,
     ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError>;
+
+    async fn list_all_tasks(
+        &self,
+        request: ListAllTasksRequest,
+    ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError>;
 
     async fn auto_session(
         &self,
@@ -50,6 +55,13 @@ impl WebGateway for ServerFunctionGateway {
         request: ListTasksRequest,
     ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError> {
         super::list_tasks(request).await
+    }
+
+    async fn list_all_tasks(
+        &self,
+        request: ListAllTasksRequest,
+    ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError> {
+        super::list_all_tasks(request).await
     }
 
     async fn auto_session(

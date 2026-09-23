@@ -5,12 +5,28 @@ use super::effect_dispatcher::{
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 use std::cell::RefCell;
+
+#[test]
+fn gatewayはopaqueなall_task_cursorを保持する() {
+    let gateway = FakeGateway::default();
+    let response = futures::executor::block_on(gateway.list_all_tasks(ListAllTasksRequest {
+        cursor: Some("opaque".to_owned()),
+    }))
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(response.data.rows, Vec::new());
+    assert_eq!(
+        *gateway.calls.borrow(),
+        ["list_all:Some(\"opaque\")".to_owned()]
+    );
+}
 
 #[test]
 fn 六effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
@@ -238,6 +254,13 @@ impl WebGateway for BootstrapGateway {
         unreachable!("bootstrap test gateway")
     }
 
+    async fn list_all_tasks(
+        &self,
+        _request: ListAllTasksRequest,
+    ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
     async fn defer_task(
         &self,
         _request: crate::DeferTaskRequest,
@@ -291,6 +314,22 @@ impl WebGateway for FakeGateway {
         Ok(Ok(WebSuccess {
             snapshot: snapshot(),
             data: None,
+        }))
+    }
+
+    async fn list_all_tasks(
+        &self,
+        request: ListAllTasksRequest,
+    ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("list_all:{:?}", request.cursor));
+        Ok(Ok(WebSuccess {
+            snapshot: snapshot(),
+            data: AllTaskPage {
+                rows: Vec::new(),
+                next_cursor: None,
+            },
         }))
     }
 
