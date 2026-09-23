@@ -661,7 +661,12 @@ button:disabled {
 }
 
 .date-jump-submit {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-block: 0;
     padding-inline: 1rem;
+    line-height: 1;
 }
 
 .date-input-error {

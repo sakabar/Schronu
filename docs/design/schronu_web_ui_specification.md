@@ -559,7 +559,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
-34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
+34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。「表示」buttonは共通buttonの上下paddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で文字を中央に配置する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
 全buttonの`:hover`装飾は`@media (hover: hover) and (pointer: fine)`内だけに定義し、タッチ主体の端末ではタップ後にhover配色を残さない。`:active`と`:focus-visible`はmedia query外に置き、pointer種別にかかわらず操作feedbackを維持する。hover可能なfine pointerではtab、primary action、session startを含む既存hover表現を維持し、選択済み日付buttonのhover中は緑背景と白文字を上書き規則で維持する。
 
@@ -808,7 +808,7 @@ OperationHistoryEntry {
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
-- 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。
+- 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。「表示」の文字がbutton内で上下左右の中央に揃うこと、日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 5操作buttonのlabel、ARIA名、意味別class、通常幅の解除系2button、再開button全幅、完了系2buttonの3段配置と、狭幅で同じ順序の1列配置を確認する。
 - 「計測を破棄して再開」で開始時刻だけがclick時刻へ更新され、他のsnapshot、session数・順序、tab、一覧、発火履歴を維持することを確認する。保存失敗と安全停止中の拒否、背景更新中の成功も確認する。

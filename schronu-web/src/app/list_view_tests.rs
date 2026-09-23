@@ -770,6 +770,15 @@ fn 一覧操作領域は全幅で36pxに統一する() {
 }
 
 #[test]
+fn 日付表示ボタンの文字は中央に配置する() {
+    let css = include_str!("../../assets/main.css");
+
+    assert!(css.contains(
+        ".date-jump-submit {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    padding-block: 0;\n    padding-inline: 1rem;\n    line-height: 1;\n}"
+    ));
+}
+
+#[test]
 fn 幅34rem以下はbufferと曜日間隔を圧縮する() {
     let css = include_str!("../../assets/main.css");
     let narrow_layout = css
