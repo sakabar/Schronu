@@ -1,3 +1,5 @@
+#[path = "web_service/all_tasks.rs"]
+mod all_tasks;
 #[path = "web_service/error.rs"]
 mod error;
 #[path = "web_service/model.rs"]
@@ -5,11 +7,18 @@ mod model;
 #[path = "web_service/read_model.rs"]
 mod read_model;
 
+#[cfg(test)]
+#[path = "all_tasks_performance_tests.rs"]
+mod all_tasks_performance_tests;
+
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, WebSuccess,
 };
-pub(super) use read_model::{build_auto_session_dto, build_scheduled_task_rows};
+pub(super) use read_model::{
+    build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows,
+};
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
 
@@ -29,6 +38,7 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, execute_defer_task_plan, TaskFactory,
 };
+use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
@@ -41,6 +51,7 @@ pub struct WebService {
     config: SchronuConfig,
     repository_state_uncertain: bool,
     mutation_repository_factory: Box<dyn Fn(&str) -> TaskRepository>,
+    all_task_snapshots: AllTaskSnapshots,
 }
 
 impl WebService {
@@ -53,7 +64,32 @@ impl WebService {
             config,
             repository_state_uncertain: false,
             mutation_repository_factory: Box::new(TaskRepository::new),
+            all_task_snapshots: AllTaskSnapshots::default(),
         }
+    }
+
+    pub fn list_all_tasks_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        cursor: Option<String>,
+    ) -> Result<WebSuccess<AllTaskPageDto>, WebReadError> {
+        if let Some(cursor) = cursor {
+            return self.all_task_snapshots.next_page(&cursor);
+        }
+        let (snapshot, rows) =
+            self.run_at(operation_now, |repository, free_time_manager, offset| {
+                let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
+                let rows = build_all_task_rows(&schedule, repository.get_last_synced_time())?;
+                let snapshot = build_server_snapshot_from_schedule(
+                    repository,
+                    free_time_manager,
+                    operation_now,
+                    &schedule,
+                    offset,
+                )?;
+                Ok((snapshot, rows))
+            })?;
+        Ok(self.all_task_snapshots.first_page(snapshot, rows))
     }
 
     pub fn bootstrap_at(

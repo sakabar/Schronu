@@ -1,8 +1,12 @@
+#[cfg(test)]
+mod all_tasks_performance_tests;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod carry_lock_view;
 #[cfg(test)]
 mod carry_lock_view_tests;
 mod component;
+#[cfg(test)]
+mod component_all_tasks_tests;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod component_dispatch;
 #[cfg(any(
@@ -45,6 +49,14 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, defer_task, list_tasks, record_session,
-    WebOperationResult,
+    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks,
+    record_session, WebOperationResult,
 };
+
+#[cfg(test)]
+mod all_task_endpoint_export_tests {
+    #[test]
+    fn appはall_task_server_functionを公開する() {
+        let _endpoint = super::list_all_tasks;
+    }
+}

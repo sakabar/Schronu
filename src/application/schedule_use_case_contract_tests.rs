@@ -1,5 +1,5 @@
 use super::interface::TaskRepositoryTrait;
-use super::schedule_use_case::{get_schedule, ScheduledTaskView};
+use super::schedule_use_case::{get_schedule, scheduled_logical_dates, ScheduledTaskView};
 use super::task_use_case::{get_task, ApplicationError};
 use crate::entity::task::{Status, TaskHandle};
 use crate::test_support::TestTaskRepository;
@@ -19,6 +19,41 @@ fn schedule_use_caseの型境界を固定する() {
     }
 
     assert_contract(get_schedule);
+}
+
+#[test]
+fn scheduled_segment_metadataは06時境界と入力順とrankに対応する() {
+    let day = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let boundary = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let repository = TestTaskRepository::new(
+        vec![task_with_schedule("metadata", boundary, 15 * 60, 1)],
+        boundary,
+    );
+    let task = get_task(&repository, repository.projects()[0].get_id().unwrap())
+        .unwrap()
+        .unwrap();
+    let segment = |scheduled_start, rank| ScheduledTaskView {
+        task: task.clone(),
+        first_available_time: scheduled_start,
+        scheduled_start,
+        scheduled_end: scheduled_start + Duration::minutes(15),
+        scheduled_work_seconds: 15 * 60,
+        total_work_seconds: 15 * 60,
+        rank,
+    };
+    let schedule = vec![
+        segment(boundary, 0),
+        segment(boundary - Duration::minutes(1), 1),
+        segment(boundary + Duration::days(1), 0),
+    ];
+
+    assert_eq!(
+        scheduled_logical_dates(&schedule),
+        Ok(vec![day, day.pred_opt().unwrap(), day.succ_opt().unwrap()])
+    );
+    assert!(schedule[0].is_leaf());
+    assert!(!schedule[1].is_leaf());
+    assert!(schedule[2].is_leaf());
 }
 
 #[test]

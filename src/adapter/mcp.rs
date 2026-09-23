@@ -9,7 +9,10 @@ use crate::application::task_use_case::{ApplicationError, TaskFactory};
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::time::Duration;
 use uuid::Uuid;
+
+const MCP_LOCK_TIMEOUT: Duration = Duration::from_millis(100);
 
 mod error;
 mod handler;
@@ -109,9 +112,12 @@ impl<R: TaskRepositoryTrait> McpServer<R> {
             &mut self.repository,
             operation_now,
             || match storage_directory {
-                Some(storage_directory) => {
-                    StorageLock::acquire(&storage_directory, LockMode::Mcp).map(Some)
-                }
+                Some(storage_directory) => StorageLock::acquire_with_timeout(
+                    &storage_directory,
+                    LockMode::Mcp,
+                    MCP_LOCK_TIMEOUT,
+                )
+                .map(Some),
                 None => Ok(None),
             },
             |repository| {

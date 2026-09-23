@@ -1,6 +1,9 @@
 use std::{collections::VecDeque, fmt};
 
-use crate::{CompleteSessionRequest, DeferTaskRequest, ListTasksRequest, RecordSessionRequest};
+use crate::{
+    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
+    RecordSessionRequest,
+};
 
 const MAX_HISTORY_ENTRIES: usize = 100;
 
@@ -8,6 +11,7 @@ const MAX_HISTORY_ENTRIES: usize = 100;
 pub enum Operation {
     Bootstrap,
     ListTasks,
+    ListAllTasks,
     AutoSession,
     AddSession,
     DeferTask,
@@ -28,6 +32,7 @@ pub enum Outcome {
 pub enum ServerActionInvocation {
     Bootstrap,
     ListTasks(ListTasksRequest),
+    ListAllTasks(ListAllTasksRequest),
     AutoSession,
     DeferTask(DeferTaskRequest),
     RecordSession(RecordSessionRequest),
@@ -39,6 +44,7 @@ impl ServerActionInvocation {
         match self {
             Self::Bootstrap => Operation::Bootstrap,
             Self::ListTasks(_) => Operation::ListTasks,
+            Self::ListAllTasks(_) => Operation::ListAllTasks,
             Self::AutoSession => Operation::AutoSession,
             Self::DeferTask(_) => Operation::DeferTask,
             Self::RecordSession(_) => Operation::RecordSession,
@@ -54,7 +60,9 @@ impl ServerActionInvocation {
             Self::RecordSession(request) => Some(&request.task_id),
             Self::CompleteSession(request) => Some(&request.task_id),
             Self::DeferTask(request) => Some(&request.task_id),
-            Self::Bootstrap | Self::ListTasks(_) | Self::AutoSession => None,
+            Self::Bootstrap | Self::ListTasks(_) | Self::ListAllTasks(_) | Self::AutoSession => {
+                None
+            }
         }
     }
 }
@@ -65,6 +73,9 @@ impl fmt::Display for ServerActionInvocation {
             Self::Bootstrap => formatter.write_str("bootstrap()"),
             Self::ListTasks(request) => {
                 write!(formatter, "list_tasks(logical_date: {:?})", request.logical_date)
+            }
+            Self::ListAllTasks(request) => {
+                write!(formatter, "list_all_tasks(cursor: {:?})", request.cursor)
             }
             Self::AutoSession => formatter.write_str("auto_session()"),
             Self::DeferTask(request) => {

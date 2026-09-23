@@ -1,7 +1,7 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::{DeferMode, DeferPlan, SessionTask};
-use chrono::{DateTime, Datelike, FixedOffset, Utc};
+use crate::{AllTaskRow, DeferMode, DeferPlan, SessionTask};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 
 const INVALID_TIME: &str = "--:--";
 
@@ -37,8 +37,14 @@ pub struct ListRowViewModel {
     pub schedule_label: String,
     pub misses_deadline: bool,
     pub is_leaf: bool,
-    pub defer_plan: DeferPlan,
+    pub defer_plan: Option<DeferPlan>,
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VisibleAllTaskRows {
+    pub rows: Vec<ListRowViewModel>,
+    pub has_more: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,6 +68,47 @@ pub fn project_session_cards(
 
 pub fn project_list_rows(state: &ClientState, utc_offset_minutes: i32) -> Vec<ListRowViewModel> {
     project_list_rows_with(state, |_| Some(utc_offset_minutes))
+}
+
+pub fn project_all_task_rows(rows: &[AllTaskRow]) -> Vec<ListRowViewModel> {
+    rows.iter().map(project_all_task_row).collect()
+}
+
+pub fn project_visible_all_task_rows(
+    rows: &[AllTaskRow],
+    filter: &str,
+    visible_limit: usize,
+) -> VisibleAllTaskRows {
+    let mut matching_rows = rows
+        .iter()
+        .filter(|row| task_name_matches(filter, &row.task.task_name));
+    let rows = matching_rows
+        .by_ref()
+        .take(visible_limit)
+        .map(project_all_task_row)
+        .collect();
+    VisibleAllTaskRows {
+        rows,
+        has_more: matching_rows.next().is_some(),
+    }
+}
+
+pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
+    let normalized_filter = filter.trim().to_lowercase();
+    normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
+}
+
+fn project_all_task_row(row: &AllTaskRow) -> ListRowViewModel {
+    ListRowViewModel {
+        row_key: format!("all:{}", row.segment_index),
+        task: row.task.clone(),
+        deadline_label: row.deadline_label.clone(),
+        schedule_label: all_task_schedule_label(&row.schedule_date),
+        misses_deadline: row.misses_deadline,
+        is_leaf: row.is_leaf,
+        defer_plan: None,
+        defer_confirmation: None,
+    }
 }
 
 pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
@@ -198,11 +245,27 @@ fn project_list_rows_with(
                 ),
                 misses_deadline: row.misses_deadline,
                 is_leaf: row.is_leaf,
-                defer_plan: row.defer_plan.clone(),
+                defer_plan: Some(row.defer_plan.clone()),
                 defer_confirmation,
             }
         })
         .collect()
+}
+
+fn all_task_schedule_label(schedule_date: &str) -> String {
+    let Ok(date) = NaiveDate::parse_from_str(schedule_date, "%Y-%m-%d") else {
+        return schedule_date.to_owned();
+    };
+    let weekday = match date.weekday() {
+        Weekday::Mon => "月",
+        Weekday::Tue => "火",
+        Weekday::Wed => "水",
+        Weekday::Thu => "木",
+        Weekday::Fri => "金",
+        Weekday::Sat => "土",
+        Weekday::Sun => "日",
+    };
+    format!("{}({weekday})", date.format("%Y/%m/%d"))
 }
 
 fn format_local_month_day_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {

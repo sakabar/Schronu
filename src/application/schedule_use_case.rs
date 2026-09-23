@@ -1,4 +1,4 @@
-use crate::application::daily_capacity::try_next_logical_date_start;
+use crate::application::daily_capacity::{try_logical_date, try_next_logical_date_start};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::scheduling_instrumentation::{record_schedule, ScheduleEvent};
 use crate::application::scheduling_policy::{
@@ -9,7 +9,7 @@ use crate::application::task_view::TaskView;
 use crate::entity::task::{
     extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
 };
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Duration, Local, NaiveDate};
 use serde::Serialize;
 use std::cmp::{max, min};
 use std::collections::HashMap;
@@ -24,6 +24,21 @@ pub struct ScheduledTaskView {
     pub scheduled_work_seconds: i64,
     pub total_work_seconds: i64,
     pub rank: usize,
+}
+
+impl ScheduledTaskView {
+    pub(crate) fn is_leaf(&self) -> bool {
+        self.rank == 0
+    }
+}
+
+pub(crate) fn scheduled_logical_dates(
+    schedule: &[ScheduledTaskView],
+) -> Result<Vec<NaiveDate>, ApplicationError> {
+    schedule
+        .iter()
+        .map(|segment| try_logical_date(segment.scheduled_start))
+        .collect()
 }
 
 pub(crate) fn scheduled_end_by_task(

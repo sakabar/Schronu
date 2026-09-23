@@ -1,10 +1,11 @@
 use super::carry_lock_view::CarryLockViewModel;
+use super::component_runtime::project_date_button_models;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, ClientState, Outcome};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection, Outcome};
 use crate::client::view_projection::{
-    project_list_rows_for_browser, project_session_cards_for_browser, ListRowViewModel,
-    SessionCardViewModel,
+    project_list_rows_for_browser, project_session_cards_for_browser,
+    project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
 
 pub(crate) struct BrowserPageModel {
@@ -12,6 +13,10 @@ pub(crate) struct BrowserPageModel {
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub has_more_rows: bool,
+    pub list_selection: ListSelection,
+    pub all_tasks_status: AllTasksStatus,
+    pub all_tasks_failure: Option<String>,
     pub active_task_ids: Vec<String>,
     pub dates: Vec<DateButtonViewModel>,
     pub history: Vec<HistoryEntryViewModel>,
@@ -28,29 +33,45 @@ pub(crate) struct BrowserPageModel {
 impl BrowserPageModel {
     #[cfg(test)]
     pub fn from_state(state: &ClientState) -> Self {
-        Self::from_state_at(state, 0)
+        Self::from_state_at(state, 0, "", 500)
     }
 
-    pub fn from_state_at(state: &ClientState, monotonic_now_ms: u64) -> Self {
+    pub fn from_state_at(
+        state: &ClientState,
+        monotonic_now_ms: u64,
+        all_task_filter: &str,
+        all_tasks_visible_limit: usize,
+    ) -> Self {
+        let (rows, has_more_rows) = if state.list_selection() == ListSelection::All {
+            state
+                .all_task_rows()
+                .map(|rows| {
+                    let projection = project_visible_all_task_rows(
+                        rows,
+                        all_task_filter,
+                        all_tasks_visible_limit,
+                    );
+                    (projection.rows, projection.has_more)
+                })
+                .unwrap_or_default()
+        } else {
+            (project_list_rows_for_browser(state), false)
+        };
         Self {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
-            rows: project_list_rows_for_browser(state),
+            rows,
+            has_more_rows,
+            list_selection: state.list_selection(),
+            all_tasks_status: state.all_tasks_status(),
+            all_tasks_failure: state.all_tasks_failure_message().map(str::to_owned),
             active_task_ids: state
                 .sessions()
                 .iter()
                 .map(|session| session.task_id.clone())
                 .collect(),
-            dates: state
-                .date_buttons()
-                .iter()
-                .map(|date| DateButtonViewModel {
-                    logical_date: date.logical_date.clone(),
-                    label: date.label.clone(),
-                    selected: state.selected_logical_date() == Some(date.logical_date.as_str()),
-                })
-                .collect(),
+            dates: project_date_button_models(state),
             history: history_view_models(state),
             warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),

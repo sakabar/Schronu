@@ -64,6 +64,7 @@ pub(super) enum WebReadOperationError {
 
 #[derive(Debug)]
 pub enum WebReadError {
+    InvalidCursor,
     BusyTimeSlots(BusyTimeSlotLoadError),
     Lock(StorageLockError),
     Repository(TaskRepositoryError),
@@ -103,6 +104,7 @@ impl WebReadError {
 impl fmt::Display for WebReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidCursor => write!(formatter, "invalid all-task cursor"),
             Self::BusyTimeSlots(error) => write!(formatter, "busy time slot load failed: {error}"),
             Self::Lock(error) => write!(formatter, "storage lock failed: {error}"),
             Self::Repository(error) => write!(formatter, "repository read failed: {error}"),
@@ -140,7 +142,7 @@ impl Error for WebReadError {
             Self::Application(error) => Some(error),
             Self::InvalidInput(error) => Some(error),
             Self::Overflow(error) => Some(error),
-            Self::PathEncoding(_) | Self::RepositoryPoisoned => None,
+            Self::PathEncoding(_) | Self::RepositoryPoisoned | Self::InvalidCursor => None,
         }
     }
 }

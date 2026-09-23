@@ -7,7 +7,7 @@ use super::super::component_models::{
 };
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
-use super::super::list_view::ListView;
+use super::super::list_view::{AllTasksViewStatus, ListView};
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
@@ -15,7 +15,7 @@ use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
     RestoringShell, SessionChrome, UnavailableBufferPanel,
 };
-use crate::client::state::{ActiveTab, ClientState};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
 
@@ -48,9 +48,14 @@ pub(super) fn BrowserApp() -> Element {
 
     let model = {
         let client = client.read();
-        client
-            .state()
-            .map(|state| BrowserPageModel::from_state_at(state, browser_monotonic_now_ms()))
+        client.state().map(|state| {
+            BrowserPageModel::from_state_at(
+                state,
+                browser_monotonic_now_ms(),
+                client.task_name_filter(),
+                client.all_tasks_visible_limit(),
+            )
+        })
     };
     let Some(model) = model else {
         return rsx! { RestoringShell {} };
@@ -60,6 +65,10 @@ pub(super) fn BrowserApp() -> Element {
         buffer,
         sessions,
         rows,
+        has_more_rows,
+        list_selection,
+        all_tasks_status,
+        all_tasks_failure,
         active_task_ids,
         dates,
         history,
@@ -82,6 +91,7 @@ pub(super) fn BrowserApp() -> Element {
         date_input_text,
         date_input_error,
         filter_text,
+        all_tasks_visible_limit,
     ) = {
         let client = client.read();
         (
@@ -93,8 +103,19 @@ pub(super) fn BrowserApp() -> Element {
             client.date_input().text().to_owned(),
             client.date_input().error().map(|error| error.to_string()),
             client.task_name_filter().to_owned(),
+            client.all_tasks_visible_limit(),
         )
     };
+    let all_tasks_view_status =
+        (list_selection == ListSelection::All).then(|| match all_tasks_status {
+            AllTasksStatus::NotLoaded | AllTasksStatus::Loading => AllTasksViewStatus::Loading,
+            AllTasksStatus::Loaded => AllTasksViewStatus::Loaded,
+            AllTasksStatus::Failed => AllTasksViewStatus::Failed(
+                all_tasks_failure
+                    .unwrap_or_else(|| "全てのタスクを取得できませんでした。".to_owned()),
+            ),
+            AllTasksStatus::Invalidated => AllTasksViewStatus::Invalidated,
+        });
 
     rsx! {
         InteractiveShell {
@@ -163,12 +184,25 @@ pub(super) fn BrowserApp() -> Element {
                     date_input_text,
                     date_input_error,
                     filter_text,
+                    all_tasks_status: all_tasks_view_status,
+                    visible_row_limit: (list_selection == ListSelection::All)
+                        .then_some(all_tasks_visible_limit),
+                    has_more_rows: (list_selection == ListSelection::All).then_some(has_more_rows),
                     mutations_locked,
                     mutation_globally_blocked: global_blocked,
                     server_actions_blocked,
                     on_select_date: move |date| {
                         client.write().clear_date_input(&BrowserLocalStorage);
                         dispatch_action(client, ComponentAction::SelectDate(date));
+                    },
+                    on_select_all_tasks: move |_| {
+                        dispatch_action(client, ComponentAction::SelectAllTasks);
+                    },
+                    on_retry_all_tasks: move |_| {
+                        dispatch_action(client, ComponentAction::RetryAllTasks);
+                    },
+                    on_show_more: move |_| {
+                        client.write().show_more_all_tasks();
                     },
                     on_date_input_change: move |text| {
                         client.write().edit_date_input(&BrowserLocalStorage, text);

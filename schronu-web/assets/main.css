@@ -745,6 +745,28 @@ button:disabled {
     grid-template-areas: "action schedule deadline task";
 }
 
+.task-table.all-task-table thead tr,
+.task-table.all-task-table .task-row {
+    grid-template-columns: 44px 8.25rem 5.5rem minmax(0, 1fr);
+}
+
+.all-tasks-status {
+    margin: 0;
+    border: 1px dashed var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    padding: 0.75rem;
+}
+
+.all-tasks-status p {
+    margin: 0 0 0.5rem;
+}
+
+.all-tasks-more {
+    width: 100%;
+    min-height: 36px;
+}
+
 .task-table thead tr {
     min-height: 1.75rem;
     align-items: center;

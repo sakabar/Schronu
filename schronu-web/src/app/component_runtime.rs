@@ -1,10 +1,13 @@
 use crate::client::date_input::DateInputState;
-use crate::client::state::{load_client_state_for_ui, ActiveTab, ClientEffect, ClientState};
+use crate::client::state::{
+    load_client_state_for_ui, ActiveTab, ClientEffect, ClientState, ListSelection,
+};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
 use crate::{DeferPlan, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
+use super::list_view::DateButtonViewModel;
 use super::session_view::{SessionAction, SessionActionKind};
 
 pub(crate) enum ComponentAction {
@@ -14,6 +17,10 @@ pub(crate) enum ComponentAction {
         wall_now_epoch_ms: i64,
     },
     SelectDate(String),
+    #[allow(dead_code)]
+    SelectAllTasks,
+    #[allow(dead_code)]
+    RetryAllTasks,
     AutoSession,
     AddSession {
         task: SessionTask,
@@ -127,6 +134,8 @@ pub(crate) struct ComponentOrchestrator {
     refresh_state: RefreshState,
     date_input: DateInputState,
     task_name_filter: String,
+    all_task_name_filter: String,
+    all_tasks_visible_limit: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,6 +155,8 @@ impl ComponentOrchestrator {
             refresh_state: RefreshState::Bootstrap(0),
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
+            all_task_name_filter: String::new(),
+            all_tasks_visible_limit: 500,
         }
     }
 
@@ -177,7 +188,29 @@ impl ComponentOrchestrator {
     }
 
     pub fn task_name_filter(&self) -> &str {
-        &self.task_name_filter
+        if self
+            .state()
+            .is_some_and(|state| state.list_selection() == ListSelection::All)
+        {
+            &self.all_task_name_filter
+        } else {
+            &self.task_name_filter
+        }
+    }
+
+    pub fn all_tasks_visible_limit(&self) -> usize {
+        self.all_tasks_visible_limit
+    }
+
+    #[cfg(test)]
+    pub fn date_button_models(&self) -> Vec<DateButtonViewModel> {
+        self.state()
+            .map(project_date_button_models)
+            .unwrap_or_default()
+    }
+
+    pub fn show_more_all_tasks(&mut self) {
+        self.all_tasks_visible_limit = self.all_tasks_visible_limit.saturating_add(500);
     }
 
     pub fn edit_date_input<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
@@ -205,8 +238,16 @@ impl ComponentOrchestrator {
     }
 
     pub fn edit_task_name_filter<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
-        self.task_name_filter = text;
-        self.persist_view_state(storage);
+        if self
+            .state()
+            .is_some_and(|state| state.list_selection() == ListSelection::All)
+        {
+            self.all_task_name_filter = text;
+            self.all_tasks_visible_limit = 500;
+        } else {
+            self.task_name_filter = text;
+            self.persist_view_state(storage);
+        }
     }
 
     pub fn begin_server_effect(&mut self) {
@@ -291,14 +332,20 @@ impl ComponentOrchestrator {
         is_leaf: bool,
     ) -> ClientEffect {
         let previous_session_count = self.state().map_or(0, |state| state.sessions().len());
+        let source_selection = self.state().map(ClientState::list_selection);
         let effect = self.action(
             storage,
             monotonic_now_ms,
             ComponentAction::AddSession { task, is_leaf },
         );
         let current_session_count = self.state().map_or(0, |state| state.sessions().len());
+        let filter = if source_selection == Some(ListSelection::All) {
+            &mut self.all_task_name_filter
+        } else {
+            &mut self.task_name_filter
+        };
         reset_task_name_filter_after_session_add(
-            &mut self.task_name_filter,
+            filter,
             previous_session_count,
             current_session_count,
         );
@@ -354,15 +401,17 @@ impl ComponentOrchestrator {
     }
 
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
-        matches!(
-            (self.refresh_state, effect),
-            (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
-                if expected == *request_id
-        ) || matches!(
-            (self.refresh_state, effect),
-            (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
-                if expected == *request_id
-        )
+        matches!(effect, ClientEffect::ListAllTasks { .. })
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
+                    if expected == *request_id
+            )
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
+                    if expected == *request_id
+            )
     }
 
     fn persist_view_state<S: KeyValueStorage>(&mut self, storage: &S) {
@@ -396,6 +445,20 @@ impl ComponentOrchestrator {
             state.set_view_state_warning(warning);
         }
     }
+}
+
+pub(crate) fn project_date_button_models(state: &ClientState) -> Vec<DateButtonViewModel> {
+    let all_selected = state.list_selection() == ListSelection::All;
+    state
+        .date_buttons()
+        .iter()
+        .map(|date| DateButtonViewModel {
+            logical_date: date.logical_date.clone(),
+            label: date.label.clone(),
+            selected: !all_selected
+                && state.selected_logical_date() == Some(date.logical_date.as_str()),
+        })
+        .collect()
 }
 
 fn background_state_for_effect(effect: &ClientEffect) -> Option<RefreshState> {
@@ -442,7 +505,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::RetryRefresh => ClientEffect::None,
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
-        ComponentAction::SelectDate(logical_date) => state.request_list(&logical_date),
+        ComponentAction::SelectDate(logical_date) => state.select_logical_date(&logical_date),
+        ComponentAction::SelectAllTasks => state.select_all_tasks(),
+        ComponentAction::RetryAllTasks => state.retry_all_tasks(),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::DeferTask {
             task_id,

@@ -70,6 +70,10 @@ mod web_read_buffer_contract_tests;
 mod web_read_model_contract_tests;
 
 #[cfg(test)]
+#[path = "schronu/web_all_tasks_contract_tests.rs"]
+mod web_all_tasks_contract_tests;
+
+#[cfg(test)]
 #[path = "schronu/web_read_service_contract_tests.rs"]
 mod web_read_service_contract_tests;
 
@@ -80,8 +84,8 @@ pub fn run_cli() {
 
 pub use storage_directory::resolve_project_storage_directory;
 pub use web_service::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, WebReadError,
-    WebReadOverflowError, WebService, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, WebReadError, WebReadOverflowError, WebService, WebSuccess,
 };
 pub use web_session_write::{
     CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest,

@@ -38,7 +38,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-002**: tab切替はclient内だけで処理し、server通信を発生させないこと。tab barは通信中overlayより背面に配置すること。
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。タイトルやtoolbarは表示せず、持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは3画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
-- **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば睡眠時間の確定値を`schronu-buffer-ready`へ表示し、なければ睡眠時間と一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存一覧があればそのlogical dateを`list_tasks`で再取得すること。view stateが破損・未知version・不正行・読込失敗で復元されなかった場合は、`bootstrap`が返した現在logical dateを`list_tasks`で新規取得すること。
+- **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば睡眠時間の確定値を`schronu-buffer-ready`へ表示し、なければ睡眠時間と一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存済みの日付別一覧があればそのlogical dateを`list_tasks`で再取得すること。view stateが破損・未知version・不正行・読込失敗で復元されなかった場合は、`bootstrap`が返した現在logical dateを`list_tasks`で新規取得すること。「全て」の選択、取得結果、取得状態、検索文字列は復元せず、日付別の選択日と検索文字列を従来どおり復元すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
 - **REQ-COMMON-007**: 34rem以下ではbuffer領域を圧縮すること。一覧画面では全幅で日付buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持すること。
 - **REQ-COMMON-008**: 全buttonのhover配色はhover可能なfine pointerでだけ適用し、タッチ操作後に残留させないこと。desktopで選択済み日付buttonへhoverした場合は、緑背景と白文字を維持すること。`:active`と`:focus-visible`の操作feedbackはpointer種別によらず維持すること。
@@ -124,22 +124,31 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。
 - **REQ-LIST-012**: 4種類のセッション終了操作が成功した場合は、選択中のlogical date、または未選択なら最新snapshotのlogical dateを指定して`list_tasks`を送り、response全体で表示一覧を置換すること。完了成功response受理時点でin-flightの古い`list_tasks` requestを無効化し、その後に到着したresponseは適用しないこと。server errorでは追加取得せず、server commit成功後に対象sessionのlocalStorage削除だけが失敗した場合は安全状態を維持したまま一覧を再取得すること。
 - **REQ-LIST-013**: 全幅で一覧を`操作、予定、締切、task名`の順に表示し、可視の列headerを維持すること。viewport幅にかかわらず罫線区切りの1行tableとし、列幅は`88px 5.75rem 5.5rem minmax(0, 1fr)`、rowの高さは32px以上とする。締切と予定は固定列で折り返さず、task名だけを1行のままcell内で横スクロール可能にし、task名cellの縦overflowとpage全体の横scrollを発生させないこと。rank 0 taskの操作cellには、セッション追加済みならdisabledの「✓」、未追加なら「＋」を表示し、その右へ「→」の先送りbuttonを表示すること。rank非0なら空の操作cellを表示すること。
-- **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外した英字大小無視の部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替とreloadで保持すること。一覧からセッションを追加できた場合は検索文字列と絞り込みを解除し、追加の保存失敗または拒否時は保持すること。この解除で選択日、日付入力、日付入力errorを変更しないこと。全幅で検索欄を高さ36px、入力中だけ表示するclear buttonを36px四方とし、clear後は検索欄へkeyboard focusを戻すこと。検索入力とclearではserver通信、task更新、発火履歴追加を行わず、view stateだけをlocalStorageへ保存すること。
+- **REQ-LIST-014**: 日付buttonの直下にtask名検索欄を表示し、前後空白を除外したUnicode小文字化による部分一致で取得済みrowを即時に絞り込むこと。空または空白だけなら全rowを表示し、一致しない場合は空結果を案内すること。検索文字列は日付・tab切替とreloadで保持すること。一覧からセッションを追加できた場合は検索文字列と絞り込みを解除し、追加の保存失敗または拒否時は保持すること。この解除で選択日、日付入力、日付入力errorを変更しないこと。全幅で検索欄を高さ36px、入力中だけ表示するclear buttonを36px四方とし、clear後は検索欄へkeyboard focusを戻すこと。検索入力とclearではserver通信、task更新、発火履歴追加を行わず、view stateだけをlocalStorageへ保存すること。
 - **REQ-LIST-015**: 日付buttonの下に`M/D`または`YYYY/M/D`を入力してEnterまたは「表示」で一覧取得できること。年省略時はserver snapshotの現在logical dateを含む未来方向の直近日へ解決し、同じ月日は当日、過ぎた月日は翌年とすること。妥当な入力は`YYYY/M/D`へ正規化してpage内に保持し、serverへは`YYYY-MM-DD`を送ること。不正入力はfieldと関連付けたerrorを表示して通信せず、日付button選択時は入力とerrorを消去すること。日付入力はviewport幅にかかわらずtask名検索の上に配置し、viewportを超えないこと。
 - **REQ-LIST-016**: schedule rank 0の各行に幅44pxかつ高さ32pxの「→」の先送りbuttonを表示すること。assistive technologyがtask名と先送り操作を識別できるlabelを持ち、セッション操作と合わせた操作列は全幅で88pxとすること。
 - **REQ-LIST-017**: 先送り希望時刻は表示logical dateと現在logical dateの遅い方の翌日06:00とし、serverがdeadline余裕と直接の親の反復日数から`Normal`、`DeadlineLimited`、`RoutinePeriod`を判定すること。`Normal`は確認なしで希望時刻までPendingにし、`DeadlineLimited`は実際の期限上限を行内表示して確定後だけそこまでPendingにし、`RoutinePeriod`は反復日数を行内表示して確定後だけdeadlineとstart timeを次周期へ移動すること。期限上限は既存方針の`deadline - 見積時間 - 5分`とし、TD-043の残作業時間対応は別変更とすること。clientはserverのplanだけを表示・送信し、logical dateや期限余裕を再計算しないこと。確認表示とキャンセルではserver通信を行わないこと。serverは実行直前に表示日からplanを再計算し、期待planのmode、希望日時、実効日時、反復日数のいずれかが変わっていれば保存せず一覧を再取得させること。セッション中の同一task、rank非0、通信操作禁止中、mutation safetyによる全体停止中、持ち歩きロック中はbuttonと確定操作を無効化して実行せず、成功応答時に同一taskの全segmentを表示一覧から除去してから選択日の一覧を再取得し、検索と日付入力を維持すること。一覧再取得に失敗しても除去したsegmentを復活させないこと。
+- **REQ-LIST-018**: 曜日button群の先頭に「全て」buttonを置き、初めて選択した時と無効化後に選択した時だけ全件取得を開始すること。取得中にtab切替または日付別一覧への移動を許可し、取得は背景で継続すること。完了後に「全て」へ戻った場合はmemory上の結果を再利用すること。
+- **REQ-LIST-019**: 全件取得は500行単位のpageを一時bufferへ連結し、全pageが成功した時だけ一覧へ公開すること。途中pageの行を描画せず、失敗時は一時bufferを破棄して一覧内に失敗内容と「再試行」を表示し、再試行はcursorなしの先頭pageから開始すること。無効化時は取得結果を隠し、一覧内に「更新」を表示すること。
+- **REQ-LIST-020**: 全件取得中、失敗、無効化のstatusは一覧領域内へ表示し、全面overlayと背面の`inert`を使用しないこと。全件取得中もtab、曜日button、日付入力を操作でき、日付入力は「全て」表示中も常に表示して、妥当な送信時は指定日の日付別一覧へ切り替えること。
+- **REQ-LIST-021**: 全件検索は取得完了時だけ表示し、前後空白を除外したUnicode小文字化と部分一致を日付別検索と共通化すること。文字列はmemory内だけに保持し、日付別との往復と全件一覧の無効化後も維持するが、reloadでは空にすること。日付別検索文字列とは独立させ、セッション追加成功時は操作元の検索文字列だけを消去すること。
+- **REQ-LIST-022**: 全件一覧は検索後の先頭500行だけを描画し、「さらに表示」で500行ずつ増やすこと。全件検索文字列を変更またはclearした場合は描画上限を500へ戻すこと。
+- **REQ-LIST-023**: 全件行は`get_schedule`が返す全実task segmentと1対1で、同一taskの複数segment、対応順、連続する`segment_index`を保持すること。予定列はsegmentのlogical dateを`YYYY/MM/DD(曜)`で表示し、締切label、締切超過、葉判定は日付別一覧と共通のserver計算を用いること。
+- **REQ-LIST-024**: 全件一覧ではrank 0行にセッション追加だけを表示し、先送りを表示しないこと。rank非0の操作cellは空とし、同一UUIDのセッションが存在する場合は全segmentを追加済み表示にすること。列幅はviewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`とし、日付別一覧の列幅とtask名cell内横scrollを維持すること。
+- **REQ-LIST-025**: `record_session`、`complete_session`、`defer_task`の成功時だけ全件状態を無効化し、遅延した全件responseで古い一覧を復活させないこと。localのセッション追加、破棄、再開では無効化しないこと。
+- **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。
 
 ### 4.8 通信制限と発火履歴
 
-- **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、`自動セッション`、一覧の「先送り」、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および各mutation成功後の`list_tasks`に限定すること。
-- **REQ-NET-002**: tab切替、毎秒tick、一覧検索の入力・clear、一覧の「セッション」と追加成功後の検索解除・tab切替、先送りの確認表示とキャンセル、「計測を破棄して再開」、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
+- **REQ-NET-001**: server通信を初回`bootstrap`、日付選択、「全て」のpage取得、`自動セッション`、一覧の「先送り」、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および各mutation成功後の`list_tasks`に限定すること。
+- **REQ-NET-002**: tab切替、毎秒tick、日付別・全件検索の入力・clear、全件一覧の「さらに表示」、一覧の「セッション」と追加成功後の検索解除・tab切替、先送りの確認表示とキャンセル、「計測を破棄して再開」、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
 - **REQ-NET-003**: 「発火履歴」tabを選択した場合だけ、発火履歴を独立したsectionとして表示できること。
 - **REQ-NET-004**: 発火履歴はserver通信結果の直近100件をmemory内だけに保持し、reload時に消去すること。localStorage操作は記録しないこと。
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
 - **REQ-NET-006**: 実行していないCLI command名を履歴へ記録せず、実際にresponseを受信したserver操作を記録すること。
 - **REQ-NET-007**: 「記録して完了」と「計測を破棄して完了」は、実際の`complete_session`呼出しと`record_elapsed_seconds`の真偽を履歴へ記録し、失敗時もどちらを試みたか識別できること。
-- **REQ-NET-008**: 利用者起点のserver通信ではrequest開始からresponse適用まで画面全体に待機表示を出し、背面操作を無効にすること。SSR初期HTMLとhydration前の表示は全面overlayを出さず「画面を復元しています…」を表示すること。localStorage復元後の`bootstrap`と保存日付の`list_tasks`は背景更新とし、保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示すること。この背景更新statusは全tab共通でbottom navigation直上に浮遊表示し、表示・消去で本文の位置を変えないこと。背景更新中は「計測を破棄して再開」を含むlocal操作を許可し、日付選択・送信、自動セッション、先送り、記録・完了・競合再送、「計測を破棄して解除」はUIとreducerの両方で拒否すること。失敗時は保存一覧を維持して同じ浮遊表示に再試行buttonを表示すること。
-- **REQ-NET-010**: `schronu_web.view_state.v1`へ最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと全`ScheduledTaskRow`、選択tab、検索文字列、日付入力文字列をversion付きでatomicに保存すること。空一覧の成功も保存し、破損・未知version・不正行・read/write失敗はwarningにしてwork sessionやserver mutationをwrite-blockしないこと。発火履歴、通信中state、error、確認dialogは保存しないこと。
+- **REQ-NET-008**: 利用者起点のserver通信ではrequest開始からresponse適用まで画面全体に待機表示を出し、背面操作を無効にすること。ただし「全て」のpage取得はこの対象外とし、REQ-LIST-020の一覧内statusを用いること。SSR初期HTMLとhydration前の表示は全面overlayを出さず「画面を復元しています…」を表示すること。localStorage復元後の`bootstrap`と保存日付の`list_tasks`は背景更新とし、保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示すること。この背景更新statusは全tab共通でbottom navigation直上に浮遊表示し、表示・消去で本文の位置を変えないこと。背景更新中は「計測を破棄して再開」を含むlocal操作を許可し、日付選択・送信、自動セッション、先送り、記録・完了・競合再送、「計測を破棄して解除」はUIとreducerの両方で拒否すること。失敗時は保存一覧を維持して同じ浮遊表示に再試行buttonを表示すること。
+- **REQ-NET-010**: `schronu_web.view_state.v1`へ最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと全`ScheduledTaskRow`、選択tab、日付別検索文字列、日付入力文字列をversion付きでatomicに保存すること。空一覧の成功も保存し、破損・未知version・不正行・read/write失敗はwarningにしてwork sessionやserver mutationをwrite-blockしないこと。選択tabが一覧の場合も日付別選択として復元し、「全て」の選択、取得結果、取得状態、検索文字列は保存しないこと。発火履歴、通信中state、error、確認dialogは保存しないこと。
 - **REQ-NET-009**: 完了実績競合とその再完了は、それぞれ実際に送信した全引数と失敗・成功を通常どおり履歴へ記録すること。「計測を再開」はlocalStorage操作なので履歴へ記録しないこと。
 
 ### 4.9 持ち歩きロック
@@ -194,8 +203,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-004 | 残り・超過`MM:SS`がtiming領域の主表示となり、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`が補助情報として表示され、320px幅でもcardが横へ超過しない。各値をassistive technologyが識別でき、見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
 | AC-005 | 日次終端前は毎週固定`busy_time_slot`控除後の空き秒、日次終端ちょうどは予定作業がなければ0、日次終端後は壁時計超過秒を負値とするbufferがserver観測時刻を基準に変化する。browserはsnapshot後の壁時計経過秒を1回減算し、各セッションの未送信進捗秒を重複ごと個別に加算する。1セッションの見積内では通常停止し、同時計測ではセッションごとの進捗が加算され、見積到達またはより早い終了click後は対象の加算を止める。一覧を再取得しても新server bufferへ同じ未送信進捗を足す。表示はbufferへ基準睡眠時間420分を加え、bufferが負なら睡眠時間が正でも赤色、7時間を超えて不足すれば負の睡眠時間とする。 |
 | AC-006 | 06:00境界、3画面のtab切替、毎秒tick、一覧からのセッション追加、計測を破棄して再開、破棄完了の確認とキャンセルではserver requestが増えない。 |
-| AC-007 | 初回、日付選択、自動セッション、記録、2種類の完了確定、および4種類のセッション終了成功後の一覧再取得だけが仕様どおりのserver requestを発生させる。 |
-| AC-008 | 一覧に8 logical datesが表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
+| AC-007 | 初回、日付選択、オンデマンドの全件page、自動セッション、先送り、記録、2種類の完了確定、および各mutation成功後の一覧再取得だけが仕様どおりのserver requestを発生させる。 |
+| AC-008 | 一覧に「全て」と8 logical datesがこの順で表示され、両端が同じ曜日でも具体日付で別の日として取得される。 |
 | AC-009 | 一覧は開始時刻順で、締切超過は赤、schedule rank 0のtask名は緑になる。rank非0ではセッションbuttonを表示せず、セッション中のrank 0 taskでは全segmentのbuttonが無効になる。 |
 | AC-010 | 計測を破棄して解除ではtaskが変わらず、記録では終了操作clickまでの完了済み整数秒だけが加算される。記録して完了では同じclick時刻をtask終了時刻として加算と完了が1 transactionで保存され、計測を破棄して完了では既存実績を変えずtaskだけが完了する。 |
 | AC-011 | 別processで実績が変化した後の記録・2種類の完了は競合となり、taskと反復taskを保存せず、Webセッションを保持する。2種類の完了は初回clickまでの計測を失わず、最新実績での明示的な再完了または確認待ちを除外した計測再開を選べる。 |
@@ -209,9 +218,14 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.0秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。ただし、最初のsession追加成功時は即時再ロックが優先される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。一時許可中は残り秒数の横に44px以上の「今すぐロック」を表示し、1 clickで通信・履歴・保存なしに即時再ロックする。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
 | AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
-| AC-022 | 利用者起点の一覧取得、自動選定、記録、2種類の完了の各server通信中は全画面の「通信中…」とスピナーが表示され、背面を操作できない。reload直後の背景更新では全面overlayを出さず、前回表示または未取得状態と更新statusを示す。複数の通常通信は最後のresponseまでoverlayを維持し、成功と各error応答の完了後に解除される。 |
-| AC-023 | 曜日button直下の検索欄へtask名の一部を入力すると、前後空白を除外した英字大小無視の部分一致で取得済みrowだけが即時表示され、同一taskの複数segmentはすべて残る。日付・tab切替とreloadでは検索文字列を保持し、clearで全rowへ戻って検索欄へkeyboard focusが戻る。一覧からセッションを正常に追加すると検索と絞り込みだけが解除され、選択日と日付入力は保持される。保存失敗または追加拒否時は検索を保持する。入力、clear、追加成功後の検索解除はserver通信と発火履歴追加を行わず、view stateだけを保存する。 |
+| AC-022 | 利用者起点の日付別一覧取得、自動選定、記録、2種類の完了の各server通信中は全画面の「通信中…」とスピナーが表示され、背面を操作できない。全件page取得とreload直後の背景更新では全面overlayを出さず、それぞれ一覧内status、または前回表示・未取得状態と更新statusを示す。複数の通常通信は最後のresponseまでoverlayを維持し、成功と各error応答の完了後に解除される。 |
+| AC-023 | 曜日button直下の日付別検索欄へtask名の一部を入力すると、前後空白を除外したUnicode小文字化による部分一致で取得済みrowだけが即時表示され、同一taskの複数segmentはすべて残る。日付・tab切替とreloadでは検索文字列を保持し、clearで全rowへ戻って検索欄へkeyboard focusが戻る。一覧からセッションを正常に追加すると検索と絞り込みだけが解除され、選択日と日付入力は保持される。保存失敗または追加拒否時は検索を保持する。入力、clear、追加成功後の検索解除はserver通信と発火履歴追加を行わず、view stateだけを保存する。 |
 | AC-024 | セッションtabで最後のセッションを正常に削除すると一覧tabへ移り、複数セッション中の1件削除、server失敗、localStorage削除失敗、完了競合の計測再開、通常操作の計測を破棄して再開、一覧・発火履歴tab表示中の削除では強制遷移しない。既存の一覧再取得以外にtab遷移由来のserver通信を追加しない。 |
 | AC-025 | 一覧の日付欄へ`9/16`を入力すると、現在logical dateが9月16日なら当日、9月17日以後なら翌年の9月16日を`YYYY-MM-DD`で取得する。`2026/9/16`は指定年を維持する。入力はreload後も復元され、曜日button選択で消去される。不正値と空白だけの入力はserver通信と発火履歴追加を行わない。 |
-| AC-026 | reload後に最後のsnapshot、1日分の一覧、選択tab、検索、日付入力、作業中セッションを復元し、保存日付の最新取得が成功した時だけ一覧全体を置換する。日跨ぎ、bootstrap失敗、一覧取得失敗でも前回一覧を維持し、失敗時は再試行できる。背景更新中は「計測を破棄して再開」を含むlocal操作が成功し、server依存操作と「計測を破棄して解除」はUIとreducerの両方で拒否される。 |
+| AC-026 | reload後に最後のsnapshot、1日分の日付別一覧、選択tab、日付別の選択日・検索、日付入力、作業中セッションを復元し、保存日付の最新取得が成功した時だけ一覧全体を置換する。「全て」の選択・取得結果・検索は復元しない。日跨ぎ、bootstrap失敗、一覧取得失敗でも前回一覧を維持し、失敗時は再試行できる。背景更新中は「計測を破棄して再開」を含むlocal操作が成功し、server依存操作と「計測を破棄して解除」はUIとreducerの両方で拒否される。 |
 | AC-027 | 持ち歩きロックの一時許可中に一覧または自動選定から最初のsessionを追加すると即時再ロックする。sessionが増えない場合と1件以上からの追加では一時許可を維持する。 |
+| AC-028 | 「全て」を初めて選択すると500行単位の取得を開始し、全page成功時だけ全segmentを順序どおり公開する。500/501境界で欠落・重複がなく、途中失敗、無効cursor、snapshot evictionでは部分行を破棄し、「再試行」によりcursorなしから取得し直す。 |
+| AC-029 | 全件取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得が継続する。完了後に「全て」へ戻ると再取得せずmemory上の結果を表示し、日付入力の送信では指定日の日付別一覧へ移る。 |
+| AC-030 | 全件検索は取得完了後だけ表示され、前後空白を除外したUnicode小文字化の部分一致を日付別と共用する。日付別との往復と無効化後は全件検索を保持し、reloadでは空にする。検索変更時は500行へ戻り、「さらに表示」で500行ずつ増える。 |
+| AC-031 | 全件tableは320px、360px、46rem、1024pxで`44px 8.25rem 5.5rem minmax(0, 1fr)`を維持し、予定を`YYYY/MM/DD(曜)`で表示する。葉行はセッション追加だけ、親行は空の操作cellとなり、同一UUIDの全segmentが追加済み表示になる。 |
+| AC-032 | record、complete、defer成功後だけ全件一覧が無効状態となり、取得中だった遅延responseで古い行を復活させない。localのセッション追加、破棄、再開では無効化しない。 |

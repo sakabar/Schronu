@@ -65,6 +65,30 @@ impl WebReadServiceFixture {
         task_id
     }
 
+    fn seed_fixed_tasks(&self, now: chrono::DateTime<Local>, count: usize) -> Vec<Uuid> {
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        let ids = (0..count)
+            .map(|index| {
+                let task_id = Uuid::new_v4();
+                let task = TaskHandle::with_identity("paged service task", task_id, now).unwrap();
+                task.set_estimated_work_seconds(60).unwrap();
+                task.set_start_time(now + Duration::minutes(index as i64 * 2))
+                    .unwrap();
+                task.set_fixed_start(true).unwrap();
+                if index == 0 {
+                    task.set_deadline_time_opt(Some(now + Duration::hours(1)))
+                        .unwrap();
+                }
+                repository.start_new_project(task).unwrap();
+                task_id
+            })
+            .collect::<Vec<_>>();
+        repository.save().unwrap();
+        ids
+    }
+
     fn seed_fixed_task_with_actual(
         &self,
         now: chrono::DateTime<Local>,
@@ -111,6 +135,50 @@ impl WebReadServiceFixture {
         (parent_id, child_id)
     }
 
+    fn seed_parent_child_and_pending_leaf(
+        &self,
+        now: chrono::DateTime<Local>,
+    ) -> (Uuid, Uuid, Uuid) {
+        let parent_id = Uuid::new_v4();
+        let child_id = Uuid::new_v4();
+        let pending_id = Uuid::new_v4();
+        let parent = TaskHandle::with_identity("all parent", parent_id, now).unwrap();
+        parent.set_estimated_work_seconds(1_200).unwrap();
+        let child = parent
+            .create_child(TaskAttr::with_identity("all child", child_id, now))
+            .unwrap();
+        child.set_estimated_work_seconds(600).unwrap();
+        let pending = TaskHandle::with_identity("pending leaf", pending_id, now).unwrap();
+        pending.set_estimated_work_seconds(600).unwrap();
+        pending.set_pending_until(now + Duration::days(1)).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        repository.start_new_project(parent).unwrap();
+        repository.start_new_project(pending).unwrap();
+        repository.save().unwrap();
+        (parent_id, child_id, pending_id)
+    }
+
+    fn seed_task_split_by_fixed_blocker(&self, now: chrono::DateTime<Local>) -> Uuid {
+        let task_id = Uuid::new_v4();
+        let task = TaskHandle::with_identity("split all task", task_id, now).unwrap();
+        task.set_estimated_work_seconds(3_600).unwrap();
+        let blocker = TaskHandle::with_identity("fixed blocker", Uuid::new_v4(), now).unwrap();
+        blocker.set_estimated_work_seconds(60).unwrap();
+        blocker.set_start_time(now + Duration::minutes(30)).unwrap();
+        blocker.set_fixed_start(true).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        repository.start_new_project(task).unwrap();
+        repository.start_new_project(blocker).unwrap();
+        repository.save().unwrap();
+        task_id
+    }
+
     fn persisted_bytes(&self) -> Vec<(PathBuf, Vec<u8>)> {
         let mut paths = vec![self.storage.join(".revision")];
         for entry in fs::read_dir(&self.storage).unwrap() {
@@ -130,6 +198,157 @@ impl WebReadServiceFixture {
     }
 }
 
+#[test]
+fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_ids = fixture.seed_fixed_tasks(operation_now, 501);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let first = service.list_all_tasks_at(operation_now, None).unwrap();
+    assert_eq!(first.data.rows.len(), 500);
+    assert_eq!(first.data.rows[0].segment_index, 0);
+    assert_eq!(first.data.rows[499].segment_index, 499);
+    assert_eq!(
+        first
+            .data
+            .rows
+            .iter()
+            .map(|row| row.task.task_id.clone())
+            .collect::<Vec<_>>(),
+        task_ids[..500]
+            .iter()
+            .map(|id| id.hyphenated().to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(first
+        .data
+        .rows
+        .iter()
+        .all(|row| row.is_leaf && row.schedule_date.len() == 10 && !row.deadline_label.is_empty()));
+    assert!(first.data.rows[0].deadline_epoch_ms.is_some());
+    let cursor = first.data.next_cursor.clone().unwrap();
+    let cursor_id = cursor.split(':').next().unwrap();
+    for invalid in [
+        "missing-separator".to_owned(),
+        "not-a-uuid:500".to_owned(),
+        format!("{cursor_id}:nope"),
+        format!("{cursor_id}:0"),
+        format!("{cursor_id}:1"),
+        format!("{cursor_id}:1000"),
+        format!("{cursor_id}:500:extra"),
+    ] {
+        assert!(matches!(
+            service.list_all_tasks_at(operation_now, Some(invalid)),
+            Err(WebReadError::InvalidCursor)
+        ));
+    }
+
+    let added_id = fixture.seed_unconstrained_task(operation_now + Duration::seconds(1));
+    let second = service
+        .list_all_tasks_at(operation_now + Duration::seconds(1), Some(cursor.clone()))
+        .unwrap();
+    assert_eq!(second.snapshot, first.snapshot);
+    assert_eq!(second.data.rows.len(), 1);
+    assert_eq!(second.data.rows[0].segment_index, 500);
+    assert_eq!(
+        second.data.rows[0].task.task_id,
+        task_ids[500].hyphenated().to_string()
+    );
+    assert_ne!(
+        second.data.rows[0].task.task_id,
+        added_id.hyphenated().to_string()
+    );
+    assert_eq!(second.data.next_cursor, None);
+    assert!(matches!(
+        service.list_all_tasks_at(operation_now, Some(cursor)),
+        Err(WebReadError::InvalidCursor)
+    ));
+}
+
+#[test]
+fn 全件serviceの九個目開始は最古snapshotだけをfifoで失効させる() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_fixed_tasks(operation_now, 501);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let cursors = (0..9)
+        .map(|index| {
+            service
+                .list_all_tasks_at(operation_now + Duration::seconds(index), None)
+                .unwrap()
+                .data
+                .next_cursor
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+
+    assert!(matches!(
+        service.list_all_tasks_at(operation_now, Some(cursors[0].clone())),
+        Err(WebReadError::InvalidCursor)
+    ));
+    for cursor in &cursors[1..] {
+        assert!(service
+            .list_all_tasks_at(operation_now, Some(cursor.clone()))
+            .is_ok());
+    }
+}
+
+#[test]
+fn 全件serviceは実repositoryの親葉pending葉をschedule順のrowへ変換する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (parent_id, child_id, pending_id) =
+        fixture.seed_parent_child_and_pending_leaf(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let page = service.list_all_tasks_at(operation_now, None).unwrap().data;
+    assert_eq!(
+        page.rows
+            .iter()
+            .map(|row| row.segment_index)
+            .collect::<Vec<_>>(),
+        (0..page.rows.len()).collect::<Vec<_>>()
+    );
+    let parent = page
+        .rows
+        .iter()
+        .find(|row| row.task.task_id == parent_id.hyphenated().to_string())
+        .unwrap();
+    let child = page
+        .rows
+        .iter()
+        .find(|row| row.task.task_id == child_id.hyphenated().to_string())
+        .unwrap();
+    let pending = page
+        .rows
+        .iter()
+        .find(|row| row.task.task_id == pending_id.hyphenated().to_string())
+        .unwrap();
+    assert!(!parent.is_leaf);
+    assert!(child.is_leaf);
+    assert!(pending.is_leaf);
+    assert_eq!(pending.schedule_date.len(), 10);
+}
+
+#[test]
+fn 全件serviceは同じtaskの複数segmentを別rowとして保持する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_task_split_by_fixed_blocker(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let page = service.list_all_tasks_at(operation_now, None).unwrap().data;
+    let task_rows = page
+        .rows
+        .iter()
+        .filter(|row| row.task.task_id == task_id.hyphenated().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(task_rows.len(), 2);
+    assert_ne!(task_rows[0].segment_index, task_rows[1].segment_index);
+}
+
 impl Drop for WebReadServiceFixture {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
@@ -147,7 +366,7 @@ fn busy_time_slots_yaml() -> String {
 }
 
 #[test]
-fn serviceの3read操作は実storageを同期して同一snapshotとtyped_dataを返し保存しない() {
+fn serviceの4read操作は実storageを同期して同一snapshotとtyped_dataを返し保存しない() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let fixture = WebReadServiceFixture::new();
@@ -159,6 +378,7 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     let listed = service
         .list_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
         .unwrap();
+    let all = service.list_all_tasks_at(operation_now, None).unwrap();
     let selected = service.auto_session_at(operation_now).unwrap();
 
     assert_eq!(
@@ -168,8 +388,26 @@ fn serviceの3read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(bootstrap.logical_date, "2026-09-05");
     assert_eq!(bootstrap.buffer_seconds, 20_041);
     assert_eq!(listed.snapshot, bootstrap);
+    assert_eq!(all.snapshot, bootstrap);
     assert_eq!(selected.snapshot, bootstrap);
     assert_eq!(listed.data.len(), 1);
+    assert_eq!(all.data.rows.len(), 1);
+    assert_eq!(all.data.next_cursor, None);
+    assert_eq!(all.data.rows[0].segment_index, 0);
+    assert_eq!(all.data.rows[0].schedule_date, "2026-09-05");
+    assert_eq!(
+        all.data.rows[0].task.task_id,
+        task_id.hyphenated().to_string()
+    );
+    assert_eq!(
+        all.data.rows[0].deadline_label,
+        listed.data[0].deadline_label
+    );
+    assert_eq!(
+        all.data.rows[0].misses_deadline,
+        listed.data[0].misses_deadline
+    );
+    assert_eq!(all.data.rows[0].is_leaf, listed.data[0].is_leaf);
     assert_eq!(
         listed.data[0].task.task_id,
         task_id.hyphenated().to_string()

@@ -21,6 +21,15 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let schedule = vec![
         ScheduledTaskView {
             task: first.clone(),
+            first_available_time: day_start - Duration::minutes(1),
+            scheduled_start: day_start - Duration::minutes(1),
+            scheduled_end: day_start,
+            scheduled_work_seconds: 60,
+            total_work_seconds: 1_200,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            task: first.clone(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(3),
             scheduled_end: day_start + Duration::hours(3) + Duration::seconds(600),

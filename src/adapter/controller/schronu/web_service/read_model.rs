@@ -1,13 +1,15 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    AllTaskRowDto, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
 };
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
 };
 use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
+use crate::application::schedule_use_case::{
+    get_schedule, scheduled_logical_dates, ScheduledTaskView,
+};
 use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
@@ -29,6 +31,41 @@ where
         operation_now,
         crate::application::daily_capacity::END_OF_DAY_OFFSET_MINUTES,
     )
+}
+
+pub(in crate::adapter::controller) fn build_all_task_rows(
+    schedule: &[ScheduledTaskView],
+    last_synced_time: DateTime<Local>,
+) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
+    let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    logical_dates
+        .into_iter()
+        .zip(schedule)
+        .enumerate()
+        .map(|(segment_index, (logical_date, segment))| {
+            let deadline = segment.task.deadline_time;
+            let deadline_label = format_deadline_remaining_time(
+                deadline.as_ref(),
+                segment.scheduled_end,
+                last_synced_time,
+            )
+            .map_err(WebReadCoreError::Application)?;
+            Ok(AllTaskRowDto {
+                task: session_task_dto(
+                    segment.task.id.hyphenated().to_string(),
+                    segment.task.name.clone(),
+                    segment.task.estimated_work_seconds,
+                    segment.task.actual_work_seconds,
+                ),
+                segment_index,
+                schedule_date: logical_date.format("%Y-%m-%d").to_string(),
+                deadline_epoch_ms: deadline.map(|value| value.timestamp_millis()),
+                deadline_label,
+                misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
+                is_leaf: segment.is_leaf(),
+            })
+        })
+        .collect()
 }
 
 pub(super) fn build_server_snapshot_with_offset<R, F>(
@@ -87,14 +124,13 @@ where
         .map_err(WebReadCoreError::Application)?;
         free_time_manager.get_free_seconds(&start, &end)
     };
-    let scheduled_segments = schedule
-        .iter()
-        .map(|segment| {
-            try_logical_date(segment.scheduled_start)
-                .map(|date| (date, segment.scheduled_work_seconds))
-                .map_err(WebReadCoreError::Application)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let segment_logical_dates =
+        scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let scheduled_segments = segment_logical_dates
+        .into_iter()
+        .zip(schedule)
+        .map(|(date, segment)| (date, segment.scheduled_work_seconds))
+        .collect::<Vec<_>>();
     let buffer_seconds = calculate_buffer_seconds(
         logical_date,
         remaining_capacity_seconds,
@@ -114,14 +150,12 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     logical_date: NaiveDate,
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<ScheduledTaskRowDto>, WebReadCoreError> {
-    let mut dated_segments = schedule
-        .iter()
-        .map(|segment| {
-            try_logical_date(segment.scheduled_start)
-                .map(|date| (date, segment))
-                .map_err(WebReadCoreError::Application)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let segment_logical_dates =
+        scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let mut dated_segments = segment_logical_dates
+        .into_iter()
+        .zip(schedule)
+        .collect::<Vec<_>>();
     dated_segments.retain(|(date, _)| *date == logical_date);
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
@@ -147,7 +181,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
-                is_leaf: segment.rank == 0,
+                is_leaf: segment.is_leaf(),
                 defer_plan: defer_plan_dto(
                     plan_defer_task(repository, segment.task.id, logical_date)
                         .map_err(WebReadCoreError::Application)?,

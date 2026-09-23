@@ -1,7 +1,7 @@
 use crate::{
-    CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -29,6 +29,18 @@ pub async fn list_tasks(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_all_tasks")]
+pub async fn list_all_tasks(
+    request: ListAllTasksRequest,
+) -> Result<WebOperationResult<WebSuccess<AllTaskPage>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_all_tasks(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -104,6 +116,14 @@ async fn dispatch_list_tasks(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_list_all_tasks(
+    worker: WebWorkerHandle,
+    request: ListAllTasksRequest,
+) -> WebOperationResult<WebSuccess<AllTaskPage>> {
+    worker.list_all_tasks(request).await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_auto_session(
     worker: WebWorkerHandle,
 ) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
@@ -138,25 +158,29 @@ async fn dispatch_complete_session(
 mod tests {
     use super::{
         dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_defer_task,
-        dispatch_list_tasks, dispatch_record_session, WebOperationResult,
+        dispatch_list_all_tasks, dispatch_list_tasks, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest, ListTasksRequest,
-        RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-        SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+        WebSuccess, WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     #[test]
-    fn 六endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 七endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
+        let all_task_cursors = Arc::new(Mutex::new(Vec::new()));
+        let worker_cursors = Arc::clone(&all_task_cursors);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
             calls: worker_calls,
             bootstrap_error: None,
+            all_task_cursors: worker_cursors,
         });
         let request = RecordSessionRequest {
             task_id: "task".to_owned(),
@@ -178,6 +202,13 @@ mod tests {
                 worker.clone(),
                 ListTasksRequest {
                     logical_date: "2026-09-05".to_owned(),
+                },
+            )
+            .await;
+            let _: WebOperationResult<WebSuccess<AllTaskPage>> = dispatch_list_all_tasks(
+                worker.clone(),
+                ListAllTasksRequest {
+                    cursor: Some("opaque-cursor".to_owned()),
                 },
             )
             .await;
@@ -204,7 +235,11 @@ mod tests {
             assert_eq!(completed, Ok(snapshot()));
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 7);
+        assert_eq!(
+            *all_task_cursors.lock().unwrap(),
+            [Some("opaque-cursor".to_owned())]
+        );
     }
 
     #[test]
@@ -221,6 +256,7 @@ mod tests {
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
             calls: worker_calls,
             bootstrap_error: Some(worker_error),
+            all_task_cursors: Arc::new(Mutex::new(Vec::new())),
         });
         let mut request = Request::builder().body(()).unwrap();
         request.extensions_mut().insert(worker);
@@ -236,6 +272,7 @@ mod tests {
     struct CountingOperations {
         calls: Arc<AtomicUsize>,
         bootstrap_error: Option<WebError>,
+        all_task_cursors: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl CountingOperations {
@@ -261,6 +298,21 @@ mod tests {
             Ok(WebSuccess {
                 snapshot: snapshot(),
                 data: Vec::new(),
+            })
+        }
+
+        fn list_all_tasks(
+            &mut self,
+            request: ListAllTasksRequest,
+        ) -> Result<WebSuccess<AllTaskPage>, WebError> {
+            self.count();
+            self.all_task_cursors.lock().unwrap().push(request.cursor);
+            Ok(WebSuccess {
+                snapshot: snapshot(),
+                data: AllTaskPage {
+                    rows: Vec::new(),
+                    next_cursor: None,
+                },
             })
         }
 

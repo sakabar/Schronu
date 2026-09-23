@@ -29,6 +29,23 @@ pub struct ScheduledTaskRow {
     pub defer_plan: DeferPlan,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskRow {
+    pub task: SessionTask,
+    pub segment_index: usize,
+    pub schedule_date: String,
+    pub deadline_epoch_ms: Option<i64>,
+    pub deadline_label: String,
+    pub misses_deadline: bool,
+    pub is_leaf: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AllTaskPage {
+    pub rows: Vec<AllTaskRow>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeferMode {
@@ -56,6 +73,52 @@ pub struct WebSuccess<T> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListTasksRequest {
     pub logical_date: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListAllTasksRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+#[cfg(test)]
+mod all_task_contract_tests {
+    use super::*;
+
+    #[test]
+    fn all_task_wireはcursorと必須日付をjsonで保持する() {
+        let request = ListAllTasksRequest {
+            cursor: Some("00000000-0000-4000-8000-000000000001:500".to_owned()),
+        };
+        let encoded = serde_json::to_string(&request).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ListAllTasksRequest>(&encoded).unwrap(),
+            request
+        );
+
+        let row = AllTaskRow {
+            task: SessionTask {
+                task_id: "task".to_owned(),
+                task_name: "name".to_owned(),
+                estimated_work_seconds: 1,
+                actual_work_seconds: 0,
+            },
+            segment_index: 0,
+            schedule_date: "2026-09-05".to_owned(),
+            deadline_epoch_ms: None,
+            deadline_label: "____/__/__".to_owned(),
+            misses_deadline: false,
+            is_leaf: true,
+        };
+        let page = AllTaskPage {
+            rows: vec![row],
+            next_cursor: None,
+        };
+        let decoded: AllTaskPage =
+            serde_json::from_str(&serde_json::to_string(&page).unwrap()).unwrap();
+        assert_eq!(decoded, page);
+        assert_eq!(web_error_codes::INVALID_CURSOR, "invalid_cursor");
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -90,6 +153,7 @@ pub struct RecordSessionResult {
 }
 
 pub mod web_error_codes {
+    pub const INVALID_CURSOR: &str = "invalid_cursor";
     pub const INVALID_INPUT: &str = "invalid_input";
     pub const TASK_NOT_FOUND: &str = "task_not_found";
     pub const TASK_ALREADY_COMPLETED: &str = "task_already_completed";
