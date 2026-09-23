@@ -328,6 +328,9 @@ mod tests {
         ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
+    use schronu::adapter::gateway::task_repository::TaskRepository;
+    use schronu::application::interface::TaskRepositoryTrait;
+    use schronu::entity::task::TaskHandle;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -337,6 +340,7 @@ mod tests {
     fn 七操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {
         let fixture = Fixture::new();
         let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+        let task_id = fixture.seed_task(now);
         let calls = Arc::new(AtomicUsize::new(0));
         let mut operations = EnvironmentWebOperations::with_environment_and_clock(
             Some(fixture.config.clone().into_os_string()),
@@ -359,6 +363,22 @@ mod tests {
             .list_all_tasks(ListAllTasksRequest { cursor: None })
             .unwrap();
         assert_eq!(all.snapshot.observed_at_epoch_ms, now.timestamp_millis());
+        assert_eq!(all.data.next_cursor, None);
+        assert_eq!(all.data.rows.len(), 1);
+        let row = &all.data.rows[0];
+        assert_eq!(row.task.task_id, task_id.hyphenated().to_string());
+        assert_eq!(row.task.task_name, "environment all task");
+        assert_eq!(row.task.estimated_work_seconds, 600);
+        assert_eq!(row.task.actual_work_seconds, 60);
+        assert_eq!(row.segment_index, 0);
+        assert_eq!(row.schedule_date, "2026-09-05");
+        assert_eq!(
+            row.deadline_epoch_ms,
+            Some((now + chrono::Duration::hours(1)).timestamp_millis())
+        );
+        assert!(!row.deadline_label.is_empty());
+        assert!(!row.misses_deadline);
+        assert!(row.is_leaf);
         let selected = operations.auto_session().unwrap();
         assert_eq!(
             selected.snapshot.observed_at_epoch_ms,
@@ -494,6 +514,21 @@ mod tests {
                 ),
             )
             .unwrap();
+        }
+
+        fn seed_task(&self, now: DateTime<Local>) -> uuid::Uuid {
+            let task_id = uuid::Uuid::from_u128(0x2026_0905_ffff);
+            let task = TaskHandle::with_identity("environment all task", task_id, now).unwrap();
+            task.set_estimated_work_seconds(600).unwrap();
+            task.set_actual_work_seconds(60).unwrap();
+            task.set_deadline_time_opt(Some(now + chrono::Duration::hours(1)))
+                .unwrap();
+            let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+            repository.sync_clock(now).unwrap();
+            repository.load().unwrap();
+            repository.start_new_project(task).unwrap();
+            repository.save().unwrap();
+            task_id
         }
     }
 

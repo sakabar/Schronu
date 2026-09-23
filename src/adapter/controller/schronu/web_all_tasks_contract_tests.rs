@@ -1,5 +1,5 @@
 use super::web_service::build_all_task_rows;
-use super::{AllTaskRowDto, WebReadError, WebService};
+use super::{AllTaskRowDto, WebReadError};
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
 use crate::entity::task::TaskHandle;
@@ -61,10 +61,4 @@ fn all_task_rowはschedule順とsegment情報を保持する() {
 fn invalid_cursorは専用errorである() {
     let error = WebReadError::InvalidCursor;
     assert_eq!(error.to_string(), "invalid all-task cursor");
-}
-
-#[test]
-fn 全件pageは500行境界とcursor検証とfifo解放を守る() {
-    let _operation: fn(&mut WebService, chrono::DateTime<Local>, Option<String>) -> _ =
-        WebService::list_all_tasks_at;
 }

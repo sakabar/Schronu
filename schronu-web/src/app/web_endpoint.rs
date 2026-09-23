@@ -169,15 +169,18 @@ mod tests {
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn 七endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
+        let all_task_cursors = Arc::new(Mutex::new(Vec::new()));
+        let worker_cursors = Arc::clone(&all_task_cursors);
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
             calls: worker_calls,
             bootstrap_error: None,
+            all_task_cursors: worker_cursors,
         });
         let request = RecordSessionRequest {
             task_id: "task".to_owned(),
@@ -202,8 +205,13 @@ mod tests {
                 },
             )
             .await;
-            let _: WebOperationResult<WebSuccess<AllTaskPage>> =
-                dispatch_list_all_tasks(worker.clone(), ListAllTasksRequest { cursor: None }).await;
+            let _: WebOperationResult<WebSuccess<AllTaskPage>> = dispatch_list_all_tasks(
+                worker.clone(),
+                ListAllTasksRequest {
+                    cursor: Some("opaque-cursor".to_owned()),
+                },
+            )
+            .await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
             let _: WebOperationResult<ServerSnapshot> = dispatch_defer_task(
@@ -228,6 +236,10 @@ mod tests {
         });
 
         assert_eq!(calls.load(Ordering::SeqCst), 7);
+        assert_eq!(
+            *all_task_cursors.lock().unwrap(),
+            [Some("opaque-cursor".to_owned())]
+        );
     }
 
     #[test]
@@ -244,6 +256,7 @@ mod tests {
         let worker = WebWorkerHandle::spawn(move || CountingOperations {
             calls: worker_calls,
             bootstrap_error: Some(worker_error),
+            all_task_cursors: Arc::new(Mutex::new(Vec::new())),
         });
         let mut request = Request::builder().body(()).unwrap();
         request.extensions_mut().insert(worker);
@@ -259,6 +272,7 @@ mod tests {
     struct CountingOperations {
         calls: Arc<AtomicUsize>,
         bootstrap_error: Option<WebError>,
+        all_task_cursors: Arc<Mutex<Vec<Option<String>>>>,
     }
 
     impl CountingOperations {
@@ -289,9 +303,10 @@ mod tests {
 
         fn list_all_tasks(
             &mut self,
-            _request: ListAllTasksRequest,
+            request: ListAllTasksRequest,
         ) -> Result<WebSuccess<AllTaskPage>, WebError> {
             self.count();
+            self.all_task_cursors.lock().unwrap().push(request.cursor);
             Ok(WebSuccess {
                 snapshot: snapshot(),
                 data: AllTaskPage {
