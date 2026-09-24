@@ -10,6 +10,7 @@ use termion::raw::RawTerminal;
 use uuid::Uuid;
 
 pub(super) const MAX_COL: u16 = 999;
+const TASK_LIST_DATE_BOUNDARY_WIDTH: usize = 88;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SnapshotDisplay {
@@ -1064,7 +1065,7 @@ pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
         TaskListRow::DayGap { days } => format!(
             "---- ------------------------------------ - ---------- --------------------- - -- -- {days}日間の空き時間"
         ),
-        TaskListRow::DateBoundary => "-".repeat(157),
+        TaskListRow::DateBoundary => "-".repeat(TASK_LIST_DATE_BOUNDARY_WIDTH),
         TaskListRow::Message { text } => text.clone(),
     }
 }
