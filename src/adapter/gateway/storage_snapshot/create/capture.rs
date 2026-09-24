@@ -312,6 +312,7 @@ fn validate_capture_unchanged_secure(
         file_count: 0,
         total_bytes: 0,
         directory_manifest_bytes: 0,
+        changed_path: None,
     };
     validator.read_directory(&root, Path::new(""))?;
     if let Some(expected) = validator.directories.values().next() {
@@ -319,6 +320,9 @@ fn validate_capture_unchanged_secure(
     }
     if let Some(expected) = validator.files.values().next() {
         return Err(capture_changed(&expected.path));
+    }
+    if let Some(path) = validator.changed_path {
+        return Err(capture_changed(path));
     }
     Ok(())
 }
@@ -344,6 +348,7 @@ struct CaptureValidator<'a> {
     file_count: usize,
     total_bytes: u64,
     directory_manifest_bytes: u64,
+    changed_path: Option<PathBuf>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -394,7 +399,7 @@ impl CaptureValidator<'_> {
             } else if metadata.is_file() {
                 self.validate_file(&display_path, &child_relative, &mut child, &metadata)?;
             } else {
-                return Err(capture_changed(display_path));
+                self.record_changed(display_path);
             }
         }
         Ok(())
@@ -413,13 +418,11 @@ impl CaptureValidator<'_> {
             self.directory_manifest_bytes,
             self.limits,
         )?;
-        let Some(expected) = self.directories.remove(relative) else {
-            return Err(capture_changed(path));
-        };
-        if permission_mode(&metadata.permissions())
-            != permission_mode(&expected.metadata.permissions())
-        {
-            return Err(capture_changed(path));
+        match self.directories.remove(relative) {
+            Some(expected)
+                if permission_mode(&metadata.permissions())
+                    == permission_mode(&expected.metadata.permissions()) => {}
+            Some(_) | None => self.record_changed(path),
         }
         Ok(())
     }
@@ -476,13 +479,15 @@ impl CaptureValidator<'_> {
             self.total_bytes,
         )?;
         let Some(expected) = self.files.remove(relative) else {
-            return Err(capture_changed(path));
+            self.record_changed(path);
+            return Ok(());
         };
         if metadata.len() != expected.bytes.len() as u64
             || permission_mode(&metadata.permissions())
                 != permission_mode(&expected.metadata.permissions())
         {
-            return Err(capture_changed(path));
+            self.record_changed(path);
+            return Ok(());
         }
         let prior_total = self
             .total_bytes
@@ -543,14 +548,20 @@ impl CaptureValidator<'_> {
                 observed_total,
             )?;
             if expected.bytes.get(offset..end) != Some(&buffer[..read]) {
-                return Err(capture_changed(path));
+                self.record_changed(path);
             }
             offset = end;
         }
         if offset != expected.bytes.len() {
-            return Err(capture_changed(path));
+            self.record_changed(path);
         }
         Ok(())
+    }
+
+    fn record_changed(&mut self, path: impl Into<PathBuf>) {
+        if self.changed_path.is_none() {
+            self.changed_path = Some(path.into());
+        }
     }
 }
 
@@ -590,6 +601,7 @@ mod tests {
             file_count: 0,
             total_bytes: 0,
             directory_manifest_bytes: 0,
+            changed_path: None,
         };
         validator
             .validate_file(&expected.path, &expected.relative, &mut source, &metadata)
@@ -637,6 +649,7 @@ mod tests {
             file_count: 0,
             total_bytes: 0,
             directory_manifest_bytes: 0,
+            changed_path: None,
         };
         let mut unexpected = File::open(&unexpected_path).unwrap();
         let unexpected_metadata = unexpected.metadata().unwrap();
