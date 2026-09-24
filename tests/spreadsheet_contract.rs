@@ -213,9 +213,11 @@ fn copy_for_spreadsheetは同一taskの異なるsegment_identityを保持する(
 fn copy_for_spreadsheetは日付境界と空き日行を無視する() {
     let cli_output = format!(
         "0001 22222222-2222-2222-2222-222222222222 - ____-00:30 06/22(日)-10:00~10:30 0 30 01 維 翌日task\n{}\n\
-         ---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間\n\
+         {}2日間の空き時間{}\n\
          0000 11111111-1111-1111-1111-111111111111 - ____-00:30 06/21(土)-10:00~10:30 0 30 01 維 今日task\n",
-        "-".repeat(88)
+        "-".repeat(88),
+        "-".repeat(88),
+        "-".repeat(54)
     );
 
     let copied = run_script("shell/copy_for_spreadsheet.sh", &[], &cli_output);

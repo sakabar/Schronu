@@ -487,7 +487,12 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
         [
             "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 夕食 の 準備",
             "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 15分間の空き時間",
-            "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間",
+            format!(
+                "newline:{}2日間の空き時間{}",
+                "-".repeat(88),
+                "-".repeat(54)
+            )
+            .as_str(),
             date_boundary_operation.as_str(),
             "newline:予定外の案内",
             "newline:0002 22222222-2222-2222-2222-222222222222 / ____/__/__ 08/23(日)-10:00~10:05 3 05 08 _ 短い task",
@@ -509,16 +514,23 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
 }
 
 #[test]
-fn task_list_displayの一日区切り線はtask名直前の88マスまでにする() {
+fn task_list_displayの空き日区切りは88本の後へ説明を挟んで157マスに揃える() {
     let date_boundary = format_task_list_row(&TaskListRow::DateBoundary);
-    let day_gap = format_task_list_row(&TaskListRow::DayGap { days: 2 });
 
     assert_eq!(date_boundary, "-".repeat(88));
     assert_eq!(UnicodeWidthStr::width(date_boundary.as_str()), 88);
-    assert!(
-        UnicodeWidthStr::width(date_boundary.as_str()) < UnicodeWidthStr::width(day_gap.as_str()),
-        "一日区切り線はN日間の空き時間行より短くする"
-    );
+    for (days, trailing_hyphen_count) in [(2, 54), (12, 53)] {
+        let day_gap = format_task_list_row(&TaskListRow::DayGap { days });
+        assert_eq!(
+            day_gap,
+            format!(
+                "{}{days}日間の空き時間{}",
+                "-".repeat(88),
+                "-".repeat(trailing_hyphen_count)
+            )
+        );
+        assert_eq!(UnicodeWidthStr::width(day_gap.as_str()), 157);
+    }
 }
 
 #[test]
