@@ -7,10 +7,12 @@ use std::io::{IsTerminal, Stdout, Write};
 use std::path::PathBuf;
 use termion::color;
 use termion::raw::RawTerminal;
+use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
 pub(super) const MAX_COL: u16 = 999;
 const TASK_LIST_DATE_BOUNDARY_WIDTH: usize = 88;
+const TASK_LIST_DAY_GAP_WIDTH: usize = 157;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct SnapshotDisplay {
@@ -1062,12 +1064,23 @@ pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
         TaskListRow::Gap { minutes } => format!(
             "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
         ),
-        TaskListRow::DayGap { days } => format!(
-            "---- ------------------------------------ - ---------- --------------------- - -- -- {days}日間の空き時間"
-        ),
+        TaskListRow::DayGap { days } => format_task_list_day_gap(*days),
         TaskListRow::DateBoundary => "-".repeat(TASK_LIST_DATE_BOUNDARY_WIDTH),
         TaskListRow::Message { text } => text.clone(),
     }
+}
+
+fn format_task_list_day_gap(days: i64) -> String {
+    let description = format!("{days}日間の空き時間");
+    let trailing_hyphen_count = TASK_LIST_DAY_GAP_WIDTH.saturating_sub(
+        TASK_LIST_DATE_BOUNDARY_WIDTH + UnicodeWidthStr::width(description.as_str()),
+    );
+    format!(
+        "{}{}{}",
+        "-".repeat(TASK_LIST_DATE_BOUNDARY_WIDTH),
+        description,
+        "-".repeat(trailing_hyphen_count)
+    )
 }
 
 fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool) -> String {
