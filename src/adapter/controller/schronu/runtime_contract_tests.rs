@@ -2066,7 +2066,7 @@ fn show_allの製品経路はspreadsheet_formatterを使う() {
 }
 
 #[test]
-fn task_list製品経路はtask種別を帯と同じ色で表示する() {
+fn task_list製品経路はtask種別ごとの色で表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     let fixed = new_test_task_handle("固定task").unwrap();
@@ -2074,7 +2074,7 @@ fn task_list製品経路はtask種別を帯と同じ色で表示する() {
     fixed.set_fixed_start(true).unwrap();
     let fixed_output = execute_command_with_ansi_color_for_test(fixed, now, None, "全", true).output;
     assert!(
-        fixed_output.contains("\x1b[38;5;110m固定task\x1b[39m"),
+        fixed_output.contains("\x1b[38;5;127m固定task\x1b[39m"),
         "{fixed_output}"
     );
 
@@ -2118,7 +2118,7 @@ fn task_list製品経路はtask種別を帯と同じ色で表示する() {
     )
     .output;
     assert!(
-        fixed_repetitive_output.contains("\x1b[38;5;110m【繰】(7)固定繰返task\x1b[39m"),
+        fixed_repetitive_output.contains("\x1b[38;5;127m【繰】(7)固定繰返task\x1b[39m"),
         "{fixed_repetitive_output}"
     );
 
@@ -6617,7 +6617,7 @@ fn test_format_daily_band_累積境界で端数を丸めて96文字にする() {
             accumulated_free_diff_seconds: (Duration::hours(46) + Duration::minutes(9))
                 .num_seconds(),
             durations: BandDurations {
-            fixed_seconds: 450 * 60,
+            unavailable_seconds: 450 * 60,
             elapsed_seconds: 0,
             repetitive_seconds: 855 * 60,
             non_repetitive_seconds: 71 * 60,
@@ -6643,7 +6643,7 @@ fn test_calculate_daily_band_durations_経過した空き時間を当日だけ�
     let today = calculate_daily_band_durations(true, 990, 190, 60 * 60, 40 * 60, -1.0);
     let future = calculate_daily_band_durations(false, 990, 990, 60 * 60, 40 * 60, -1.0);
 
-    assert_eq!(today.fixed_seconds, 450 * 60);
+    assert_eq!(today.unavailable_seconds, 450 * 60);
     assert_eq!(today.elapsed_seconds, 800 * 60);
     assert_eq!(today.repetitive_seconds, 40 * 60);
     assert_eq!(today.non_repetitive_seconds, 20 * 60);
@@ -6675,7 +6675,7 @@ fn test_format_daily_band_当日経過と24時間超過を表示する() {
             accumulated_free_diff_seconds: (-Duration::hours(3) - Duration::minutes(4))
                 .num_seconds(),
             durations: BandDurations {
-            fixed_seconds: 450 * 60,
+            unavailable_seconds: 450 * 60,
             elapsed_seconds: 800 * 60,
             repetitive_seconds: 476 * 60,
             non_repetitive_seconds: 40 * 60,
@@ -6709,7 +6709,7 @@ fn test_execute_band_日本語と英語で凡例と棒とサマリーを表示�
     let english = execute_calendar_command_for_test("band", now, task, 10 * 60);
     let expected = format!(
         concat!(
-            "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)\n",
+            "凡例: # 利用不可  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)\n",
             "\n",
             "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
             "\n",
@@ -6920,7 +6920,7 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
     let color = |value: u8, symbol: &str| format!("\x1b[38;5;{value}m{symbol}\x1b[39m");
     let expected = format!(
         concat!(
-            "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)\n",
+            "凡例: {} 利用不可  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)\n",
             "\n",
             "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
             "\n",
@@ -6963,7 +6963,7 @@ fn test_execute_band_パイプ出力では_ansi前景色を含めない() {
     let actual = execute_calendar_command_with_ansi_color_for_test("帯", now, task, 10 * 60, false);
 
     assert!(!actual.contains("\x1b["));
-    assert!(actual.contains("凡例: # 固定  x 経過済み"));
+    assert!(actual.contains("凡例: # 利用不可  x 経過済み"));
 }
 
 #[test]
@@ -10003,7 +10003,7 @@ fn test_try_exit_interactive_ctrl_d終了時は帯を表示する() {
     assert!(exited);
     let output = stdout.into_string();
     assert!(strip_ansi_escape_sequences(&output).contains(
-        "凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
+        "凡例: # 利用不可  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)"
     ));
     assert!(!output.contains("日          \t空          \t空差"));
 }

@@ -306,7 +306,7 @@ pub(super) fn calculate_daily_band_durations(
     diff_to_goal_hours: f64,
 ) -> BandDurations {
     BandDurations {
-        fixed_seconds: (BAND_SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
+        unavailable_seconds: (BAND_SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
         elapsed_seconds: if is_today {
             (full_day_free_minutes - remaining_free_minutes).max(0) * 60
         } else {
