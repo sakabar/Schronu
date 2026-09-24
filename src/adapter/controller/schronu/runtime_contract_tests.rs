@@ -2606,7 +2606,7 @@ fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示す
         task.set_fixed_start(true).unwrap();
     }
 
-    let date_boundary = "-".repeat(157);
+    let date_boundary = "-".repeat(88);
     let unfiltered = execute_command_for_test(root.clone(), now, None, "全");
     assert!(unfiltered.output.contains(&date_boundary));
     assert!(unfiltered.output.contains("2日間の空き時間"));
@@ -2639,9 +2639,13 @@ fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示す
             .collect::<Vec<_>>(),
         [
             "空き後".to_owned(),
-            "---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間".to_owned(),
+            format!(
+                "{}2日間の空き時間{}",
+                "-".repeat(88),
+                "-".repeat(54)
+            ),
             "翌日".to_owned(),
-            "-".repeat(157),
+            "-".repeat(88),
             "今日後半".to_owned(),
             "今日前半".to_owned(),
         ]
@@ -2667,7 +2671,7 @@ fn test_execute_all_06時をlogical_date境界として横線を表示する() {
     }
 
     let result = execute_command_for_test(root, now, None, "全 06時境界対象");
-    let date_boundary = "-".repeat(157);
+    let date_boundary = "-".repeat(88);
     let relevant_lines = result
         .output
         .lines()

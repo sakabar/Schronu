@@ -1,16 +1,18 @@
 use super::renderer::{
-    format_spreadsheet_task_row, format_task_list_columns, format_task_list_task_row,
-    render_display_model, render_display_model_with_mode, task_list_columns, AncestorTreeRow,
-    BandDayRow, BandDisplay, BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow,
-    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter,
-    FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay,
-    FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter,
-    SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
+    format_spreadsheet_task_row, format_task_list_columns, format_task_list_row,
+    format_task_list_task_row, render_display_model, render_display_model_with_mode,
+    task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlertIssue,
+    CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel,
+    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
+    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
+    RenderMode, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
+    TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use std::io::Write;
+use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
 
 #[test]
@@ -478,14 +480,19 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     let mut writer = TraceWriter::default();
 
     render_display_model(&mut writer, &display).unwrap();
-    let date_boundary_operation = format!("newline:{}", "-".repeat(157));
+    let date_boundary_operation = format!("newline:{}", "-".repeat(88));
 
     assert_eq!(
         writer.operations,
         [
             "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 夕食 の 準備",
             "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 15分間の空き時間",
-            "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 2日間の空き時間",
+            format!(
+                "newline:{}2日間の空き時間{}",
+                "-".repeat(88),
+                "-".repeat(54)
+            )
+            .as_str(),
             date_boundary_operation.as_str(),
             "newline:予定外の案内",
             "newline:0002 22222222-2222-2222-2222-222222222222 / ____/__/__ 08/23(日)-10:00~10:05 3 05 08 _ 短い task",
@@ -504,6 +511,26 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     assert_eq!(columns.len(), 10, "Spreadsheet連携はA-Jの10列");
     assert_eq!(columns[8], "維", "I列はcategory");
     assert_eq!(columns[9], "夕食 の 準備", "J列はtask_name");
+}
+
+#[test]
+fn task_list_displayの空き日区切りは88本の後へ説明を挟んで157マスに揃える() {
+    let date_boundary = format_task_list_row(&TaskListRow::DateBoundary);
+
+    assert_eq!(date_boundary, "-".repeat(88));
+    assert_eq!(UnicodeWidthStr::width(date_boundary.as_str()), 88);
+    for (days, trailing_hyphen_count) in [(2, 54), (12, 53)] {
+        let day_gap = format_task_list_row(&TaskListRow::DayGap { days });
+        assert_eq!(
+            day_gap,
+            format!(
+                "{}{days}日間の空き時間{}",
+                "-".repeat(88),
+                "-".repeat(trailing_hyphen_count)
+            )
+        );
+        assert_eq!(UnicodeWidthStr::width(day_gap.as_str()), 157);
+    }
 }
 
 #[test]

@@ -312,6 +312,7 @@ fn validate_capture_unchanged_secure(
         file_count: 0,
         total_bytes: 0,
         directory_manifest_bytes: 0,
+        changed_path: None,
     };
     validator.read_directory(&root, Path::new(""))?;
     if let Some(expected) = validator.directories.values().next() {
@@ -319,6 +320,9 @@ fn validate_capture_unchanged_secure(
     }
     if let Some(expected) = validator.files.values().next() {
         return Err(capture_changed(&expected.path));
+    }
+    if let Some(path) = validator.changed_path {
+        return Err(capture_changed(path));
     }
     Ok(())
 }
@@ -344,6 +348,7 @@ struct CaptureValidator<'a> {
     file_count: usize,
     total_bytes: u64,
     directory_manifest_bytes: u64,
+    changed_path: Option<PathBuf>,
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -394,7 +399,7 @@ impl CaptureValidator<'_> {
             } else if metadata.is_file() {
                 self.validate_file(&display_path, &child_relative, &mut child, &metadata)?;
             } else {
-                return Err(capture_changed(display_path));
+                self.record_changed(display_path);
             }
         }
         Ok(())
@@ -413,13 +418,11 @@ impl CaptureValidator<'_> {
             self.directory_manifest_bytes,
             self.limits,
         )?;
-        let Some(expected) = self.directories.remove(relative) else {
-            return Err(capture_changed(path));
-        };
-        if permission_mode(&metadata.permissions())
-            != permission_mode(&expected.metadata.permissions())
-        {
-            return Err(capture_changed(path));
+        match self.directories.remove(relative) {
+            Some(expected)
+                if permission_mode(&metadata.permissions())
+                    == permission_mode(&expected.metadata.permissions()) => {}
+            Some(_) | None => self.record_changed(path),
         }
         Ok(())
     }
@@ -476,13 +479,15 @@ impl CaptureValidator<'_> {
             self.total_bytes,
         )?;
         let Some(expected) = self.files.remove(relative) else {
-            return Err(capture_changed(path));
+            self.record_changed(path);
+            return Ok(());
         };
         if metadata.len() != expected.bytes.len() as u64
             || permission_mode(&metadata.permissions())
                 != permission_mode(&expected.metadata.permissions())
         {
-            return Err(capture_changed(path));
+            self.record_changed(path);
+            return Ok(());
         }
         let prior_total = self
             .total_bytes
@@ -543,14 +548,20 @@ impl CaptureValidator<'_> {
                 observed_total,
             )?;
             if expected.bytes.get(offset..end) != Some(&buffer[..read]) {
-                return Err(capture_changed(path));
+                self.record_changed(path);
             }
             offset = end;
         }
         if offset != expected.bytes.len() {
-            return Err(capture_changed(path));
+            self.record_changed(path);
         }
         Ok(())
+    }
+
+    fn record_changed(&mut self, path: impl Into<PathBuf>) {
+        if self.changed_path.is_none() {
+            self.changed_path = Some(path.into());
+        }
     }
 }
 
@@ -590,6 +601,7 @@ mod tests {
             file_count: 0,
             total_bytes: 0,
             directory_manifest_bytes: 0,
+            changed_path: None,
         };
         validator
             .validate_file(&expected.path, &expected.relative, &mut source, &metadata)
@@ -609,6 +621,57 @@ mod tests {
         fs::write(storage.join("second"), b"second").unwrap();
 
         let error = validate_capture_unchanged(&storage, &scanned, limits).unwrap_err();
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
+        assert_eq!(error.limit_value(), Some(1));
+        assert_eq!(error.observed_value(), Some(2));
+        fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
+    fn capture不変性再検査はunexpected_fileが先でもfile件数上限を優先する() {
+        let storage = std::env::temp_dir().join(format!(
+            "schronu-capture-validation-order-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        fs::create_dir(&storage).unwrap();
+        fs::write(storage.join("expected"), b"expected").unwrap();
+        let limits = SnapshotResourceLimits::new(u64::MAX, 1, u64::MAX, u64::MAX, usize::MAX, 64);
+        let scanned = scan_storage_entries(&storage, limits, &FileSystemSnapshotIo).unwrap();
+        let expected = &scanned.files[0];
+        let unexpected_path = storage.join("unexpected");
+        fs::write(&unexpected_path, b"unexpected").unwrap();
+        let mut validator = CaptureValidator {
+            storage: &storage,
+            limits,
+            directories: std::collections::HashMap::new(),
+            files: std::collections::HashMap::from([(expected.relative.as_path(), expected)]),
+            file_count: 0,
+            total_bytes: 0,
+            directory_manifest_bytes: 0,
+            changed_path: None,
+        };
+        let mut unexpected = File::open(&unexpected_path).unwrap();
+        let unexpected_metadata = unexpected.metadata().unwrap();
+
+        validator
+            .validate_file(
+                &unexpected_path,
+                Path::new("unexpected"),
+                &mut unexpected,
+                &unexpected_metadata,
+            )
+            .unwrap();
+        let mut expected_source = File::open(&expected.path).unwrap();
+        let expected_metadata = expected_source.metadata().unwrap();
+        let error = validator
+            .validate_file(
+                &expected.path,
+                &expected.relative,
+                &mut expected_source,
+                &expected_metadata,
+            )
+            .unwrap_err();
 
         assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
         assert_eq!(error.limit_value(), Some(1));
