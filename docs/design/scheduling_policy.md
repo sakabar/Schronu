@@ -73,9 +73,9 @@ segmentは次の最も早いeventで閉じます。
 - 元windowへ収まらない残作業は元window終了後のflexible taskとなります。予約windowと後続作業を合わせた作業秒数は元の残作業量と一致します。
 - fixed開始をsynthetic effective deadlineとしてdependencyへ伝えます。window内で完了する場合、completion eventは通常経路で元window終了とdependency完了の双方を待ちます。missing dependencyまたはcycleでは上記fallbackを使います。超過する場合は後続の実作業が完了するまでdependentを解放しません。
 
-`約`または`appointment`は開始時刻を設定して`fixed_start = true`にします。`始`または`start`は開始時刻を設定して`fixed_start = false`に戻します。
+`約`または`appointment`は開始時刻を設定して`fixed_start = true`かつ`atomic = true`にします。`始`または`start`は開始時刻を設定して`fixed_start = false`に戻し、`atomic`は保持します。
 
-繰り返し親taskから次回子taskを生成するときは、完了した子ではなく親のrawな`fixed_start`を継承します。既存の子の値は補完・変更せず、個別の子に対する`約`・`始`も繰り返し親taskへ逆伝播しません。YAMLとMCPではraw値を従来どおり公開・保存します。
+繰り返し親taskから次回子taskを生成するときは、完了した子ではなく親のrawな`fixed_start`と`atomic`を継承します。直接の子に対する`約`は親の両属性もtrueにしますが、既存の他の子の値は変更しません。個別の子に対する`始`は親へ逆伝播しません。YAMLとMCPではraw値を従来どおり公開・保存します。
 
 旧YAMLに`fixed_start` fieldがない場合だけ、次の完全一致で従来の予定を推定します。
 
@@ -86,8 +86,6 @@ segmentは次の最も早いeventで閉じます。
 ## Atomic taskと不能時の扱い
 
 atomic taskは完了まで連続する枠がある場合だけ開始します。fixed開始、slackが0になる時刻、atomicより先に選ばれるtaskのreleaseを跨ぐ場合は候補を後順へ送り、収まる候補を探します。release予測は、その時点のpriorityとcritical groupでも実際にpreemptionが起きる場合だけ境界に採用します。
-
-`約`は対象taskの`fixed_start`と`atomic`を同時にtrueにします。対象が繰り返し親の直接の子なら、親の両属性も次回生成用templateとしてtrueにします。既存の兄弟taskと通常祖先は変更しません。`始`は対象の`fixed_start`だけをfalseにし、`atomic`と親templateは保持します。
 
 dependencyの欠落やcycle、deadlineまでの容量不足などで通常配置が不能でも、taskを消したりloopしたりしません。通常選択keyによる決定論的なfallbackで1segment進め、残作業をevent loopへ戻します。deadline超過はそのままscheduleへ現れ、上位層の既存警告で利用者に示されます。
 
