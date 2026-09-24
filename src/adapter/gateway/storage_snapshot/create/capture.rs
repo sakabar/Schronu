@@ -617,6 +617,56 @@ mod tests {
     }
 
     #[test]
+    fn capture不変性再検査はunexpected_fileが先でもfile件数上限を優先する() {
+        let storage = std::env::temp_dir().join(format!(
+            "schronu-capture-validation-order-{}",
+            uuid::Uuid::new_v4().hyphenated()
+        ));
+        fs::create_dir(&storage).unwrap();
+        fs::write(storage.join("expected"), b"expected").unwrap();
+        let limits = SnapshotResourceLimits::new(u64::MAX, 1, u64::MAX, u64::MAX, usize::MAX, 64);
+        let scanned = scan_storage_entries(&storage, limits, &FileSystemSnapshotIo).unwrap();
+        let expected = &scanned.files[0];
+        let unexpected_path = storage.join("unexpected");
+        fs::write(&unexpected_path, b"unexpected").unwrap();
+        let mut validator = CaptureValidator {
+            storage: &storage,
+            limits,
+            directories: std::collections::HashMap::new(),
+            files: std::collections::HashMap::from([(expected.relative.as_path(), expected)]),
+            file_count: 0,
+            total_bytes: 0,
+            directory_manifest_bytes: 0,
+        };
+        let mut unexpected = File::open(&unexpected_path).unwrap();
+        let unexpected_metadata = unexpected.metadata().unwrap();
+
+        validator
+            .validate_file(
+                &unexpected_path,
+                Path::new("unexpected"),
+                &mut unexpected,
+                &unexpected_metadata,
+            )
+            .unwrap();
+        let mut expected_source = File::open(&expected.path).unwrap();
+        let expected_metadata = expected_source.metadata().unwrap();
+        let error = validator
+            .validate_file(
+                &expected.path,
+                &expected.relative,
+                &mut expected_source,
+                &expected_metadata,
+            )
+            .unwrap_err();
+
+        assert_eq!(error.limit_kind(), Some(SnapshotLimitKind::FileCount));
+        assert_eq!(error.limit_value(), Some(1));
+        assert_eq!(error.observed_value(), Some(2));
+        fs::remove_dir_all(storage).unwrap();
+    }
+
+    #[test]
     fn capture不変性streamはmetadata後増大をtyped上限で拒否する() {
         let storage = std::env::temp_dir().join(format!(
             "schronu-capture-validation-growth-{}",
