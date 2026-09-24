@@ -87,6 +87,8 @@ segmentは次の最も早いeventで閉じます。
 
 atomic taskは完了まで連続する枠がある場合だけ開始します。fixed開始、slackが0になる時刻、atomicより先に選ばれるtaskのreleaseを跨ぐ場合は候補を後順へ送り、収まる候補を探します。release予測は、その時点のpriorityとcritical groupでも実際にpreemptionが起きる場合だけ境界に採用します。
 
+`約`は対象taskの`fixed_start`と`atomic`を同時にtrueにします。対象が繰り返し親の直接の子なら、親の両属性も次回生成用templateとしてtrueにします。既存の兄弟taskと通常祖先は変更しません。`始`は対象の`fixed_start`だけをfalseにし、`atomic`と親templateは保持します。
+
 dependencyの欠落やcycle、deadlineまでの容量不足などで通常配置が不能でも、taskを消したりloopしたりしません。通常選択keyによる決定論的なfallbackで1segment進め、残作業をevent loopへ戻します。deadline超過はそのままscheduleへ現れ、上位層の既存警告で利用者に示されます。
 
 日時に作業秒数を加算できない場合はfallbackで値を丸めず、task ID、開始時刻、作業秒数を保持したerrorを返します。
