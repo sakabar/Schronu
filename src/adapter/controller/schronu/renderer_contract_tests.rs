@@ -948,7 +948,7 @@ fn band_display_fixture() -> BandDisplay {
                 accumulated_rho_diff_seconds: 62 * 60,
                 accumulated_free_diff_seconds: -(3 * 60 + 4) * 60,
                 durations: BandDurations {
-                    fixed_seconds: 15 * 60,
+                    unavailable_seconds: 15 * 60,
                     elapsed_seconds: 30 * 60,
                     repetitive_seconds: 45 * 60,
                     non_repetitive_seconds: 60 * 60,
@@ -960,7 +960,7 @@ fn band_display_fixture() -> BandDisplay {
                 accumulated_rho_diff_seconds: -(7 * 60 + 8) * 60,
                 accumulated_free_diff_seconds: (46 * 60 + 9) * 60,
                 durations: BandDurations {
-                    fixed_seconds: 450 * 60,
+                    unavailable_seconds: 450 * 60,
                     elapsed_seconds: 800 * 60,
                     repetitive_seconds: 476 * 60,
                     non_repetitive_seconds: 40 * 60,
@@ -1000,7 +1000,7 @@ fn band_displayは96segmentと超過と逆順と週区切りとsummary_alertを�
     assert_eq!(
         writer.operations,
         [
-            "newline:凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
+            "newline:凡例: # 利用不可  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
             "newline:",
             &format!(
                 "newline:2026-08-24(月) -07:08 +46:09 [{}{}{}]{}",
@@ -1053,7 +1053,7 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[0],
         format!(
-            "newline:凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
+            "newline:凡例: {} 利用不可  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
             color(110, "#"),
             color(244, "x"),
             color(33, "="),
@@ -1099,7 +1099,7 @@ fn band_displayは日別rowが空でもlegendとsummaryとhealthy_alertを描画
     assert_eq!(
         writer.operations,
         [
-            "newline:凡例: # 固定  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
+            "newline:凡例: # 利用不可  x 経過済み  = 繰返  - 単発  : 余差  . 空き  > 超過  (1文字=15分)",
             "newline:",
             "newline:",
             "newline:今のタスクが片付く日付: 2日後の2026-08-25",

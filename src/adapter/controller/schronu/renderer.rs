@@ -235,7 +235,7 @@ pub(super) struct CalendarDisplay {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct BandDurations {
-    pub(super) fixed_seconds: i64,
+    pub(super) unavailable_seconds: i64,
     pub(super) elapsed_seconds: i64,
     pub(super) repetitive_seconds: i64,
     pub(super) non_repetitive_seconds: i64,
@@ -535,7 +535,7 @@ fn render_calendar_display(
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
 pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
-const BAND_FIXED_COLOR: u8 = 110;
+const BAND_UNAVAILABLE_COLOR: u8 = 110;
 const TASK_LIST_FIXED_COLOR: u8 = 127;
 const REPETITIVE_COLOR: u8 = 33;
 const NON_REPETITIVE_COLOR: u8 = 208;
@@ -577,7 +577,7 @@ fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) ->
         return symbol.to_string().repeat(count);
     }
     let color_value = match symbol {
-        '#' => BAND_FIXED_COLOR,
+        '#' => BAND_UNAVAILABLE_COLOR,
         'x' => 244,
         '=' => REPETITIVE_COLOR,
         '-' => NON_REPETITIVE_COLOR,
@@ -607,7 +607,7 @@ fn ansi_foreground(value: &str, color_value: u8, supports_ansi_color: bool) -> S
 
 fn format_band_legend(supports_ansi_color: bool) -> String {
     format!(
-        "凡例: {} 固定  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
+        "凡例: {} 利用不可  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)",
         format_band_segment('#', 1, supports_ansi_color),
         format_band_segment('x', 1, supports_ansi_color),
         format_band_segment('=', 1, supports_ansi_color),
@@ -621,7 +621,7 @@ fn format_band_legend(supports_ansi_color: bool) -> String {
 pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -> String {
     let durations = row.durations;
     let categories = [
-        ('#', durations.fixed_seconds.max(0)),
+        ('#', durations.unavailable_seconds.max(0)),
         ('x', durations.elapsed_seconds.max(0)),
         ('=', durations.repetitive_seconds.max(0)),
         ('-', durations.non_repetitive_seconds.max(0)),
