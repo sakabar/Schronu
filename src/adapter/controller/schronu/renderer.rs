@@ -535,7 +535,8 @@ fn render_calendar_display(
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
 pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
-const FIXED_COLOR: u8 = 110;
+const BAND_FIXED_COLOR: u8 = 110;
+const TASK_LIST_FIXED_COLOR: u8 = 127;
 const REPETITIVE_COLOR: u8 = 33;
 const NON_REPETITIVE_COLOR: u8 = 208;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
@@ -576,7 +577,7 @@ fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) ->
         return symbol.to_string().repeat(count);
     }
     let color_value = match symbol {
-        '#' => FIXED_COLOR,
+        '#' => BAND_FIXED_COLOR,
         'x' => 244,
         '=' => REPETITIVE_COLOR,
         '-' => NON_REPETITIVE_COLOR,
@@ -1074,7 +1075,7 @@ fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool
         TaskListRow::Task(row) => {
             let mut columns = task_list_columns(row, TaskListIconMode::ApplyGiveUpCandidate);
             let task_color = match row.kind {
-                TaskListTaskKind::Fixed => FIXED_COLOR,
+                TaskListTaskKind::Fixed => TASK_LIST_FIXED_COLOR,
                 TaskListTaskKind::Repetitive => REPETITIVE_COLOR,
                 TaskListTaskKind::NonRepetitive => NON_REPETITIVE_COLOR,
             };

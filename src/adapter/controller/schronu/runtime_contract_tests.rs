@@ -2066,7 +2066,7 @@ fn show_allの製品経路はspreadsheet_formatterを使う() {
 }
 
 #[test]
-fn task_list製品経路はtask種別を帯と同じ色で表示する() {
+fn task_list製品経路はtask種別ごとの色で表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     let fixed = new_test_task_handle("固定task").unwrap();
@@ -2074,7 +2074,7 @@ fn task_list製品経路はtask種別を帯と同じ色で表示する() {
     fixed.set_fixed_start(true).unwrap();
     let fixed_output = execute_command_with_ansi_color_for_test(fixed, now, None, "全", true).output;
     assert!(
-        fixed_output.contains("\x1b[38;5;110m固定task\x1b[39m"),
+        fixed_output.contains("\x1b[38;5;127m固定task\x1b[39m"),
         "{fixed_output}"
     );
 
@@ -2118,7 +2118,7 @@ fn task_list製品経路はtask種別を帯と同じ色で表示する() {
     )
     .output;
     assert!(
-        fixed_repetitive_output.contains("\x1b[38;5;110m【繰】(7)固定繰返task\x1b[39m"),
+        fixed_repetitive_output.contains("\x1b[38;5;127m【繰】(7)固定繰返task\x1b[39m"),
         "{fixed_repetitive_output}"
     );
 

@@ -593,7 +593,7 @@ fn task_list_displayは種別ごとのtask名と今日以降の締切を指定�
     assert!(
         writer.operations[0].contains("\x1b[38;5;214m!\x1b[39m \x1b[38;5;214m____-01:20\x1b[39m")
     );
-    assert!(writer.operations[0].ends_with("\x1b[38;5;110m固定task\x1b[39m"));
+    assert!(writer.operations[0].ends_with("\x1b[38;5;127m固定task\x1b[39m"));
     assert!(writer.operations[1].contains("- \x1b[38;5;34m_____-001D\x1b[39m"));
     assert!(writer.operations[1].ends_with("\x1b[38;5;33m繰返task\x1b[39m"));
     assert!(writer.operations[2].contains("- ____/__/__"));
