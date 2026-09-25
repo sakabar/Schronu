@@ -153,7 +153,7 @@ ListAllTasksRequest {
 
 `segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
 
-日付別と全件は同じ一覧componentとclass契約を使う。task名は固定`#516f82`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。`is_leaf`は太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
+日付別と全件は同じ一覧componentとclass契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。`is_leaf`は太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 

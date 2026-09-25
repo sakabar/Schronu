@@ -118,7 +118,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-005**: 各行に締切、予定時間、task名、セッション追加buttonを表示すること。viewport幅にかかわらずbuttonは左端の幅44pxかつ高さ32pxの「＋」とし、assistive technologyがtask名とセッション追加操作を識別できるlabelを持つこと。左スワイプによる直接発火は行わないこと。
 - **REQ-LIST-006**: 予定時間をlocal timeの`HH:MM-HH:MM`で表示すること。
 - **REQ-LIST-007**: 日付別・全件一覧の締切はserver分類に従い、予定終了が締切を超える場合を赤`#c33d43`、超過せず表示logical date内に締切が来る場合を黄`#9a5a00`、それより先を緑`#196846`で表示し、締切なしは通常色とすること。旧保存payloadで分類が欠けても`misses_deadline`が真なら赤を優先すること。
-- **REQ-LIST-008**: 日付別・全件一覧のtask名はserver分類に従い、固定を淡青`#516f82`、繰返を青`#0069c2`、単発を橙`#a44a00`で親rowにも表示すること。schedule rank 0は色分類から分離して太字と操作可否だけに用いること。
+- **REQ-LIST-008**: 日付別・全件一覧のtask名はserver分類に従い、固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返を青`#0069c2`、単発を橙`#a44a00`で親rowにも表示すること。schedule rank 0は色分類から分離して太字と操作可否だけに用いること。
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加し、追加に成功した場合はセッションtabへ切り替えること。server通信は行わないこと。
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
 - **REQ-LIST-011**: schedule rankが0でないtaskは「セッション」buttonを表示せず、client stateが手動追加要求を受けても`work_sessions`へ追加しないこと。

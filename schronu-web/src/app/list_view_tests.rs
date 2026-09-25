@@ -376,7 +376,7 @@ fn listはtask種類と締切種類を親子にかかわらずclassへ反映す�
 fn list配色は意味別tokenを使いleafは太字だけを担う() {
     let css = include_str!("../../assets/main.css");
     for token in [
-        "--task-fixed: #516f82;",
+        "--task-fixed: #af00af;",
         "--task-repetitive: #0069c2;",
         "--task-non-repetitive: #a44a00;",
         "--deadline-today: #9a5a00;",
