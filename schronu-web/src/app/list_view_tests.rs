@@ -18,6 +18,7 @@ use super::view_test_support::{
     rebuild_with_event_listeners, rebuild_with_named_event_listeners, render_with_click_listeners,
 };
 use crate::client::date_input::DateInputState;
+use crate::client::view_projection::ScheduleDisplayViewModel;
 use crate::{DeadlineDisplayKind, DeferMode, SessionTask, TaskDisplayKind};
 use dioxus::html::SerializedFormData;
 use dioxus::prelude::*;
@@ -228,7 +229,10 @@ fn named_row(
         row_key: format!("row:{task_id}"),
         task: task(task_id, task_name),
         deadline_label: "____-01:00".to_owned(),
-        schedule_label: "11:25-11:28".to_owned(),
+        schedule_display: ScheduleDisplayViewModel::Daily {
+            start_hh_mm: "11:25".to_owned(),
+            duration_minutes: Some(3),
+        },
         gap_before: None,
         date_boundary_before: false,
         misses_deadline,
@@ -653,7 +657,14 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("日 明日"));
     assert!(html.contains("date-pill is-selected"));
     assert!(html.contains("____-01:00"));
-    assert!(html.contains("11:25-11:28"));
+    assert!(
+        html.contains("aria-label=\"予定開始11:25、予定時間3分\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("11:25<span class=\"schedule-duration\">(3)</span>"),
+        "{html}"
+    );
     assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
     assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1);
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
@@ -678,6 +689,56 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     );
     assert!(!html.contains("<a"));
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn 予定表示は分数の各桁と全件日付を省略せずariaへ保持する() {
+    let mut rows = [3_u64, 22, 125, 1_000]
+        .into_iter()
+        .enumerate()
+        .map(|(index, duration_minutes)| {
+            let mut row = row(&format!("duration-{index}"), false, true);
+            row.schedule_display = ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "23:07".to_owned(),
+                duration_minutes: Some(duration_minutes),
+            };
+            row
+        })
+        .collect::<Vec<_>>();
+    let mut all_tasks_row = row("all-date", false, true);
+    all_tasks_row.schedule_display = ScheduleDisplayViewModel::AllTasksDate {
+        label: "2026/09/06(日)".to_owned(),
+    };
+    rows.push(all_tasks_row);
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows,
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events,
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    for minutes in [3_u64, 22, 125, 1_000] {
+        assert!(
+            html.contains(&format!(
+                "aria-label=\"予定開始23:07、予定時間{minutes}分\""
+            )),
+            "{html}"
+        );
+        assert!(
+            html.contains(&format!(
+                "23:07<span class=\"schedule-duration\">({minutes})</span>"
+            )),
+            "{html}"
+        );
+    }
+    assert!(
+        html.contains("aria-label=\"予定日2026/09/06(日)\""),
+        "{html}"
+    );
+    assert!(html.contains(">2026/09/06(日)</span>"), "{html}");
 }
 
 #[test]
@@ -758,6 +819,7 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         ".task-table td {\n    display: flex;\n    min-width: 0;\n    align-items: center;\n    padding: 0.125rem 0.35rem;",
         ".task-table .session-cell {\n    padding: 0;",
         ".deadline,\n.schedule-time {\n    font-size: 0.68rem;",
+        ".schedule-duration {\n    display: inline-block;\n    min-width: 5ch;\n    margin-left: 1ch;\n    text-align: right;",
         ".task-name {\n    overflow: hidden;\n    font-size: 0.75rem;",
         ".task-name-scroll {\n    min-width: 0;\n    overflow-x: auto;\n    overflow-y: hidden;\n    overscroll-behavior-inline: contain;\n    white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",

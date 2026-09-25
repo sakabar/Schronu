@@ -1,6 +1,7 @@
 use schronu_web::client::state::load_client_state;
 use schronu_web::client::view_projection::{
     format_local_hh_mm, project_list_rows, project_session_cards, DeferConfirmationKind,
+    ScheduleDisplayViewModel,
 };
 use schronu_web::{
     DeadlineDisplayKind, DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask,
@@ -135,11 +136,90 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     );
 
     let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
-    assert_eq!(rows[0].schedule_label, "09:30-10:00");
+    assert_eq!(
+        rows[0].schedule_display,
+        ScheduleDisplayViewModel::Daily {
+            start_hh_mm: "09:30".to_owned(),
+            duration_minutes: Some(30),
+        }
+    );
     assert_eq!(rows[0].deadline_label, "server deadline label");
     assert!(rows[0].misses_deadline);
     assert_eq!(rows[0].task_display_kind, TaskDisplayKind::NonRepetitive);
     assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
+}
+
+#[test]
+fn 日付別listの予定時間は分を切り上げて右寄3桁で表示する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", START_EPOCH_MS)));
+    let (request_id, request) = list_effect(state.request_list("2026-09-05"));
+    let rows = [
+        0,
+        1,
+        60_000,
+        60_001,
+        22 * 60_000,
+        125 * 60_000,
+        1_000 * 60_000,
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, duration_ms)| {
+        let mut row = session_row();
+        row.task.task_id = format!("00000000-0000-0000-0000-{index:012}");
+        row.schedule_end_epoch_ms = row.schedule_start_epoch_ms + duration_ms;
+        row
+    })
+    .collect();
+    state.apply_list_result(
+        request_id,
+        &request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+            data: rows,
+        }),
+    );
+
+    let schedules = project_list_rows(&state, JST_OFFSET_MINUTES)
+        .into_iter()
+        .map(|row| row.schedule_display)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        schedules,
+        [
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(0),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(1),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(1),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(2),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(22),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(125),
+            },
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: "09:30".to_owned(),
+                duration_minutes: Some(1_000),
+            },
+        ]
+    );
 }
 
 #[test]

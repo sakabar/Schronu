@@ -960,6 +960,13 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+.schedule-duration {
+    display: inline-block;
+    min-width: 5ch;
+    margin-left: 1ch;
+    text-align: right;
+}
+
 .task-name.is-leaf {
     font-weight: 750;
 }
