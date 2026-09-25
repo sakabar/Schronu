@@ -383,9 +383,8 @@ fn TaskRow(
                             .unwrap_or_else(|| "---".to_owned());
                         rsx! {
                             span { class: "schedule-daily", aria_hidden: "true",
-                                "{start_hh_mm}- ("
-                                span { class: "schedule-duration-minutes", "{duration_label}" }
-                                ")"
+                                "{start_hh_mm}"
+                                span { class: "schedule-duration", "({duration_label})" }
                             }
                         }
                     },

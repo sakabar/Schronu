@@ -116,7 +116,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-003**: 日付取得では曜日名ではなく具体的なlogical dateをserverへ送ること。
 - **REQ-LIST-004**: 選択したlogical dateのschedule segmentを開始時刻の昇順で表示すること。
 - **REQ-LIST-005**: 各行に締切、予定時間、task名、セッション追加buttonを表示すること。viewport幅にかかわらずbuttonは左端の幅44pxかつ高さ32pxの「＋」とし、assistive technologyがtask名とセッション追加操作を識別できるlabelを持つこと。左スワイプによる直接発火は行わないこと。
-- **REQ-LIST-006**: 日付別一覧の予定時間はlocal timeの開始時刻と予定区間の分数を`HH:MM- (MMM)`で表示すること。分数は`ceil((schedule_end_epoch_ms - schedule_start_epoch_ms) / 60000)`とし、1〜3桁はゼロ埋めせず3文字幅で右寄せし、1000分以上も省略しないこと。assistive technologyには開始時刻と予定分数を識別できるlabelを付けること。
+- **REQ-LIST-006**: 日付別一覧の予定時間はlocal timeの開始時刻と予定区間の分数を`HH:MM (MMM)`で表示すること。分数は`ceil((schedule_end_epoch_ms - schedule_start_epoch_ms) / 60000)`とし、括弧付きの分数全体をゼロ埋めせず5文字幅で右寄せし、開始時刻との間に最低1文字幅を維持すること。1000分以上も省略しないこと。assistive technologyには開始時刻と予定分数を識別できるlabelを付けること。
 - **REQ-LIST-007**: 日付別・全件一覧の締切はserver分類に従い、予定終了が締切を超える場合を赤`#c33d43`、超過せず表示logical date内に締切が来る場合を黄`#9a5a00`、それより先を緑`#196846`で表示し、締切なしは通常色とすること。旧保存payloadで分類が欠けても`misses_deadline`が真なら赤を優先すること。
 - **REQ-LIST-008**: 日付別・全件一覧のtask名はserver分類に従い、固定を淡青`#516f82`、繰返を青`#0069c2`、単発を橙`#a44a00`で親rowにも表示すること。schedule rank 0は色分類から分離して太字と操作可否だけに用いること。
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加し、追加に成功した場合はセッションtabへ切り替えること。server通信は行わないこと。
@@ -214,7 +214,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-014 | 発火履歴tabの選択時だけ独立sectionがDOMへ表示され、実際のserver action名、全送信引数、成否を区別して100件まで表示し、localStorage操作を表示せず、reload後は空になる。 |
 | AC-015 | 各cardに5操作が指定順で表示され、計測を破棄して再開は解除系2操作の後で経過秒だけを破棄し、計測を破棄して完了はcard内の確認を経た確定時だけ1回送信され、キャンセルでは送信されない。3終了操作はclick時刻でcardの計測を停止し、通信待ちで表示や実績を増やさない。2種類の完了は`record_elapsed_seconds`の真偽を含む発火履歴で区別される。 |
 | AC-016 | 4種類のセッション終了が成功すると選択中または最新snapshotのlogical dateで一覧を再取得し、実績変更後の再schedule、完了taskの除去、反復taskを含むresponse全体で置換する。終了失敗では再取得せず一覧とsessionを保持し、server commit成功後にlocalStorage削除だけが失敗した場合は安全状態を維持して一覧を再取得する。 |
-| AC-017 | 320px、360px、46rem、1024pxの画面幅で一覧が同じ可視header付きの高さ32px以上の1行tableとなり、左端の幅44px・高さ32pxの「＋」またはdisabledの「✓」と「→」、`HH:MM- (MMM)`の日付別予定、固定された締切、cell内だけを横スクロールできる長いtask名を表示する。予定分数は1分未満を切り上げ、1〜3桁を右寄3文字幅で表示し、1000分以上を省略しない。task名cellに縦scrollbarを表示せず、viewport全体は横に超えず、rank非0の操作cellは空になる。曜日button、日付入力・表示button、検索欄は高さ36px、検索clear buttonは36px四方、曜日・入力・検索・table間は8pxとする。「表示」の文字はbutton内で上下左右の中央に揃う。34rem以下ではbufferを圧縮する。 |
+| AC-017 | 320px、360px、46rem、1024pxの画面幅で一覧が同じ可視header付きの高さ32px以上の1行tableとなり、左端の幅44px・高さ32pxの「＋」またはdisabledの「✓」と「→」、`HH:MM (MMM)`の日付別予定、固定された締切、cell内だけを横スクロールできる長いtask名を表示する。予定分数は1分未満を切り上げ、括弧付きの1〜3桁を右寄5文字幅、開始時刻との間を最低1文字幅で表示し、1000分以上を省略しない。task名cellに縦scrollbarを表示せず、viewport全体は横に超えず、rank非0の操作cellは空になる。曜日button、日付入力・表示button、検索欄は高さ36px、検索clear buttonは36px四方、曜日・入力・検索・table間は8pxとする。「表示」の文字はbutton内で上下左右の中央に揃う。34rem以下ではbufferを圧縮する。 |
 | AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、10変更操作はdispatchされない。 |
 | AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.0秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。ただし、最初のsession追加成功時は即時再ロックが優先される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。一時許可中は残り秒数の横に44px以上の「今すぐロック」を表示し、1 clickで通信・履歴・保存なしに即時再ロックする。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |

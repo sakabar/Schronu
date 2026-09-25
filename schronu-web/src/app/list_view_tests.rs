@@ -662,7 +662,7 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
         "{html}"
     );
     assert!(
-        html.contains("11:25- (<span class=\"schedule-duration-minutes\">3</span>)"),
+        html.contains("11:25<span class=\"schedule-duration\">(3)</span>"),
         "{html}"
     );
     assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
@@ -729,7 +729,7 @@ fn 予定表示は分数の各桁と全件日付を省略せずariaへ保持す�
         );
         assert!(
             html.contains(&format!(
-                "23:07- (<span class=\"schedule-duration-minutes\">{minutes}</span>)"
+                "23:07<span class=\"schedule-duration\">({minutes})</span>"
             )),
             "{html}"
         );
@@ -819,7 +819,7 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         ".task-table td {\n    display: flex;\n    min-width: 0;\n    align-items: center;\n    padding: 0.125rem 0.35rem;",
         ".task-table .session-cell {\n    padding: 0;",
         ".deadline,\n.schedule-time {\n    font-size: 0.68rem;",
-        ".schedule-duration-minutes {\n    display: inline-block;\n    min-width: 3ch;\n    text-align: right;",
+        ".schedule-duration {\n    display: inline-block;\n    min-width: 5ch;\n    margin-left: 1ch;\n    text-align: right;",
         ".task-name {\n    overflow: hidden;\n    font-size: 0.75rem;",
         ".task-name-scroll {\n    min-width: 0;\n    overflow-x: auto;\n    overflow-y: hidden;\n    overscroll-behavior-inline: contain;\n    white-space: nowrap;",
         "touch-action: pan-x pan-y pinch-zoom;",

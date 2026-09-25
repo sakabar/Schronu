@@ -960,9 +960,10 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
-.schedule-duration-minutes {
+.schedule-duration {
     display: inline-block;
-    min-width: 3ch;
+    min-width: 5ch;
+    margin-left: 1ch;
     text-align: right;
 }
 

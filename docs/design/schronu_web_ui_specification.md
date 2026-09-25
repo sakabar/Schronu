@@ -590,7 +590,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と同じ純粋helperを使うが、取得完了時だけ表示し、memory内だけに保持する。日付別との往復と全件無効化後も維持し、reloadでは空にする。検索入力またはclearのたびに描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。日付別検索だけをview stateとしてlocalStorageへ保存し、全件検索は保存しない。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
-- rowは締切、予定`HH:MM- (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。分数はゼロ埋めせず`min-width: 3ch`で右寄せし、1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
+- rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
