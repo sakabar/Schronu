@@ -960,6 +960,12 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+.schedule-duration-minutes {
+    display: inline-block;
+    min-width: 3ch;
+    text-align: right;
+}
+
 .task-name.is-leaf {
     font-weight: 750;
 }

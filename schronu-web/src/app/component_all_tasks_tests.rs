@@ -265,7 +265,12 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     parent.deadline_display_kind = crate::DeadlineDisplayKind::None;
     let rows = project_all_task_rows(&[fixed, repetitive, parent]);
     assert_eq!(rows[0].row_key, "all:12");
-    assert_eq!(rows[0].schedule_label, "2026/09/06(日)");
+    assert_eq!(
+        rows[0].schedule_display,
+        crate::client::view_projection::ScheduleDisplayViewModel::AllTasksDate {
+            label: "2026/09/06(日)".to_owned(),
+        }
+    );
     assert!(rows[0].defer_plan.is_none());
     assert_eq!(rows[1].row_key, "all:13");
     assert!(!rows[2].is_leaf);

@@ -4,6 +4,7 @@ use std::rc::Rc;
 use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
+use crate::client::view_projection::ScheduleDisplayViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::{DeadlineDisplayKind, DeferPlan, SessionTask, TaskDisplayKind};
 
@@ -308,6 +309,18 @@ fn TaskRow(
         )
     });
     let is_leaf = row.is_leaf;
+    let schedule_display = row.schedule_display.clone();
+    let schedule_accessible_label = match &schedule_display {
+        ScheduleDisplayViewModel::Daily {
+            start_hh_mm,
+            duration_minutes: Some(duration_minutes),
+        } => format!("予定開始{start_hh_mm}、予定時間{duration_minutes}分"),
+        ScheduleDisplayViewModel::Daily {
+            start_hh_mm,
+            duration_minutes: None,
+        } => format!("予定開始{start_hh_mm}、予定時間算出不能"),
+        ScheduleDisplayViewModel::AllTasksDate { label } => format!("予定日{label}"),
+    };
     let row_class = if show_separators && row.date_boundary_before {
         "task-row has-logical-date-boundary"
     } else {
@@ -359,7 +372,28 @@ fn TaskRow(
                     }
                 }
             }
-            td { class: "schedule-time", "data-label": "予定", "{row.schedule_label}" }
+            td {
+                class: "schedule-time",
+                "data-label": "予定",
+                aria_label: schedule_accessible_label,
+                match schedule_display {
+                    ScheduleDisplayViewModel::Daily { start_hh_mm, duration_minutes } => {
+                        let duration_label = duration_minutes
+                            .map(|minutes| minutes.to_string())
+                            .unwrap_or_else(|| "---".to_owned());
+                        rsx! {
+                            span { class: "schedule-daily", aria_hidden: "true",
+                                "{start_hh_mm}- ("
+                                span { class: "schedule-duration-minutes", "{duration_label}" }
+                                ")"
+                            }
+                        }
+                    },
+                    ScheduleDisplayViewModel::AllTasksDate { label } => rsx! {
+                        span { aria_hidden: "true", "{label}" }
+                    },
+                }
+            }
             td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
             td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.task.task_name),
                 div {

@@ -34,7 +34,7 @@ pub struct ListRowViewModel {
     pub row_key: String,
     pub task: SessionTask,
     pub deadline_label: String,
-    pub schedule_label: String,
+    pub schedule_display: ScheduleDisplayViewModel,
     pub gap_before: Option<String>,
     pub date_boundary_before: bool,
     pub misses_deadline: bool,
@@ -43,6 +43,17 @@ pub struct ListRowViewModel {
     pub is_leaf: bool,
     pub defer_plan: Option<DeferPlan>,
     pub defer_confirmation: Option<DeferConfirmationViewModel>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ScheduleDisplayViewModel {
+    Daily {
+        start_hh_mm: String,
+        duration_minutes: Option<u64>,
+    },
+    AllTasksDate {
+        label: String,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,7 +141,9 @@ fn project_all_task_row(
         row_key: format!("all:{}", row.segment_index),
         task: row.task.clone(),
         deadline_label: row.deadline_label.clone(),
-        schedule_label: all_task_schedule_label(&row.schedule_date),
+        schedule_display: ScheduleDisplayViewModel::AllTasksDate {
+            label: all_task_schedule_label(&row.schedule_date),
+        },
         gap_before,
         date_boundary_before,
         misses_deadline: row.misses_deadline,
@@ -281,11 +294,16 @@ fn project_list_rows_with(
                 ),
                 task: row.task.clone(),
                 deadline_label: row.deadline_label.clone(),
-                schedule_label: format!(
-                    "{}-{}",
-                    format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at),
-                    format_with_offset_provider(row.schedule_end_epoch_ms, &offset_at)
-                ),
+                schedule_display: ScheduleDisplayViewModel::Daily {
+                    start_hh_mm: format_with_offset_provider(
+                        row.schedule_start_epoch_ms,
+                        &offset_at,
+                    ),
+                    duration_minutes: schedule_duration_minutes(
+                        row.schedule_start_epoch_ms,
+                        row.schedule_end_epoch_ms,
+                    ),
+                },
                 gap_before,
                 date_boundary_before: false,
                 misses_deadline: row.misses_deadline,
@@ -300,6 +318,14 @@ fn project_list_rows_with(
             }
         })
         .collect()
+}
+
+fn schedule_duration_minutes(start_epoch_ms: i64, end_epoch_ms: i64) -> Option<u64> {
+    let duration_ms = i128::from(end_epoch_ms) - i128::from(start_epoch_ms);
+    if duration_ms < 0 {
+        return None;
+    }
+    u64::try_from((duration_ms + 59_999) / 60_000).ok()
 }
 
 fn minute_gap_label(cursor_epoch_ms: Option<i64>, next_start_epoch_ms: i64) -> Option<String> {
