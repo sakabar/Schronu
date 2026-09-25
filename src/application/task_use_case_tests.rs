@@ -2208,6 +2208,42 @@ fn complete_task_繰り返し親のfixed_startを次回子タスクに引き継�
 }
 
 #[test]
+fn complete_task_約した繰り返し子のfixed_atomicを親から次回子へ引き継ぐ() {
+    let parent_task = crate::test_support::new_task_handle("通勤").unwrap();
+    parent_task
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let child_task =
+        parent_task.create_as_last_child(crate::test_support::new_task_attr("今回の通勤"));
+    let appointment_start = Local.with_ymd_and_hms(2026, 8, 11, 13, 0, 0).unwrap();
+    child_task.make_appointment(appointment_start).unwrap();
+    assert!(parent_task.get_fixed_start().unwrap());
+    assert!(parent_task.get_atomic().unwrap());
+
+    let finished_at = Local.with_ymd_and_hms(2026, 8, 11, 13, 15, 0).unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent_task.clone()], finished_at);
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: child_task.get_id().unwrap(),
+            finished_at,
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    let next_child = parent_task
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|task| task.get_status().unwrap() != Status::Done)
+        .expect("next repetition child");
+    assert!(next_child.get_fixed_start().unwrap());
+    assert!(next_child.get_atomic().unwrap());
+}
+
+#[test]
 fn complete_task_繰り返し親がflexibleならfixed_startの子からもflexibleな次回子を生成する() {
     let parent_task = crate::test_support::new_task_handle("通勤").unwrap();
     parent_task

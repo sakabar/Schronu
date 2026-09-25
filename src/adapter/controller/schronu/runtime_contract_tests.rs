@@ -1042,6 +1042,33 @@ fn test_execute_日付指定の不正入力は状態を変更しない() {
 }
 
 #[test]
+fn test_execute_約は繰り返し子と親をfixed_atomicにする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("通常祖先").unwrap();
+    let repeating_parent = root
+        .create_child(new_test_task_attr("繰り返し親"))
+        .unwrap();
+    repeating_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let current = repeating_parent
+        .create_child(new_test_task_attr("今回"))
+        .unwrap();
+    let current_id = current.get_id().unwrap();
+
+    let result = execute_command_for_test(root, now, Some(current_id), "約 14:30 8/15");
+
+    let actual_current = result.task.get_by_id(current_id).unwrap().unwrap();
+    let actual_parent = actual_current.parent().unwrap().unwrap();
+    assert!(actual_current.get_fixed_start().unwrap());
+    assert!(actual_current.get_atomic().unwrap());
+    assert!(actual_parent.get_fixed_start().unwrap());
+    assert!(actual_parent.get_atomic().unwrap());
+    assert!(!result.task.get_fixed_start().unwrap());
+    assert!(!result.task.get_atomic().unwrap());
+}
+
+#[test]
 fn test_execute_始と約の不正時刻はtask日時を変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let original_start = Local.with_ymd_and_hms(2026, 8, 15, 8, 0, 0).unwrap();
@@ -1062,6 +1089,7 @@ fn test_execute_始と約の不正時刻はtask日時を変更しない() {
             Some(original_deadline)
         );
         assert!(result.task.get_fixed_start().unwrap());
+        assert!(!result.task.get_atomic().unwrap());
         assert_eq!(result.focused_task_id_opt, Some(task_id));
     }
 }
@@ -2868,10 +2896,12 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         Local.with_ymd_and_hms(2026, 8, 12, 14, 30, 0).unwrap()
     );
     assert!(appointment_result.task.get_fixed_start().unwrap());
+    assert!(appointment_result.task.get_atomic().unwrap());
     assert_eq!(appointment_result.focused_task_id_opt, Some(appointment_id));
 
     let start_task = new_test_task_handle("開始").unwrap();
     start_task.set_fixed_start(true).unwrap();
+    start_task.set_atomic(true).unwrap();
     let start_id = start_task.get_id().unwrap();
     let start_result = execute_command_for_test(start_task, now, Some(start_id), "始 16:45 8/13");
     assert_eq!(
@@ -2879,6 +2909,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         Local.with_ymd_and_hms(2026, 8, 13, 16, 45, 0).unwrap()
     );
     assert!(!start_result.task.get_fixed_start().unwrap());
+    assert!(start_result.task.get_atomic().unwrap());
 
     for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 毎 09:00 10:00"] {
         let task = new_test_task_handle("変更なし").unwrap();

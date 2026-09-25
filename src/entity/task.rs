@@ -1613,6 +1613,10 @@ impl TaskHandle {
         if self.is_repeating_task()? {
             return Err(TaskTreeError::RepeatingTaskDeadline);
         }
+        let repeating_parent_opt = match self.parent()? {
+            Some(parent) if parent.get_repetition_interval_days_opt()?.is_some() => Some(parent),
+            _ => None,
+        };
         let task_id = self.get_id()?;
         let estimated_work_seconds = self.get_estimated_work_seconds()?;
         let deadline_time = try_appointment_deadline(
@@ -1655,6 +1659,12 @@ impl TaskHandle {
         root.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
+        if let Some(repeating_parent) = &repeating_parent_opt {
+            repeating_parent
+                .node
+                .try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
+        }
         self.node
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
@@ -1668,6 +1678,18 @@ impl TaskHandle {
                 .map_err(|_| TaskTreeError::Borrow)?
                 .set_deadline_time_opt(Some(*deadline))?;
         }
+        let parent_changed = if let Some(repeating_parent) = &repeating_parent_opt {
+            let mut attr = repeating_parent
+                .node
+                .try_borrow_data_mut()
+                .map_err(|_| TaskTreeError::Borrow)?;
+            let changed = !attr.get_fixed_start() || !attr.get_atomic();
+            attr.set_fixed_start(true);
+            attr.set_atomic(true);
+            changed
+        } else {
+            false
+        };
         let mut attr = self
             .node
             .try_borrow_data_mut()
@@ -1677,18 +1699,22 @@ impl TaskHandle {
             *attr.get_pending_until(),
             *attr.get_deadline_time_opt(),
             attr.get_fixed_start(),
+            attr.get_atomic(),
         );
         // 完了済みtaskは旧約実装と同じく自己deadlineを解除したままにする。
         attr.set_deadline_time_opt((!is_done).then_some(deadline_time))?;
         attr.set_start_time(appointment_start_time);
         attr.set_fixed_start(true);
-        let changed = !deadline_updates.is_empty()
+        attr.set_atomic(true);
+        let changed = parent_changed
+            || !deadline_updates.is_empty()
             || before
                 != (
                     *attr.get_start_time(),
                     *attr.get_pending_until(),
                     *attr.get_deadline_time_opt(),
                     attr.get_fixed_start(),
+                    attr.get_atomic(),
                 );
         drop(attr);
 

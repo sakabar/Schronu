@@ -1002,8 +1002,47 @@ fn test_make_appointment_正常系1() {
         &Some(Local.with_ymd_and_hms(2023, 5, 19, 2, 23, 45).unwrap())
     );
     assert!(task.get_fixed_start().unwrap());
+    assert!(task.get_atomic().unwrap());
+    assert!(!root_task.get_fixed_start().unwrap());
+    assert!(!root_task.get_atomic().unwrap());
     assert_eq!(
         root_task.get_persistent_mutation_revision().unwrap(),
+        before_revision + 1
+    );
+}
+
+#[test]
+fn test_make_appointmentは対象と直接の繰り返し親だけをfixed_atomicにする() {
+    let root = new_test_task_handle("通常祖先").unwrap();
+    let repeating_parent = root
+        .create_child(new_test_task_attr("繰り返し親"))
+        .unwrap();
+    repeating_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let past = repeating_parent
+        .create_child(new_test_task_attr("完了済みの過去回"))
+        .unwrap();
+    past.set_orig_status(Status::Done).unwrap();
+    let current = repeating_parent
+        .create_child(new_test_task_attr("今回"))
+        .unwrap();
+    current.set_estimated_work_seconds(30 * 60).unwrap();
+    let appointment_start = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    current.make_appointment(appointment_start).unwrap();
+
+    assert!(current.get_fixed_start().unwrap());
+    assert!(current.get_atomic().unwrap());
+    assert!(repeating_parent.get_fixed_start().unwrap());
+    assert!(repeating_parent.get_atomic().unwrap());
+    assert!(!past.get_fixed_start().unwrap());
+    assert!(!past.get_atomic().unwrap());
+    assert!(!root.get_fixed_start().unwrap());
+    assert!(!root.get_atomic().unwrap());
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
         before_revision + 1
     );
 }
@@ -1054,6 +1093,7 @@ fn test_make_appointmentは完了済みtaskの自己deadlineを解除する() {
 fn test_set_flexible_start_timeは開始時刻とfixed_startを1回の更新で変更する() {
     let task = new_test_task_handle("通常task").unwrap();
     task.set_fixed_start(true).unwrap();
+    task.set_atomic(true).unwrap();
     let start_time = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
     let before_revision = task.get_persistent_mutation_revision().unwrap();
 
@@ -1061,10 +1101,34 @@ fn test_set_flexible_start_timeは開始時刻とfixed_startを1回の更新で�
 
     assert_eq!(task.get_start_time().unwrap(), start_time);
     assert!(!task.get_fixed_start().unwrap());
+    assert!(task.get_atomic().unwrap());
     assert_eq!(
         task.get_persistent_mutation_revision().unwrap(),
         before_revision + 1
     );
+}
+
+#[test]
+fn test_set_flexible_start_timeは繰り返し親の予定templateを変更しない() {
+    let repeating_parent = new_test_task_handle("繰り返し親").unwrap();
+    repeating_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    repeating_parent.set_fixed_start(true).unwrap();
+    repeating_parent.set_atomic(true).unwrap();
+    let current = repeating_parent
+        .create_child(new_test_task_attr("今回"))
+        .unwrap();
+    current.set_fixed_start(true).unwrap();
+    current.set_atomic(true).unwrap();
+    let start_time = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+
+    current.set_flexible_start_time(start_time).unwrap();
+
+    assert!(!current.get_fixed_start().unwrap());
+    assert!(current.get_atomic().unwrap());
+    assert!(repeating_parent.get_fixed_start().unwrap());
+    assert!(repeating_parent.get_atomic().unwrap());
 }
 
 #[test]
@@ -1815,6 +1879,35 @@ fn test_make_appointmentは子の共有借用競合時に部分更新とrevision
 
     let actual =
         child.with_shared_data_borrow_for_test(|| root.make_appointment(appointment_start_time));
+
+    assert_eq!(actual, Err(TaskTreeError::Borrow));
+    assert_eq!(root.snapshot().unwrap(), before_snapshot);
+    assert_eq!(
+        root.get_persistent_mutation_revision().unwrap(),
+        before_revision
+    );
+}
+
+#[test]
+fn test_make_appointmentは繰り返し親の共有借用競合時に部分更新しない() {
+    let root = new_test_task_handle("通常祖先").unwrap();
+    let repeating_parent = root
+        .create_child(new_test_task_attr("繰り返し親"))
+        .unwrap();
+    repeating_parent
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let current = repeating_parent
+        .create_child(new_test_task_attr("今回"))
+        .unwrap();
+    current.set_estimated_work_seconds(30 * 60).unwrap();
+    let appointment_start_time = Local.with_ymd_and_hms(2026, 8, 21, 9, 0, 0).unwrap();
+    let before_snapshot = root.snapshot().unwrap();
+    let before_revision = root.get_persistent_mutation_revision().unwrap();
+
+    let actual = repeating_parent.with_shared_data_borrow_for_test(|| {
+        current.make_appointment(appointment_start_time)
+    });
 
     assert_eq!(actual, Err(TaskTreeError::Borrow));
     assert_eq!(root.snapshot().unwrap(), before_snapshot);
