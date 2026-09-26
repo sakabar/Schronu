@@ -345,13 +345,50 @@ fn all行は非昇順の後も既出task日を空きに数えない() {
 }
 
 #[test]
-fn all行の境界はtask件数上限に含めず検索中は空きとともに非表示にする() {
+fn all検索後は一致taskだけから日付区切りを再計算する() {
+    use crate::client::view_projection::project_visible_all_task_rows;
+
+    let first = all_row(10, "first", "検索対象 先頭", true);
+    let mut unmatched = all_row(11, "unmatched", "通常task", true);
+    unmatched.schedule_date = "2026-09-08".to_owned();
+    let mut after_gap = all_row(12, "after-gap", "検索対象 空き後", true);
+    after_gap.schedule_date = "2026-09-10".to_owned();
+
+    let projected = project_visible_all_task_rows(&[first, unmatched, after_gap], "検索対象", 500);
+
+    assert_eq!(projected.rows.len(), 2);
+    assert!(!projected.has_more);
+    assert_eq!(projected.rows[0].row_key, "all:10");
+    assert_eq!(projected.rows[1].row_key, "all:12");
+    assert_eq!(
+        projected.rows[1].gap_before.as_deref(),
+        Some("3日間の空き時間")
+    );
+    assert!(!projected.rows[1].date_boundary_before);
+
+    let mut adjacent = all_row(13, "adjacent", "検索対象 翌日", true);
+    adjacent.schedule_date = "2026-09-07".to_owned();
+    let projected = project_visible_all_task_rows(
+        &[
+            all_row(10, "first", "検索対象 先頭", true),
+            all_row(11, "unmatched", "通常task", true),
+            adjacent,
+        ],
+        "検索対象",
+        500,
+    );
+    assert!(projected.rows[1].date_boundary_before);
+    assert_eq!(projected.rows[1].gap_before, None);
+}
+
+#[test]
+fn all行の区切りはtask件数上限に含めずさらに表示で先頭から再投影する() {
     use crate::client::view_projection::project_visible_all_task_rows;
 
     let mut rows = (0..501)
         .map(|index| all_row(index, &format!("task-{index}"), "検索対象", true))
         .collect::<Vec<_>>();
-    rows[500].schedule_date = "2026-09-07".to_owned();
+    rows[500].schedule_date = "2026-09-10".to_owned();
 
     let first_page = project_visible_all_task_rows(&rows, "", 500);
     assert_eq!(first_page.rows.len(), 500);
@@ -361,12 +398,19 @@ fn all行の境界はtask件数上限に含めず検索中は空きとともに�
 
     let expanded = project_visible_all_task_rows(&rows, "", 501);
     assert_eq!(expanded.rows.len(), 501);
-    assert_eq!(expanded.rows[500].gap_before, None);
-    assert!(expanded.rows[500].date_boundary_before);
+    assert_eq!(
+        expanded.rows[500].gap_before.as_deref(),
+        Some("3日間の空き時間")
+    );
+    assert!(!expanded.rows[500].date_boundary_before);
 
     let filtered = project_visible_all_task_rows(&rows, "検索", 501);
-    assert!(filtered.rows.iter().all(|row| row.gap_before.is_none()));
-    assert!(filtered.rows.iter().all(|row| !row.date_boundary_before));
+    assert_eq!(filtered.rows.len(), 501);
+    assert_eq!(filtered.rows[500].row_key, "all:500");
+    assert_eq!(
+        filtered.rows[500].gap_before.as_deref(),
+        Some("3日間の空き時間")
+    );
 }
 
 #[test]

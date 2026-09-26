@@ -254,7 +254,7 @@ fn named_row(
 }
 
 #[test]
-fn 空き時間行は4列を結合し検索中は表示しない() {
+fn 日付別の空き時間行は4列を結合し検索中は表示しない() {
     let mut gap_row = row("gap", false, true);
     gap_row.gap_before = Some("15分間の空き時間".to_owned());
     let render = |filter_text: &str| {
@@ -281,7 +281,7 @@ fn 空き時間行は4列を結合し検索中は表示しない() {
 }
 
 #[test]
-fn logical_date境界は次task行のmodifierだけで表示し検索中は隠す() {
+fn 日付別のlogical_date境界は次task行のmodifierだけで表示し検索中は隠す() {
     let mut boundary_row = row("boundary", false, true);
     boundary_row.date_boundary_before = true;
     let render = |filter_text: &str| {
@@ -311,6 +311,54 @@ fn logical_date境界は次task行のmodifierだけで表示し検索中は隠�
     assert!(
         !filtered.contains("has-logical-date-boundary"),
         "{filtered}"
+    );
+}
+
+#[test]
+fn all一覧は検索中も投影済みの空き時間とlogical_date境界を表示する() {
+    use super::list_view::AllTasksViewStatus;
+
+    #[component]
+    fn AllFilteredSeparatorsHarness(rows: Vec<ListRowViewModel>) -> Element {
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows,
+                active_task_ids: Vec::new(),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: "task".to_owned(),
+                all_tasks_status: Some(AllTasksViewStatus::Loaded),
+                visible_row_limit: Some(500),
+                has_more_rows: Some(false),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut gap_row = row("all-gap", false, true);
+    gap_row.gap_before = Some("3日間の空き時間".to_owned());
+    let mut boundary_row = row("all-boundary", false, true);
+    boundary_row.date_boundary_before = true;
+
+    let mut dom = VirtualDom::new_with_props(
+        AllFilteredSeparatorsHarness,
+        AllFilteredSeparatorsHarnessProps {
+            rows: vec![gap_row, boundary_row],
+        },
+    );
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("class=\"task-gap-row\""), "{html}");
+    assert!(html.contains("3日間の空き時間"), "{html}");
+    assert!(
+        html.contains("class=\"task-row has-logical-date-boundary\""),
+        "{html}"
     );
 }
 
