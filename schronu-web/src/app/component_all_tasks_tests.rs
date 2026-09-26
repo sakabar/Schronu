@@ -235,6 +235,8 @@ fn allからsession追加成功した時だけ共有検索語をclearする() {
     orchestrator.edit_task_name_filter(&storage, "date filter".to_owned());
     let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
     orchestrator.edit_task_name_filter(&storage, "all filter".to_owned());
+    orchestrator.show_more_all_tasks();
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 1_000);
 
     let _ = orchestrator.start_session_from_list(
         &storage,
@@ -249,6 +251,7 @@ fn allからsession追加成功した時だけ共有検索語をclearする() {
     );
     assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
     assert_eq!(orchestrator.task_name_filter(), "");
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 500);
     assert_eq!(
         orchestrator.state().unwrap().active_tab(),
         ActiveTab::Session
@@ -293,11 +296,13 @@ fn allからsession追加が重複で拒否された時は共有検索語を保�
     );
     let _ = orchestrator.action(&storage, 0, ComponentAction::SelectAllTasks);
     orchestrator.edit_task_name_filter(&storage, "all filter".to_owned());
+    orchestrator.show_more_all_tasks();
 
     let _ = orchestrator.start_session_from_list(&storage, 0, task, true);
 
     assert_eq!(orchestrator.state().unwrap().sessions().len(), 1);
     assert_eq!(orchestrator.task_name_filter(), "all filter");
+    assert_eq!(orchestrator.all_tasks_visible_limit(), 1_000);
     let _ = orchestrator.action(
         &storage,
         0,

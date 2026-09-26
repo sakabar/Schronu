@@ -327,6 +327,9 @@ impl ComponentOrchestrator {
             previous_session_count,
             current_session_count,
         );
+        if current_session_count > previous_session_count {
+            self.all_tasks_visible_limit = 500;
+        }
         self.persist_view_state(storage);
         effect
     }
