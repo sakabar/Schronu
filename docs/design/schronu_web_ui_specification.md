@@ -13,7 +13,7 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 | 層 | 責務 |
 | --- | --- |
 | Dioxus component | tab、button、card、一覧、error、履歴、持ち歩きロックbarの描画と利用者操作の受付。 |
-| client state | `work_sessions`、snapshot、日付別選択、全件取得状態、各一覧の検索文字列、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
+| client state | `work_sessions`、snapshot、日付別選択、全件取得状態、日付別・全件共通の検索文字列、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
 | localStorage adapter | `work_sessions`、view state、mutation safety、持ち歩きロックの独立したversion付きstateを読込・検証・保存する。 |
 | server function | wire DTOを検証し、専用workerへ型付きcommandを送る。 |
 | Web operation worker | 1 thread上でWeb操作を直列実行し、environment、repository、free-time資源を所有する。 |
@@ -186,7 +186,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
-画面復元状態は別key `schronu_web.view_state.v1`へversion 2として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと`defer_plan`を含む全`ScheduledTaskRow`、選択tab、日付別検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。reload時は保存済みの日付別選択日と検索文字列を復元し、一覧tabを復元する場合も日付別を選択する。「全て」の選択、`AllTaskRow`、取得状態、cursor、全件検索文字列、描画上限は保存せず、reload時に未取得、空検索、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
+画面復元状態は別key `schronu_web.view_state.v1`へversion 2として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと`defer_plan`を含む全`ScheduledTaskRow`、選択tab、日付別・全件共通の検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。reload時は保存済みの日付別選択日と共有検索文字列を復元し、一覧tabを復元する場合も日付別を選択する。「全て」の選択、`AllTaskRow`、取得状態、cursor、描画上限は保存せず、reload時に未取得、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
 
 ```json
 {
@@ -387,7 +387,6 @@ all_tasks_load: NotLoaded
               | Loaded(Vec<AllTaskRow>)
               | Failed(ServerFailure)
               | Invalidated
-all_task_name_filter: String
 all_tasks_visible_limit: usize
 date_input: DateInputState { text, error }
 in_flight_session_ids: Set<UUID>
@@ -404,7 +403,7 @@ tick_now_epoch_ms: i64
 
 `record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
 
-`all_task_name_filter`はmemoryだけに保持し、日付別検索と独立させる。日付別との往復と`Invalidated`後も保持し、reloadでは空にする。変更時は`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。日付別検索と全件検索は、前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使う。
+`task_name_filter`は日付別一覧と全件一覧で共有し、view stateへ保存する。両一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使う。
 
 ### 6.2 経過時間
 
@@ -542,7 +541,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 ### 7.1 初期化とtab
 
-1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、最後に表示した1日分の一覧、選択tab、日付別検索文字列、日付入力文字列を保持する。「全て」の選択、取得結果、検索文字列は復元せず、日付別選択へ戻す。
+1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、最後に表示した1日分の一覧、選択tab、日付別・全件共通の検索文字列、日付入力文字列を保持する。「全て」の選択と取得結果は復元せず、日付別選択へ戻す。
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
@@ -585,18 +584,18 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
 - 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
-- task名検索文字列はview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
+- task名検索文字列は日付別と「全て」で共有してview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ共有検索文字列を空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
-- 全件検索は日付別検索と同じ純粋helperを使うが、取得完了時だけ表示し、memory内だけに保持する。日付別との往復と全件無効化後も維持し、reloadでは空にする。検索入力またはclearのたびに描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
+- 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
-- 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。日付別検索だけをview stateとしてlocalStorageへ保存し、全件検索は保存しない。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
+- 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
 - `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信と発火履歴追加は行わない。
-- 全件一覧からの追加成功では全件検索だけを空にし、日付別一覧からの追加成功では日付別検索だけを空にする。
+- 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
@@ -643,11 +642,11 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | reload背景更新 | `bootstrap`後、保存一覧があれば保存日付、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotと一覧をview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
 | tab切替 | なし | なし | view stateを保存 | なし | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
-| 日付別検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
+| 共有検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
 | 「全て」button | `list_all_tasks(cursor: None)`と全継続page | なし | なし | 全page成功時だけ一時bufferから置換。途中失敗は非公開 | なし |
 | 全件取得の再試行・更新 | `list_all_tasks(cursor: None)`から再開 | なし | なし | 成功時だけ置換。全件検索は維持 | なし |
-| 全件検索・「さらに表示」 | なし | なし | なし | memory内の絞り込みと500行単位の描画上限だけを変更 | なし |
+| 全件検索・「さらに表示」 | なし | なし | 検索編集でview stateを保存 | client内の絞り込みと500行単位の描画上限だけを変更 | なし |
 | 自動セッション | `auto_session` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
 | 一覧の「先送り」 | `Normal`は即時、`DeadlineLimited`と`RoutinePeriod`は行内確認後に表示日・期待plan全体付きで`safety marker`を保存して`defer_task`。成功または`defer_plan_changed`後に`list_tasks` | 表示日と現在日の遅い方の翌日06:00を希望先とし、期限余裕に応じて通常延期、期限上限への短縮、次周期移動を選択 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。plan変更時は除去せず再取得。検索と日付入力を維持 | なし |
@@ -797,7 +796,7 @@ OperationHistoryEntry {
 - actionとresponseの製品orchestrator経路で、最後のsession削除成功時だけセッションtabから一覧tabへ移ることを検証する。複数session、server失敗、localStorage削除失敗、他tab表示中では遷移しないことも固定する。
 - 全件状態の未取得、取得中、取得済み、取得失敗、無効状態を検証する。page連結中は公開せず、最終成功でだけ原子的に公開し、途中失敗時にbufferを破棄してretryが`cursor: None`から始まることを固定する。
 - request IDとcursorが一致しないstale response、mutation成功後の遅延responseを無視し、record・complete・defer成功だけが無効化することを検証する。localのセッション追加、破棄、再開では無効化しないことも固定する。
-- 全件取得中にtabと日付別へ移動してもpage取得が継続し、完了後の再選択がserver effectを生成しないことを検証する。reloadでは日付別選択日と検索を復元し、全件選択・行・検索・描画上限を復元しないことを確認する。
+- 全件取得中にtabと日付別へ移動してもpage取得が継続し、完了後の再選択がserver effectを生成しないことを検証する。reloadでは日付別選択日と共有検索を復元し、全件選択・行・描画上限を復元しないことを確認する。
 
 ### 12.5 UI and integration
 
@@ -807,9 +806,9 @@ OperationHistoryEntry {
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
-- 日付別一覧、選択tab、日付別検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。「全て」は日付別へ戻り、全件行と全件検索が復元されないことも確認する。
+- 日付別一覧、選択tab、日付別・全件共通の検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。「全て」は日付別へ戻り、全件行は復元されないが共有検索は復元されることも確認する。
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化と更新、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
-- 全件検索の前後空白、Unicode小文字化、部分一致、空検索、日付別検索との独立、日付往復・無効化後の保持、reload時の消去を確認する。検索変更で描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
+- 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
