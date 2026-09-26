@@ -134,7 +134,6 @@ pub(crate) struct ComponentOrchestrator {
     refresh_state: RefreshState,
     date_input: DateInputState,
     task_name_filter: String,
-    all_task_name_filter: String,
     all_tasks_visible_limit: usize,
 }
 
@@ -155,7 +154,6 @@ impl ComponentOrchestrator {
             refresh_state: RefreshState::Bootstrap(0),
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
-            all_task_name_filter: String::new(),
             all_tasks_visible_limit: 500,
         }
     }
@@ -188,14 +186,7 @@ impl ComponentOrchestrator {
     }
 
     pub fn task_name_filter(&self) -> &str {
-        if self
-            .state()
-            .is_some_and(|state| state.list_selection() == ListSelection::All)
-        {
-            &self.all_task_name_filter
-        } else {
-            &self.task_name_filter
-        }
+        &self.task_name_filter
     }
 
     pub fn all_tasks_visible_limit(&self) -> usize {
@@ -238,16 +229,9 @@ impl ComponentOrchestrator {
     }
 
     pub fn edit_task_name_filter<S: KeyValueStorage>(&mut self, storage: &S, text: String) {
-        if self
-            .state()
-            .is_some_and(|state| state.list_selection() == ListSelection::All)
-        {
-            self.all_task_name_filter = text;
-            self.all_tasks_visible_limit = 500;
-        } else {
-            self.task_name_filter = text;
-            self.persist_view_state(storage);
-        }
+        self.task_name_filter = text;
+        self.all_tasks_visible_limit = 500;
+        self.persist_view_state(storage);
     }
 
     pub fn begin_server_effect(&mut self) {
@@ -332,23 +316,20 @@ impl ComponentOrchestrator {
         is_leaf: bool,
     ) -> ClientEffect {
         let previous_session_count = self.state().map_or(0, |state| state.sessions().len());
-        let source_selection = self.state().map(ClientState::list_selection);
         let effect = self.action(
             storage,
             monotonic_now_ms,
             ComponentAction::AddSession { task, is_leaf },
         );
         let current_session_count = self.state().map_or(0, |state| state.sessions().len());
-        let filter = if source_selection == Some(ListSelection::All) {
-            &mut self.all_task_name_filter
-        } else {
-            &mut self.task_name_filter
-        };
         reset_task_name_filter_after_session_add(
-            filter,
+            &mut self.task_name_filter,
             previous_session_count,
             current_session_count,
         );
+        if current_session_count > previous_session_count {
+            self.all_tasks_visible_limit = 500;
+        }
         self.persist_view_state(storage);
         effect
     }
