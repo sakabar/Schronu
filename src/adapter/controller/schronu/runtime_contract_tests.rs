@@ -2609,16 +2609,16 @@ fn test_execute_all_未来締切を超過する予定のiconをvにする() {
 }
 
 #[test]
-fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示する() {
+fn test_execute_all_絞り込み後の表示taskだけでlogical_date区切りを再計算する() {
     let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
     let root = new_test_task_handle("root").unwrap();
     for (name, start) in [
         (
-            "境界対象 今日前半",
+            "空き日対象 今日",
             Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap(),
         ),
         (
-            "境界対象 今日後半",
+            "境界対象 今日",
             Local.with_ymd_and_hms(2026, 9, 6, 11, 0, 0).unwrap(),
         ),
         (
@@ -2626,7 +2626,11 @@ fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示す
             Local.with_ymd_and_hms(2026, 9, 7, 10, 0, 0).unwrap(),
         ),
         (
-            "境界対象 空き後",
+            "検索不一致 中間日",
+            Local.with_ymd_and_hms(2026, 9, 8, 10, 0, 0).unwrap(),
+        ),
+        (
+            "空き日対象 空き後",
             Local.with_ymd_and_hms(2026, 9, 10, 10, 0, 0).unwrap(),
         ),
     ] {
@@ -2635,49 +2639,47 @@ fn test_execute_all_絞り込み中もlogical_date境界と空き日を表示す
     }
 
     let date_boundary = "-".repeat(88);
-    let unfiltered = execute_command_for_test(root.clone(), now, None, "全");
-    assert!(unfiltered.output.contains(&date_boundary));
-    assert!(unfiltered.output.contains("2日間の空き時間"));
-
-    let tail = execute_command_for_test(root.clone(), now, None, "尾 週");
-    assert!(!tail.output.contains(&date_boundary));
-    assert!(!tail.output.contains("日間の空き時間"));
-
-    let result = execute_command_for_test(root, now, None, "全 境界対象");
-    let relevant_lines = result
-        .output
-        .lines()
-        .filter(|line| {
-            line.contains("境界対象")
-                || line.contains("日間の空き時間")
-                || *line == date_boundary.as_str()
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        relevant_lines
-            .iter()
-            .map(|line| {
-                if line.contains("日間の空き時間") || *line == date_boundary.as_str() {
-                    (*line).to_owned()
-                } else {
-                    line.split_whitespace().last().unwrap().to_string()
-                }
-            })
-            .collect::<Vec<_>>(),
-        [
-            "空き後".to_owned(),
-            format!(
-                "{}2日間の空き時間{}",
-                "-".repeat(88),
-                "-".repeat(54)
-            ),
-            "翌日".to_owned(),
+    for supports_ansi_color in [false, true] {
+        let gap_result = execute_command_with_ansi_color_for_test(
+            root.clone(),
+            now,
+            None,
+            "全 空き日対象",
+            supports_ansi_color,
+        );
+        assert!(gap_result.output.contains("空き日対象 空き後"));
+        assert!(gap_result.output.contains("空き日対象 今日"));
+        assert!(!gap_result.output.contains("検索不一致 中間日"));
+        assert!(gap_result.output.contains(&format!(
+            "{}3日間の空き時間{}",
             "-".repeat(88),
-            "今日後半".to_owned(),
-            "今日前半".to_owned(),
-        ]
-    );
+            "-".repeat(54)
+        )));
+
+        let boundary_result = execute_command_with_ansi_color_for_test(
+            root.clone(),
+            now,
+            None,
+            "全 境界対象",
+            supports_ansi_color,
+        );
+        assert!(boundary_result.output.contains("境界対象 翌日"));
+        assert!(boundary_result.output.contains("境界対象 今日"));
+        assert!(boundary_result
+            .output
+            .lines()
+            .any(|line| line == date_boundary));
+
+        let tail = execute_command_with_ansi_color_for_test(
+            root.clone(),
+            now,
+            None,
+            "尾 週",
+            supports_ansi_color,
+        );
+        assert!(!tail.output.contains(&date_boundary));
+        assert!(!tail.output.contains("日間の空き時間"));
+    }
 }
 
 #[test]

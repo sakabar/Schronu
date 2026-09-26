@@ -600,8 +600,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
 - 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
-- 全件一覧はserver順の隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。同日、不正日付、非昇順ではどちらも表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めない。
-- 日付別・全件ともtrim後のtask名検索文字列が空でない間は空き行とlogical date境界線を描画せず、検索解除後に取得済み行のprojectionから再表示する。
+- 全件一覧はtask名検索に一致したserver順の行から表示上限内のtaskを先頭から投影する。その隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致taskの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
+- 日付別一覧はtrim後のtask名検索文字列が空でない間、分単位の空き行を描画しない。全件一覧は検索文字列の有無にかかわらず、projection済みの日単位の空き行とlogical date境界線を描画する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
@@ -806,7 +806,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
-- 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、500/501件境界を確認する。両一覧で検索中の空き行非表示とclear後の再表示、4列結合、非操作性をcomponent・CSS contract testで固定する。
+- 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
 - 日付別一覧、選択tab、日付別検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。「全て」は日付別へ戻り、全件行と全件検索が復元されないことも確認する。
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化と更新、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 全件検索の前後空白、Unicode小文字化、部分一致、空検索、日付別検索との独立、日付往復・無効化後の保持、reload時の消去を確認する。検索変更で描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
