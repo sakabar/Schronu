@@ -94,24 +94,10 @@ pub fn project_visible_all_task_rows(
     filter: &str,
     visible_limit: usize,
 ) -> VisibleAllTaskRows {
-    let show_gaps = filter.trim().is_empty();
     let mut previous_date = None;
     let mut projected_rows = Vec::with_capacity(visible_limit.min(rows.len()));
     let mut has_more = false;
     for row in rows {
-        let current_date = NaiveDate::parse_from_str(&row.schedule_date, "%Y-%m-%d").ok();
-        let gap_before = show_gaps
-            .then(|| date_gap_label(previous_date, current_date))
-            .flatten();
-        let date_boundary_before = show_gaps
-            && logical_dates_are_adjacent(previous_date, current_date)
-            && gap_before.is_none();
-        previous_date = current_date.map(|date| {
-            previous_date
-                .map(|previous| previous.max(date))
-                .unwrap_or(date)
-        });
-
         if !task_name_matches(filter, &row.task.task_name) {
             continue;
         }
@@ -119,6 +105,17 @@ pub fn project_visible_all_task_rows(
             has_more = true;
             break;
         }
+
+        let current_date = NaiveDate::parse_from_str(&row.schedule_date, "%Y-%m-%d").ok();
+        let gap_before = date_gap_label(previous_date, current_date);
+        let date_boundary_before =
+            logical_dates_are_adjacent(previous_date, current_date) && gap_before.is_none();
+        previous_date = current_date.map(|date| {
+            previous_date
+                .map(|previous| previous.max(date))
+                .unwrap_or(date)
+        });
+
         projected_rows.push(project_all_task_row(row, gap_before, date_boundary_before));
     }
     VisibleAllTaskRows {

@@ -56,8 +56,8 @@ pub fn ListView(
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
-    let show_separators = filter_text.trim().is_empty();
     let all_selected = all_tasks_status.is_some();
+    let show_separators = all_selected || filter_text.trim().is_empty();
     let visible_limit = if all_selected {
         visible_row_limit.unwrap_or(500)
     } else {
