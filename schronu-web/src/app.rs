@@ -30,6 +30,7 @@ mod history_view_tests;
 pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;
+pub(crate) mod load_view;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod long_press_browser;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]

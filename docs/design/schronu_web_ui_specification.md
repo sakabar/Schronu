@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-`schronu-web`を、localStorageに保持する複数の`work_sessions`と、日付別およびオンデマンド全件のSchronu scheduleを表示するDioxus single-page UIへ置換する。
+`schronu-web`を、localStorageに保持する複数の`work_sessions`と、日付別・オンデマンド全件のSchronu schedule、今日から7日間の負荷帯を表示するDioxus single-page UIへ置換する。
 
 WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの`get_focus`は自動選定の内部実装としてだけ利用し、UI上の名称は「セッション」に統一する。
 
@@ -151,6 +151,27 @@ ListAllTasksRequest {
 }
 ```
 
+負荷取得は現在logical dateから6日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
+
+```text
+BandDay {
+    logical_date: YYYY-MM-DD,
+    accumulated_rho_diff_seconds: i64,
+    accumulated_free_diff_seconds: i64,
+    durations: BandDurations,
+}
+
+BandDurations {
+    unavailable_seconds: i64,
+    elapsed_seconds: i64,
+    repetitive_seconds: i64,
+    non_repetitive_seconds: i64,
+    rho_leeway_seconds: i64,
+}
+```
+
+`load_band`は`WebSuccess<Vec<BandDay>>`を返す。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。負荷dataはlocalStorageへ保存しない。
+
 `segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
 
 日付別と全件は同じ一覧componentとclass契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。`is_leaf`は太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
@@ -216,7 +237,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ## 4. Server operations
 
-専用workerは次の7 commandを順番に処理する。workerへの送信順が実行順となる。
+専用workerは`bootstrap`、`list_tasks`、`list_all_tasks`、`load_band`、`auto_session`、`defer_task`、`record_session`、`complete_session`の8 commandを順番に処理する。workerへの送信順が実行順となる。
 
 cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。`list_all_tasks`の継続pageは保存済みsnapshotだけを読む。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
 
@@ -545,7 +566,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
-5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
+5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
 7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
@@ -800,7 +821,7 @@ OperationHistoryEntry {
 
 ### 12.5 UI and integration
 
-- 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 固定された「セッション」「一覧」「負荷」「発火履歴」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。

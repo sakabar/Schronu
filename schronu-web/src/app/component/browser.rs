@@ -8,6 +8,7 @@ use super::super::component_models::{
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
 use super::super::list_view::{AllTasksViewStatus, ListView};
+use super::super::load_view::LoadView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_view::SessionView;
@@ -65,6 +66,10 @@ pub(super) fn BrowserApp() -> Element {
         buffer,
         sessions,
         rows,
+        band_rows,
+        band_observed_at_epoch_ms,
+        band_loading,
+        band_error,
         has_more_rows,
         list_selection,
         all_tasks_status,
@@ -230,6 +235,18 @@ pub(super) fn BrowserApp() -> Element {
                     },
                     on_filter_change: move |filter| {
                         client.write().edit_task_name_filter(&BrowserLocalStorage, filter);
+                    },
+                }
+            } else if active_tab == ActiveTab::Load {
+                LoadView {
+                    rows: band_rows,
+                    observed_at_epoch_ms: band_observed_at_epoch_ms,
+                    loading: band_loading,
+                    error: band_error,
+                    on_refresh: move |_| dispatch_action(client, ComponentAction::RefreshLoad),
+                    on_select_date: move |date| {
+                        client.write().clear_date_input(&BrowserLocalStorage);
+                        dispatch_action(client, ComponentAction::SelectLoadDate(date));
                     },
                 }
             } else {

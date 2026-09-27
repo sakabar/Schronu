@@ -110,7 +110,7 @@ where
         let task = repository
             .get_by_id(segment.task.id)
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .ok_or_else(|| {
+            .ok_or({
                 WebReadCoreError::Application(ApplicationError::TaskNotFound(segment.task.id))
             })?;
         if task

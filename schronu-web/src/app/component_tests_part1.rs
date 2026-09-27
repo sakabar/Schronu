@@ -148,9 +148,9 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 
     assert!(html.contains("直近7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
-    assert!(html.contains("余差累</span><strong>+01:15"), "{html}");
-    assert!(html.contains("空差累</span><strong>-00:45"), "{html}");
-    assert!(html.contains("超過 00:30"), "{html}");
+    assert!(html.contains("<span>余差累</span><strong>+01:15"), "{html}");
+    assert!(html.contains("<span>空差累</span><strong>-00:45"), "{html}");
+    assert!(html.contains("超過 01:30"), "{html}");
 }
 
 #[test]
@@ -434,6 +434,129 @@ fn 負荷tab進入と更新はload_bandを要求する() {
         ComponentAction::RefreshLoad,
     );
     assert!(matches!(refreshed, ClientEffect::LoadBand { .. }));
+}
+
+#[test]
+fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    let first_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    let second_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+
+    state.apply_load_band_result(
+        first_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_100),
+            data: vec![band_day("2026-09-27", 1)],
+        }),
+    );
+    assert!(state.band_rows().is_empty());
+
+    state.apply_load_band_result(
+        second_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_200),
+            data: vec![band_day("2026-09-27", 2)],
+        }),
+    );
+    assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
+
+    let failed_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    state.apply_load_band_result(
+        failed_id,
+        Err(ServerFailure::Transport("offline".to_owned())),
+    );
+    assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
+    assert!(state.band_error().is_some());
+}
+
+#[test]
+fn 負荷日付は一覧tabへ移動して対象日を取得する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.switch_tab(ActiveTab::Load);
+
+    let effect = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SelectLoadDate("2026-09-29".to_owned()),
+    );
+
+    assert_eq!(state.active_tab(), ActiveTab::List);
+    assert!(matches!(
+        effect,
+        ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-29"
+    ));
+}
+
+#[test]
+fn 復元した負荷tabはbootstrap後に負荷を取得する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.restore_view_state(&ViewState {
+        snapshot: load_snapshot(900),
+        list: None,
+        active_tab: ActiveTab::Load,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
+
+    let effect = state.apply_bootstrap_result(1, Ok(load_snapshot(1_100)));
+
+    assert!(matches!(effect, ClientEffect::LoadBand { .. }));
+}
+
+#[test]
+fn 復元した負荷tabはbootstrap失敗時に負荷を取得しない() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.restore_view_state(&ViewState {
+        snapshot: load_snapshot(900),
+        list: None,
+        active_tab: ActiveTab::Load,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
+
+    let effect = state.apply_bootstrap_result(
+        1,
+        Err(ServerFailure::Transport("offline".to_owned())),
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+}
+
+fn load_snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
+    ServerSnapshot {
+        observed_at_epoch_ms,
+        logical_date: "2026-09-27".to_owned(),
+        buffer_seconds: 0,
+    }
+}
+
+fn band_day(logical_date: &str, unavailable_seconds: i64) -> BandDay {
+    BandDay {
+        logical_date: logical_date.to_owned(),
+        accumulated_rho_diff_seconds: 0,
+        accumulated_free_diff_seconds: 0,
+        durations: BandDurations {
+            unavailable_seconds,
+            elapsed_seconds: 0,
+            repetitive_seconds: 0,
+            non_repetitive_seconds: 0,
+            rho_leeway_seconds: 0,
+        },
+    }
 }
 
 #[test]

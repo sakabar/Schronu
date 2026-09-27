@@ -12,7 +12,7 @@ use super::renderer::{
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
-pub(super) use crate::application::daily_capacity::calculate_daily_band_durations;
+use crate::application::daily_capacity::calculate_daily_band_durations;
 use crate::application::daily_capacity::{
     calculate_daily_leeway_seconds, calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,

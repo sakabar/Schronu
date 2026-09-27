@@ -17,6 +17,9 @@ pub(crate) enum ComponentAction {
         wall_now_epoch_ms: i64,
     },
     SelectDate(String),
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    SelectLoadDate(String),
+    RefreshLoad,
     #[allow(dead_code)]
     SelectAllTasks,
     #[allow(dead_code)]
@@ -382,17 +385,18 @@ impl ComponentOrchestrator {
     }
 
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
-        matches!(effect, ClientEffect::ListAllTasks { .. })
-            || matches!(
-                (self.refresh_state, effect),
-                (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
-                    if expected == *request_id
-            )
-            || matches!(
-                (self.refresh_state, effect),
-                (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
-                    if expected == *request_id
-            )
+        matches!(
+            effect,
+            ClientEffect::ListAllTasks { .. } | ClientEffect::LoadBand { .. }
+        ) || matches!(
+            (self.refresh_state, effect),
+            (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
+                if expected == *request_id
+        ) || matches!(
+            (self.refresh_state, effect),
+            (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
+                if expected == *request_id
+        )
     }
 
     fn persist_view_state<S: KeyValueStorage>(&mut self, storage: &S) {
@@ -454,6 +458,8 @@ fn action_requires_server(action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::SelectDate(_)
+            | ComponentAction::SelectLoadDate(_)
+            | ComponentAction::RefreshLoad
             | ComponentAction::AutoSession
             | ComponentAction::DeferTask { .. }
             | ComponentAction::DiscardSession(_)
@@ -487,6 +493,11 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.select_logical_date(&logical_date),
+        ComponentAction::SelectLoadDate(logical_date) => {
+            state.switch_tab(ActiveTab::List);
+            state.select_logical_date(&logical_date)
+        }
+        ComponentAction::RefreshLoad => state.request_load_band(),
         ComponentAction::SelectAllTasks => state.select_all_tasks(),
         ComponentAction::RetryAllTasks => state.retry_all_tasks(),
         ComponentAction::AutoSession => state.request_auto_session(),

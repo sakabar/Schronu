@@ -73,7 +73,7 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     assert!(tabs.contains(
         "min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));"
     ));
-    assert!(tabs.contains("grid-template-columns: repeat(3, minmax(0, 1fr));"));
+    assert!(tabs.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
 
     let tab_button = block_body(MAIN_CSS, ".tab-button");
     assert!(tab_button.contains("min-height: max(2.75rem, 44px);"));
