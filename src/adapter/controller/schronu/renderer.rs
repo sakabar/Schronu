@@ -236,14 +236,7 @@ pub(super) struct CalendarDisplay {
     pub(super) alerts: CalendarAlerts,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct BandDurations {
-    pub(super) unavailable_seconds: i64,
-    pub(super) elapsed_seconds: i64,
-    pub(super) repetitive_seconds: i64,
-    pub(super) non_repetitive_seconds: i64,
-    pub(super) rho_leeway_seconds: i64,
-}
+pub(super) use crate::application::daily_capacity::DailyBandDurations as BandDurations;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct BandDayRow {
@@ -537,7 +530,8 @@ fn render_calendar_display(
 
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
-pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
+pub(super) const BAND_SECONDS_PER_DAY: i64 =
+    crate::application::daily_capacity::BAND_SECONDS_PER_DAY;
 const BAND_UNAVAILABLE_COLOR: u8 = 110;
 const TASK_LIST_FIXED_COLOR: u8 = 127;
 const REPETITIVE_COLOR: u8 = 33;

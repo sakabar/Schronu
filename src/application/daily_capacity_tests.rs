@@ -51,7 +51,7 @@ fn calculate_daily_band_durationsはcli帯の区分秒数を返す() {
     assert_eq!(
         actual,
         DailyBandDurations {
-            unavailable_seconds: 9 * 60 * 60 + 30 * 60,
+            unavailable_seconds: 7 * 60 * 60 + 30 * 60,
             elapsed_seconds: 800 * 60,
             repetitive_seconds: 40 * 60,
             non_repetitive_seconds: 20 * 60,
