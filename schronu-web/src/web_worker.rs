@@ -1,5 +1,5 @@
 use crate::{
-    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
     DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
     RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
     WebSuccess,
@@ -20,6 +20,9 @@ pub trait WebOperations: 'static {
         &mut self,
         request: ListAllTasksRequest,
     ) -> Result<WebSuccess<AllTaskPage>, WebError>;
+    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        unreachable!("load_band is not implemented by this test operation")
+    }
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
     fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError>;
     fn record_session(
@@ -48,6 +51,9 @@ enum WebWorkerCommand {
     ListAllTasks {
         request: ListAllTasksRequest,
         response: oneshot::Sender<Result<WebSuccess<AllTaskPage>, WebError>>,
+    },
+    LoadBand {
+        response: oneshot::Sender<Result<WebSuccess<Vec<BandDay>>, WebError>>,
     },
     AutoSession {
         response: oneshot::Sender<Result<WebSuccess<Option<SessionTask>>, WebError>>,
@@ -111,6 +117,14 @@ impl WebWorkerHandle {
         receiver.await.map_err(|_| unavailable_error())?
     }
 
+    pub async fn load_band(&self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::LoadBand { response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
     pub async fn auto_session(&self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands
@@ -161,6 +175,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::ListAllTasks { request, response } => {
                 let _ = response.send(operations.list_all_tasks(request));
+            }
+            WebWorkerCommand::LoadBand { response } => {
+                let _ = response.send(operations.load_band());
             }
             WebWorkerCommand::AutoSession { response } => {
                 let _ = response.send(operations.auto_session());

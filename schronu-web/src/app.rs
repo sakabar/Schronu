@@ -49,14 +49,19 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks,
+    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks, load_band,
     record_session, WebOperationResult,
 };
 
 #[cfg(test)]
-mod all_task_endpoint_export_tests {
+mod read_endpoint_export_tests {
     #[test]
     fn appはall_task_server_functionを公開する() {
         let _endpoint = super::list_all_tasks;
+    }
+
+    #[test]
+    fn appはband_server_functionを公開する() {
+        let _endpoint = super::load_band;
     }
 }
