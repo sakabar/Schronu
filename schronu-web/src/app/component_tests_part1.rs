@@ -195,6 +195,28 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 }
 
 #[test]
+fn 負荷viewはerror時にcompact固定高を解除するclassを付ける() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-09-27", 0)],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: Some("負荷の更新に失敗しました。".to_owned()),
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("<section class=\"load-view has-error\""), "{html}");
+}
+
+#[test]
 fn 背景更新中の負荷操作はbuttonを無効化する() {
     fn root() -> Element {
         rsx! {

@@ -16,6 +16,11 @@ pub(crate) fn LoadView(
     on_refresh: EventHandler<()>,
     on_select_date: EventHandler<String>,
 ) -> Element {
+    let view_class = if error.is_some() {
+        "load-view has-error"
+    } else {
+        "load-view"
+    };
     let updated = observed_at_epoch_ms
         .and_then(|epoch| Local.timestamp_millis_opt(epoch).single())
         .map(|datetime| {
@@ -29,7 +34,7 @@ pub(crate) fn LoadView(
         })
         .unwrap_or_else(|| "未取得".to_owned());
     rsx! {
-        section { class: "load-view", aria_label: "直近7日の負荷",
+        section { class: view_class, aria_label: "直近7日の負荷",
             div { class: "load-toolbar",
                 div {
                     h2 { "直近7日の負荷" }

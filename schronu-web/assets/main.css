@@ -1306,6 +1306,10 @@ button:disabled {
         flex-direction: column;
     }
 
+    .load-view.has-error {
+        height: auto;
+    }
+
     .load-toolbar {
         flex: 0 0 auto;
         gap: 0.5rem;

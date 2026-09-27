@@ -133,6 +133,8 @@ fn load_rows_use_bounded_compact_height_without_overlapping() {
     assert!(view.contains("height: calc(100dvh"));
     assert!(view.contains("display: flex;"));
     assert!(view.contains("flex-direction: column;"));
+    let error_view = block_body(compact, ".load-view.has-error");
+    assert!(error_view.contains("height: auto;"));
 
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
