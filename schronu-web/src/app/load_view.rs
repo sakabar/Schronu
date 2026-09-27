@@ -12,6 +12,7 @@ pub(crate) fn LoadView(
     observed_at_epoch_ms: Option<i64>,
     loading: bool,
     error: Option<String>,
+    #[props(default)] server_actions_blocked: bool,
     on_refresh: EventHandler<()>,
     on_select_date: EventHandler<String>,
 ) -> Element {
@@ -37,8 +38,12 @@ pub(crate) fn LoadView(
                 button {
                     class: "load-refresh",
                     r#type: "button",
-                    disabled: loading,
-                    onclick: move |_| on_refresh.call(()),
+                    disabled: loading || server_actions_blocked,
+                    onclick: move |_| {
+                        if !loading && !server_actions_blocked {
+                            on_refresh.call(())
+                        }
+                    },
                     if loading { "更新中…" } else { "更新" }
                 }
             }
@@ -56,6 +61,7 @@ pub(crate) fn LoadView(
                         BandDayRow {
                             row,
                             today: index == 0,
+                            disabled: server_actions_blocked,
                             on_select_date,
                         }
                     }
@@ -91,7 +97,12 @@ fn LegendItem(class: &'static str, symbol: &'static str, label: &'static str) ->
 }
 
 #[component]
-fn BandDayRow(row: BandDay, today: bool, on_select_date: EventHandler<String>) -> Element {
+fn BandDayRow(
+    row: BandDay,
+    today: bool,
+    disabled: bool,
+    on_select_date: EventHandler<String>,
+) -> Element {
     let date = chrono::NaiveDate::parse_from_str(&row.logical_date, "%Y-%m-%d").ok();
     let date_label = date
         .map(|date| {
@@ -107,18 +118,14 @@ fn BandDayRow(row: BandDay, today: bool, on_select_date: EventHandler<String>) -
     let used_seconds = raw_used_seconds(row.durations);
     let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
     let aria_label = format!(
-        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}{}。押すと一覧を表示します。",
+        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、超過{}。押すと一覧を表示します。",
         format_duration(row.durations.unavailable_seconds),
         format_duration(row.durations.elapsed_seconds),
         format_duration(row.durations.repetitive_seconds),
         format_duration(row.durations.non_repetitive_seconds),
         format_duration(row.durations.rho_leeway_seconds),
         format_duration(segments.free_seconds),
-        if overflow_seconds > 0 {
-            format!("、超過{}", format_duration(overflow_seconds))
-        } else {
-            String::new()
-        }
+        format_duration(overflow_seconds),
     );
     let class = if today {
         "load-day is-today"
@@ -130,8 +137,13 @@ fn BandDayRow(row: BandDay, today: bool, on_select_date: EventHandler<String>) -
         button {
             class,
             r#type: "button",
+            disabled,
             aria_label,
-            onclick: move |_| on_select_date.call(logical_date.clone()),
+            onclick: move |_| {
+                if !disabled {
+                    on_select_date.call(logical_date.clone())
+                }
+            },
             span { class: "load-day-heading",
                 span { class: "load-date", "{date_label}"
                     if today { span { class: "load-today", "今日" } }

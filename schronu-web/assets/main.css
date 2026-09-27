@@ -1067,8 +1067,10 @@ button:disabled {
 .load-day-heading,
 .load-day-footer {
     display: flex;
+    min-width: 0;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 0.75rem;
 }
 
@@ -1131,6 +1133,8 @@ button:disabled {
 
 .load-days {
     display: grid;
+    width: 100%;
+    min-width: 0;
     gap: 0.45rem;
 }
 
@@ -1176,6 +1180,7 @@ button:disabled {
 
 .load-metrics {
     display: flex;
+    min-width: 0;
     flex-wrap: wrap;
     gap: 0.25rem 0.75rem;
 }

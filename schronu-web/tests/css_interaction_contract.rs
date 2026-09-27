@@ -95,6 +95,31 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
 }
 
 #[test]
+fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
+    let view = block_body(MAIN_CSS, ".load-view");
+    assert!(view.contains("width: min(100%, 44rem);"));
+
+    let days = block_body(MAIN_CSS, ".load-days");
+    assert!(days.contains("width: 100%;"));
+    assert!(days.contains("min-width: 0;"));
+
+    let row = block_body(MAIN_CSS, ".load-day {");
+    assert!(row.contains("width: 100%;"));
+    assert!(row.contains("min-width: 0;"));
+
+    for selector in [".load-day-heading", ".load-day-footer"] {
+        let shared = block_body(
+            MAIN_CSS,
+            ".load-toolbar,\n.load-day-heading,\n.load-day-footer",
+        );
+        assert!(MAIN_CSS.contains(selector));
+        assert!(shared.contains("min-width: 0;"));
+        assert!(shared.contains("flex-wrap: wrap;"));
+    }
+    assert!(MAIN_CSS.contains("@media (max-width: 46rem)"));
+}
+
+#[test]
 fn background_refresh_status_floats_above_navigation_without_affecting_layout() {
     let status = block_body(MAIN_CSS, ".background-refresh-status");
     assert!(status.contains("position: fixed;"));

@@ -385,18 +385,17 @@ impl ComponentOrchestrator {
     }
 
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
-        matches!(
-            effect,
-            ClientEffect::ListAllTasks { .. } | ClientEffect::LoadBand { .. }
-        ) || matches!(
-            (self.refresh_state, effect),
-            (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
-                if expected == *request_id
-        ) || matches!(
-            (self.refresh_state, effect),
-            (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
-                if expected == *request_id
-        )
+        matches!(effect, ClientEffect::ListAllTasks { .. })
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })
+                    if expected == *request_id
+            )
+            || matches!(
+                (self.refresh_state, effect),
+                (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
+                    if expected == *request_id
+            )
     }
 
     fn persist_view_state<S: KeyValueStorage>(&mut self, storage: &S) {

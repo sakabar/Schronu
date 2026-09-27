@@ -243,6 +243,7 @@ pub(super) fn BrowserApp() -> Element {
                     observed_at_epoch_ms: band_observed_at_epoch_ms,
                     loading: band_loading,
                     error: band_error,
+                    server_actions_blocked,
                     on_refresh: move |_| dispatch_action(client, ComponentAction::RefreshLoad),
                     on_select_date: move |date| {
                         client.write().clear_date_input(&BrowserLocalStorage);

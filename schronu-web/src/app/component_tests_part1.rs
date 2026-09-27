@@ -121,18 +121,21 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     fn root() -> Element {
         rsx! {
             LoadView {
-                rows: vec![BandDay {
-                    logical_date: "2026-09-27".to_owned(),
-                    accumulated_rho_diff_seconds: 75 * 60,
-                    accumulated_free_diff_seconds: -45 * 60,
-                    durations: BandDurations {
-                        unavailable_seconds: 10 * 60 * 60,
-                        elapsed_seconds: 6 * 60 * 60,
-                        repetitive_seconds: 90 * 60,
-                        non_repetitive_seconds: 7 * 60 * 60,
-                        rho_leeway_seconds: 60 * 60,
+                rows: vec![
+                    BandDay {
+                        logical_date: "2026-09-27".to_owned(),
+                        accumulated_rho_diff_seconds: 75 * 60,
+                        accumulated_free_diff_seconds: -45 * 60,
+                        durations: BandDurations {
+                            unavailable_seconds: 10 * 60 * 60,
+                            elapsed_seconds: 6 * 60 * 60,
+                            repetitive_seconds: 90 * 60,
+                            non_repetitive_seconds: 7 * 60 * 60,
+                            rho_leeway_seconds: 60 * 60,
+                        },
                     },
-                }],
+                    band_day("2026-09-28", 0),
+                ],
                 observed_at_epoch_ms: Some(1_790_490_720_000),
                 loading: false,
                 error: None,
@@ -151,6 +154,30 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     assert!(html.contains("<span>余差累</span><strong>+01:15"), "{html}");
     assert!(html.contains("<span>空差累</span><strong>-00:45"), "{html}");
     assert!(html.contains("超過 01:30"), "{html}");
+    assert!(html.contains("超過0時間0分"), "{html}");
+}
+
+#[test]
+fn 背景更新中の負荷操作はbuttonを無効化する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-09-27", 0)],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                server_actions_blocked: true,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(html.matches(" disabled").count(), 2, "{html}");
 }
 
 #[test]
@@ -426,6 +453,28 @@ fn 負荷tab進入と更新はload_bandを要求する() {
         ComponentAction::SwitchTab(ActiveTab::Load),
     );
     assert!(matches!(entered, ClientEffect::LoadBand { .. }));
+    assert!(!ComponentOrchestrator::new().effect_is_background(&entered));
+
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 2_000,
+            },
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::SwitchTab(ActiveTab::History),
+        ),
+        ClientEffect::None
+    );
 
     let refreshed = reduce_component_action_at(
         &mut state,
