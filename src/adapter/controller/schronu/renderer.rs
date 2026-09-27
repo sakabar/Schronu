@@ -536,6 +536,7 @@ const BAND_UNAVAILABLE_COLOR: u8 = 110;
 const TASK_LIST_FIXED_COLOR: u8 = 127;
 const REPETITIVE_COLOR: u8 = 33;
 const NON_REPETITIVE_COLOR: u8 = 208;
+const BAND_FREE_COLOR: u8 = 34;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
 const DEADLINE_TODAY_COLOR: u8 = 214;
 const FUTURE_DEADLINE_COLOR: u8 = 34;
@@ -579,7 +580,7 @@ fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) ->
         '=' => REPETITIVE_COLOR,
         '-' => NON_REPETITIVE_COLOR,
         ':' => 28,
-        '.' => 34,
+        '.' => BAND_FREE_COLOR,
         '>' => DEADLINE_OVERRUN_COLOR,
         _ => return symbol.to_string().repeat(count),
     };
@@ -664,7 +665,7 @@ fn format_band_cumulative_diff(seconds: i64, supports_ansi_color: bool) -> Strin
     if seconds > 0 {
         ansi_foreground(&formatted, DEADLINE_OVERRUN_COLOR, supports_ansi_color)
     } else {
-        formatted
+        ansi_foreground(&formatted, BAND_FREE_COLOR, supports_ansi_color)
     }
 }
 

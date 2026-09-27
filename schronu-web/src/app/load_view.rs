@@ -166,7 +166,7 @@ fn BandDayRow(
                             class: if row.accumulated_rho_diff_seconds > 0 {
                                 "load-metric-value is-over"
                             } else {
-                                "load-metric-value"
+                                "load-metric-value is-within"
                             },
                             "{format_signed(row.accumulated_rho_diff_seconds)}"
                         }
@@ -177,7 +177,7 @@ fn BandDayRow(
                             class: if row.accumulated_free_diff_seconds > 0 {
                                 "load-metric-value is-over"
                             } else {
-                                "load-metric-value"
+                                "load-metric-value is-within"
                             },
                             "{format_signed(row.accumulated_free_diff_seconds)}"
                         }

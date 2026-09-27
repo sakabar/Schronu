@@ -1201,6 +1201,10 @@ button:disabled {
     color: var(--red);
 }
 
+.load-metric-value.is-within {
+    color: var(--green-dark);
+}
+
 .load-overflow,
 .load-error {
     color: var(--red);

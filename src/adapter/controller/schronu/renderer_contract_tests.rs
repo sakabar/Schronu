@@ -1093,7 +1093,8 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[2],
         format!(
-            "newline:2026-08-24(月) -07:08 {} [{}{}{}]{}",
+            "newline:2026-08-24(月) {} {} [{}{}{}]{}",
+            color(34, "-07:08"),
             color(196, "+46:09"),
             color(110, &"#".repeat(30)),
             color(244, &"x".repeat(53)),
@@ -1104,8 +1105,9 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[4],
         format!(
-            "newline:2026-08-23(日) {} -03:04 [{}{}{}{}{}{}]",
+            "newline:2026-08-23(日) {} {} [{}{}{}{}{}{}]",
             color(196, "+01:02"),
+            color(34, "-03:04"),
             color(110, "#"),
             color(244, "xx"),
             color(33, "==="),
@@ -1117,7 +1119,7 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
 }
 
 #[test]
-fn band_displayはterminalでも累積差分のzeroを着色しない() {
+fn band_displayはterminalで累積差分のzeroを緑色にする() {
     let row = BandDayRow {
         date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
         accumulated_rho_diff_seconds: 0,
@@ -1133,8 +1135,8 @@ fn band_displayはterminalでも累積差分のzeroを着色しない() {
 
     let formatted = format_band_day_row(&row, true);
 
-    assert!(formatted.starts_with("2026-08-25(火) +00:00 +00:00 ["));
-    assert!(!formatted.contains("\x1b[38;5;196m+00:00"));
+    assert!(formatted
+        .starts_with("2026-08-25(火) \x1b[38;5;34m+00:00\x1b[39m \x1b[38;5;34m+00:00\x1b[39m ["));
 }
 
 #[test]
