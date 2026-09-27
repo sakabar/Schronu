@@ -1,8 +1,8 @@
 use schronu_web::{
-    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
-    DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebSuccess,
+    web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
+    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -233,6 +233,38 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
             "observed_at_epoch_ms": 1_788_565_500_123_i64,
             "logical_date": "2026-09-05",
             "buffer_seconds": -61
+        }),
+    );
+}
+
+#[test]
+fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
+    let day = BandDay {
+        logical_date: "2026-09-05".to_owned(),
+        accumulated_rho_diff_seconds: 60,
+        accumulated_free_diff_seconds: -120,
+        durations: BandDurations {
+            unavailable_seconds: 1,
+            elapsed_seconds: 2,
+            repetitive_seconds: 3,
+            non_repetitive_seconds: 4,
+            rho_leeway_seconds: 5,
+        },
+    };
+
+    assert_json_round_trip(
+        &day,
+        json!({
+            "logical_date": "2026-09-05",
+            "accumulated_rho_diff_seconds": 60,
+            "accumulated_free_diff_seconds": -120,
+            "durations": {
+                "unavailable_seconds": 1,
+                "elapsed_seconds": 2,
+                "repetitive_seconds": 3,
+                "non_repetitive_seconds": 4,
+                "rho_leeway_seconds": 5
+            }
         }),
     );
 }
