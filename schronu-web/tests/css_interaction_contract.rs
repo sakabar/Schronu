@@ -122,6 +122,28 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
+fn load_rows_use_the_short_viewport_without_page_scrolling() {
+    let compact = block_body(MAIN_CSS, "@media (max-height: 50rem)");
+
+    let view = block_body(compact, ".load-view");
+    assert!(view.contains("height: calc(100dvh"));
+    assert!(view.contains("display: flex;"));
+    assert!(view.contains("flex-direction: column;"));
+
+    let legend = block_body(compact, ".band-legend");
+    assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
+
+    let days = block_body(compact, ".load-days");
+    assert!(days.contains("flex: 1 1 auto;"));
+    assert!(days.contains("min-height: 0;"));
+    assert!(days.contains("grid-template-rows: repeat(7, minmax(0, 1fr));"));
+
+    let row = block_body(compact, ".load-day {");
+    assert!(row.contains("min-height: 0;"));
+    assert!(row.contains("padding: 0.3rem 0.45rem;"));
+}
+
+#[test]
 fn background_refresh_status_floats_above_navigation_without_affecting_layout() {
     let status = block_body(MAIN_CSS, ".background-refresh-status");
     assert!(status.contains("position: fixed;"));
