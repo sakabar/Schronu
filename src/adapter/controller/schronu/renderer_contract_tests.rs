@@ -1,13 +1,13 @@
 use super::renderer::{
-    format_spreadsheet_task_row, format_task_list_columns, format_task_list_row,
-    format_task_list_task_row, render_display_model, render_display_model_with_mode,
-    task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlertIssue,
-    CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel,
-    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
-    RenderMode, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
-    TreeDisplay,
+    format_band_day_row, format_spreadsheet_task_row, format_task_list_columns,
+    format_task_list_row, format_task_list_task_row, render_display_model,
+    render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
+    BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
+    CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
+    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
+    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
@@ -1114,6 +1114,27 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
             color(34, &".".repeat(81)),
         )
     );
+}
+
+#[test]
+fn band_displayはterminalでも累積差分のzeroを着色しない() {
+    let row = BandDayRow {
+        date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+        accumulated_rho_diff_seconds: 0,
+        accumulated_free_diff_seconds: 0,
+        durations: BandDurations {
+            unavailable_seconds: 0,
+            elapsed_seconds: 0,
+            repetitive_seconds: 0,
+            non_repetitive_seconds: 0,
+            rho_leeway_seconds: 0,
+        },
+    };
+
+    let formatted = format_band_day_row(&row, true);
+
+    assert!(formatted.starts_with("2026-08-25(火) +00:00 +00:00 ["));
+    assert!(!formatted.contains("\x1b[38;5;196m+00:00"));
 }
 
 #[test]
