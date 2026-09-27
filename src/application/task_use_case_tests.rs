@@ -1912,6 +1912,138 @@ fn complete_task_繰り返しtaskを生成して見積もりを補正する() {
 }
 
 #[test]
+fn complete_task_繰り返しtaskはsubtreeのみなし実績で見積もりを補正する() {
+    let parent = crate::test_support::new_task_handle("月次報告書").unwrap();
+    parent.set_repetition_interval_days_opt(Some(30)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+
+    let mut occurrence_attr = crate::test_support::new_task_attr("今回");
+    occurrence_attr.set_estimated_work_seconds(120);
+    let occurrence = parent.create_as_last_child(occurrence_attr);
+
+    let mut measured_child_attr = crate::test_support::new_task_attr("計測済み");
+    measured_child_attr.set_estimated_work_seconds(200);
+    measured_child_attr.set_actual_work_seconds(100);
+    measured_child_attr.set_orig_status(Status::Done);
+    let measured_child = occurrence.create_as_last_child(measured_child_attr);
+
+    let mut unmeasured_child_attr = crate::test_support::new_task_attr("計測漏れ");
+    unmeasured_child_attr.set_estimated_work_seconds(300);
+    unmeasured_child_attr.set_orig_status(Status::Done);
+    let unmeasured_child = occurrence.create_as_last_child(unmeasured_child_attr);
+
+    let mut unmeasured_grandchild_attr = crate::test_support::new_task_attr("孫の計測漏れ");
+    unmeasured_grandchild_attr.set_estimated_work_seconds(40);
+    unmeasured_grandchild_attr.set_orig_status(Status::Done);
+    let unmeasured_grandchild = unmeasured_child.create_as_last_child(unmeasured_grandchild_attr);
+
+    let occurrence_id = occurrence.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: occurrence_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    // 120 (今回の見積) + 100 (計測済みactual) + 300 + 40 (計測漏れの見積) = 560。
+    // 既存見積600から100%未満への補正は差分の1/4なので、次回見積は590になる。
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 590);
+    let next_occurrence = parent
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|task| task.get_status().unwrap() != Status::Done)
+        .expect("next repetition occurrence");
+    assert_eq!(next_occurrence.get_estimated_work_seconds().unwrap(), 590);
+    assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 0);
+    assert_eq!(measured_child.get_actual_work_seconds().unwrap(), 100);
+    assert_eq!(unmeasured_child.get_actual_work_seconds().unwrap(), 0);
+    assert_eq!(unmeasured_grandchild.get_actual_work_seconds().unwrap(), 0);
+}
+
+#[test]
+fn complete_task_繰り返しtaskは完了時の追加実績を自身の見積より優先する() {
+    let parent = crate::test_support::new_task_handle("月次報告書").unwrap();
+    parent.set_repetition_interval_days_opt(Some(30)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+
+    let mut occurrence_attr = crate::test_support::new_task_attr("今回");
+    occurrence_attr.set_estimated_work_seconds(999);
+    let occurrence = parent.create_as_last_child(occurrence_attr);
+
+    let mut child_attr = crate::test_support::new_task_attr("計測済みの子");
+    child_attr.set_actual_work_seconds(100);
+    child_attr.set_orig_status(Status::Done);
+    let _child = occurrence.create_as_last_child(child_attr);
+
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: occurrence.get_id().unwrap(),
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 300,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+
+    // 300 (完了時に追加した今回のactual) + 100 (子のactual) = 400。
+    // 既存見積600から100%未満への補正は差分の1/4なので、次回見積は550になる。
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 550);
+    assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 300);
+}
+
+#[test]
+fn complete_task_subtreeのみなし実績overflowでは状態を変更しない() {
+    let parent = crate::test_support::new_task_handle("月次報告書").unwrap();
+    parent.set_repetition_interval_days_opt(Some(30)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+
+    let mut occurrence_attr = crate::test_support::new_task_attr("今回");
+    occurrence_attr.set_estimated_work_seconds(1);
+    let occurrence = parent.create_as_last_child(occurrence_attr);
+    let occurrence_id = occurrence.get_id().unwrap();
+
+    let mut child_attr = crate::test_support::new_task_attr("巨大な実績");
+    child_attr.set_actual_work_seconds(i64::MAX);
+    child_attr.set_orig_status(Status::Done);
+    let _child = occurrence.create_as_last_child(child_attr);
+
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let children_before = parent.get_children().unwrap().len();
+
+    let actual = complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: occurrence_id,
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+    );
+
+    assert_eq!(
+        actual,
+        Err(ApplicationError::InvalidInput {
+            field: "actual_work_seconds",
+            reason: "subtree accounted work overflow",
+        })
+    );
+    assert_eq!(occurrence.get_status().unwrap(), Status::Todo);
+    assert_eq!(occurrence.get_end_time_opt().unwrap(), None);
+    assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 0);
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(parent.get_children().unwrap().len(), children_before);
+}
+
+#[test]
 fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更しない() {
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();

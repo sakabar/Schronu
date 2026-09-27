@@ -850,8 +850,11 @@ fn prepare_next_repetition_task(
     let original_parent_estimated_work_seconds = parent_task
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let adjusted_parent_estimated_work_seconds =
-        adjusted_repetition_estimate(original_parent_estimated_work_seconds, actual_work_seconds)?;
+    let accounted_work_seconds = accounted_subtree_work_seconds(task, Some(actual_work_seconds))?;
+    let adjusted_parent_estimated_work_seconds = adjusted_repetition_estimate(
+        original_parent_estimated_work_seconds,
+        accounted_work_seconds,
+    )?;
     let task_attr = build_next_repetition_task_attr(
         task,
         &parent_task,
@@ -866,6 +869,37 @@ fn prepare_next_repetition_task(
         task_id,
         adjusted_parent_estimated_work_seconds,
     }))
+}
+
+fn accounted_subtree_work_seconds(
+    task: &TaskHandle,
+    actual_work_seconds_override: Option<i64>,
+) -> Result<i64, ApplicationError> {
+    let actual_work_seconds = match actual_work_seconds_override {
+        Some(actual_work_seconds) => actual_work_seconds,
+        None => task
+            .get_actual_work_seconds()
+            .map_err(ApplicationError::TaskTree)?,
+    };
+    let own_accounted_work_seconds = if actual_work_seconds > 0 {
+        actual_work_seconds
+    } else {
+        task.get_estimated_work_seconds()
+            .map_err(ApplicationError::TaskTree)?
+    };
+
+    task.get_children()
+        .map_err(ApplicationError::TaskTree)?
+        .into_iter()
+        .try_fold(own_accounted_work_seconds, |total, child| {
+            let child_accounted_work_seconds = accounted_subtree_work_seconds(&child, None)?;
+            total
+                .checked_add(child_accounted_work_seconds)
+                .ok_or(ApplicationError::InvalidInput {
+                    field: "actual_work_seconds",
+                    reason: "subtree accounted work overflow",
+                })
+        })
 }
 
 fn adjusted_repetition_estimate(
