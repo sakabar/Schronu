@@ -170,7 +170,7 @@ BandDurations {
 }
 ```
 
-`load_band`は`WebSuccess<Vec<BandDay>>`を返す。serverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。余差累・空差累は正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値を日付rowのARIA labelにも含める。負荷dataはlocalStorageへ保存しない。
+`load_band`は`WebSuccess<Vec<BandDay>>`を返す。serverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値を日付rowのARIA labelにも含める。負荷dataはlocalStorageへ保存しない。
 
 `segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
 

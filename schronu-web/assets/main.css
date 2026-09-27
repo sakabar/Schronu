@@ -1187,6 +1187,7 @@ button:disabled {
 
 .load-metric {
     display: inline-flex;
+    align-items: baseline;
     gap: 0.3rem;
     color: var(--muted);
     font-size: 0.75rem;

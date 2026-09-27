@@ -116,6 +116,8 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
         assert!(shared.contains("min-width: 0;"));
         assert!(shared.contains("flex-wrap: wrap;"));
     }
+    let metric = block_body(MAIN_CSS, ".load-metric {");
+    assert!(metric.contains("align-items: baseline;"));
     assert!(MAIN_CSS.contains("@media (max-width: 46rem)"));
 }
 
