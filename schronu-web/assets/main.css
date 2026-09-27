@@ -1298,7 +1298,7 @@ button:disabled {
     }
 }
 
-@media (max-height: 50rem) {
+@media (min-height: 35rem) and (max-height: 50rem) {
     .load-view {
         display: flex;
         height: calc(100dvh - var(--bottom-navigation-height) - env(safe-area-inset-bottom) - 3.5rem);
@@ -1309,38 +1309,40 @@ button:disabled {
     .load-toolbar {
         flex: 0 0 auto;
         gap: 0.5rem;
-        margin-bottom: 0.35rem;
+        margin-bottom: 0.25rem;
     }
 
     .load-toolbar h2 {
-        font-size: 1rem;
+        font-size: 0.95rem;
     }
 
     .load-refresh {
-        min-height: 32px;
-        padding: 0.3rem 0.75rem;
+        min-height: 30px;
+        padding: 0.25rem 0.7rem;
     }
 
     .band-legend {
         display: grid;
         flex: 0 0 auto;
         grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.2rem 0.4rem;
-        margin-bottom: 0.35rem;
-        padding: 0.35rem 0.5rem;
-        font-size: 0.65rem;
+        gap: 0.1rem 0.3rem;
+        margin-bottom: 0.25rem;
+        padding: 0.25rem 0.4rem;
+        font-size: 0.62rem;
     }
 
     .load-days {
         flex: 1 1 auto;
         min-height: 0;
-        grid-template-rows: repeat(7, minmax(0, 1fr));
+        grid-template-rows: repeat(7, minmax(2.875rem, 1fr));
         gap: 0.2rem;
     }
 
     .load-day {
         min-height: 0;
-        padding: 0.3rem 0.45rem;
+        padding: 0.2rem 0.4rem;
+        font-size: 0.72rem;
+        line-height: 1.15;
     }
 
     .load-day-heading,
@@ -1351,19 +1353,19 @@ button:disabled {
     }
 
     .load-band {
-        height: 0.7rem;
-        margin-block: 0.2rem;
+        height: 0.55rem;
+        margin-block: 0.1rem;
     }
 
     .load-metric {
         gap: 0.2rem;
-        font-size: 0.68rem;
+        font-size: 0.64rem;
     }
 
     .load-today,
     .load-open-list,
     .load-overflow {
-        font-size: 0.68rem;
+        font-size: 0.64rem;
     }
 }
 
