@@ -652,11 +652,20 @@ pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -
         "{}({}) {} {} [{}]{}",
         row.date,
         weekday_jp(row.date.weekday()),
-        format_signed_seconds(row.accumulated_rho_diff_seconds),
-        format_signed_seconds(row.accumulated_free_diff_seconds),
+        format_band_cumulative_diff(row.accumulated_rho_diff_seconds, supports_ansi_color,),
+        format_band_cumulative_diff(row.accumulated_free_diff_seconds, supports_ansi_color,),
         bar,
         overflow,
     )
+}
+
+fn format_band_cumulative_diff(seconds: i64, supports_ansi_color: bool) -> String {
+    let formatted = format_signed_seconds(seconds);
+    if seconds > 0 {
+        ansi_foreground(&formatted, DEADLINE_OVERRUN_COLOR, supports_ansi_color)
+    } else {
+        formatted
+    }
 }
 
 pub(super) fn format_signed_seconds(seconds: i64) -> String {

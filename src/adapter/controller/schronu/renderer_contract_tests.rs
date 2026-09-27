@@ -1093,7 +1093,8 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[2],
         format!(
-            "newline:2026-08-24(月) -07:08 +46:09 [{}{}{}]{}",
+            "newline:2026-08-24(月) -07:08 {} [{}{}{}]{}",
+            color(196, "+46:09"),
             color(110, &"#".repeat(30)),
             color(244, &"x".repeat(53)),
             color(33, &"=".repeat(13)),
@@ -1103,7 +1104,8 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[4],
         format!(
-            "newline:2026-08-23(日) +01:02 -03:04 [{}{}{}{}{}{}]",
+            "newline:2026-08-23(日) {} -03:04 [{}{}{}{}{}{}]",
+            color(196, "+01:02"),
             color(110, "#"),
             color(244, "xx"),
             color(33, "==="),

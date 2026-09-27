@@ -134,7 +134,18 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
                             rho_leeway_seconds: 60 * 60,
                         },
                     },
-                    band_day("2026-09-28", 0),
+                    BandDay {
+                        logical_date: "2026-09-28".to_owned(),
+                        accumulated_rho_diff_seconds: 0,
+                        accumulated_free_diff_seconds: 30 * 60,
+                        durations: BandDurations {
+                            unavailable_seconds: 0,
+                            elapsed_seconds: 0,
+                            repetitive_seconds: 0,
+                            non_repetitive_seconds: 0,
+                            rho_leeway_seconds: 0,
+                        },
+                    },
                 ],
                 observed_at_epoch_ms: Some(1_790_490_720_000),
                 loading: false,
@@ -151,8 +162,26 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 
     assert!(html.contains("直近7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
-    assert!(html.contains("<span>余差累</span><strong>+01:15"), "{html}");
-    assert!(html.contains("<span>空差累</span><strong>-00:45"), "{html}");
+    assert!(
+        html.contains(
+            "<span>余差累</span><strong class=\"load-metric-value is-over\">+01:15"
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span>空差累</span><strong class=\"load-metric-value\">-00:45"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span>余差累</span><strong class=\"load-metric-value\">+00:00"),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<span>空差累</span><strong class=\"load-metric-value is-over\">+00:30"
+        ),
+        "{html}"
+    );
     assert!(html.contains("超過 01:30"), "{html}");
     assert!(html.contains("超過0時間0分"), "{html}");
 }

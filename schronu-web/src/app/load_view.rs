@@ -162,11 +162,25 @@ fn BandDayRow(
                 span { class: "load-metrics",
                     span { class: "load-metric",
                         span { "余差累" }
-                        strong { "{format_signed(row.accumulated_rho_diff_seconds)}" }
+                        strong {
+                            class: if row.accumulated_rho_diff_seconds > 0 {
+                                "load-metric-value is-over"
+                            } else {
+                                "load-metric-value"
+                            },
+                            "{format_signed(row.accumulated_rho_diff_seconds)}"
+                        }
                     }
                     span { class: "load-metric",
                         span { "空差累" }
-                        strong { "{format_signed(row.accumulated_free_diff_seconds)}" }
+                        strong {
+                            class: if row.accumulated_free_diff_seconds > 0 {
+                                "load-metric-value is-over"
+                            } else {
+                                "load-metric-value"
+                            },
+                            "{format_signed(row.accumulated_free_diff_seconds)}"
+                        }
                     }
                 }
                 if overflow_seconds > 0 {

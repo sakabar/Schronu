@@ -1193,8 +1193,12 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
-.load-metric strong {
+.load-metric-value {
     color: var(--ink);
+}
+
+.load-metric-value.is-over {
+    color: var(--red);
 }
 
 .load-overflow,
