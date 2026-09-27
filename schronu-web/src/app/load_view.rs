@@ -118,13 +118,15 @@ fn BandDayRow(
     let used_seconds = raw_used_seconds(row.durations);
     let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
     let aria_label = format!(
-        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、超過{}。押すと一覧を表示します。",
+        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、空差累{}、超過{}。押すと一覧を表示します。",
         format_duration(row.durations.unavailable_seconds),
         format_duration(row.durations.elapsed_seconds),
         format_duration(row.durations.repetitive_seconds),
         format_duration(row.durations.non_repetitive_seconds),
         format_duration(row.durations.rho_leeway_seconds),
         format_duration(segments.free_seconds),
+        format_signed(row.accumulated_rho_diff_seconds),
+        format_signed(row.accumulated_free_diff_seconds),
         format_duration(overflow_seconds),
     );
     let class = if today {

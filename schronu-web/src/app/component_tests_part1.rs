@@ -163,6 +163,10 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     assert!(html.contains("直近7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
+        html.contains("余差累+01:15、空差累-00:45"),
+        "{html}"
+    );
+    assert!(
         html.contains(
             "<span>余差累</span><strong class=\"load-metric-value is-over\">+01:15"
         ),
