@@ -11,6 +11,7 @@ use super::component_runtime::{
     ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
+use super::load_view::LoadView;
 use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
@@ -18,8 +19,8 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, BandDay, BandDurations, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
@@ -77,7 +78,7 @@ fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
 }
 
 #[test]
-fn 固定navigationは3tabの選択状態とcallbackを提供する() {
+fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         navigation_root,
@@ -90,8 +91,8 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
-    assert_eq!(html.matches("class=\"tab-button").count(), 3, "{html}");
-    for label in ["セッション", "一覧", "発火履歴"] {
+    assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
+    for label in ["セッション", "一覧", "負荷", "発火履歴"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
     assert!(
@@ -106,8 +107,50 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     }
     assert_eq!(
         *events.lock().unwrap(),
-        [ActiveTab::History, ActiveTab::List, ActiveTab::Session]
+        [
+            ActiveTab::History,
+            ActiveTab::Load,
+            ActiveTab::List,
+            ActiveTab::Session
+        ]
     );
+}
+
+#[test]
+fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![BandDay {
+                    logical_date: "2026-09-27".to_owned(),
+                    accumulated_rho_diff_seconds: 75 * 60,
+                    accumulated_free_diff_seconds: -45 * 60,
+                    durations: BandDurations {
+                        unavailable_seconds: 10 * 60 * 60,
+                        elapsed_seconds: 6 * 60 * 60,
+                        repetitive_seconds: 90 * 60,
+                        non_repetitive_seconds: 7 * 60 * 60,
+                        rho_leeway_seconds: 60 * 60,
+                    },
+                }],
+                observed_at_epoch_ms: Some(1_790_490_720_000),
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("直近7日の負荷"), "{html}");
+    assert!(html.contains("9/27(日)"), "{html}");
+    assert!(html.contains("余差累</span><strong>+01:15"), "{html}");
+    assert!(html.contains("空差累</span><strong>-00:45"), "{html}");
+    assert!(html.contains("超過 00:30"), "{html}");
 }
 
 #[test]
@@ -369,6 +412,28 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
             && !request.record_elapsed_seconds
     ));
+}
+
+#[test]
+fn 負荷tab進入と更新はload_bandを要求する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+
+    let entered = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::Load),
+    );
+    assert!(matches!(entered, ClientEffect::LoadBand { .. }));
+
+    let refreshed = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::RefreshLoad,
+    );
+    assert!(matches!(refreshed, ClientEffect::LoadBand { .. }));
 }
 
 #[test]
