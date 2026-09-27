@@ -56,9 +56,18 @@ pub struct DailyLoadCumulative {
 pub struct DailyLoadAccumulator {
     accumulated_rho_diff: chrono::Duration,
     accumulated_free_diff: chrono::Duration,
+    accumulated_rho_ratio: f64,
 }
 
 impl DailyLoadAccumulator {
+    pub(crate) fn current(&self) -> DailyLoadCumulative {
+        DailyLoadCumulative {
+            accumulated_rho_diff_seconds: self.accumulated_rho_diff.num_seconds(),
+            accumulated_free_diff_seconds: self.accumulated_free_diff.num_seconds(),
+            accumulated_rho_ratio: self.accumulated_rho_ratio,
+        }
+    }
+
     pub fn advance(&mut self, input: DailyLoadDayInput) -> DailyLoadCumulative {
         let adjustable = chrono::Duration::seconds(input.adjustable_work_seconds.max(0));
         if self.accumulated_free_diff < -adjustable {
@@ -82,6 +91,7 @@ impl DailyLoadAccumulator {
         } else {
             f64::INFINITY
         };
+        self.accumulated_rho_ratio = accumulated_rho_ratio;
         let diff_to_goal = calculate_daily_rho_diff_hours(
             input.free_time_minutes,
             input.repetitive_work_seconds,

@@ -131,7 +131,10 @@ where
             .get_is_on_other_side()
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?;
         if segment.is_leaf() && !is_on_other_side && date > available_date {
-            *adjustable.entry(date).or_default() += segment.scheduled_work_seconds;
+            let estimated_work_seconds = task.get_estimated_work_seconds().map_err(|error| {
+                WebReadCoreError::Application(ApplicationError::TaskTree(error))
+            })?;
+            *adjustable.entry(date).or_default() += estimated_work_seconds;
         }
     }
 
@@ -161,12 +164,16 @@ where
                 repetitive_work_seconds,
                 total_work_seconds,
             );
-            let cumulative = accumulator.advance(DailyLoadDayInput {
-                free_time_minutes,
-                total_work_seconds,
-                repetitive_work_seconds,
-                adjustable_work_seconds: *adjustable.get(&date).unwrap_or(&0),
-            });
+            let cumulative = if totals.contains_key(&date) {
+                accumulator.advance(DailyLoadDayInput {
+                    free_time_minutes,
+                    total_work_seconds,
+                    repetitive_work_seconds,
+                    adjustable_work_seconds: *adjustable.get(&date).unwrap_or(&0),
+                })
+            } else {
+                accumulator.current()
+            };
             let durations = calculate_daily_band_durations(
                 date == today,
                 full_day_free_minutes,
