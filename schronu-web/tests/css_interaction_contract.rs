@@ -122,7 +122,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
-fn load_rows_fit_without_scroll_from_35rem_and_compact_through_50rem() {
+fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
     assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
 
@@ -141,7 +141,7 @@ fn load_rows_fit_without_scroll_from_35rem_and_compact_through_50rem() {
 
     let compact = block_body(
         MAIN_CSS,
-        "@media (min-height: 35rem) and (max-height: 50rem)",
+        "@media (min-height: 35rem) and (max-height: 60rem)",
     );
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));

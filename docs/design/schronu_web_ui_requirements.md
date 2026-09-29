@@ -141,7 +141,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.8 負荷画面
 
-- **REQ-LOAD-001**: 現在logical dateから6日後までの連続7日を日付昇順で表示し、taskがない日も省略しないこと。viewport高が35rem以上の場合は負荷viewを動的viewport高へ固定し、取得成功してinline errorがない7日分をpageの縦scrollなしで表示すること。35rem以上50rem以下ではtoolbar、凡例、rowをcompact表示に切り替えること。35rem未満ではrowを重ねず通常の縦scrollを許可すること。
+- **REQ-LOAD-001**: 現在logical dateから6日後までの連続7日を日付昇順で表示し、taskがない日も省略しないこと。viewport高が35rem以上の場合は負荷viewを動的viewport高へ固定し、取得成功してinline errorがない7日分をpageの縦scrollなしで表示すること。35rem以上60rem以下ではtoolbar、凡例、rowをcompact表示に切り替えること。35rem未満ではrowを重ねず通常の縦scrollを許可すること。
 - **REQ-LOAD-002**: 各日を24時間固定の積み上げbarとし、利用不可、当日だけの経過済み、繰返、単発、rho 0.7までの余差、空きの順に表示すること。当日だけはその上へ、利用不可と経過済みを除外し、残る繰返、単発、余差、空きを残り容量に対して再正規化した「残り枠」barを追加すること。残り容量が0の場合は空barとすること。合計が24時間を超える場合は1日全体barを24時間で打ち切り、超過を赤い`HH:MM`で表示すること。
 - **REQ-LOAD-003**: 各rowへCLI`帯`と同じ余差累・空差累を符号付き`HH:MM`で表示し、名称と数値のbaselineを揃えること。正の値は赤、0以下は緑で表示すること。空日は累積計算を進めず直前値を表示すること。`利用不可・経過済み・繰返・単発・余差・空き・超過`の全category名と時間、および余差累・空差累の名称と符号付き値をARIA labelへ含めること。categoryは0秒の場合も省略しないこと。
 - **REQ-LOAD-004**: 負荷tabへ入った時と「更新」押下時に`load_band`を1回送り、定期pollingしないこと。失敗時は直前のdataを保持してinline errorと再試行を表示すること。
@@ -240,4 +240,4 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-031 | 全件tableは320px、360px、46rem、1024pxで`44px 8.25rem 5.5rem minmax(0, 1fr)`を維持し、予定を`YYYY/MM/DD(曜)`で表示する。葉行はセッション追加だけ、親行は空の操作cellとなり、同一UUIDの全segmentが追加済み表示になる。 |
 | AC-032 | record、complete、defer成功後だけ全件一覧が無効状態となり、取得中だった遅延responseで古い行を復活させない。localのセッション追加、破棄、再開では無効化しない。 |
 | AC-033 | 日付別一覧は現在logical dateの現在時刻から先頭taskまでとtask間の1分以上を分単位で表示し、未来・過去日の先頭と最終task後は表示しない。全件一覧は検索後の隣接表示task日の間に実在する空のlogical date数を日単位で表示し、翌logical dateへ連続する境界は横線で示す。空き行と境界線は500task件数とserverのsegment対応を変えない。日付別は検索中に分単位の空き行を隠すが、全件は検索不一致taskの日付を除外して日単位の空き行と境界線を再計算・表示する。 |
-| AC-034 | 負荷tabは今日から空日を含む連続7日を24時間固定barで表示し、CLIと同じcategory、余差累、空差累、超過時間を示す。当日は利用不可・経過済みを除いた4categoryを残り容量へ再正規化した「残り枠」barを「1日全体」barの上に示す。余差累・空差累は正なら赤、0以下なら緑で表示する。viewport高が35rem以上では取得成功してinline errorがない7日分をpageの縦scrollなしで表示し、35rem以上50rem以下ではcompact表示へ切り替える。35rem未満ではrowを重ねず縦scrollを許可する。tab進入と更新だけで取得し、row押下で対象日の一覧へ移る。 |
+| AC-034 | 負荷tabは今日から空日を含む連続7日を24時間固定barで表示し、CLIと同じcategory、余差累、空差累、超過時間を示す。当日は利用不可・経過済みを除いた4categoryを残り容量へ再正規化した「残り枠」barを「1日全体」barの上に示す。余差累・空差累は正なら赤、0以下なら緑で表示する。viewport高が35rem以上では取得成功してinline errorがない7日分をpageの縦scrollなしで表示し、35rem以上60rem以下ではcompact表示へ切り替える。35rem未満ではrowを重ねず縦scrollを許可する。tab進入と更新だけで取得し、row押下で対象日の一覧へ移る。 |

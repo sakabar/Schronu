@@ -1349,7 +1349,7 @@ button:disabled {
     }
 }
 
-@media (min-height: 35rem) and (max-height: 50rem) {
+@media (min-height: 35rem) and (max-height: 60rem) {
 
     .load-toolbar {
         flex: 0 0 auto;
