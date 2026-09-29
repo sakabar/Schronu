@@ -120,10 +120,26 @@ fn BandDayRow(
         })
         .unwrap_or_else(|| row.logical_date.clone());
     let segments = clipped_segments(row.durations);
+    let remaining_capacity_seconds = SECONDS_PER_DAY
+        .saturating_sub(segments.unavailable_seconds)
+        .saturating_sub(segments.elapsed_seconds)
+        .max(0);
     let used_seconds = raw_used_seconds(row.durations);
     let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
+    let remaining_aria = if today {
+        format!(
+            "残り枠{}、残り繰返{}、残り単発{}、残り余差{}、残り空き{}。",
+            format_duration(remaining_capacity_seconds),
+            format_duration(segments.repetitive_seconds),
+            format_duration(segments.non_repetitive_seconds),
+            format_duration(segments.rho_leeway_seconds),
+            format_duration(segments.free_seconds),
+        )
+    } else {
+        String::new()
+    };
     let aria_label = format!(
-        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、空差累{}、超過{}。押すと一覧を表示します。",
+        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、空差累{}、超過{}。{remaining_aria}押すと一覧を表示します。",
         format_duration(row.durations.unavailable_seconds),
         format_duration(row.durations.elapsed_seconds),
         format_duration(row.durations.repetitive_seconds),
@@ -157,13 +173,47 @@ fn BandDayRow(
                 }
                 span { class: "load-open-list", "一覧を見る ›" }
             }
+            if today {
+                span { class: "load-focus-group",
+                    span { class: "load-band-caption load-focus-caption",
+                        span { "残り枠 " small { "利用不可・経過済みを除外" } }
+                        strong { "{format_unsigned(remaining_capacity_seconds)}" }
+                    }
+                    span { class: "load-band", aria_hidden: "true",
+                        BandSegment {
+                            class: "is-repetitive",
+                            seconds: segments.repetitive_seconds,
+                            capacity_seconds: remaining_capacity_seconds,
+                        }
+                        BandSegment {
+                            class: "is-single",
+                            seconds: segments.non_repetitive_seconds,
+                            capacity_seconds: remaining_capacity_seconds,
+                        }
+                        BandSegment {
+                            class: "is-leeway",
+                            seconds: segments.rho_leeway_seconds,
+                            capacity_seconds: remaining_capacity_seconds,
+                        }
+                        BandSegment {
+                            class: "is-free",
+                            seconds: segments.free_seconds,
+                            capacity_seconds: remaining_capacity_seconds,
+                        }
+                    }
+                }
+                span { class: "load-band-caption load-overview-caption",
+                    span { "1日全体" }
+                    strong { "24:00" }
+                }
+            }
             span { class: "load-band", aria_hidden: "true",
-                BandSegment { class: "is-unavailable", seconds: segments.unavailable_seconds }
-                BandSegment { class: "is-elapsed", seconds: segments.elapsed_seconds }
-                BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds }
-                BandSegment { class: "is-single", seconds: segments.non_repetitive_seconds }
-                BandSegment { class: "is-leeway", seconds: segments.rho_leeway_seconds }
-                BandSegment { class: "is-free", seconds: segments.free_seconds }
+                BandSegment { class: "is-unavailable", seconds: segments.unavailable_seconds, capacity_seconds: SECONDS_PER_DAY }
+                BandSegment { class: "is-elapsed", seconds: segments.elapsed_seconds, capacity_seconds: SECONDS_PER_DAY }
+                BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
+                BandSegment { class: "is-single", seconds: segments.non_repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
+                BandSegment { class: "is-leeway", seconds: segments.rho_leeway_seconds, capacity_seconds: SECONDS_PER_DAY }
+                BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: SECONDS_PER_DAY }
             }
             span { class: "load-day-footer",
                 span { class: "load-metrics",
@@ -199,8 +249,12 @@ fn BandDayRow(
 }
 
 #[component]
-fn BandSegment(class: &'static str, seconds: i64) -> Element {
-    let width = seconds.max(0) as f64 * 100.0 / SECONDS_PER_DAY as f64;
+fn BandSegment(class: &'static str, seconds: i64, capacity_seconds: i64) -> Element {
+    let width = if capacity_seconds > 0 {
+        seconds.max(0).min(capacity_seconds) as f64 * 100.0 / capacity_seconds as f64
+    } else {
+        0.0
+    };
     rsx! { span { class: "load-band-segment {class}", style: "width:{width:.4}%" } }
 }
 

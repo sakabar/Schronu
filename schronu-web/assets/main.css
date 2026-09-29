@@ -1163,6 +1163,29 @@ button:disabled {
     font-size: 0.75rem;
 }
 
+.load-band-caption {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.35rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.load-band-caption strong {
+    color: var(--ink);
+}
+
+.load-focus-caption {
+    color: var(--green-dark);
+}
+
+.load-focus-caption small {
+    font-size: inherit;
+}
+
 .load-band {
     display: flex;
     width: 100%;
@@ -1171,6 +1194,15 @@ button:disabled {
     overflow: hidden;
     border-radius: 0.3rem;
     background: var(--surface-muted);
+}
+
+.load-focus-group .load-band,
+.load-day.is-today > .load-band {
+    margin-top: 0.15rem;
+}
+
+.load-focus-group .load-band {
+    margin-bottom: 0;
 }
 
 .load-band-segment {
@@ -1298,7 +1330,7 @@ button:disabled {
     }
 }
 
-@media (min-height: 35rem) and (max-height: 50rem) {
+@media (min-height: 35rem) {
     .load-view {
         display: flex;
         height: calc(100dvh - var(--bottom-navigation-height) - env(safe-area-inset-bottom) - 3.5rem);
@@ -1309,6 +1341,15 @@ button:disabled {
     .load-view.has-error {
         height: auto;
     }
+
+    .load-days {
+        flex: 1 1 auto;
+        min-height: 0;
+        grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));
+    }
+}
+
+@media (min-height: 35rem) and (max-height: 50rem) {
 
     .load-toolbar {
         flex: 0 0 auto;
@@ -1335,12 +1376,7 @@ button:disabled {
         font-size: 0.62rem;
     }
 
-    .load-days {
-        flex: 1 1 auto;
-        min-height: 0;
-        grid-template-rows: repeat(7, minmax(2.875rem, 1fr));
-        gap: 0.2rem;
-    }
+    .load-days { gap: 0.2rem; }
 
     .load-day {
         min-height: 0;
@@ -1359,6 +1395,23 @@ button:disabled {
     .load-band {
         height: 0.55rem;
         margin-block: 0.1rem;
+    }
+
+    .load-band-caption {
+        margin-top: 0.1rem;
+        font-size: 0.64rem;
+    }
+
+    .load-overview-caption {
+        display: none;
+    }
+
+    .load-focus-group .load-band {
+        margin-block: 0.1rem 0;
+    }
+
+    .load-day.is-today > .load-band {
+        margin-block: 0.2rem 0.1rem;
     }
 
     .load-metric {

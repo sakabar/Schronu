@@ -122,27 +122,31 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
-fn load_rows_use_bounded_compact_height_without_overlapping() {
+fn load_rows_fit_without_scroll_from_35rem_and_compact_through_50rem() {
+    let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
+    assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
+
+    let view = block_body(no_scroll, ".load-view");
+    assert!(view.contains("height: calc(100dvh"));
+    assert!(view.contains("display: flex;"));
+    assert!(view.contains("flex-direction: column;"));
+    let error_view = block_body(no_scroll, ".load-view.has-error");
+    assert!(error_view.contains("height: auto;"));
+
+    let days = block_body(no_scroll, ".load-days");
+    assert!(days.contains("flex: 1 1 auto;"));
+    assert!(days.contains("min-height: 0;"));
+    assert!(days
+        .contains("grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));"));
+
     let compact = block_body(
         MAIN_CSS,
         "@media (min-height: 35rem) and (max-height: 50rem)",
     );
-    assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
-
-    let view = block_body(compact, ".load-view");
-    assert!(view.contains("height: calc(100dvh"));
-    assert!(view.contains("display: flex;"));
-    assert!(view.contains("flex-direction: column;"));
-    let error_view = block_body(compact, ".load-view.has-error");
-    assert!(error_view.contains("height: auto;"));
-
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
-
-    let days = block_body(compact, ".load-days");
-    assert!(days.contains("flex: 1 1 auto;"));
-    assert!(days.contains("min-height: 0;"));
-    assert!(days.contains("grid-template-rows: repeat(7, minmax(2.875rem, 1fr));"));
+    let overview_caption = block_body(compact, ".load-overview-caption");
+    assert!(overview_caption.contains("display: none;"));
 
     let row = block_body(compact, ".load-day {");
     assert!(row.contains("min-height: 0;"));

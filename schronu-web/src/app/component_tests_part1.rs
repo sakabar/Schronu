@@ -195,6 +195,124 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 }
 
 #[test]
+fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
+    fn root() -> Element {
+        let today = BandDay {
+            logical_date: "2026-09-27".to_owned(),
+            accumulated_rho_diff_seconds: 0,
+            accumulated_free_diff_seconds: 0,
+            durations: BandDurations {
+                unavailable_seconds: 8 * 60 * 60,
+                elapsed_seconds: 8 * 60 * 60,
+                repetitive_seconds: 60 * 60,
+                non_repetitive_seconds: 2 * 60 * 60,
+                rho_leeway_seconds: 60 * 60,
+            },
+        };
+        let future = BandDay {
+            logical_date: "2026-09-28".to_owned(),
+            durations: BandDurations {
+                elapsed_seconds: 0,
+                ..today.durations
+            },
+            ..today
+        };
+        rsx! {
+            LoadView {
+                rows: vec![today, future],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let today_start = html
+        .find("<button class=\"load-day is-today\"")
+        .expect("today row must exist");
+    let future_start = html
+        .find("<button class=\"load-day\"")
+        .expect("future row must exist");
+    let today_html = &html[today_start..future_start];
+    let future_html = &html[future_start..];
+
+    assert_eq!(today_html.matches("class=\"load-band\"").count(), 2, "{html}");
+    assert_eq!(future_html.matches("class=\"load-band\"").count(), 1, "{html}");
+    assert!(
+        today_html.find("残り枠").unwrap() < today_html.find("1日全体").unwrap(),
+        "{html}"
+    );
+    let focus_start = today_html
+        .find("<span class=\"load-focus-group\"")
+        .expect("remaining focus group must exist");
+    let overview_start = today_html
+        .find("<span class=\"load-band-caption load-overview-caption\"")
+        .expect("full-day overview caption must exist");
+    let focus_html = &today_html[focus_start..overview_start];
+    assert!(focus_html.contains("08:00"), "{html}");
+    for expected in [
+        "残り枠8時間0分",
+        "残り繰返1時間0分",
+        "残り単発2時間0分",
+        "残り余差1時間0分",
+        "残り空き4時間0分",
+    ] {
+        assert!(today_html.contains(expected), "missing {expected}: {html}");
+    }
+    for expected in ["width:12.5000%", "width:25.0000%", "width:50.0000%"] {
+        assert!(focus_html.contains(expected), "missing {expected}: {html}");
+    }
+}
+
+#[test]
+fn 負荷viewは残り容量zeroを空barとして表示する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![BandDay {
+                    logical_date: "2026-09-27".to_owned(),
+                    accumulated_rho_diff_seconds: 0,
+                    accumulated_free_diff_seconds: 0,
+                    durations: BandDurations {
+                        unavailable_seconds: 24 * 60 * 60,
+                        elapsed_seconds: 0,
+                        repetitive_seconds: 60 * 60,
+                        non_repetitive_seconds: 0,
+                        rho_leeway_seconds: 0,
+                    },
+                }],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let focus_start = html
+        .find("<span class=\"load-focus-group\"")
+        .expect("remaining focus group must exist");
+    let overview_start = html
+        .find("<span class=\"load-band-caption load-overview-caption\"")
+        .expect("full-day overview caption must exist");
+    let focus_html = &html[focus_start..overview_start];
+
+    assert!(html.contains("残り枠0時間0分"), "{html}");
+    assert_eq!(focus_html.matches("width:0.0000%").count(), 4, "{html}");
+    assert!(!html.contains("NaN"), "{html}");
+    assert!(!html.contains("inf"), "{html}");
+}
+
+#[test]
 fn 負荷viewはerror時にcompact固定高を解除するclassを付ける() {
     fn root() -> Element {
         rsx! {
