@@ -1189,20 +1189,49 @@ button:disabled {
 .load-band {
     display: flex;
     width: 100%;
-    height: 1.1rem;
-    margin-block: 0.45rem 0.4rem;
+    height: 0.9rem;
     overflow: hidden;
     border-radius: 0.3rem;
     background: var(--surface-muted);
 }
 
-.load-focus-group .load-band,
-.load-day.is-today > .load-band {
+.load-band-stack {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin-block: 0.45rem 0.4rem;
+    overflow: hidden;
+}
+
+.load-focus-stack {
+    margin-block: 0.15rem 0;
+}
+
+.load-day.is-today > .load-overview-stack {
     margin-top: 0.15rem;
 }
 
-.load-focus-group .load-band {
-    margin-bottom: 0;
+.load-overflow-rail {
+    display: flex;
+    width: 100%;
+    height: 0.2rem;
+    overflow: hidden;
+    border-radius: 0.1rem;
+    background: transparent;
+}
+
+.load-overflow-fill {
+    flex: 0 0 auto;
+    min-width: 2px;
+    height: 100%;
+    margin-left: auto;
+    border-radius: inherit;
+    background: var(--band-overflow);
+}
+
+.load-overflow-fill.is-zero {
+    width: 0 !important;
+    min-width: 0;
 }
 
 .load-band-segment {
@@ -1393,8 +1422,15 @@ button:disabled {
     }
 
     .load-band {
-        height: 0.55rem;
+        height: 0.425rem;
+    }
+
+    .load-band-stack {
         margin-block: 0.1rem;
+    }
+
+    .load-overflow-rail {
+        height: 0.125rem;
     }
 
     .load-band-caption {
@@ -1406,11 +1442,11 @@ button:disabled {
         display: none;
     }
 
-    .load-focus-group .load-band {
+    .load-focus-stack {
         margin-block: 0.1rem 0;
     }
 
-    .load-day.is-today > .load-band {
+    .load-day.is-today > .load-overview-stack {
         margin-block: 0.2rem 0.1rem;
     }
 

@@ -153,6 +153,27 @@ fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     assert!(row.contains("padding: 0.2rem 0.4rem;"));
     assert!(row.contains("font-size: 0.72rem;"));
     assert!(row.contains("line-height: 1.15;"));
+
+    let stack = block_body(MAIN_CSS, ".load-band-stack");
+    assert!(stack.contains("min-width: 0;"));
+    assert!(stack.contains("margin-block: 0.45rem 0.4rem;"));
+    assert!(stack.contains("overflow: hidden;"));
+    let band = block_body(MAIN_CSS, ".load-band {");
+    assert!(band.contains("height: 0.9rem;"));
+    let rail = block_body(MAIN_CSS, ".load-overflow-rail");
+    assert!(rail.contains("height: 0.2rem;"));
+    let fill = block_body(MAIN_CSS, ".load-overflow-fill");
+    assert!(fill.contains("min-width: 2px;"));
+    assert!(fill.contains("margin-left: auto;"));
+    let zero_fill = block_body(MAIN_CSS, ".load-overflow-fill.is-zero");
+    assert!(zero_fill.contains("min-width: 0;"));
+
+    let compact_stack = block_body(compact, ".load-band-stack");
+    assert!(compact_stack.contains("margin-block: 0.1rem;"));
+    let compact_band = block_body(compact, ".load-band {");
+    assert!(compact_band.contains("height: 0.425rem;"));
+    let compact_rail = block_body(compact, ".load-overflow-rail");
+    assert!(compact_rail.contains("height: 0.125rem;"));
 }
 
 #[test]

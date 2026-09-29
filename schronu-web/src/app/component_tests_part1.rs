@@ -270,6 +270,64 @@ fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
 }
 
 #[test]
+fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示する() {
+    fn root() -> Element {
+        let today = BandDay {
+            logical_date: "2026-09-27".to_owned(),
+            accumulated_rho_diff_seconds: 0,
+            accumulated_free_diff_seconds: 0,
+            durations: BandDurations {
+                unavailable_seconds: 8 * 60 * 60,
+                elapsed_seconds: 8 * 60 * 60,
+                repetitive_seconds: 4 * 60 * 60,
+                non_repetitive_seconds: 5 * 60 * 60,
+                rho_leeway_seconds: 3 * 60 * 60,
+            },
+        };
+        let future = BandDay {
+            logical_date: "2026-09-28".to_owned(),
+            durations: BandDurations {
+                elapsed_seconds: 0,
+                ..today.durations
+            },
+            ..today
+        };
+        rsx! {
+            LoadView {
+                rows: vec![today, future],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let today_start = html
+        .find("<button class=\"load-day is-today\"")
+        .expect("today row must exist");
+    let future_start = html
+        .find("<button class=\"load-day\"")
+        .expect("future row must exist");
+    let today_html = &html[today_start..future_start];
+    let future_html = &html[future_start..];
+
+    assert_eq!(today_html.matches("class=\"load-overflow-rail\"").count(), 2, "{html}");
+    assert_eq!(future_html.matches("class=\"load-overflow-rail\"").count(), 1, "{html}");
+    assert_eq!(today_html.matches("aria-hidden=\"true\"").count(), 4, "{html}");
+    assert!(today_html.contains("width:50.0000%"), "{html}");
+    assert!(today_html.contains("width:16.6667%"), "{html}");
+    assert!(future_html.contains("width:0.0000%"), "{html}");
+    assert!(future_html.contains("is-zero"), "{html}");
+    assert!(today_html.contains("超過 04:00"), "{html}");
+    assert!(today_html.contains("超過4時間0分"), "{html}");
+}
+
+#[test]
 fn 負荷viewは残り容量zeroを空barとして表示する() {
     fn root() -> Element {
         rsx! {
@@ -308,6 +366,48 @@ fn 負荷viewは残り容量zeroを空barとして表示する() {
 
     assert!(html.contains("残り枠0時間0分"), "{html}");
     assert_eq!(focus_html.matches("width:0.0000%").count(), 4, "{html}");
+    assert!(focus_html.contains("width:100.0000%"), "{html}");
+    assert!(html.contains("width:4.1667%"), "{html}");
+    assert!(!html.contains("NaN"), "{html}");
+    assert!(!html.contains("inf"), "{html}");
+}
+
+#[test]
+fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![BandDay {
+                    logical_date: "2026-09-27".to_owned(),
+                    accumulated_rho_diff_seconds: 0,
+                    accumulated_free_diff_seconds: 0,
+                    durations: BandDurations {
+                        unavailable_seconds: 24 * 60 * 60,
+                        elapsed_seconds: 0,
+                        repetitive_seconds: 30 * 60 * 60,
+                        non_repetitive_seconds: 0,
+                        rho_leeway_seconds: 0,
+                    },
+                }],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(
+        html.matches("class=\"load-overflow-fill\" style=\"width:100.0000%\"")
+            .count(),
+        2,
+        "{html}"
+    );
     assert!(!html.contains("NaN"), "{html}");
     assert!(!html.contains("inf"), "{html}");
 }

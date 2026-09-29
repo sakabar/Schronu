@@ -179,7 +179,10 @@ fn BandDayRow(
                         span { "残り枠 " small { "利用不可・経過済みを除外" } }
                         strong { "{format_unsigned(remaining_capacity_seconds)}" }
                     }
-                    span { class: "load-band", aria_hidden: "true",
+                    BandStack {
+                        class: "load-focus-stack",
+                        overflow_seconds,
+                        capacity_seconds: remaining_capacity_seconds,
                         BandSegment {
                             class: "is-repetitive",
                             seconds: segments.repetitive_seconds,
@@ -207,7 +210,10 @@ fn BandDayRow(
                     strong { "24:00" }
                 }
             }
-            span { class: "load-band", aria_hidden: "true",
+            BandStack {
+                class: "load-overview-stack",
+                overflow_seconds,
+                capacity_seconds: SECONDS_PER_DAY,
                 BandSegment { class: "is-unavailable", seconds: segments.unavailable_seconds, capacity_seconds: SECONDS_PER_DAY }
                 BandSegment { class: "is-elapsed", seconds: segments.elapsed_seconds, capacity_seconds: SECONDS_PER_DAY }
                 BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
@@ -249,6 +255,29 @@ fn BandDayRow(
 }
 
 #[component]
+fn BandStack(
+    class: &'static str,
+    overflow_seconds: i64,
+    capacity_seconds: i64,
+    children: Element,
+) -> Element {
+    let overflow_width = overflow_percentage(overflow_seconds, capacity_seconds);
+    let overflow_class = if overflow_seconds > 0 {
+        "load-overflow-fill"
+    } else {
+        "load-overflow-fill is-zero"
+    };
+    rsx! {
+        span { class: "load-band-stack {class}",
+            span { class: "load-band", aria_hidden: "true", {children} }
+            span { class: "load-overflow-rail", aria_hidden: "true",
+                span { class: overflow_class, style: "width:{overflow_width:.4}%" }
+            }
+        }
+    }
+}
+
+#[component]
 fn BandSegment(class: &'static str, seconds: i64, capacity_seconds: i64) -> Element {
     let width = if capacity_seconds > 0 {
         seconds.max(0).min(capacity_seconds) as f64 * 100.0 / capacity_seconds as f64
@@ -256,6 +285,16 @@ fn BandSegment(class: &'static str, seconds: i64, capacity_seconds: i64) -> Elem
         0.0
     };
     rsx! { span { class: "load-band-segment {class}", style: "width:{width:.4}%" } }
+}
+
+fn overflow_percentage(overflow_seconds: i64, capacity_seconds: i64) -> f64 {
+    if overflow_seconds <= 0 {
+        0.0
+    } else if capacity_seconds <= 0 {
+        100.0
+    } else {
+        overflow_seconds.min(capacity_seconds) as f64 * 100.0 / capacity_seconds as f64
+    }
 }
 
 fn raw_used_seconds(durations: BandDurations) -> i64 {
