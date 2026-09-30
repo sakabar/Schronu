@@ -2,6 +2,15 @@ const MAIN_CSS: &str = include_str!("../assets/main.css");
 const HOVER_MEDIA_QUERY: &str = "@media (hover: hover) and (pointer: fine)";
 
 #[test]
+fn load_band_palette_distinguishes_adjacent_blue_and_green_segments() {
+    let root = block_body(MAIN_CSS, ":root");
+
+    assert!(root.contains("--band-repetitive: #60a5fa;"));
+    assert!(root.contains("--band-leeway: #166534;"));
+    assert!(root.contains("--band-free: #4ade80;"));
+}
+
+#[test]
 fn button_hover_styles_are_limited_to_hover_capable_fine_pointers() {
     let hover_block = block_body(MAIN_CSS, HOVER_MEDIA_QUERY);
     let media_start = MAIN_CSS
