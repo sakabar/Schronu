@@ -2539,7 +2539,7 @@ fn test_execute_all_締切差をlogical_date単位でd列へ表示する() {
 }
 
 #[test]
-fn test_execute_all_未来締切を超過する予定のiconをvにする() {
+fn test_execute_all_締切iconとfilterは着手予定logical_dateを基準にする() {
     let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
     let root = new_test_task_handle("root").unwrap();
     let missed = add_scheduled_child_for_test(
@@ -2579,6 +2579,17 @@ fn test_execute_all_未来締切を超過する予定のiconをvにする() {
         ))
         .unwrap();
 
+    for pattern in ["全 〆", "全 印"] {
+        let filtered = execute_command_for_test(root.clone(), now, None, pattern);
+        assert!(filtered.output.contains("未来締切超過"));
+        assert!(filtered.output.contains("未来締切内"));
+        assert!(filtered.output.contains("当日締切内"));
+    }
+
+    let overrun = execute_command_for_test(root.clone(), now, None, "全 超");
+    assert!(overrun.output.contains("未来締切超過"));
+    assert!(!overrun.output.contains("未来締切内"));
+
     let mut task_repository = TestTaskRepository::new(root, now);
     let mut free_time_manager = TestFreeTimeManager::with_free_minutes(24 * 60);
     let mut focused_task_id_opt = None;
@@ -2604,7 +2615,7 @@ fn test_execute_all_未来締切を超過する予定のiconをvにする() {
     };
 
     assert_eq!(icon_for("未来締切超過"), "v");
-    assert_eq!(icon_for("未来締切内"), "-");
+    assert_eq!(icon_for("未来締切内"), "!");
     assert_eq!(icon_for("当日締切内"), "!");
 }
 
