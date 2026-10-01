@@ -2,6 +2,15 @@ const MAIN_CSS: &str = include_str!("../assets/main.css");
 const HOVER_MEDIA_QUERY: &str = "@media (hover: hover) and (pointer: fine)";
 
 #[test]
+fn load_band_palette_distinguishes_adjacent_blue_and_green_segments() {
+    let root = block_body(MAIN_CSS, ":root");
+
+    assert!(root.contains("--band-repetitive: #60a5fa;"));
+    assert!(root.contains("--band-leeway: #166534;"));
+    assert!(root.contains("--band-free: #4ade80;"));
+}
+
+#[test]
 fn button_hover_styles_are_limited_to_hover_capable_fine_pointers() {
     let hover_block = block_body(MAIN_CSS, HOVER_MEDIA_QUERY);
     let media_start = MAIN_CSS
@@ -73,7 +82,7 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     assert!(tabs.contains(
         "min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));"
     ));
-    assert!(tabs.contains("grid-template-columns: repeat(3, minmax(0, 1fr));"));
+    assert!(tabs.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
 
     let tab_button = block_body(MAIN_CSS, ".tab-button");
     assert!(tab_button.contains("min-height: max(2.75rem, 44px);"));
@@ -92,6 +101,88 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     let tabs_z_index = numeric_property(tabs, "z-index");
     let overlay_z_index = numeric_property(block_body(MAIN_CSS, ".loading-overlay"), "z-index");
     assert!(tabs_z_index < overlay_z_index);
+}
+
+#[test]
+fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
+    let view = block_body(MAIN_CSS, ".load-view");
+    assert!(view.contains("width: min(100%, 44rem);"));
+
+    let days = block_body(MAIN_CSS, ".load-days");
+    assert!(days.contains("width: 100%;"));
+    assert!(days.contains("min-width: 0;"));
+
+    let row = block_body(MAIN_CSS, ".load-day {");
+    assert!(row.contains("width: 100%;"));
+    assert!(row.contains("min-width: 0;"));
+
+    for selector in [".load-day-heading", ".load-day-footer"] {
+        let shared = block_body(
+            MAIN_CSS,
+            ".load-toolbar,\n.load-day-heading,\n.load-day-footer",
+        );
+        assert!(MAIN_CSS.contains(selector));
+        assert!(shared.contains("min-width: 0;"));
+        assert!(shared.contains("flex-wrap: wrap;"));
+    }
+    let metric = block_body(MAIN_CSS, ".load-metric {");
+    assert!(metric.contains("align-items: baseline;"));
+    assert!(MAIN_CSS.contains("@media (max-width: 46rem)"));
+}
+
+#[test]
+fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
+    let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
+    assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
+
+    let view = block_body(no_scroll, ".load-view");
+    assert!(view.contains("height: calc(100dvh"));
+    assert!(view.contains("display: flex;"));
+    assert!(view.contains("flex-direction: column;"));
+    let error_view = block_body(no_scroll, ".load-view.has-error");
+    assert!(error_view.contains("height: auto;"));
+
+    let days = block_body(no_scroll, ".load-days");
+    assert!(days.contains("flex: 1 1 auto;"));
+    assert!(days.contains("min-height: 0;"));
+    assert!(days
+        .contains("grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));"));
+
+    let compact = block_body(
+        MAIN_CSS,
+        "@media (min-height: 35rem) and (max-height: 60rem)",
+    );
+    let legend = block_body(compact, ".band-legend");
+    assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
+    let overview_caption = block_body(compact, ".load-overview-caption");
+    assert!(overview_caption.contains("display: none;"));
+
+    let row = block_body(compact, ".load-day {");
+    assert!(row.contains("min-height: 0;"));
+    assert!(row.contains("padding: 0.2rem 0.4rem;"));
+    assert!(row.contains("font-size: 0.72rem;"));
+    assert!(row.contains("line-height: 1.15;"));
+
+    let stack = block_body(MAIN_CSS, ".load-band-stack");
+    assert!(stack.contains("min-width: 0;"));
+    assert!(stack.contains("margin-block: 0.45rem 0.4rem;"));
+    assert!(stack.contains("overflow: hidden;"));
+    let band = block_body(MAIN_CSS, ".load-band {");
+    assert!(band.contains("height: 0.9rem;"));
+    let rail = block_body(MAIN_CSS, ".load-overflow-rail");
+    assert!(rail.contains("height: 0.2rem;"));
+    let fill = block_body(MAIN_CSS, ".load-overflow-fill");
+    assert!(fill.contains("min-width: 2px;"));
+    assert!(fill.contains("margin-left: auto;"));
+    let zero_fill = block_body(MAIN_CSS, ".load-overflow-fill.is-zero");
+    assert!(zero_fill.contains("min-width: 0;"));
+
+    let compact_stack = block_body(compact, ".load-band-stack");
+    assert!(compact_stack.contains("margin-block: 0.1rem;"));
+    let compact_band = block_body(compact, ".load-band {");
+    assert!(compact_band.contains("height: 0.425rem;"));
+    let compact_rail = block_body(compact, ".load-overflow-rail");
+    assert!(compact_rail.contains("height: 0.125rem;"));
 }
 
 #[test]

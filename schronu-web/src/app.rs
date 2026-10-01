@@ -30,6 +30,7 @@ mod history_view_tests;
 pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;
+pub(crate) mod load_view;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod long_press_browser;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
@@ -49,14 +50,19 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks,
+    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks, load_band,
     record_session, WebOperationResult,
 };
 
 #[cfg(test)]
-mod all_task_endpoint_export_tests {
+mod read_endpoint_export_tests {
     #[test]
     fn appはall_task_server_functionを公開する() {
         let _endpoint = super::list_all_tasks;
+    }
+
+    #[test]
+    fn appはband_server_functionを公開する() {
+        let _endpoint = super::load_band;
     }
 }

@@ -1,11 +1,11 @@
 use super::web_service::{
-    build_auto_session_dto, build_scheduled_task_rows, DeadlineDisplayKind, DeferModeDto,
-    TaskDisplayKind,
+    build_auto_session_dto, build_band_days, build_scheduled_task_rows, DeadlineDisplayKind,
+    DeferModeDto, TaskDisplayKind,
 };
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::get_task;
-use crate::entity::task::{Status, TaskHandle};
-use crate::test_support::TestTaskRepository;
+use crate::entity::task::{Status, TaskAttr, TaskHandle};
+use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
@@ -347,6 +347,129 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
 
     assert!(rows[0].is_leaf);
     assert!(!rows[1].is_leaf);
+}
+
+#[test]
+fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使う() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(401);
+    let adjustable_id = Uuid::from_u128(402);
+    let first = TaskHandle::with_identity("first load", first_id, operation_now).unwrap();
+    first.set_estimated_work_seconds(600).unwrap();
+    let adjustable =
+        TaskHandle::with_identity("adjustable load", adjustable_id, operation_now).unwrap();
+    adjustable.set_estimated_work_seconds(3_600).unwrap();
+    let repository = TestTaskRepository::new(vec![first, adjustable], operation_now);
+    let first_view = get_task(&repository, first_id).unwrap().unwrap();
+    let adjustable_view = get_task(&repository, adjustable_id).unwrap().unwrap();
+    let schedule = vec![
+        ScheduledTaskView {
+            task: first_view,
+            first_available_time: operation_now,
+            scheduled_start: operation_now,
+            scheduled_end: operation_now + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 600,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            task: adjustable_view,
+            first_available_time: operation_now,
+            scheduled_start: operation_now + Duration::days(2),
+            scheduled_end: operation_now + Duration::days(2) + Duration::minutes(30),
+            scheduled_work_seconds: 1_800,
+            total_work_seconds: 3_600,
+            rank: 0,
+        },
+    ];
+    let mut free_time = TestFreeTimeManager::new(60);
+
+    let rows = build_band_days(&repository, &mut free_time, &schedule, operation_now, 120).unwrap();
+
+    assert_eq!(rows.len(), 7);
+    assert_eq!(rows[0].accumulated_free_diff_seconds, -50 * 60);
+    assert_eq!(rows[1].accumulated_free_diff_seconds, -50 * 60);
+    assert_eq!(rows[2].accumulated_free_diff_seconds, -80 * 60);
+    assert_eq!(rows[2].durations.non_repetitive_seconds, 30 * 60);
+}
+
+#[test]
+fn 負荷は06時境界とend_of_day_offsetで当日経過を計算する() {
+    let before_boundary = Local.with_ymd_and_hms(2026, 9, 5, 5, 59, 0).unwrap();
+    let at_boundary = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let repository = TestTaskRepository::new(vec![], before_boundary);
+    let mut free_time = TestFreeTimeManager::new(600);
+
+    let before_rows =
+        build_band_days(&repository, &mut free_time, &[], before_boundary, 120).unwrap();
+    let at_rows = build_band_days(
+        &TestTaskRepository::new(vec![], at_boundary),
+        &mut free_time,
+        &[],
+        at_boundary,
+        120,
+    )
+    .unwrap();
+
+    assert_eq!(
+        before_rows[0].logical_date,
+        NaiveDate::from_ymd_opt(2026, 9, 4).unwrap()
+    );
+    assert_eq!(
+        at_rows[0].logical_date,
+        NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
+    );
+
+    let evening = Local.with_ymd_and_hms(2026, 9, 5, 20, 0, 0).unwrap();
+    let evening_rows = build_band_days(
+        &TestTaskRepository::new(vec![], evening),
+        &mut TestFreeTimeManager::new(600),
+        &[],
+        evening,
+        120,
+    )
+    .unwrap();
+    assert_eq!(evening_rows[0].durations.unavailable_seconds, 840 * 60);
+    assert_eq!(evening_rows[0].durations.elapsed_seconds, 240 * 60);
+}
+
+#[test]
+fn 負荷は祖先から継承した繰返を単発から分離する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let parent = TaskHandle::with_identity("routine", Uuid::from_u128(410), operation_now).unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let child = parent
+        .create_child(TaskAttr::with_identity(
+            "occurrence",
+            Uuid::from_u128(411),
+            operation_now,
+        ))
+        .unwrap();
+    child.set_estimated_work_seconds(600).unwrap();
+    let child_id = child.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], operation_now);
+    let child_view = get_task(&repository, child_id).unwrap().unwrap();
+    let schedule = [ScheduledTaskView {
+        task: child_view,
+        first_available_time: operation_now,
+        scheduled_start: operation_now,
+        scheduled_end: operation_now + Duration::minutes(10),
+        scheduled_work_seconds: 600,
+        total_work_seconds: 600,
+        rank: 0,
+    }];
+
+    let rows = build_band_days(
+        &repository,
+        &mut TestFreeTimeManager::new(600),
+        &schedule,
+        operation_now,
+        120,
+    )
+    .unwrap();
+
+    assert_eq!(rows[0].durations.repetitive_seconds, 600);
+    assert_eq!(rows[0].durations.non_repetitive_seconds, 0);
 }
 
 #[test]

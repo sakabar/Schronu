@@ -5,19 +5,20 @@ use super::renderer::format_task_category_summary;
 pub(super) use super::renderer::project_category_symbol;
 use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
-    BandDisplay, BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow,
-    CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow,
-    MessageLevel, SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
+    BandDisplay, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
+    CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel,
+    SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
     TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
-    BAND_SECONDS_PER_DAY,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
+use crate::application::daily_capacity::calculate_daily_band_durations;
 use crate::application::daily_capacity::{
     calculate_daily_leeway_seconds, calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
     calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
-    try_logical_date, try_logical_date_end, try_next_logical_date_start, RHO_GOAL,
+    try_logical_date, try_logical_date_end, try_next_logical_date_start, DailyLoadAccumulator,
+    DailyLoadDayInput,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
@@ -295,27 +296,6 @@ fn capacity_alert_issues(
         tomorrow: tomorrow_issue,
         weekly: weekly_issue,
     })
-}
-
-pub(super) fn calculate_daily_band_durations(
-    is_today: bool,
-    full_day_free_minutes: i64,
-    remaining_free_minutes: i64,
-    total_work_seconds: i64,
-    repetitive_work_seconds: i64,
-    diff_to_goal_hours: f64,
-) -> BandDurations {
-    BandDurations {
-        unavailable_seconds: (BAND_SECONDS_PER_DAY - full_day_free_minutes.max(0) * 60).max(0),
-        elapsed_seconds: if is_today {
-            (full_day_free_minutes - remaining_free_minutes).max(0) * 60
-        } else {
-            0
-        },
-        repetitive_seconds: repetitive_work_seconds.max(0),
-        non_repetitive_seconds: (total_work_seconds - repetitive_work_seconds).max(0),
-        rho_leeway_seconds: (-diff_to_goal_hours * 3600.0).max(0.0).round() as i64,
-    }
 }
 
 #[derive(Clone)]
@@ -1371,10 +1351,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
     // rho < 0.7 : 累積和はそのぶん減る
     // 0.7<= rho <=1.0 : ノーカウント。その日のうちに吸収できる
     // 1.0 < rho : 累積和はそのぶん増える
-    let mut accumulate_duration_diff_to_goal_rho = Duration::minutes(0);
-
-    // 「それぞれの日の自由時間との差」の累積和
-    let mut accumulate_duration_diff_to_limit = Duration::minutes(0);
+    let mut daily_load_accumulator = DailyLoadAccumulator::default();
 
     let mut first_caught_up_date = unreached_daily_summary_date();
 
@@ -1401,9 +1378,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             *repetitive_task_estimated_work_seconds_map
                 .get(date)
                 .unwrap_or(&0);
-        let total_repetitive_task_work_hours_of_the_date =
-            total_repetitive_task_work_seconds_of_the_date as f64 / 3600.0;
-
         let cnt_of_the_date = *counter.get(date).unwrap_or(&0);
 
         let free_time_minutes =
@@ -1426,24 +1400,14 @@ pub(super) fn build_show_all_tasks_display_with_config(
         };
 
         let free_time_hours = free_time_minutes as f64 / 60.0;
+        let non_repetitive_free_time_hours =
+            free_time_hours - total_repetitive_task_work_seconds_of_the_date as f64 / 3600.0;
         let rho_in_date = total_estimated_work_hours_of_the_date / free_time_hours;
-        let non_repetitive_rho_in_date =
-            if free_time_hours - total_repetitive_task_work_hours_of_the_date > 0.0 {
-                (total_estimated_work_hours_of_the_date
-                    - total_repetitive_task_work_hours_of_the_date)
-                    / (free_time_hours - total_repetitive_task_work_hours_of_the_date)
-            } else {
-                f64::INFINITY
-            };
-
         let diff_to_goal = calculate_daily_rho_diff_hours(
             free_time_minutes,
             total_repetitive_task_work_seconds_of_the_date,
             total_estimated_work_seconds_of_the_date,
         );
-        let diff_to_goal_hour = diff_to_goal.abs().floor();
-        let diff_to_goal_minute = (diff_to_goal.abs() - diff_to_goal_hour) * 60.0;
-
         let over_time_hours_f = total_estimated_work_hours_of_the_date - free_time_hours;
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
@@ -1451,20 +1415,22 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let adjustable_estimated_work_seconds: i64 = *adjustable_estimated_work_seconds_map
             .get(date)
             .unwrap_or(&0);
-        let adjustable_estimated_work_duration =
-            Duration::seconds(adjustable_estimated_work_seconds);
-
-        // これまでにどれだけ累積でマイナス(余裕)だったとしても、前倒しできるタスクの量でキャップされる
-        if accumulate_duration_diff_to_limit < -adjustable_estimated_work_duration {
-            accumulate_duration_diff_to_limit = -adjustable_estimated_work_duration
-        }
-
         let over_time_duration = if over_time_hours_f > 0.0 {
             Duration::hours(over_time_hours) + Duration::minutes(over_time_minutes)
         } else {
             -Duration::hours(over_time_hours) - Duration::minutes(over_time_minutes)
         };
-        accumulate_duration_diff_to_limit += over_time_duration;
+        let cumulative = daily_load_accumulator.advance(DailyLoadDayInput {
+            free_time_minutes,
+            total_work_seconds: total_estimated_work_seconds_of_the_date,
+            repetitive_work_seconds: total_repetitive_task_work_seconds_of_the_date,
+            adjustable_work_seconds: adjustable_estimated_work_seconds,
+        });
+        let accumulate_duration_diff_to_limit =
+            Duration::seconds(cumulative.accumulated_free_diff_seconds);
+        let accumulate_duration_diff_to_goal_rho =
+            Duration::seconds(cumulative.accumulated_rho_diff_seconds);
+        let accumulated_rho_diff = cumulative.accumulated_rho_ratio;
 
         if accumulate_duration_diff_to_limit > max_accumulate_duration_diff_to_limit {
             max_accumulate_duration_diff_to_limit = accumulate_duration_diff_to_limit;
@@ -1478,36 +1444,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
         {
             first_caught_up_date = **date;
         }
-
-        let repetitive_task_estimated_work_seconds = *repetitive_task_estimated_work_seconds_map
-            .get(date)
-            .unwrap_or(&0);
-        let repetitive_task_estimated_work_hours =
-            repetitive_task_estimated_work_seconds as f64 / 3600.0;
-
-        let non_repetitive_free_time_hours = free_time_hours - repetitive_task_estimated_work_hours;
-        let accumulated_rho_diff = if free_time_hours - repetitive_task_estimated_work_hours > 0.0 {
-            accumulate_duration_diff_to_limit.num_minutes() as f64
-                / 60.0
-                / non_repetitive_free_time_hours
-        } else {
-            f64::INFINITY
-        };
-
-        accumulate_duration_diff_to_goal_rho = if accumulated_rho_diff >= 0.0 {
-            // タスクが捌けていない場合はそれがそのまま積み残される
-            accumulate_duration_diff_to_limit
-        } else if accumulated_rho_diff < RHO_GOAL - 1.0 && non_repetitive_rho_in_date < RHO_GOAL {
-            // タスクが捌けてかなり余裕がある場合
-            accumulate_duration_diff_to_goal_rho
-                - Duration::hours(diff_to_goal_hour as i64)
-                - Duration::minutes(diff_to_goal_minute as i64)
-        } else if accumulated_rho_diff < 0.0 {
-            // なんとかその日のうちに捌けている状態。積む余裕は無い
-            Duration::minutes(0)
-        } else {
-            accumulate_duration_diff_to_goal_rho
-        };
 
         if accumulate_duration_diff_to_goal_rho < Duration::minutes(0) && **date < first_leeway_date
         {

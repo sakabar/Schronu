@@ -2,7 +2,7 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
     ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
     ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
@@ -20,6 +20,10 @@ pub(crate) trait WebGateway {
         &self,
         request: ListAllTasksRequest,
     ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError>;
+
+    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+        unreachable!("load_band is not implemented by this test gateway")
+    }
 
     async fn auto_session(
         &self,
@@ -62,6 +66,10 @@ impl WebGateway for ServerFunctionGateway {
         request: ListAllTasksRequest,
     ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError> {
         super::list_all_tasks(request).await
+    }
+
+    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+        super::load_band().await
     }
 
     async fn auto_session(
@@ -107,6 +115,10 @@ pub(crate) enum ClientResponse {
         request_id: u64,
         request: ListAllTasksRequest,
         result: Result<WebSuccess<AllTaskPage>, ServerFailure>,
+    },
+    LoadBand {
+        request_id: u64,
+        result: Result<WebSuccess<Vec<BandDay>>, ServerFailure>,
     },
     AutoSession {
         request_id: u64,
@@ -154,6 +166,10 @@ pub(crate) async fn execute_effect<G: WebGateway>(
             request_id,
             request: request.clone(),
             result: normalize_endpoint_result(gateway.list_all_tasks(request).await),
+        }),
+        ClientEffect::LoadBand { request_id } => Some(ClientResponse::LoadBand {
+            request_id,
+            result: normalize_endpoint_result(gateway.load_band().await),
         }),
         ClientEffect::AutoSession { request_id } => Some(ClientResponse::AutoSession {
             request_id,
@@ -228,6 +244,9 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
             request,
             result,
         } => state.apply_all_tasks_result(request_id, request, result),
+        ClientResponse::LoadBand { request_id, result } => {
+            state.apply_load_band_result(request_id, result)
+        }
         ClientResponse::AutoSession { request_id, result } => {
             state.apply_auto_session_result(storage, request_id, result)
         }

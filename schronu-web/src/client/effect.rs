@@ -17,6 +17,9 @@ pub enum ClientEffect {
         request_id: u64,
         request: ListAllTasksRequest,
     },
+    LoadBand {
+        request_id: u64,
+    },
     AutoSession {
         request_id: u64,
     },

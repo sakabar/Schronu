@@ -45,6 +45,37 @@ fn calculate_daily_rho_diff_hours_反復時間を分子と分母から除いて�
 }
 
 #[test]
+fn calculate_daily_band_durationsはcli帯の区分秒数を返す() {
+    let actual = calculate_daily_band_durations(true, 990, 190, 60 * 60, 40 * 60, -1.0);
+
+    assert_eq!(
+        actual,
+        DailyBandDurations {
+            unavailable_seconds: 7 * 60 * 60 + 30 * 60,
+            elapsed_seconds: 800 * 60,
+            repetitive_seconds: 40 * 60,
+            non_repetitive_seconds: 20 * 60,
+            rho_leeway_seconds: 60 * 60,
+        }
+    );
+}
+
+#[test]
+fn daily_load_accumulatorは容量超過を空差累と余差累へ反映する() {
+    let mut accumulator = DailyLoadAccumulator::default();
+
+    let actual = accumulator.advance(DailyLoadDayInput {
+        free_time_minutes: 60,
+        total_work_seconds: 2 * 60 * 60,
+        repetitive_work_seconds: 0,
+        adjustable_work_seconds: 0,
+    });
+
+    assert_eq!(actual.accumulated_free_diff_seconds, 60 * 60);
+    assert_eq!(actual.accumulated_rho_diff_seconds, 60 * 60);
+}
+
+#[test]
 fn logical_date_06時より前は前日として扱う() {
     let datetime = Local.with_ymd_and_hms(2026, 8, 12, 1, 0, 0).unwrap();
 

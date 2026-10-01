@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-`schronu-web`を、localStorageに保持する複数の`work_sessions`と、日付別およびオンデマンド全件のSchronu scheduleを表示するDioxus single-page UIへ置換する。
+`schronu-web`を、localStorageに保持する複数の`work_sessions`と、日付別・オンデマンド全件のSchronu schedule、今日から7日間の負荷帯を表示するDioxus single-page UIへ置換する。
 
 WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの`get_focus`は自動選定の内部実装としてだけ利用し、UI上の名称は「セッション」に統一する。
 
@@ -151,6 +151,27 @@ ListAllTasksRequest {
 }
 ```
 
+負荷取得は現在logical dateから6日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
+
+```text
+BandDay {
+    logical_date: YYYY-MM-DD,
+    accumulated_rho_diff_seconds: i64,
+    accumulated_free_diff_seconds: i64,
+    durations: BandDurations,
+}
+
+BandDurations {
+    unavailable_seconds: i64,
+    elapsed_seconds: i64,
+    repetitive_seconds: i64,
+    non_repetitive_seconds: i64,
+    rho_leeway_seconds: i64,
+}
+```
+
+`load_band`は`WebSuccess<Vec<BandDay>>`を返す。serverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
+
 `segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
 
 日付別と全件は同じ一覧componentとclass契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。`is_leaf`は太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
@@ -216,7 +237,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ## 4. Server operations
 
-専用workerは次の7 commandを順番に処理する。workerへの送信順が実行順となる。
+専用workerは`bootstrap`、`list_tasks`、`list_all_tasks`、`load_band`、`auto_session`、`defer_task`、`record_session`、`complete_session`の8 commandを順番に処理する。workerへの送信順が実行順となる。
 
 cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。`list_all_tasks`の継続pageは保存済みsnapshotだけを読む。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
 
@@ -545,9 +566,9 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
-5. viewport下端へ「セッション」「一覧」「発火履歴」の3tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
+5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
-7. tab切替だけでは一覧取得を含むserver操作を行わず、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+7. 負荷以外へのtab切替ではserver操作を行わない。「負荷」への切替だけは`load_band`を1回送り、選択中の1画面だけをDOMへ描画する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
@@ -556,7 +577,7 @@ reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tas
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
-背景更新中はtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
+背景更新中は負荷以外へのtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。「表示」buttonは共通buttonの上下paddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で文字を中央に配置する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -640,7 +661,9 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | --- | --- | --- | --- | --- | --- |
 | 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
 | reload背景更新 | `bootstrap`後、保存一覧があれば保存日付、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotと一覧をview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
-| tab切替 | なし | なし | view stateを保存 | なし | なし |
+| 負荷以外へのtab切替 | なし | なし | view stateを保存 | なし | なし |
+| 負荷tabへの切替 | `load_band` | なし | view stateだけを保存し、負荷dataは保存しない | 直前の負荷dataを維持し、成功時に7日分を置換 | なし |
+| 負荷の「更新」 | `load_band` | なし | なし | 直前の負荷dataを維持し、成功時に7日分を置換 | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
 | 共有検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
 | 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
@@ -699,6 +722,7 @@ OperationHistoryEntry {
     invocation: Bootstrap
               | ListTasks(ListTasksRequest)
               | ListAllTasks(ListAllTasksRequest)
+              | LoadBand
               | AutoSession
               | DeferTask(DeferTaskRequest)
               | RecordSession(RecordSessionRequest)
@@ -800,7 +824,7 @@ OperationHistoryEntry {
 
 ### 12.5 UI and integration
 
-- 固定された「セッション」「一覧」「発火履歴」の3tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 固定された「セッション」「一覧」「負荷」「発火履歴」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。

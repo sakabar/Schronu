@@ -32,9 +32,9 @@ use crate::adapter::gateway::schronu_config::{load_schronu_config, SchronuConfig
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::storage_snapshot::SnapshotError;
 use crate::adapter::gateway::task_repository::TaskRepository;
-#[cfg(test)]
-use crate::application::daily_capacity::try_logical_date_start;
 use crate::application::daily_capacity::try_next_logical_date_start;
+#[cfg(test)]
+use crate::application::daily_capacity::{calculate_daily_band_durations, try_logical_date_start};
 use crate::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
 #[cfg(test)]

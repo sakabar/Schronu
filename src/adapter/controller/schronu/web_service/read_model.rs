@@ -1,12 +1,17 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    AllTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto,
-    ServerSnapshot, SessionTaskDto, TaskDisplayKind,
+    AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     format_deadline_remaining_time, misses_deadline,
 };
-use crate::application::daily_capacity::{try_logical_date, try_logical_date_start};
+use crate::application::daily_capacity::{
+    calculate_daily_band_durations, calculate_daily_rho_diff_hours,
+    calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
+    calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
+    try_logical_date, try_logical_date_start, DailyLoadAccumulator, DailyLoadDayInput,
+};
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_logical_dates, ScheduledTaskView,
@@ -15,6 +20,7 @@ use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
 use chrono::{DateTime, Local, NaiveDate};
+use std::cmp::max;
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -72,6 +78,121 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 task_display_kind,
                 deadline_display_kind,
                 is_leaf: segment.is_leaf(),
+            })
+        })
+        .collect()
+}
+
+pub(in crate::adapter::controller) fn build_band_days<R, F>(
+    repository: &R,
+    free_time_manager: &mut F,
+    schedule: &[ScheduledTaskView],
+    operation_now: DateTime<Local>,
+    end_of_day_offset_minutes: i64,
+) -> Result<Vec<BandDayDto>, WebReadCoreError>
+where
+    R: TaskRepositoryTrait,
+    F: FreeTimeManagerTrait,
+{
+    const HORIZON_DAYS: i64 = 7;
+    let today = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
+    let last_synced_time = repository.get_last_synced_time();
+    let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
+    let mut totals = HashMap::<NaiveDate, i64>::new();
+    let mut repetitive = HashMap::<NaiveDate, i64>::new();
+    let mut adjustable = HashMap::<NaiveDate, i64>::new();
+
+    for (date, segment) in logical_dates.into_iter().zip(schedule) {
+        if date < today || date >= today + chrono::Duration::days(HORIZON_DAYS) {
+            continue;
+        }
+        *totals.entry(date).or_default() += segment.scheduled_work_seconds;
+        let task = repository
+            .get_by_id(segment.task.id)
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+            .ok_or({
+                WebReadCoreError::Application(ApplicationError::TaskNotFound(segment.task.id))
+            })?;
+        if task
+            .get_inherited_repetition_interval_days_opt()
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+            .is_some()
+        {
+            *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
+        }
+        let available_date = try_logical_date(max(
+            task.get_start_time().map_err(|error| {
+                WebReadCoreError::Application(ApplicationError::TaskTree(error))
+            })?,
+            last_synced_time,
+        ))
+        .map_err(WebReadCoreError::Application)?;
+        let is_on_other_side = task
+            .get_is_on_other_side()
+            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?;
+        if segment.is_leaf() && !is_on_other_side && date > available_date {
+            let estimated_work_seconds = task.get_estimated_work_seconds().map_err(|error| {
+                WebReadCoreError::Application(ApplicationError::TaskTree(error))
+            })?;
+            *adjustable.entry(date).or_default() += estimated_work_seconds;
+        }
+    }
+
+    let mut accumulator = DailyLoadAccumulator::default();
+    (0..HORIZON_DAYS)
+        .map(|offset| {
+            let date = today + chrono::Duration::days(offset);
+            let total_work_seconds = *totals.get(&date).unwrap_or(&0);
+            let repetitive_work_seconds = *repetitive.get(&date).unwrap_or(&0);
+            let free_time_minutes =
+                calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                    &date,
+                    last_synced_time,
+                    free_time_manager,
+                    end_of_day_offset_minutes,
+                )
+                .map_err(WebReadCoreError::Application)?;
+            let full_day_free_minutes =
+                calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                    &date,
+                    free_time_manager,
+                    end_of_day_offset_minutes,
+                )
+                .map_err(WebReadCoreError::Application)?;
+            let diff_to_goal = calculate_daily_rho_diff_hours(
+                free_time_minutes,
+                repetitive_work_seconds,
+                total_work_seconds,
+            );
+            let cumulative = if totals.contains_key(&date) {
+                accumulator.advance(DailyLoadDayInput {
+                    free_time_minutes,
+                    total_work_seconds,
+                    repetitive_work_seconds,
+                    adjustable_work_seconds: *adjustable.get(&date).unwrap_or(&0),
+                })
+            } else {
+                accumulator.current()
+            };
+            let durations = calculate_daily_band_durations(
+                date == today,
+                full_day_free_minutes,
+                free_time_minutes,
+                total_work_seconds,
+                repetitive_work_seconds,
+                diff_to_goal,
+            );
+            Ok(BandDayDto {
+                logical_date: date,
+                accumulated_rho_diff_seconds: cumulative.accumulated_rho_diff_seconds,
+                accumulated_free_diff_seconds: cumulative.accumulated_free_diff_seconds,
+                durations: BandDurationsDto {
+                    unavailable_seconds: durations.unavailable_seconds,
+                    elapsed_seconds: durations.elapsed_seconds,
+                    repetitive_seconds: durations.repetitive_seconds,
+                    non_repetitive_seconds: durations.non_repetitive_seconds,
+                    rho_leeway_seconds: durations.rho_leeway_seconds,
+                },
             })
         })
         .collect()

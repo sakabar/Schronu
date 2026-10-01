@@ -267,6 +267,30 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
 }
 
 #[test]
+fn 負荷serviceは今日から空日を含む7日を返す() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_fixed_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service.load_band_at(operation_now).unwrap();
+
+    assert_eq!(response.data.len(), 7);
+    assert_eq!(
+        response.data[0].logical_date,
+        NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
+    );
+    assert_eq!(
+        response.data[6].logical_date,
+        NaiveDate::from_ymd_opt(2026, 9, 11).unwrap()
+    );
+    assert!(response
+        .data
+        .iter()
+        .all(|row| row.durations.unavailable_seconds >= 0));
+}
+
+#[test]
 fn 全件serviceの九個目開始は最古snapshotだけをfifoで失効させる() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();

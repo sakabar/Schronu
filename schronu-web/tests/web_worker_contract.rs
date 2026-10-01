@@ -1,5 +1,5 @@
 use schronu_web::{
-    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
     DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
     RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
     WebOperations, WebSuccess, WebWorkerHandle,
@@ -13,7 +13,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは7操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは8操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -50,6 +50,13 @@ fn workerは7操作を送信順に専用threadで実行してpayloadを保持す
                 .await,
             Ok(WebSuccess {
                 snapshot: snapshot(2),
+                data: Vec::new(),
+            })
+        );
+        assert_eq!(
+            worker.load_band().await,
+            Ok(WebSuccess {
+                snapshot: snapshot(8),
                 data: Vec::new(),
             })
         );
@@ -111,6 +118,7 @@ fn workerは7操作を送信順に専用threadで実行してpayloadを保持す
         &[
             Event::Bootstrap,
             Event::List("2026-09-05".to_owned()),
+            Event::LoadBand,
             Event::ListAll(Some("cursor".to_owned())),
             Event::Auto,
             Event::Record(123, 456),
@@ -167,6 +175,7 @@ enum Event {
     Bootstrap,
     List(String),
     ListAll(Option<String>),
+    LoadBand,
     Auto,
     Defer(String),
     Record(i64, i64),
@@ -315,6 +324,14 @@ impl WebOperations for RecordingOperations {
                 rows: Vec::new(),
                 next_cursor: None,
             },
+        })
+    }
+
+    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        self.events.lock().unwrap().push(Event::LoadBand);
+        Ok(WebSuccess {
+            snapshot: snapshot(8),
+            data: Vec::new(),
         })
     }
 
