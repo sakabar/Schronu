@@ -4,9 +4,10 @@ use super::model::{
     ServerSnapshot, SessionTaskDto, TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
-    format_deadline_remaining_time, misses_deadline,
+    classify_deadline_display, format_deadline_remaining_time, misses_deadline,
+    DeadlineDisplayStatus,
 };
-use crate::application::daily_capacity::{try_logical_date, try_logical_date_start};
+use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_logical_dates, ScheduledTaskView,
@@ -237,23 +238,17 @@ fn classify_display_kinds(
         task_kind_cache.insert(segment.task.id, kind);
         kind
     };
-    let deadline_display_kind = match segment.task.deadline_time {
-        None => DeadlineDisplayKind::None,
-        Some(deadline) if segment.scheduled_end > deadline => DeadlineDisplayKind::Overrun,
-        Some(deadline) => {
-            let next_logical_date = logical_date.succ_opt().ok_or({
-                WebReadCoreError::Application(ApplicationError::LogicalDateStartOutOfRange {
-                    date: logical_date,
-                })
-            })?;
-            let next_logical_date_start =
-                try_logical_date_start(next_logical_date).map_err(WebReadCoreError::Application)?;
-            if deadline < next_logical_date_start {
-                DeadlineDisplayKind::Today
-            } else {
-                DeadlineDisplayKind::Future
-            }
-        }
+    let deadline_display_kind = match classify_deadline_display(
+        segment.task.deadline_time.as_ref(),
+        segment.scheduled_end,
+        logical_date,
+    )
+    .map_err(WebReadCoreError::Application)?
+    {
+        DeadlineDisplayStatus::None => DeadlineDisplayKind::None,
+        DeadlineDisplayStatus::Overrun => DeadlineDisplayKind::Overrun,
+        DeadlineDisplayStatus::DueWithinLogicalDate => DeadlineDisplayKind::Today,
+        DeadlineDisplayStatus::Future => DeadlineDisplayKind::Future,
     };
 
     Ok((task_display_kind, deadline_display_kind))

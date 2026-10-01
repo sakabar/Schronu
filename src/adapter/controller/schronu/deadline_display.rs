@@ -1,12 +1,46 @@
-use crate::application::daily_capacity::try_logical_date;
+use crate::application::daily_capacity::{try_logical_date, try_logical_date_start};
 use crate::application::task_use_case::ApplicationError;
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDate};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum DeadlineDisplayStatus {
+    None,
+    Overrun,
+    DueWithinLogicalDate,
+    Future,
+}
 
 pub(super) fn misses_deadline(
     deadline_time_opt: Option<&DateTime<Local>>,
     scheduled_end: DateTime<Local>,
 ) -> bool {
     deadline_time_opt.is_some_and(|deadline| *deadline < scheduled_end)
+}
+
+pub(super) fn classify_deadline_display(
+    deadline_time_opt: Option<&DateTime<Local>>,
+    scheduled_end: DateTime<Local>,
+    scheduled_logical_date: NaiveDate,
+) -> Result<DeadlineDisplayStatus, ApplicationError> {
+    let Some(deadline) = deadline_time_opt else {
+        return Ok(DeadlineDisplayStatus::None);
+    };
+    if misses_deadline(Some(deadline), scheduled_end) {
+        return Ok(DeadlineDisplayStatus::Overrun);
+    }
+
+    let next_logical_date =
+        scheduled_logical_date
+            .succ_opt()
+            .ok_or(ApplicationError::LogicalDateStartOutOfRange {
+                date: scheduled_logical_date,
+            })?;
+    let next_logical_date_start = try_logical_date_start(next_logical_date)?;
+    if *deadline < next_logical_date_start {
+        Ok(DeadlineDisplayStatus::DueWithinLogicalDate)
+    } else {
+        Ok(DeadlineDisplayStatus::Future)
+    }
 }
 
 pub(super) fn format_deadline_remaining_time(
@@ -51,7 +85,10 @@ pub(super) fn format_deadline_remaining_time(
 
 #[cfg(test)]
 mod tests {
-    use super::{format_deadline_remaining_time, misses_deadline};
+    use super::{
+        classify_deadline_display, format_deadline_remaining_time, misses_deadline,
+        DeadlineDisplayStatus,
+    };
     use crate::application::task_use_case::ApplicationError;
     use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
 
@@ -69,6 +106,35 @@ mod tests {
             Some(&(scheduled_end - Duration::minutes(1))),
             scheduled_end,
         ));
+    }
+
+    #[test]
+    fn 締切表示は予定logical_dateの06時境界で分類する() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 9, 6).unwrap();
+        let scheduled_end = Local.with_ymd_and_hms(2026, 9, 6, 18, 0, 0).unwrap();
+        let next_logical_date_start = Local.with_ymd_and_hms(2026, 9, 7, 6, 0, 0).unwrap();
+
+        for (deadline, expected) in [
+            (None, DeadlineDisplayStatus::None),
+            (
+                Some(scheduled_end - Duration::seconds(1)),
+                DeadlineDisplayStatus::Overrun,
+            ),
+            (
+                Some(scheduled_end),
+                DeadlineDisplayStatus::DueWithinLogicalDate,
+            ),
+            (
+                Some(next_logical_date_start - Duration::seconds(1)),
+                DeadlineDisplayStatus::DueWithinLogicalDate,
+            ),
+            (Some(next_logical_date_start), DeadlineDisplayStatus::Future),
+        ] {
+            assert_eq!(
+                classify_deadline_display(deadline.as_ref(), scheduled_end, logical_date).unwrap(),
+                expected
+            );
+        }
     }
 
     #[test]
