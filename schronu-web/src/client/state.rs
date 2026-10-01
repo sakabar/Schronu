@@ -1,5 +1,6 @@
 mod all_tasks;
 mod diagnostics;
+mod load;
 mod read_state;
 mod session_state;
 
@@ -28,6 +29,7 @@ use std::collections::VecDeque;
 pub enum ActiveTab {
     Session,
     List,
+    Load,
     History,
 }
 
@@ -40,6 +42,7 @@ pub enum ServerFailure {
 pub struct ClientState {
     active_tab: ActiveTab,
     read: ReadState,
+    load: load::LoadState,
     all_tasks: all_tasks::AllTasksState,
     sessions: SessionState,
     diagnostics: DiagnosticsState,
@@ -59,6 +62,7 @@ impl ClientState {
         Self {
             active_tab: ActiveTab::Session,
             read: ReadState::new(),
+            load: load::LoadState::new(),
             all_tasks: all_tasks::AllTasksState::new(),
             sessions: SessionState::new(work_sessions, mutation_safety),
             diagnostics: DiagnosticsState::new(),
@@ -155,6 +159,7 @@ impl ClientState {
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
     pub(crate) fn restore_view_state(&mut self, view_state: &ViewState) {
         self.active_tab = view_state.active_tab;
+        self.load.after_bootstrap = view_state.active_tab == ActiveTab::Load;
         self.read.date_buttons =
             super::date_buttons::logical_date_buttons(&view_state.snapshot.logical_date)
                 .unwrap_or_default();
@@ -312,8 +317,13 @@ impl ClientState {
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
+        let entering_load = self.active_tab != ActiveTab::Load && tab == ActiveTab::Load;
         self.active_tab = tab;
-        ClientEffect::None
+        if entering_load {
+            self.request_load_band()
+        } else {
+            ClientEffect::None
+        }
     }
 
     pub fn tick(&mut self, now_epoch_ms: i64) -> ClientEffect {

@@ -1,13 +1,13 @@
 use crate::{
-    web_error_codes, AllTaskPage, AllTaskRow, CompleteSessionRequest, CompleteSessionResponse,
-    DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest, ListAllTasksRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess,
-    WebWorkerHandle,
+    web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
+    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebOperations,
+    WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
-    resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto,
+    resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto, BandDayDto,
     CompleteSessionRequest as CoreCompleteSessionRequest,
     DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
@@ -108,6 +108,14 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
         let operation_now = self.clock.now();
         self.service()?
             .list_all_tasks_at(operation_now, request.cursor)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
+    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .load_band_at(operation_now)
             .map(convert_success)
             .map_err(Into::into)
     }
@@ -235,6 +243,23 @@ impl From<AllTaskRowDto> for AllTaskRow {
     }
 }
 
+impl From<BandDayDto> for BandDay {
+    fn from(day: BandDayDto) -> Self {
+        Self {
+            logical_date: day.logical_date.format("%Y-%m-%d").to_string(),
+            accumulated_rho_diff_seconds: day.accumulated_rho_diff_seconds,
+            accumulated_free_diff_seconds: day.accumulated_free_diff_seconds,
+            durations: BandDurations {
+                unavailable_seconds: day.durations.unavailable_seconds,
+                elapsed_seconds: day.durations.elapsed_seconds,
+                repetitive_seconds: day.durations.repetitive_seconds,
+                non_repetitive_seconds: day.durations.non_repetitive_seconds,
+                rho_leeway_seconds: day.durations.rho_leeway_seconds,
+            },
+        }
+    }
+}
+
 impl From<RecordSessionRequest> for CoreRecordSessionRequest {
     fn from(request: RecordSessionRequest) -> Self {
         Self {
@@ -288,6 +313,14 @@ trait ConvertData {
 
 impl ConvertData for Vec<ScheduledTaskRowDto> {
     type Output = Vec<ScheduledTaskRow>;
+
+    fn convert(self) -> Self::Output {
+        self.into_iter().map(Into::into).collect()
+    }
+}
+
+impl ConvertData for Vec<BandDayDto> {
+    type Output = Vec<BandDay>;
 
     fn convert(self) -> Self::Output {
         self.into_iter().map(Into::into).collect()

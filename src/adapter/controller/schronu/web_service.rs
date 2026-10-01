@@ -13,11 +13,11 @@ mod all_tasks_performance_tests;
 
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    AllTaskPageDto, AllTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
-    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
+    DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
-    build_all_task_rows, build_auto_session_dto, build_scheduled_task_rows,
+    build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
 };
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
@@ -91,6 +91,30 @@ impl WebService {
                 Ok((snapshot, rows))
             })?;
         Ok(self.all_task_snapshots.first_page(snapshot, rows))
+    }
+
+    pub fn load_band_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+    ) -> Result<WebSuccess<Vec<BandDayDto>>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
+            let data = build_band_days(
+                repository,
+                free_time_manager,
+                &schedule,
+                operation_now,
+                offset,
+            )?;
+            let snapshot = build_server_snapshot_from_schedule(
+                repository,
+                free_time_manager,
+                operation_now,
+                &schedule,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
+        })
     }
 
     pub fn bootstrap_at(

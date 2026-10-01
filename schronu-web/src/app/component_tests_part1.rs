@@ -11,6 +11,7 @@ use super::component_runtime::{
     ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
+use super::load_view::LoadView;
 use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
@@ -18,8 +19,8 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    web_error_codes, BandDay, BandDurations, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
@@ -77,7 +78,7 @@ fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
 }
 
 #[test]
-fn 固定navigationは3tabの選択状態とcallbackを提供する() {
+fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         navigation_root,
@@ -90,8 +91,8 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
-    assert_eq!(html.matches("class=\"tab-button").count(), 3, "{html}");
-    for label in ["セッション", "一覧", "発火履歴"] {
+    assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
+    for label in ["セッション", "一覧", "負荷", "発火履歴"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
     assert!(
@@ -106,8 +107,354 @@ fn 固定navigationは3tabの選択状態とcallbackを提供する() {
     }
     assert_eq!(
         *events.lock().unwrap(),
-        [ActiveTab::History, ActiveTab::List, ActiveTab::Session]
+        [
+            ActiveTab::History,
+            ActiveTab::Load,
+            ActiveTab::List,
+            ActiveTab::Session
+        ]
     );
+}
+
+#[test]
+fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![
+                    BandDay {
+                        logical_date: "2026-09-27".to_owned(),
+                        accumulated_rho_diff_seconds: 75 * 60,
+                        accumulated_free_diff_seconds: -45 * 60,
+                        durations: BandDurations {
+                            unavailable_seconds: 10 * 60 * 60,
+                            elapsed_seconds: 6 * 60 * 60,
+                            repetitive_seconds: 90 * 60,
+                            non_repetitive_seconds: 7 * 60 * 60,
+                            rho_leeway_seconds: 60 * 60,
+                        },
+                    },
+                    BandDay {
+                        logical_date: "2026-09-28".to_owned(),
+                        accumulated_rho_diff_seconds: 0,
+                        accumulated_free_diff_seconds: 30 * 60,
+                        durations: BandDurations {
+                            unavailable_seconds: 0,
+                            elapsed_seconds: 0,
+                            repetitive_seconds: 0,
+                            non_repetitive_seconds: 0,
+                            rho_leeway_seconds: 0,
+                        },
+                    },
+                ],
+                observed_at_epoch_ms: Some(1_790_490_720_000),
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("直近7日の負荷"), "{html}");
+    assert!(html.contains("9/27(日)"), "{html}");
+    assert!(
+        html.contains("余差累+01:15、空差累-00:45"),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<span>余差累</span><strong class=\"load-metric-value is-over\">+01:15"
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<span>空差累</span><strong class=\"load-metric-value is-within\">-00:45"
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<span>余差累</span><strong class=\"load-metric-value is-within\">+00:00"
+        ),
+        "{html}"
+    );
+    assert!(
+        html.contains(
+            "<span>空差累</span><strong class=\"load-metric-value is-over\">+00:30"
+        ),
+        "{html}"
+    );
+    assert!(html.contains("超過 01:30"), "{html}");
+    assert!(html.contains("超過0時間0分"), "{html}");
+}
+
+#[test]
+fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
+    fn root() -> Element {
+        let today = BandDay {
+            logical_date: "2026-09-27".to_owned(),
+            accumulated_rho_diff_seconds: 0,
+            accumulated_free_diff_seconds: 0,
+            durations: BandDurations {
+                unavailable_seconds: 8 * 60 * 60,
+                elapsed_seconds: 8 * 60 * 60,
+                repetitive_seconds: 60 * 60,
+                non_repetitive_seconds: 2 * 60 * 60,
+                rho_leeway_seconds: 60 * 60,
+            },
+        };
+        let future = BandDay {
+            logical_date: "2026-09-28".to_owned(),
+            durations: BandDurations {
+                elapsed_seconds: 0,
+                ..today.durations
+            },
+            ..today
+        };
+        rsx! {
+            LoadView {
+                rows: vec![today, future],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let today_start = html
+        .find("<button class=\"load-day is-today\"")
+        .expect("today row must exist");
+    let future_start = html
+        .find("<button class=\"load-day\"")
+        .expect("future row must exist");
+    let today_html = &html[today_start..future_start];
+    let future_html = &html[future_start..];
+
+    assert_eq!(today_html.matches("class=\"load-band\"").count(), 2, "{html}");
+    assert_eq!(future_html.matches("class=\"load-band\"").count(), 1, "{html}");
+    assert!(
+        today_html.find("残り枠").unwrap() < today_html.find("1日全体").unwrap(),
+        "{html}"
+    );
+    let focus_start = today_html
+        .find("<span class=\"load-focus-group\"")
+        .expect("remaining focus group must exist");
+    let overview_start = today_html
+        .find("<span class=\"load-band-caption load-overview-caption\"")
+        .expect("full-day overview caption must exist");
+    let focus_html = &today_html[focus_start..overview_start];
+    assert!(focus_html.contains("08:00"), "{html}");
+    for expected in [
+        "残り枠8時間0分",
+        "残り繰返1時間0分",
+        "残り単発2時間0分",
+        "残り余差1時間0分",
+        "残り空き4時間0分",
+    ] {
+        assert!(today_html.contains(expected), "missing {expected}: {html}");
+    }
+    for expected in ["width:12.5000%", "width:25.0000%", "width:50.0000%"] {
+        assert!(focus_html.contains(expected), "missing {expected}: {html}");
+    }
+}
+
+#[test]
+fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示する() {
+    fn root() -> Element {
+        let today = BandDay {
+            logical_date: "2026-09-27".to_owned(),
+            accumulated_rho_diff_seconds: 0,
+            accumulated_free_diff_seconds: 0,
+            durations: BandDurations {
+                unavailable_seconds: 8 * 60 * 60,
+                elapsed_seconds: 8 * 60 * 60,
+                repetitive_seconds: 4 * 60 * 60,
+                non_repetitive_seconds: 5 * 60 * 60,
+                rho_leeway_seconds: 3 * 60 * 60,
+            },
+        };
+        let future = BandDay {
+            logical_date: "2026-09-28".to_owned(),
+            durations: BandDurations {
+                elapsed_seconds: 0,
+                ..today.durations
+            },
+            ..today
+        };
+        rsx! {
+            LoadView {
+                rows: vec![today, future],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let today_start = html
+        .find("<button class=\"load-day is-today\"")
+        .expect("today row must exist");
+    let future_start = html
+        .find("<button class=\"load-day\"")
+        .expect("future row must exist");
+    let today_html = &html[today_start..future_start];
+    let future_html = &html[future_start..];
+
+    assert_eq!(today_html.matches("class=\"load-overflow-rail\"").count(), 2, "{html}");
+    assert_eq!(future_html.matches("class=\"load-overflow-rail\"").count(), 1, "{html}");
+    assert_eq!(today_html.matches("aria-hidden=\"true\"").count(), 4, "{html}");
+    assert!(today_html.contains("width:50.0000%"), "{html}");
+    assert!(today_html.contains("width:16.6667%"), "{html}");
+    assert!(future_html.contains("width:0.0000%"), "{html}");
+    assert!(future_html.contains("is-zero"), "{html}");
+    assert!(today_html.contains("超過 04:00"), "{html}");
+    assert!(today_html.contains("超過4時間0分"), "{html}");
+}
+
+#[test]
+fn 負荷viewは残り容量zeroを空barとして表示する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![BandDay {
+                    logical_date: "2026-09-27".to_owned(),
+                    accumulated_rho_diff_seconds: 0,
+                    accumulated_free_diff_seconds: 0,
+                    durations: BandDurations {
+                        unavailable_seconds: 24 * 60 * 60,
+                        elapsed_seconds: 0,
+                        repetitive_seconds: 60 * 60,
+                        non_repetitive_seconds: 0,
+                        rho_leeway_seconds: 0,
+                    },
+                }],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let focus_start = html
+        .find("<span class=\"load-focus-group\"")
+        .expect("remaining focus group must exist");
+    let overview_start = html
+        .find("<span class=\"load-band-caption load-overview-caption\"")
+        .expect("full-day overview caption must exist");
+    let focus_html = &html[focus_start..overview_start];
+
+    assert!(html.contains("残り枠0時間0分"), "{html}");
+    assert_eq!(focus_html.matches("width:0.0000%").count(), 4, "{html}");
+    assert!(focus_html.contains("width:100.0000%"), "{html}");
+    assert!(html.contains("width:4.1667%"), "{html}");
+    assert!(!html.contains("NaN"), "{html}");
+    assert!(!html.contains("inf"), "{html}");
+}
+
+#[test]
+fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![BandDay {
+                    logical_date: "2026-09-27".to_owned(),
+                    accumulated_rho_diff_seconds: 0,
+                    accumulated_free_diff_seconds: 0,
+                    durations: BandDurations {
+                        unavailable_seconds: 24 * 60 * 60,
+                        elapsed_seconds: 0,
+                        repetitive_seconds: 30 * 60 * 60,
+                        non_repetitive_seconds: 0,
+                        rho_leeway_seconds: 0,
+                    },
+                }],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(
+        html.matches("class=\"load-overflow-fill\" style=\"width:100.0000%\"")
+            .count(),
+        2,
+        "{html}"
+    );
+    assert!(!html.contains("NaN"), "{html}");
+    assert!(!html.contains("inf"), "{html}");
+}
+
+#[test]
+fn 負荷viewはerror時にcompact固定高を解除するclassを付ける() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-09-27", 0)],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: Some("負荷の更新に失敗しました。".to_owned()),
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("<section class=\"load-view has-error\""), "{html}");
+}
+
+#[test]
+fn 背景更新中の負荷操作はbuttonを無効化する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-09-27", 0)],
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                server_actions_blocked: true,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(html.matches(" disabled").count(), 2, "{html}");
 }
 
 #[test]
@@ -369,6 +716,173 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
         ClientEffect::CompleteSession { request, .. } if request.task_id == COMPLETE_ID
             && !request.record_elapsed_seconds
     ));
+}
+
+#[test]
+fn 負荷tab進入と更新はload_bandを要求する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+
+    let entered = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SwitchTab(ActiveTab::Load),
+    );
+    assert!(matches!(entered, ClientEffect::LoadBand { .. }));
+    assert!(!ComponentOrchestrator::new().effect_is_background(&entered));
+
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::Tick {
+                wall_now_epoch_ms: 2_000,
+            },
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(
+        reduce_component_action_at(
+            &mut state,
+            &storage,
+            1_000,
+            ComponentAction::SwitchTab(ActiveTab::History),
+        ),
+        ClientEffect::None
+    );
+
+    let refreshed = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::RefreshLoad,
+    );
+    assert!(matches!(refreshed, ClientEffect::LoadBand { .. }));
+}
+
+#[test]
+fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    let first_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    let second_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+
+    state.apply_load_band_result(
+        first_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_100),
+            data: vec![band_day("2026-09-27", 1)],
+        }),
+    );
+    assert!(state.band_rows().is_empty());
+
+    state.apply_load_band_result(
+        second_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_200),
+            data: vec![band_day("2026-09-27", 2)],
+        }),
+    );
+    assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
+
+    let failed_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    state.apply_load_band_result(
+        failed_id,
+        Err(ServerFailure::Transport("offline".to_owned())),
+    );
+    assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
+    assert!(state.band_error().is_some());
+}
+
+#[test]
+fn 負荷日付は一覧tabへ移動して対象日を取得する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.switch_tab(ActiveTab::Load);
+
+    let effect = reduce_component_action_at(
+        &mut state,
+        &storage,
+        1_000,
+        ComponentAction::SelectLoadDate("2026-09-29".to_owned()),
+    );
+
+    assert_eq!(state.active_tab(), ActiveTab::List);
+    assert!(matches!(
+        effect,
+        ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-29"
+    ));
+}
+
+#[test]
+fn 復元した負荷tabはbootstrap後に負荷を取得する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.restore_view_state(&ViewState {
+        snapshot: load_snapshot(900),
+        list: None,
+        active_tab: ActiveTab::Load,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
+
+    let effect = state.apply_bootstrap_result(1, Ok(load_snapshot(1_100)));
+
+    assert!(matches!(effect, ClientEffect::LoadBand { .. }));
+}
+
+#[test]
+fn 復元した負荷tabはbootstrap失敗時に負荷を取得しない() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.restore_view_state(&ViewState {
+        snapshot: load_snapshot(900),
+        list: None,
+        active_tab: ActiveTab::Load,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    });
+
+    let effect = state.apply_bootstrap_result(
+        1,
+        Err(ServerFailure::Transport("offline".to_owned())),
+    );
+
+    assert_eq!(effect, ClientEffect::None);
+}
+
+fn load_snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
+    ServerSnapshot {
+        observed_at_epoch_ms,
+        logical_date: "2026-09-27".to_owned(),
+        buffer_seconds: 0,
+    }
+}
+
+fn band_day(logical_date: &str, unavailable_seconds: i64) -> BandDay {
+    BandDay {
+        logical_date: logical_date.to_owned(),
+        accumulated_rho_diff_seconds: 0,
+        accumulated_free_diff_seconds: 0,
+        durations: BandDurations {
+            unavailable_seconds,
+            elapsed_seconds: 0,
+            repetitive_seconds: 0,
+            non_repetitive_seconds: 0,
+            rho_leeway_seconds: 0,
+        },
+    }
 }
 
 #[test]

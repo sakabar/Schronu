@@ -1,13 +1,13 @@
 use super::renderer::{
-    format_spreadsheet_task_row, format_task_list_columns, format_task_list_row,
-    format_task_list_task_row, render_display_model, render_display_model_with_mode,
-    task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay, BandDurations, CalendarAlertIssue,
-    CalendarAlerts, CalendarDayRow, CalendarDisplay, CalendarSummary, DebugTreeRow, DisplayModel,
-    ErrorCapturingWriter, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, FocusDisplay, LeafTreeRow, MessageLevel, PackDisplay, PackRow,
-    RenderMode, SchronuWriter, SpreadsheetTaskRow, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
-    TreeDisplay,
+    format_band_day_row, format_spreadsheet_task_row, format_task_list_columns,
+    format_task_list_row, format_task_list_task_row, render_display_model,
+    render_display_model_with_mode, task_list_columns, AncestorTreeRow, BandDayRow, BandDisplay,
+    BandDurations, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
+    CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
+    FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
+    LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
@@ -1093,7 +1093,9 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[2],
         format!(
-            "newline:2026-08-24(月) -07:08 +46:09 [{}{}{}]{}",
+            "newline:2026-08-24(月) {} {} [{}{}{}]{}",
+            color(34, "-07:08"),
+            color(196, "+46:09"),
             color(110, &"#".repeat(30)),
             color(244, &"x".repeat(53)),
             color(33, &"=".repeat(13)),
@@ -1103,7 +1105,9 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
     assert_eq!(
         writer.operations[4],
         format!(
-            "newline:2026-08-23(日) +01:02 -03:04 [{}{}{}{}{}{}]",
+            "newline:2026-08-23(日) {} {} [{}{}{}{}{}{}]",
+            color(196, "+01:02"),
+            color(34, "-03:04"),
             color(110, "#"),
             color(244, "xx"),
             color(33, "==="),
@@ -1112,6 +1116,27 @@ fn band_displayはterminalで凡例と帯の7記号を既存ansi色で描画す�
             color(34, &".".repeat(81)),
         )
     );
+}
+
+#[test]
+fn band_displayはterminalで累積差分のzeroを緑色にする() {
+    let row = BandDayRow {
+        date: NaiveDate::from_ymd_opt(2026, 8, 25).unwrap(),
+        accumulated_rho_diff_seconds: 0,
+        accumulated_free_diff_seconds: 0,
+        durations: BandDurations {
+            unavailable_seconds: 0,
+            elapsed_seconds: 0,
+            repetitive_seconds: 0,
+            non_repetitive_seconds: 0,
+            rho_leeway_seconds: 0,
+        },
+    };
+
+    let formatted = format_band_day_row(&row, true);
+
+    assert!(formatted
+        .starts_with("2026-08-25(火) \x1b[38;5;34m+00:00\x1b[39m \x1b[38;5;34m+00:00\x1b[39m ["));
 }
 
 #[test]

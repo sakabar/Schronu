@@ -188,10 +188,13 @@ impl ClientState {
                     self.refresh_list_after_bootstrap = false;
                     return self.request_list(&current_logical_date);
                 }
+                self.request_deferred_load_band()
             }
-            Err(error) => self.record_server_failure(ServerActionInvocation::Bootstrap, error),
+            Err(error) => {
+                self.record_server_failure(ServerActionInvocation::Bootstrap, error);
+                ClientEffect::None
+            }
         }
-        ClientEffect::None
     }
 
     pub fn apply_list_result(
@@ -254,7 +257,7 @@ impl ClientState {
             }
             Err(error) => self.record_server_failure(invocation, error),
         }
-        ClientEffect::None
+        self.request_deferred_load_band()
     }
 
     pub fn apply_auto_session_result<S: KeyValueStorage>(

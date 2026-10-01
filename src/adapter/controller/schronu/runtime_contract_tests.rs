@@ -6966,7 +6966,7 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
         concat!(
             "凡例: {} 利用不可  {} 経過済み  {} 繰返  {} 単発  {} 余差  {} 空き  {} 超過  (1文字=15分)\n",
             "\n",
-            "2026-08-11(火) -06:00 -09:00 [{}{}{}{}]\n",
+            "2026-08-11(火) {} {} [{}{}{}{}]\n",
             "\n",
             "今のタスクが片付く日付: 4160日後の2037-12-31\n",
             "最大の累積時間: -09時間00分 (2026-08-11), 最大のrhoの差: -1.00 (1900-01-01), 次にタスクを積める日付: 0日後の2026-08-11 (-6時間00分)\n",
@@ -6986,6 +6986,8 @@ fn test_execute_band_凡例と帯を7色の_ansi前景色で表示する() {
         color(28, ":"),
         color(34, "."),
         color(196, ">"),
+        color(34, "-06:00"),
+        color(34, "-09:00"),
         color(110, &"#".repeat(56)),
         color(208, &"-".repeat(4)),
         color(28, &":".repeat(24)),
@@ -9837,15 +9839,13 @@ fn test_render_interactive_screen_起動時と自動更新時の既定表示は�
         .lines()
         .find(|line| line.starts_with("2026-08-12(水) "))
         .expect("起動時と自動更新時には日次帯を表示する");
-    let band = band_line
+    let plain_band_line = strip_ansi_escape_sequences(band_line);
+    let band = plain_band_line
         .split_once('[')
         .and_then(|(_, rest)| rest.split_once(']'))
         .map(|(band, _)| band)
         .expect("日次帯は角括弧内に表示する");
-    assert_eq!(
-        strip_ansi_escape_sequences(band).chars().count(),
-        BAND_SEGMENTS
-    );
+    assert_eq!(band.chars().count(), BAND_SEGMENTS);
     assert!(!output.contains("日          \t空          \t空差"));
 }
 

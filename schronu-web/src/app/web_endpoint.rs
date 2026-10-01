@@ -1,5 +1,5 @@
 use crate::{
-    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
     ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
     ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
@@ -41,6 +41,16 @@ pub async fn list_all_tasks(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_all_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_load_band")]
+pub async fn load_band() -> Result<WebOperationResult<WebSuccess<Vec<BandDay>>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_load_band(extract_worker().await?).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -124,6 +134,13 @@ async fn dispatch_list_all_tasks(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_load_band(
+    worker: WebWorkerHandle,
+) -> WebOperationResult<WebSuccess<Vec<BandDay>>> {
+    worker.load_band().await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_auto_session(
     worker: WebWorkerHandle,
 ) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
@@ -158,10 +175,11 @@ async fn dispatch_complete_session(
 mod tests {
     use super::{
         dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_defer_task,
-        dispatch_list_all_tasks, dispatch_list_tasks, dispatch_record_session, WebOperationResult,
+        dispatch_list_all_tasks, dispatch_list_tasks, dispatch_load_band, dispatch_record_session,
+        WebOperationResult,
     };
     use crate::{
-        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+        AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
         ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
         RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
         WebSuccess, WebWorkerHandle,
@@ -172,7 +190,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn 七endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 八endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
         let all_task_cursors = Arc::new(Mutex::new(Vec::new()));
@@ -212,6 +230,8 @@ mod tests {
                 },
             )
             .await;
+            let _: WebOperationResult<WebSuccess<Vec<BandDay>>> =
+                dispatch_load_band(worker.clone()).await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
             let _: WebOperationResult<ServerSnapshot> = dispatch_defer_task(
@@ -235,7 +255,7 @@ mod tests {
             assert_eq!(completed, Ok(snapshot()));
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 7);
+        assert_eq!(calls.load(Ordering::SeqCst), 8);
         assert_eq!(
             *all_task_cursors.lock().unwrap(),
             [Some("opaque-cursor".to_owned())]
@@ -313,6 +333,14 @@ mod tests {
                     rows: Vec::new(),
                     next_cursor: None,
                 },
+            })
+        }
+
+        fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+            self.count();
+            Ok(WebSuccess {
+                snapshot: snapshot(),
+                data: Vec::new(),
             })
         }
 

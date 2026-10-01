@@ -7,6 +7,23 @@ pub struct ServerSnapshot {
     pub buffer_seconds: i64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BandDurations {
+    pub unavailable_seconds: i64,
+    pub elapsed_seconds: i64,
+    pub repetitive_seconds: i64,
+    pub non_repetitive_seconds: i64,
+    pub rho_leeway_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BandDay {
+    pub logical_date: String,
+    pub accumulated_rho_diff_seconds: i64,
+    pub accumulated_free_diff_seconds: i64,
+    pub durations: BandDurations,
+}
+
 pub type CompleteSessionResponse = ServerSnapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

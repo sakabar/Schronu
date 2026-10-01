@@ -236,14 +236,7 @@ pub(super) struct CalendarDisplay {
     pub(super) alerts: CalendarAlerts,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct BandDurations {
-    pub(super) unavailable_seconds: i64,
-    pub(super) elapsed_seconds: i64,
-    pub(super) repetitive_seconds: i64,
-    pub(super) non_repetitive_seconds: i64,
-    pub(super) rho_leeway_seconds: i64,
-}
+pub(super) use crate::application::daily_capacity::DailyBandDurations as BandDurations;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct BandDayRow {
@@ -537,11 +530,13 @@ fn render_calendar_display(
 
 const BAND_SECONDS_PER_SEGMENT: i64 = 15 * 60;
 pub(super) const BAND_SEGMENTS: usize = 24 * 4;
-pub(super) const BAND_SECONDS_PER_DAY: i64 = BAND_SEGMENTS as i64 * BAND_SECONDS_PER_SEGMENT;
+pub(super) const BAND_SECONDS_PER_DAY: i64 =
+    crate::application::daily_capacity::BAND_SECONDS_PER_DAY;
 const BAND_UNAVAILABLE_COLOR: u8 = 110;
 const TASK_LIST_FIXED_COLOR: u8 = 127;
 const REPETITIVE_COLOR: u8 = 33;
 const NON_REPETITIVE_COLOR: u8 = 208;
+const BAND_FREE_COLOR: u8 = 34;
 const DEADLINE_OVERRUN_COLOR: u8 = 196;
 const DEADLINE_TODAY_COLOR: u8 = 214;
 const FUTURE_DEADLINE_COLOR: u8 = 34;
@@ -585,7 +580,7 @@ fn format_band_segment(symbol: char, count: usize, supports_ansi_color: bool) ->
         '=' => REPETITIVE_COLOR,
         '-' => NON_REPETITIVE_COLOR,
         ':' => 28,
-        '.' => 34,
+        '.' => BAND_FREE_COLOR,
         '>' => DEADLINE_OVERRUN_COLOR,
         _ => return symbol.to_string().repeat(count),
     };
@@ -658,11 +653,20 @@ pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -
         "{}({}) {} {} [{}]{}",
         row.date,
         weekday_jp(row.date.weekday()),
-        format_signed_seconds(row.accumulated_rho_diff_seconds),
-        format_signed_seconds(row.accumulated_free_diff_seconds),
+        format_band_cumulative_diff(row.accumulated_rho_diff_seconds, supports_ansi_color,),
+        format_band_cumulative_diff(row.accumulated_free_diff_seconds, supports_ansi_color,),
         bar,
         overflow,
     )
+}
+
+fn format_band_cumulative_diff(seconds: i64, supports_ansi_color: bool) -> String {
+    let formatted = format_signed_seconds(seconds);
+    if seconds > 0 {
+        ansi_foreground(&formatted, DEADLINE_OVERRUN_COLOR, supports_ansi_color)
+    } else {
+        ansi_foreground(&formatted, BAND_FREE_COLOR, supports_ansi_color)
+    }
 }
 
 pub(super) fn format_signed_seconds(seconds: i64) -> String {

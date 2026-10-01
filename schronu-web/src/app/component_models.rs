@@ -7,12 +7,17 @@ use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
+use crate::BandDay;
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub band_rows: Vec<BandDay>,
+    pub band_observed_at_epoch_ms: Option<i64>,
+    pub band_loading: bool,
+    pub band_error: Option<String>,
     pub has_more_rows: bool,
     pub list_selection: ListSelection,
     pub all_tasks_status: AllTasksStatus,
@@ -62,6 +67,10 @@ impl BrowserPageModel {
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows,
+            band_rows: state.band_rows().to_vec(),
+            band_observed_at_epoch_ms: state.band_observed_at_epoch_ms(),
+            band_loading: state.band_loading(),
+            band_error: state.band_error().map(str::to_owned),
             has_more_rows,
             list_selection: state.list_selection(),
             all_tasks_status: state.all_tasks_status(),

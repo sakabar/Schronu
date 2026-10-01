@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -93,4 +94,21 @@ pub struct AllTaskPageDto {
 pub struct WebSuccess<T> {
     pub snapshot: ServerSnapshot,
     pub data: T,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BandDurationsDto {
+    pub unavailable_seconds: i64,
+    pub elapsed_seconds: i64,
+    pub repetitive_seconds: i64,
+    pub non_repetitive_seconds: i64,
+    pub rho_leeway_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BandDayDto {
+    pub logical_date: NaiveDate,
+    pub accumulated_rho_diff_seconds: i64,
+    pub accumulated_free_diff_seconds: i64,
+    pub durations: BandDurationsDto,
 }
