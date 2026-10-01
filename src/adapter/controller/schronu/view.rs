@@ -1,4 +1,6 @@
-use super::deadline_display::{format_deadline_remaining_time, misses_deadline};
+use super::deadline_display::{
+    classify_deadline_display, format_deadline_remaining_time, DeadlineDisplayStatus,
+};
 #[cfg(test)]
 use super::renderer::format_task_category_summary;
 #[cfg(test)]
@@ -1067,7 +1069,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 })
                 .or_insert(estimated_work_seconds);
 
-            // ! : 今日中が締切。締切注意の意
+            // ! : 着手予定logical date内が締切。締切注意の意
             let deadline_icon: String = "!".to_string();
 
             // v : もっと着手を手前(下)にせよの意
@@ -1076,17 +1078,19 @@ pub(super) fn build_show_all_tasks_display_with_config(
             // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
             let today_leaf_icon: String = "/".to_string();
 
-            let icon = if misses_deadline(task_deadline_time_opt.as_ref(), end_datetime) {
-                &breaking_deadline_icon
-            } else if task_deadline_time_opt.is_some()
-                && task_deadline_time_opt.unwrap() < next_logical_date_start
-            {
-                &deadline_icon
-            } else if scheduled_task.is_leaf() && scheduled_start < &eod {
-                &today_leaf_icon
-            } else {
-                // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
-                "-"
+            let deadline_display_status = classify_deadline_display(
+                task_deadline_time_opt.as_ref(),
+                end_datetime,
+                logical_naive_date,
+            )?;
+            let icon = match deadline_display_status {
+                DeadlineDisplayStatus::Overrun => &breaking_deadline_icon,
+                DeadlineDisplayStatus::DueWithinLogicalDate => &deadline_icon,
+                _ if scheduled_task.is_leaf() && scheduled_start < &eod => &today_leaf_icon,
+                _ => {
+                    // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
+                    "-"
+                }
             };
 
             let deadline_string = format_deadline_remaining_time(
@@ -1128,10 +1132,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
             match pattern_opt {
                 Some(pattern) => {
                     if pattern == "葉" {
-                        if scheduled_task.is_leaf()
-                            || task_deadline_time_opt.is_some()
-                                && task_deadline_time_opt.unwrap() < next_logical_date_start
-                        {
+                        if scheduled_task.is_leaf() || has_deadline_icon {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "枝" {
