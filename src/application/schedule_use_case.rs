@@ -14,7 +14,7 @@ use crate::entity::task::{
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime};
 use serde::Serialize;
 use std::cmp::{max, min};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -150,6 +150,35 @@ struct TaskScheduleAttributes {
     priority: i64,
     rank: usize,
     deadline_time: Option<DateTime<Local>>,
+}
+
+struct ProjectedInternalIdAllocator {
+    used: HashSet<Uuid>,
+    next: Option<u128>,
+}
+
+impl ProjectedInternalIdAllocator {
+    fn new(used: HashSet<Uuid>) -> Self {
+        Self {
+            used,
+            // nil UUIDはTaskHandleのdummy rootが使うため、内部task IDにも割り当てない。
+            next: Some(1),
+        }
+    }
+
+    fn allocate(&mut self) -> Result<Uuid, ApplicationError> {
+        loop {
+            let value = self.next.ok_or(ApplicationError::InvalidInput {
+                field: "projected_occurrence",
+                reason: "internal schedule identity space is exhausted",
+            })?;
+            self.next = value.checked_add(1);
+            let candidate = Uuid::from_u128(value);
+            if self.used.insert(candidate) {
+                return Ok(candidate);
+            }
+        }
+    }
 }
 
 pub fn get_schedule(
@@ -337,14 +366,30 @@ fn append_projected_repetition_candidates(
             datetime: last_synced_time,
         },
     )?;
-    for root in repository.get_all_projects() {
+    let mut roots = repository.get_all_projects();
+    let mut persisted_ids = HashSet::new();
+    for root in &roots {
+        collect_task_ids(root, &mut persisted_ids)?;
+    }
+    let mut id_allocator = ProjectedInternalIdAllocator::new(persisted_ids);
+    roots.sort_by_key(|root| root.get_id().unwrap_or(Uuid::nil()));
+    for root in roots {
         append_projected_repetition_candidates_from_task(
             root,
             last_synced_time,
             horizon_start,
             horizon_end,
+            &mut id_allocator,
             candidates,
         )?;
+    }
+    Ok(())
+}
+
+fn collect_task_ids(task: &TaskHandle, ids: &mut HashSet<Uuid>) -> Result<(), ApplicationError> {
+    ids.insert(task.get_id().map_err(ApplicationError::TaskTree)?);
+    for child in task.get_children().map_err(ApplicationError::TaskTree)? {
+        collect_task_ids(&child, ids)?;
     }
     Ok(())
 }
@@ -354,6 +399,7 @@ fn append_projected_repetition_candidates_from_task(
     last_synced_time: DateTime<Local>,
     horizon_start: NaiveDate,
     horizon_end: NaiveDate,
+    id_allocator: &mut ProjectedInternalIdAllocator,
     candidates: &mut Vec<TaskScheduleCandidate>,
 ) -> Result<(), ApplicationError> {
     if let Some(interval_days) = task
@@ -366,6 +412,7 @@ fn append_projected_repetition_candidates_from_task(
             last_synced_time,
             horizon_start,
             horizon_end,
+            id_allocator,
             candidates,
         )?;
     }
@@ -375,6 +422,7 @@ fn append_projected_repetition_candidates_from_task(
             last_synced_time,
             horizon_start,
             horizon_end,
+            id_allocator,
             candidates,
         )?;
     }
@@ -387,6 +435,7 @@ fn append_projected_occurrences(
     last_synced_time: DateTime<Local>,
     horizon_start: NaiveDate,
     horizon_end: NaiveDate,
+    id_allocator: &mut ProjectedInternalIdAllocator,
     candidates: &mut Vec<TaskScheduleCandidate>,
 ) -> Result<(), ApplicationError> {
     if interval_days <= 0 {
@@ -498,7 +547,7 @@ fn append_projected_occurrences(
             break;
         }
 
-        let projected_internal_id = projected_internal_id(source_task_id, occurrence.deadline_time);
+        let projected_internal_id = id_allocator.allocate()?;
         let projected = TaskHandle::with_identity(
             &format!(
                 "{}({}/{})",
@@ -568,11 +617,6 @@ fn append_projected_occurrences(
         )?;
     }
     Ok(())
-}
-
-fn projected_internal_id(source_task_id: Uuid, deadline: DateTime<Local>) -> Uuid {
-    let deadline_bits = deadline.timestamp() as i128 as u128;
-    Uuid::from_u128(source_task_id.as_u128().rotate_left(64) ^ deadline_bits)
 }
 
 /// schedule候補専用に、leafから祖先までの着手可能時刻をchecked計算する。
@@ -797,6 +841,28 @@ mod tests {
     use super::*;
     use crate::test_support::new_task_handle;
     use chrono::TimeZone;
+
+    #[test]
+    fn projected_internal_id_allocatorは実在idを避け異なる回へ決定的に割り当てる() {
+        let reserved = HashSet::from([Uuid::from_u128(1), Uuid::from_u128(3)]);
+        let allocate_three = || {
+            let mut allocator = ProjectedInternalIdAllocator::new(reserved.clone());
+            (0..3)
+                .map(|_| allocator.allocate().unwrap())
+                .collect::<Vec<_>>()
+        };
+
+        let first = allocate_three();
+        let second = allocate_three();
+
+        assert_eq!(first, second);
+        assert_eq!(
+            first,
+            [Uuid::from_u128(2), Uuid::from_u128(4), Uuid::from_u128(5)]
+        );
+        assert_eq!(first.iter().copied().collect::<HashSet<_>>().len(), 3);
+        assert!(first.iter().all(|id| !reserved.contains(id)));
+    }
 
     #[test]
     fn scheduled_end_by_taskは分割taskごとの最終終了時刻を返す() {
