@@ -319,6 +319,45 @@ fn get_scheduleは空の反復親から展開せず最新の永続回だけをfr
 }
 
 #[test]
+fn get_scheduleは古いfrontierから最初の窓内回まで一定時間で飛ばす() {
+    let now = fixed_now();
+    let parent = task_with_schedule("日課", now, 15 * 60, 1);
+    parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap()))
+        .unwrap();
+    let old_deadline = Local.with_ymd_and_hms(2000, 1, 1, 23, 0, 0).unwrap();
+    let mut old_attr = TaskAttr::with_identity("日課(1/1)", Uuid::new_v4(), old_deadline);
+    old_attr.set_start_time(old_deadline - Duration::hours(1));
+    old_attr.set_deadline_time_opt(Some(old_deadline)).unwrap();
+    old_attr.set_estimated_work_seconds(15 * 60);
+    old_attr.set_atomic(true);
+    parent.create_as_last_child(old_attr);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let projected_dates = schedule
+        .iter()
+        .filter(|item| item.is_projected())
+        .map(|item| item.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+
+    assert_eq!(projected_dates.len(), 28);
+    assert_eq!(
+        projected_dates.first().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 8, 11).unwrap())
+    );
+    assert_eq!(
+        projected_dates.last().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 9, 7).unwrap())
+    );
+}
+
+#[test]
 fn complete_task後はcompletion基準の新しい実体回から重複なく再展開する() {
     let now = fixed_now();
     let (parent, current) =

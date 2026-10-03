@@ -343,6 +343,12 @@ fn append_projected_occurrences(
     horizon_end: NaiveDate,
     candidates: &mut Vec<TaskScheduleCandidate>,
 ) -> Result<(), ApplicationError> {
+    if interval_days <= 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "repetition_interval_days",
+            reason: "must be a positive integer",
+        });
+    }
     let mut persisted_occurrences = parent
         .get_children()
         .map_err(ApplicationError::TaskTree)?
@@ -395,21 +401,55 @@ fn append_projected_occurrences(
         .get_repetition_anchor()
         .map_err(ApplicationError::TaskTree)?;
 
-    loop {
-        let occurrence = next_repetition_occurrence_times(
+    let mut occurrence = next_repetition_occurrence_times(
+        anchor,
+        interval_days,
+        repetition_start_time,
+        repetition_deadline_time,
+        days_in_advance,
+    )?;
+    let first_occurrence_date = try_logical_date(occurrence.deadline_time)?;
+    if first_occurrence_date < horizon_start {
+        let projection_range_error = || ApplicationError::LogicalDateOutOfRange {
+            operation: "repetition_projection_horizon",
+            datetime: anchor,
+        };
+        let distance_days = (horizon_start - first_occurrence_date).num_days();
+        let skipped_intervals = distance_days
+            .checked_add(
+                interval_days
+                    .checked_sub(1)
+                    .ok_or_else(projection_range_error)?,
+            )
+            .and_then(|days| days.checked_div(interval_days))
+            .ok_or_else(projection_range_error)?;
+        let interval_count =
+            skipped_intervals
+                .checked_add(1)
+                .ok_or(ApplicationError::LogicalDateOutOfRange {
+                    operation: "repetition_projection_horizon",
+                    datetime: anchor,
+                })?;
+        let jump_days = interval_days.checked_mul(interval_count).ok_or(
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "repetition_projection_horizon",
+                datetime: anchor,
+            },
+        )?;
+        occurrence = next_repetition_occurrence_times(
             anchor,
-            interval_days,
+            jump_days,
             repetition_start_time,
             repetition_deadline_time,
             days_in_advance,
         )?;
+    }
+
+    loop {
         anchor = occurrence.deadline_time;
         let occurrence_date = try_logical_date(occurrence.deadline_time)?;
         if occurrence_date >= horizon_end {
             break;
-        }
-        if occurrence_date < horizon_start {
-            continue;
         }
 
         let projected_internal_id = projected_internal_id(source_task_id, occurrence.deadline_time);
@@ -473,6 +513,13 @@ fn append_projected_occurrences(
             fixed_start_time: occurrence.start_time,
             estimated_work_seconds: estimate,
         });
+        occurrence = next_repetition_occurrence_times(
+            anchor,
+            interval_days,
+            repetition_start_time,
+            repetition_deadline_time,
+            days_in_advance,
+        )?;
     }
     Ok(())
 }
