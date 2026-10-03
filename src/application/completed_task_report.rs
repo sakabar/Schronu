@@ -76,11 +76,71 @@ pub fn list_completed_task_report(
 
 #[cfg(test)]
 mod tests {
-    use super::list_completed_task_report;
+    use super::{build_completed_task_report, list_completed_task_report};
+    use crate::application::interface::{
+        BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
+    };
+    use crate::application::task_use_case::ApplicationError;
     use crate::entity::task::{Status, TaskAttr, TaskHandle};
     use crate::test_support::{new_task_attr_at, new_task_handle_at, TestTaskRepository};
     use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
     use uuid::Uuid;
+
+    struct RecordingFreeTimeManager {
+        free_seconds: i64,
+        requested_intervals: Vec<(DateTime<Local>, DateTime<Local>)>,
+    }
+
+    impl RecordingFreeTimeManager {
+        fn new(free_seconds: i64) -> Self {
+            Self {
+                free_seconds,
+                requested_intervals: vec![],
+            }
+        }
+    }
+
+    impl FreeTimeManagerTrait for RecordingFreeTimeManager {
+        fn get_free_minutes(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> i64 {
+            unreachable!("completed report must preserve second precision")
+        }
+
+        fn get_free_seconds(
+            &mut self,
+            start: &DateTime<Local>,
+            end: &DateTime<Local>,
+        ) -> i64 {
+            self.requested_intervals.push((*start, *end));
+            self.free_seconds
+        }
+
+        fn get_busy_minutes(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> i64 {
+            0
+        }
+
+        fn register_busy_time_slot(
+            &mut self,
+            _start: &DateTime<Local>,
+            _end: &DateTime<Local>,
+        ) -> Result<(), BusyTimeSlotRegistrationError> {
+            Ok(())
+        }
+
+        fn load_busy_time_slots_from_file(
+            &mut self,
+            _busy_time_slots_file_path: &str,
+        ) -> Result<(), BusyTimeSlotLoadError> {
+            Ok(())
+        }
+    }
 
     fn local_time(day: u32, hour: u32, minute: u32, second: u32) -> DateTime<Local> {
         Local
@@ -183,5 +243,156 @@ mod tests {
         assert_eq!(report[0].completed_at, local_time(11, 9, 0, 0));
         assert_eq!(report[0].actual_work_seconds, 11);
         assert_eq!(report[0].estimated_work_seconds, 12);
+    }
+
+    #[test]
+    fn 実績0は見積へ置換し見積も0なら0のまま返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let fallback = completed_task("fallback", local_time(11, 9, 0, 0), 0, 3_600);
+        let zero = completed_task("zero", local_time(11, 10, 0, 0), 0, 0);
+        let repository = TestTaskRepository::new(vec![fallback, zero], local_time(11, 12, 0, 0));
+
+        let rows = list_completed_task_report(&repository, logical_date).unwrap();
+
+        assert_eq!(rows[0].actual_work_seconds, 3_600);
+        assert_eq!(rows[1].actual_work_seconds, 0);
+    }
+
+    #[test]
+    fn rootと親を含む実績合計とbusy控除後の利用可能時間を返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let root = completed_task("root", local_time(11, 9, 0, 0), 0, 100);
+        root.create_child(completed_attr("parent", local_time(11, 10, 0, 0), 200, 300))
+            .unwrap();
+        let repository = TestTaskRepository::new(vec![root], local_time(11, 12, 0, 0));
+        let mut free_time_manager = RecordingFreeTimeManager::new(1_234);
+
+        let report = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap();
+
+        assert_eq!(report.total_actual_work_seconds, 300);
+        assert_eq!(report.available_seconds, 1_234);
+        assert_eq!(report.rows.len(), 2);
+        assert_eq!(
+            free_time_manager.requested_intervals,
+            vec![(local_time(11, 6, 0, 0), local_time(12, 2, 0, 0))]
+        );
+    }
+
+    #[test]
+    fn 記録率を四捨五入し100percent超も保持する() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let repository = TestTaskRepository::new(
+            vec![completed_task("task", local_time(11, 9, 0, 0), 1, 1)],
+            local_time(11, 12, 0, 0),
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(8);
+        let rounded = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap();
+        assert_eq!(rounded.recorded_percentage, Some(13));
+
+        let repository = TestTaskRepository::new(
+            vec![completed_task("task", local_time(11, 9, 0, 0), 5, 5)],
+            local_time(11, 12, 0, 0),
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(4);
+        let over_one_hundred = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap();
+        assert_eq!(over_one_hundred.recorded_percentage, Some(125));
+    }
+
+    #[test]
+    fn 利用可能時間0なら記録率はnone() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let repository = TestTaskRepository::new(
+            vec![completed_task("task", local_time(11, 9, 0, 0), 10, 10)],
+            local_time(11, 12, 0, 0),
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(0);
+
+        let report = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap();
+
+        assert_eq!(report.recorded_percentage, None);
+    }
+
+    #[test]
+    fn 実績合計のi64範囲超過を値付きerrorで返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let repository = TestTaskRepository::new(
+            vec![
+                completed_task("first", local_time(11, 9, 0, 0), i64::MAX, i64::MAX),
+                completed_task("second", local_time(11, 10, 0, 0), i64::MAX, i64::MAX),
+            ],
+            local_time(11, 12, 0, 0),
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(1);
+
+        let error = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "total_actual_work_seconds",
+                value: i64::MAX as i128 * 2,
+            }
+        );
+    }
+
+    #[test]
+    fn 記録率のi64範囲超過を値付きerrorで返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let repository = TestTaskRepository::new(
+            vec![completed_task(
+                "task",
+                local_time(11, 9, 0, 0),
+                i64::MAX,
+                i64::MAX,
+            )],
+            local_time(11, 12, 0, 0),
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(1);
+
+        let error = build_completed_task_report(
+            &repository,
+            &mut free_time_manager,
+            logical_date,
+            120,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "recorded_percentage",
+                value: i64::MAX as i128 * 100,
+            }
+        );
     }
 }
