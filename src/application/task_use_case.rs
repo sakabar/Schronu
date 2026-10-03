@@ -721,6 +721,23 @@ pub fn set_estimate(
     Ok(())
 }
 
+pub fn set_actual_work(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    actual_work_seconds: i64,
+) -> Result<(), ApplicationError> {
+    if actual_work_seconds < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "actual_work_seconds",
+            reason: "must not be negative",
+        });
+    }
+    let task = find_task(repository, task_id)?;
+    task.set_actual_work_seconds(actual_work_seconds)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(())
+}
+
 pub fn set_deadline(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
