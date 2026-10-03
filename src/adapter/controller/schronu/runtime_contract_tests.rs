@@ -3561,6 +3561,211 @@ fn test_execute_defer_routine_翌朝計算不能を情報付きerrorにして親
 }
 
 #[test]
+fn test_execute_command_押はtodo対象を維持して操作時刻から祖先を段階的にpending化する() {
+    let operation_now = test_task_time();
+    let root = new_test_task_handle("押で4日後になる祖先").unwrap();
+    let parent = root.create_as_last_child(new_test_task_attr("押で2日後になる親"));
+    let focused = parent.create_as_last_child(new_test_task_attr("Todoの押対象"));
+    root.set_orig_status(Status::Done).unwrap();
+    parent.set_orig_status(Status::Pending).unwrap();
+    parent
+        .set_pending_until(operation_now + Duration::days(30))
+        .unwrap();
+    focused
+        .set_start_time(operation_now + Duration::days(10))
+        .unwrap();
+    focused
+        .set_deadline_time_opt(Some(operation_now + Duration::minutes(5)))
+        .unwrap();
+    focused.sync_clock(operation_now).unwrap();
+    let focused_id = focused.get_id().unwrap();
+    assert_eq!(focused.get_status().unwrap(), Status::Todo);
+    let focused_before = focused.snapshot().unwrap();
+    let parent_start_time = parent.get_start_time().unwrap();
+    let root_start_time = root.get_start_time().unwrap();
+
+    let result = execute_command_for_test(root.clone(), operation_now, Some(focused_id), "押 2");
+
+    assert_eq!(result.output, "");
+    assert_eq!(result.focused_task_id_opt, Some(focused_id));
+    assert_eq!(focused.snapshot().unwrap(), focused_before);
+    assert_eq!(focused.get_status().unwrap(), Status::Todo);
+    assert_eq!(parent.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        parent.get_pending_until().unwrap(),
+        operation_now + Duration::days(2)
+    );
+    assert_eq!(parent.get_start_time().unwrap(), parent_start_time);
+    assert_eq!(root.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        root.get_pending_until().unwrap(),
+        operation_now + Duration::days(4)
+    );
+    assert_eq!(root.get_start_time().unwrap(), root_start_time);
+}
+
+#[test]
+fn test_runtime_defer_押はtodo対象の祖先を設定された曜日を飛ばしてpending化する() {
+    for (operation_now, step_days, expected_parent, expected_root) in [
+        (
+            Local.with_ymd_and_hms(2026, 8, 21, 12, 0, 0).unwrap(),
+            1,
+            Local.with_ymd_and_hms(2026, 8, 24, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 25, 12, 0, 0).unwrap(),
+        ),
+        (
+            Local.with_ymd_and_hms(2026, 8, 22, 12, 0, 0).unwrap(),
+            0,
+            Local.with_ymd_and_hms(2026, 8, 24, 12, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 24, 12, 0, 0).unwrap(),
+        ),
+    ] {
+        let root = new_test_task_handle("曜日skip後の祖先").unwrap();
+        let parent = root.create_as_last_child(new_test_task_attr("曜日skip後の親"));
+        let focused = parent.create_as_last_child(new_test_task_attr("曜日skipの押対象"));
+        let focused_id = focused.get_id().unwrap();
+        let focused_before = focused.snapshot().unwrap();
+        let mut repository = TestTaskRepository::new(root, operation_now);
+        let mut focused_task_id_opt = Some(focused_id);
+        let mut config = active_config().clone();
+        config.extrude_skip_weekdays = vec![chrono::Weekday::Sat, chrono::Weekday::Sun];
+        let mut context = RuntimeDeferCommandContext {
+            task_repository: &mut repository,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            config: &config,
+        };
+
+        assert_eq!(context.extrude(Some(step_days)), Ok(()));
+
+        assert_eq!(focused.snapshot().unwrap(), focused_before);
+        assert_eq!(parent.get_pending_until().unwrap(), expected_parent);
+        assert_eq!(repository.task.get_pending_until().unwrap(), expected_root);
+        assert_eq!(focused_task_id_opt, Some(focused_id));
+    }
+}
+
+#[test]
+fn test_execute_command_押は親のないtodo対象を変更しない() {
+    let operation_now = test_task_time();
+    let focused = new_test_task_handle("親のないTodoの押対象").unwrap();
+    let focused_id = focused.get_id().unwrap();
+    let before = focused.snapshot().unwrap();
+
+    let result = execute_command_for_test(
+        focused.clone(),
+        operation_now,
+        Some(focused_id),
+        "押 3",
+    );
+
+    assert_eq!(focused.snapshot().unwrap(), before);
+    assert_eq!(result.focused_task_id_opt, Some(focused_id));
+}
+
+#[test]
+fn test_execute_command_押は期限切れpendingの実効todo対象を維持して親だけをpending化する() {
+    let operation_now = test_task_time();
+    let root = new_test_task_handle("実効Todo対象の親").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("期限切れPendingの押対象"));
+    focused
+        .set_start_time(operation_now - Duration::days(2))
+        .unwrap();
+    focused.set_orig_status(Status::Pending).unwrap();
+    focused
+        .set_pending_until(operation_now - Duration::days(1))
+        .unwrap();
+    focused.sync_clock(operation_now).unwrap();
+    let focused_id = focused.get_id().unwrap();
+    assert_eq!(focused.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(focused.get_status().unwrap(), Status::Todo);
+    let focused_before = focused.snapshot().unwrap();
+
+    let result = execute_command_for_test(root.clone(), operation_now, Some(focused_id), "押 2");
+
+    assert_eq!(focused.snapshot().unwrap(), focused_before);
+    assert_eq!(root.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        root.get_pending_until().unwrap(),
+        operation_now + Duration::days(2)
+    );
+    assert_eq!(result.focused_task_id_opt, Some(focused_id));
+}
+
+#[test]
+fn test_execute_command_押はpending対象自身から従来の着手可能時刻を基準に延期する() {
+    let operation_now = test_task_time();
+    let root = new_test_task_handle("Pending対象の親").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("Pendingの押対象"));
+    let focused_id = focused.get_id().unwrap();
+    let first_pending_until = operation_now + Duration::days(3);
+    focused.set_orig_status(Status::Pending).unwrap();
+    focused.set_pending_until(first_pending_until).unwrap();
+
+    let result = execute_command_for_test(
+        root.clone(),
+        operation_now,
+        Some(focused_id),
+        "押 2",
+    );
+
+    assert_eq!(focused.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(focused.get_pending_until().unwrap(), first_pending_until);
+    assert_eq!(root.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(
+        root.get_pending_until().unwrap(),
+        first_pending_until + Duration::days(2)
+    );
+    assert_eq!(result.focused_task_id_opt, Some(focused_id));
+}
+
+#[test]
+fn test_runtime_defer_押は日時加算不能なら祖先を部分更新しない() {
+    let operation_now = maximum_local_datetime();
+    let root = new_test_task_handle("日時上限の祖先").unwrap();
+    let parent = root.create_as_last_child(new_test_task_attr("日時上限の親"));
+    let focused = parent.create_as_last_child(new_test_task_attr("日時上限の押対象"));
+    let focused_id = focused.get_id().unwrap();
+    let before = root.snapshot().unwrap();
+    let mut repository = TestTaskRepository::new(root.clone(), operation_now);
+    let mut focused_task_id_opt = Some(focused_id);
+    let mut context = RuntimeDeferCommandContext {
+        task_repository: &mut repository,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        config: active_config(),
+    };
+
+    assert_eq!(
+        context.extrude(Some(1)),
+        Err(ApplicationError::LogicalDateOutOfRange {
+            operation: "extrude_pending_until",
+            datetime: operation_now,
+        })
+    );
+    assert_eq!(root.snapshot().unwrap(), before);
+    assert_eq!(focused_task_id_opt, Some(focused_id));
+}
+
+#[test]
+fn test_execute_command_押はdone対象と祖先を変更しない() {
+    let operation_now = test_task_time();
+    let root = new_test_task_handle("Done対象の親").unwrap();
+    let focused = root.create_as_last_child(new_test_task_attr("Doneの押対象"));
+    let focused_id = focused.get_id().unwrap();
+    focused.set_orig_status(Status::Done).unwrap();
+    let before = root.snapshot().unwrap();
+
+    let result = execute_command_for_test(
+        root.clone(),
+        operation_now,
+        Some(focused_id),
+        "押 2",
+    );
+
+    assert_eq!(root.snapshot().unwrap(), before);
+    assert_eq!(result.focused_task_id_opt, Some(focused_id));
+}
+
+#[test]
 fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期する() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 12, 0, 0).unwrap();
     let orig_deadline = Local.with_ymd_and_hms(2026, 8, 13, 10, 0, 0).unwrap();
