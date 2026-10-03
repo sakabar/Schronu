@@ -110,6 +110,26 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
 }
 
 #[test]
+fn routine_load_displayは空reportでも見出し幅と二空白区切りを使う() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        rows: vec![],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:今後28日の繰返負荷 (2026-10-03〜2026-10-30)",
+            "newline:間隔  28日合計  週平均  発生日数  最大日  プロジェクト / 繰返",
+        ]
+    );
+}
+
+#[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
     let row = SpreadsheetTaskRow {
         ind: "0001",
