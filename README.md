@@ -146,7 +146,7 @@ SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage-copy \
 
 ### scheduling性能契約
 
-`schedule`、`pack`、`flatten`は、匿名化した固定seed fixtureで性能退行を検出します。元storageは集計時だけread-onlyで開き、名前、UUID、本文、実日付、絶対pathはfixtureへ保存しません。`SCHRONU_BENCHMARK_STORAGE`はアプリケーションの恒久設定ではなく、次の手動集計だけにinline指定します。
+`schedule`、`projection`、`pack`、`flatten`は、匿名化した固定seed fixtureで性能退行を検出します。元storageは集計時だけread-onlyで開き、名前、UUID、本文、実日付、絶対pathはfixtureへ保存しません。`SCHRONU_BENCHMARK_STORAGE`はアプリケーションの恒久設定ではなく、次の手動集計だけにinline指定します。
 
 ```shell
 SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage \
@@ -162,14 +162,23 @@ fixture規模は次のとおりです。stressはtypicalのproject、task、acti
 | typical | 2,213 | 26,378 | 691 |
 | stress | 8,852 | 105,512 | 2,764 |
 
-通常CIはwall-clockではなく、candidate、segment、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。ただし、全scheduleを333回再構築するstress flattenは8,000msを上限とします。
+`projection`は3日間隔の繰り返し元と当日の実体回を決定的に構成し、28日窓内で各1系列を実体1件+投影9件の10候補へ展開します。既存profileの基準値を変えないため、専用fixtureとして分離しています。
+
+| projection fixture | source | persisted task | candidate | projected occurrence |
+| --- | ---: | ---: | ---: | ---: |
+| typical | 64 | 128 | 640 | 576 |
+| stress | 256 | 512 | 2,560 | 2,304 |
+
+通常CIはwall-clockではなく、candidate、segment、projection step、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。projection stepは古いfrontierから窓内へ飛ぶ計算も数え、frontierの古さで増えないことを固定します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。ただし、projectionはtypical 100msとstress 500ms、全scheduleを333回再構築するstress flattenは8,000msを上限とします。
 
 ```shell
 cargo test --locked --features benchmarking --test scheduling_benchmark_contract
 cargo bench --locked --features benchmarking --bench scheduling -- typical schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- typical projection check
 cargo bench --locked --features benchmarking --bench scheduling -- typical pack check
 cargo bench --locked --features benchmarking --bench scheduling -- typical flatten check
 cargo bench --locked --features benchmarking --bench scheduling -- stress schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- stress projection check
 cargo bench --locked --features benchmarking --bench scheduling -- stress pack check
 cargo bench --locked --features benchmarking --bench scheduling -- stress flatten check
 ```
@@ -179,6 +188,7 @@ cargo bench --locked --features benchmarking --bench scheduling -- stress flatte
 | use case | typical | stress |
 | --- | ---: | ---: |
 | schedule | 6.930ms | 29.172ms |
+| projection | 3.846ms | 7.797ms |
 | pack | 8.046ms | 35.296ms |
 | flatten | 72.900ms | 403.322ms |
 
