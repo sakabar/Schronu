@@ -14,6 +14,7 @@ fn projected_occurrenceはread_onlyの一覧rowを構築する() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
     let source_task_id = Uuid::from_u128(901);
     let task = TaskHandle::with_identity("projected", source_task_id, start).unwrap();
+    task.set_fixed_start(true).unwrap();
     let repository = TestTaskRepository::new(vec![task.clone()], start);
     let schedule = [ScheduledTaskView {
         occurrence: ScheduleOccurrenceKey::Projected {
@@ -48,6 +49,11 @@ fn projected_occurrenceはread_onlyの一覧rowを構築する() {
             if source_task_id == &expected_source_task_id
     ));
     assert!(all_rows[0].task.task_id.is_none());
+    assert_eq!(
+        scheduled_rows[0].task_display_kind,
+        TaskDisplayKind::Repetitive
+    );
+    assert_eq!(all_rows[0].task_display_kind, TaskDisplayKind::Repetitive);
 }
 
 #[test]

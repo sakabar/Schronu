@@ -257,9 +257,10 @@ fn named_row(
 }
 
 #[test]
-fn projected行は予定と元taskを表示しsessionと先送り操作を描画しない() {
+fn projected行は繰返色で予定と元taskを表示しsessionと先送り操作を描画しない() {
     let mut projected = named_row("unused", "筋トレ(9/8)", false, true);
     projected.task.task_id = None;
+    projected.task_display_kind = TaskDisplayKind::Repetitive;
     projected.occurrence = crate::ScheduleOccurrence::Projected {
         occurrence_key: "parent:1788876000000".to_owned(),
         source_task_id: "00000000-0000-0000-0000-000000000010".to_owned(),
@@ -276,6 +277,14 @@ fn projected行は予定と元taskを表示しsessionと先送り操作を描画
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("projected-task-badge"), "{html}");
     assert!(html.contains("予定"), "{html}");
+    assert!(
+        html.contains("class=\"task-name task-kind-repetitive is-leaf\""),
+        "{html}"
+    );
+    assert!(
+        html.contains("aria-label=\"繰返タスク: 筋トレ(9/8)\""),
+        "{html}"
+    );
     assert!(
         html.contains("元: 00000000-0000-0000-0000-000000000010"),
         "{html}"

@@ -344,11 +344,7 @@ fn classify_display_kinds(
 ) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
     let Some(task_id) = segment.actual_task_id() else {
         return Ok((
-            if segment.task.fixed_start {
-                TaskDisplayKind::Fixed
-            } else {
-                TaskDisplayKind::Repetitive
-            },
+            TaskDisplayKind::Repetitive,
             classify_deadline_kind(segment, logical_date)?,
         ));
     };
