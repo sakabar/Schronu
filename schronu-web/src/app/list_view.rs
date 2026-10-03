@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use std::rc::Rc;
 
 use crate::client::state::ListMode;
+use crate::client::time_model::format_hh_mm_ss;
 use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
@@ -431,10 +432,14 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
         .map(|date| date.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "--:--:--".to_owned());
     let completed_datetime = completed_at.map(|date| date.to_rfc3339());
-    let actual = format_report_seconds(i128::from(row.actual_work_seconds));
-    let estimated = format_report_seconds(i128::from(row.estimated_work_seconds));
+    let actual = format_hh_mm_ss(i128::from(row.actual_work_seconds));
+    let estimated = format_hh_mm_ss(i128::from(row.estimated_work_seconds));
     let difference = i128::from(row.actual_work_seconds) - i128::from(row.estimated_work_seconds);
-    let difference_label = format_signed_report_seconds(difference);
+    let difference_label = if difference >= 0 {
+        format!("+{}", format_hh_mm_ss(difference))
+    } else {
+        format_hh_mm_ss(difference)
+    };
     let difference_class = if difference > 0 {
         "completed-number completed-difference is-overrun"
     } else {
@@ -456,20 +461,6 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
             td { class: "completed-task-name", "{row.task_name}" }
         }
     }
-}
-
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-fn format_report_seconds(seconds: i128) -> String {
-    let hours = seconds / 3_600;
-    let minutes = seconds % 3_600 / 60;
-    let seconds = seconds % 60;
-    format!("{hours:02}:{minutes:02}:{seconds:02}")
-}
-
-#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-fn format_signed_report_seconds(seconds: i128) -> String {
-    let sign = if seconds < 0 { '-' } else { '+' };
-    format!("{sign}{}", format_report_seconds(seconds.abs()))
 }
 
 #[component]

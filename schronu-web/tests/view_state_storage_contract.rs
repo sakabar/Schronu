@@ -130,6 +130,54 @@ fn view_state_v2は予定modeとscheduled_listへ移行する() {
 }
 
 #[test]
+fn view_state_v3はactive_modeの日付buttonを構築できない境界を保存と読込で拒否する() {
+    let storage = MemoryStorage::default();
+    for (mode, logical_date) in [
+        (ListMode::Scheduled, "9999-12-31"),
+        (ListMode::Completed, "0000-01-01"),
+    ] {
+        let state = boundary_view_state(mode, logical_date);
+        assert_eq!(
+            store_view_state(&storage, &state),
+            Err(ViewStateStoreError::InvalidState)
+        );
+
+        let mut raw = serde_json::to_value(&state).unwrap();
+        raw.as_object_mut()
+            .unwrap()
+            .insert("version".to_owned(), serde_json::json!(3));
+        *storage.value.borrow_mut() = Some(raw.to_string());
+        let loaded = load_view_state(&storage);
+        assert!(loaded.state().is_none(), "{mode:?} {logical_date}");
+        assert!(loaded.warning().is_some(), "{mode:?} {logical_date}");
+    }
+}
+
+#[test]
+fn view_state_v2も予定button上限を越えるsnapshotを復元しない() {
+    let storage = MemoryStorage::default();
+    *storage.value.borrow_mut() = Some(
+        serde_json::json!({
+            "version": 2,
+            "snapshot": {
+                "observed_at_epoch_ms": 1_789_000_000_000_i64,
+                "logical_date": "9999-12-31",
+                "buffer_seconds": 60
+            },
+            "list": null,
+            "active_tab": "list",
+            "task_name_filter": "",
+            "date_input_text": ""
+        })
+        .to_string(),
+    );
+
+    let loaded = load_view_state(&storage);
+    assert!(loaded.state().is_none());
+    assert!(loaded.warning().is_some());
+}
+
+#[test]
 fn view_state_v3は不正な完了rowを全体不正として扱う() {
     let storage = MemoryStorage::default();
     let mut state = ViewState {
@@ -282,6 +330,21 @@ fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {
         active_tab: ActiveTab::List,
         task_name_filter: "設計".to_owned(),
         date_input_text: "2026/9/9".to_owned(),
+    }
+}
+
+fn boundary_view_state(list_mode: ListMode, logical_date: &str) -> ViewState {
+    ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: logical_date.to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode,
+        list: None,
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
     }
 }
 

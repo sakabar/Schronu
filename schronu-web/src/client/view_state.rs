@@ -1,3 +1,4 @@
+use super::date_buttons::logical_date_buttons_for_mode;
 use super::state::{ActiveTab, ListMode};
 use super::work_sessions::{KeyValueStorage, StorageError};
 use crate::{CompletedTaskRow, DeferMode, ScheduledTaskRow, ServerSnapshot};
@@ -170,6 +171,7 @@ fn loaded(state: Option<ViewState>, warning: Option<String>) -> LoadedViewState 
 
 fn valid_view_state(state: &ViewState) -> bool {
     valid_snapshot(&state.snapshot)
+        && logical_date_buttons_for_mode(&state.snapshot.logical_date, state.list_mode).is_ok()
         && state.list.as_ref().is_none_or(|list| match list {
             StoredActiveList::Scheduled { logical_date, rows } => {
                 state.list_mode == ListMode::Scheduled
