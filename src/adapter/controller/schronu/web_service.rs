@@ -14,7 +14,8 @@ mod all_tasks_performance_tests;
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
     AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
-    DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
+    DeferPlanDto, LoadDataDto, RoutineLoadReportDto, RoutineLoadRowDto, ScheduledTaskRowDto,
+    ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
@@ -96,16 +97,22 @@ impl WebService {
     pub fn load_band_at(
         &mut self,
         operation_now: DateTime<Local>,
-    ) -> Result<WebSuccess<Vec<BandDayDto>>, WebReadError> {
+    ) -> Result<WebSuccess<LoadDataDto>, WebReadError> {
         self.run_at(operation_now, |repository, free_time_manager, offset| {
             let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
-            let data = build_band_days(
+            let band_days = build_band_days(
                 repository,
                 free_time_manager,
                 &schedule,
                 operation_now,
                 offset,
             )?;
+            let routine_load =
+                read_model::build_routine_load_report_dto(repository, &schedule, operation_now)?;
+            let data = LoadDataDto {
+                band_days,
+                routine_load,
+            };
             let snapshot = build_server_snapshot_from_schedule(
                 repository,
                 free_time_manager,

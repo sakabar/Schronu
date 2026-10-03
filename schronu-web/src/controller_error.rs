@@ -76,7 +76,8 @@ fn map_application_error(error: ApplicationError) -> WebError {
             "未完了の子タスクがあるため完了できません。",
         ),
         ApplicationError::ScheduleTimeOutOfRange { .. }
-        | ApplicationError::RemainingWorkCalculationOverflow { .. } => manual(
+        | ApplicationError::RemainingWorkCalculationOverflow { .. }
+        | ApplicationError::RoutineLoadCalculationOverflow { .. } => manual(
             web_error_codes::ARITHMETIC_OVERFLOW,
             "タスク時間の計算結果が範囲を超えました。",
         ),

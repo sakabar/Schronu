@@ -83,6 +83,9 @@ pub enum ApplicationError {
         estimated_work_seconds: i64,
         actual_work_seconds: i64,
     },
+    RoutineLoadCalculationOverflow {
+        routine_task_id: Uuid,
+    },
     DeferPlanChanged {
         expected: DeferMode,
         actual: DeferMode,
@@ -156,6 +159,10 @@ impl fmt::Display for ApplicationError {
             } => write!(
                 formatter,
                 "remaining work calculation overflow: task_id={task_id}, estimated_work_seconds={estimated_work_seconds}, actual_work_seconds={actual_work_seconds}"
+            ),
+            Self::RoutineLoadCalculationOverflow { routine_task_id } => write!(
+                formatter,
+                "routine load calculation overflow: routine_task_id={routine_task_id}"
             ),
             Self::DeferPlanChanged { expected, actual } => write!(
                 formatter,

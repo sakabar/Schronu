@@ -1,8 +1,9 @@
 use super::*;
-use crate::{BandDay, WebSuccess};
+use crate::{BandDay, LoadData, RoutineLoadReport, WebSuccess};
 
 pub(super) struct LoadState {
     pub(super) rows: Vec<BandDay>,
+    pub(super) routine_load_report: Option<RoutineLoadReport>,
     pub(super) observed_at_epoch_ms: Option<i64>,
     pub(super) loading: bool,
     pub(super) error: Option<String>,
@@ -14,6 +15,7 @@ impl LoadState {
     pub(super) fn new() -> Self {
         Self {
             rows: Vec::new(),
+            routine_load_report: None,
             observed_at_epoch_ms: None,
             loading: false,
             error: None,
@@ -41,6 +43,10 @@ impl ClientState {
         self.load.observed_at_epoch_ms
     }
 
+    pub fn routine_load_report(&self) -> Option<&RoutineLoadReport> {
+        self.load.routine_load_report.as_ref()
+    }
+
     pub fn band_loading(&self) -> bool {
         self.load.loading
     }
@@ -62,7 +68,7 @@ impl ClientState {
     pub fn apply_load_band_result(
         &mut self,
         request_id: u64,
-        result: Result<WebSuccess<Vec<BandDay>>, ServerFailure>,
+        result: Result<WebSuccess<LoadData>, ServerFailure>,
     ) -> ClientEffect {
         let invocation = ServerActionInvocation::LoadBand;
         if self.load.latest_request_id != Some(request_id) {
@@ -78,7 +84,8 @@ impl ClientState {
                     self.record_stale_response(invocation, true);
                     return ClientEffect::None;
                 }
-                self.load.rows = success.data;
+                self.load.rows = success.data.band_days;
+                self.load.routine_load_report = Some(success.data.routine_load);
                 self.load.observed_at_epoch_ms = Some(observed_at);
                 self.load.error = None;
                 self.record_server(invocation, Outcome::Success, "負荷を更新しました。");

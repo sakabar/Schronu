@@ -1098,6 +1098,141 @@ button:disabled {
     min-height: 40px;
 }
 
+.load-mode-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.25rem;
+    margin-bottom: 0.8rem;
+    padding: 0.2rem;
+    border-radius: 0.7rem;
+    background: var(--surface-muted);
+}
+
+.load-mode-tab {
+    min-height: 40px;
+    border-color: transparent;
+    background: transparent;
+    color: var(--muted);
+}
+
+.load-mode-tab.is-selected {
+    border-color: var(--line);
+    background: var(--surface);
+    color: var(--ink);
+}
+
+.routine-load-summary {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.55rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.routine-load-table-wrap {
+    max-width: 100%;
+    overflow-x: visible;
+    border: 1px solid var(--line);
+    border-radius: 0.7rem;
+    background: var(--surface);
+}
+
+.routine-load-table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.routine-load-table th,
+.routine-load-table td {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    white-space: nowrap;
+}
+
+.routine-load-table tbody tr:last-child th,
+.routine-load-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.routine-load-table thead th {
+    background: var(--surface-muted);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.routine-load-name,
+.routine-load-project {
+    display: block;
+}
+
+.routine-load-project {
+    margin-top: 0.15rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 400;
+}
+
+.routine-load-number {
+    font-variant-numeric: tabular-nums;
+}
+
+.routine-load-table .routine-load-interval {
+    width: 6rem;
+    min-width: 6rem;
+    text-align: right;
+}
+
+.routine-load-table .routine-load-total {
+    width: 6.5rem;
+    min-width: 6.5rem;
+    text-align: right;
+}
+
+.routine-load-table .routine-load-occurrences {
+    width: 6.5rem;
+    min-width: 6.5rem;
+    text-align: right;
+}
+
+.routine-load-table .routine-load-peak {
+    width: 8.5rem;
+    min-width: 8.5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.routine-load-table tbody .routine-load-peak {
+    color: var(--red);
+}
+
+.routine-load-table .routine-load-subject {
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+}
+
+.routine-load-subject-scroll {
+    min-width: 0;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.routine-load-subject-scroll:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: -3px;
+}
+
 .band-legend {
     display: flex;
     flex-wrap: wrap;
@@ -1313,6 +1448,40 @@ button:disabled {
         padding: 0.4rem 0.35rem;
     }
 
+    .routine-load-table th,
+    .routine-load-table td {
+        padding: 0.55rem 0.2rem;
+        font-size: 0.7rem;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+
+    .routine-load-table .routine-load-interval {
+        width: 11%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-total {
+        width: 15%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-occurrences {
+        width: 14%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-peak {
+        width: 18%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-subject {
+        width: 42%;
+        min-width: 0;
+    }
+
 }
 
 @media (max-width: 34rem) {
@@ -1368,6 +1537,10 @@ button:disabled {
     }
 
     .load-view.has-error {
+        height: auto;
+    }
+
+    .load-view.is-routine {
         height: auto;
     }
 

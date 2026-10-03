@@ -1,7 +1,8 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
     AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
-    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
+    RoutineLoadReportDto, RoutineLoadRowDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     classify_deadline_display, format_deadline_remaining_time, misses_deadline,
@@ -14,6 +15,7 @@ use crate::application::daily_capacity::{
     try_logical_date, DailyLoadAccumulator, DailyLoadDayInput,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_logical_dates, ScheduledTaskView,
 };
@@ -24,6 +26,35 @@ use chrono::{DateTime, Local, NaiveDate};
 use std::cmp::max;
 use std::collections::HashMap;
 use uuid::Uuid;
+
+pub(in crate::adapter::controller) fn build_routine_load_report_dto(
+    repository: &dyn TaskRepositoryTrait,
+    schedule: &[ScheduledTaskView],
+    operation_now: DateTime<Local>,
+) -> Result<RoutineLoadReportDto, WebReadCoreError> {
+    let start_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
+    let report = build_routine_load_report(repository, schedule, start_date)
+        .map_err(WebReadCoreError::Application)?;
+    Ok(RoutineLoadReportDto {
+        start_date: report.start_date,
+        end_date: report.end_date,
+        rows: report
+            .rows
+            .into_iter()
+            .map(|row| RoutineLoadRowDto {
+                project_task_id: row.project_task_id.hyphenated().to_string(),
+                project_name: row.project_name,
+                routine_task_id: row.routine_task_id.hyphenated().to_string(),
+                routine_name: row.routine_name,
+                repetition_interval_days: row.repetition_interval_days,
+                total_work_seconds: row.total_work_seconds,
+                occurrence_day_count: row.occurrence_day_count,
+                peak_date: row.peak_date,
+                peak_work_seconds: row.peak_work_seconds,
+            })
+            .collect(),
+    })
+}
 
 #[cfg(test)]
 pub(in crate::adapter::controller) fn build_server_snapshot<R, F>(

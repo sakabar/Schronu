@@ -1071,6 +1071,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         no_arguments(CommandKind::NonRepetitive, "単"),
         no_arguments(CommandKind::Calendar, "暦"),
         no_arguments(CommandKind::Band, "帯"),
+        no_arguments(CommandKind::RoutineLoad, "荷"),
         Command::Focus { task_id },
         Command::Action(CommandAction::Pick {
             task_id: Some(task_id),
@@ -1097,6 +1098,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         "list:Some(\"単\"):ScheduledStartDesc:resolve=false",
         "list:Some(\"暦\"):ScheduledStartDesc:resolve=false",
         "list:Some(\"帯\"):ScheduledStartDesc:resolve=false",
+        "list:Some(\"荷\"):ScheduledStartDesc:resolve=false",
         "focus:11111111-1111-1111-1111-111111111111",
         "pick:Some(11111111-1111-1111-1111-111111111111)",
         "pick:None",
@@ -1164,6 +1166,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
                 | CommandKind::NonRepetitive
                 | CommandKind::Calendar
                 | CommandKind::Band
+                | CommandKind::RoutineLoad
                 | CommandKind::Children
                 | CommandKind::Deepest
         );
