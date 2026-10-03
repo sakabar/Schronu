@@ -58,6 +58,10 @@ mod handler_contract_tests;
 mod renderer_contract_tests;
 
 #[cfg(test)]
+#[path = "schronu/completed_report_cli_contract_tests.rs"]
+mod completed_report_cli_contract_tests;
+
+#[cfg(test)]
 #[path = "schronu/interactive_contract_tests.rs"]
 mod interactive_contract_tests;
 
