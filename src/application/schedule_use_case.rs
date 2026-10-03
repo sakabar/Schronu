@@ -1,15 +1,16 @@
 use crate::application::daily_capacity::{try_logical_date, try_next_logical_date_start};
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::scheduling_instrumentation::{record_schedule, ScheduleEvent};
+pub use crate::application::scheduling_policy::ScheduleOccurrenceKey;
 use crate::application::scheduling_policy::{
-    schedule_tasks_by_priority, SchedulingPolicyError, TaskScheduleCandidate,
+    schedule_tasks_by_priority, ProjectedTaskMetadata, SchedulingPolicyError, TaskScheduleCandidate,
 };
-use crate::application::task_use_case::ApplicationError;
+use crate::application::task_use_case::{next_repetition_occurrence_times, ApplicationError};
 use crate::application::task_view::TaskView;
 use crate::entity::task::{
     extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
 };
-use chrono::{DateTime, Duration, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use serde::Serialize;
 use std::cmp::{max, min};
 use std::collections::HashMap;
@@ -17,6 +18,7 @@ use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScheduledTaskView {
+    pub occurrence: ScheduleOccurrenceKey,
     pub task: TaskView,
     pub first_available_time: DateTime<Local>,
     pub scheduled_start: DateTime<Local>,
@@ -29,6 +31,24 @@ pub struct ScheduledTaskView {
 impl ScheduledTaskView {
     pub(crate) fn is_leaf(&self) -> bool {
         self.rank == 0
+    }
+
+    pub fn actual_task_id(&self) -> Option<Uuid> {
+        match self.occurrence {
+            ScheduleOccurrenceKey::Actual { task_id } => Some(task_id),
+            ScheduleOccurrenceKey::Projected { .. } => None,
+        }
+    }
+
+    pub fn source_task_id(&self) -> Uuid {
+        match self.occurrence {
+            ScheduleOccurrenceKey::Actual { task_id } => task_id,
+            ScheduleOccurrenceKey::Projected { source_task_id, .. } => source_task_id,
+        }
+    }
+
+    pub fn is_projected(&self) -> bool {
+        matches!(self.occurrence, ScheduleOccurrenceKey::Projected { .. })
     }
 }
 
@@ -46,8 +66,23 @@ pub(crate) fn scheduled_end_by_task(
 ) -> HashMap<Uuid, DateTime<Local>> {
     let mut ends = HashMap::<Uuid, DateTime<Local>>::new();
     for scheduled in schedule {
-        ends.entry(scheduled.task.id)
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        ends.entry(task_id)
             .and_modify(|end| *end = (*end).max(scheduled.scheduled_end))
+            .or_insert(scheduled.scheduled_end);
+    }
+    ends
+}
+
+pub(crate) fn scheduled_end_by_occurrence(
+    schedule: &[ScheduledTaskView],
+) -> HashMap<ScheduleOccurrenceKey, DateTime<Local>> {
+    let mut ends = HashMap::new();
+    for scheduled in schedule {
+        ends.entry(scheduled.occurrence)
+            .and_modify(|end: &mut DateTime<Local>| *end = (*end).max(scheduled.scheduled_end))
             .or_insert(scheduled.scheduled_end);
     }
     ends
@@ -111,16 +146,35 @@ pub(crate) fn get_schedule_from_context_with_overrides(
     record_schedule(ScheduleEvent::Rebuild);
     let mut candidates = context.candidates.clone();
     for candidate in &mut candidates {
-        if let Some(first_available_time) = first_available_time_overrides.get(&candidate.id) {
-            candidate.first_available_time = max(*first_available_time, context.last_synced_time);
+        if let ScheduleOccurrenceKey::Actual { task_id } = candidate.occurrence {
+            if let Some(first_available_time) = first_available_time_overrides.get(&task_id) {
+                candidate.first_available_time =
+                    max(*first_available_time, context.last_synced_time);
+            }
         }
     }
     schedule_tasks_by_priority(&candidates, context.last_synced_time)
         .map_err(map_scheduling_policy_error)?
         .into_iter()
         .map(|scheduled| {
+            let mut task =
+                TaskView::try_from(&scheduled.task).map_err(ApplicationError::TaskTree)?;
+            if let ScheduleOccurrenceKey::Projected { source_task_id, .. } = scheduled.occurrence {
+                task.id = source_task_id;
+                task.root_id = source_task_id;
+                task.parent_id = None;
+                task.child_ids.clear();
+            }
+            if let Some(metadata) = scheduled.projected_metadata {
+                task.repetition_interval_days = Some(metadata.repetition_interval_days);
+                task.repetition_start_time = Some(metadata.repetition_start_time);
+                task.repetition_deadline_time = Some(metadata.repetition_deadline_time);
+                task.repetition_anchor = metadata.repetition_anchor;
+                task.days_in_advance = metadata.days_in_advance;
+            }
             Ok(ScheduledTaskView {
-                task: TaskView::try_from(&scheduled.task).map_err(ApplicationError::TaskTree)?,
+                occurrence: scheduled.occurrence,
+                task,
                 first_available_time: scheduled.first_available_time,
                 scheduled_start: scheduled.scheduled_start,
                 scheduled_end: scheduled.scheduled_end,
@@ -201,6 +255,8 @@ fn build_schedule_candidates(
         };
         candidates.push(TaskScheduleCandidate {
             id,
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: id },
+            projected_metadata: None,
             remaining_seconds: calculate_remaining_work_seconds(id, &task)?,
             dependency_ids: child_ids_by_parent_id.remove(&id).unwrap_or_default(),
             atomic: task.get_atomic().map_err(ApplicationError::TaskTree)?,
@@ -218,8 +274,212 @@ fn build_schedule_candidates(
             deadline_time: attributes.deadline_time,
         });
     }
+    append_projected_repetition_candidates(repository, &mut candidates)?;
     record_schedule(ScheduleEvent::Candidates(candidates.len()));
     Ok(candidates)
+}
+
+fn append_projected_repetition_candidates(
+    repository: &dyn TaskRepositoryTrait,
+    candidates: &mut Vec<TaskScheduleCandidate>,
+) -> Result<(), ApplicationError> {
+    let last_synced_time = repository.get_last_synced_time();
+    let horizon_start = try_logical_date(last_synced_time)?;
+    let horizon_end = horizon_start.checked_add_signed(Duration::days(28)).ok_or(
+        ApplicationError::LogicalDateOutOfRange {
+            operation: "repetition_projection_horizon",
+            datetime: last_synced_time,
+        },
+    )?;
+    for root in repository.get_all_projects() {
+        append_projected_repetition_candidates_from_task(
+            root,
+            last_synced_time,
+            horizon_start,
+            horizon_end,
+            candidates,
+        )?;
+    }
+    Ok(())
+}
+
+fn append_projected_repetition_candidates_from_task(
+    task: &TaskHandle,
+    last_synced_time: DateTime<Local>,
+    horizon_start: NaiveDate,
+    horizon_end: NaiveDate,
+    candidates: &mut Vec<TaskScheduleCandidate>,
+) -> Result<(), ApplicationError> {
+    if let Some(interval_days) = task
+        .get_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        append_projected_occurrences(
+            task,
+            interval_days,
+            last_synced_time,
+            horizon_start,
+            horizon_end,
+            candidates,
+        )?;
+    }
+    for child in task.get_children().map_err(ApplicationError::TaskTree)? {
+        append_projected_repetition_candidates_from_task(
+            &child,
+            last_synced_time,
+            horizon_start,
+            horizon_end,
+            candidates,
+        )?;
+    }
+    Ok(())
+}
+
+fn append_projected_occurrences(
+    parent: &TaskHandle,
+    interval_days: i64,
+    last_synced_time: DateTime<Local>,
+    horizon_start: NaiveDate,
+    horizon_end: NaiveDate,
+    candidates: &mut Vec<TaskScheduleCandidate>,
+) -> Result<(), ApplicationError> {
+    let mut persisted_occurrences = parent
+        .get_children()
+        .map_err(ApplicationError::TaskTree)?
+        .into_iter()
+        .filter_map(|child| {
+            child
+                .get_deadline_time_opt()
+                .map(|deadline| deadline.map(|deadline| (deadline, child)))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(ApplicationError::TaskTree)?;
+    persisted_occurrences
+        .sort_by_key(|(deadline, child)| (*deadline, child.get_id().unwrap_or(Uuid::nil())));
+    let Some((mut anchor, _frontier)) = persisted_occurrences.pop() else {
+        return Ok(());
+    };
+
+    let repetition_start_time = parent
+        .get_repetition_start_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "repetition_start_time",
+            reason: "repeating task must have a start time template",
+        })?;
+    let repetition_deadline_time = parent
+        .get_repetition_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::InvalidInput {
+            field: "repetition_deadline_time",
+            reason: "repeating task must have a deadline time template",
+        })?;
+    let days_in_advance = parent
+        .get_days_in_advance()
+        .map_err(ApplicationError::TaskTree)?;
+    let source_task_id = parent.get_id().map_err(ApplicationError::TaskTree)?;
+    let name = parent.get_name().map_err(ApplicationError::TaskTree)?;
+    let estimate = parent
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let priority = parent.get_priority().map_err(ApplicationError::TaskTree)?;
+    let atomic = parent.get_atomic().map_err(ApplicationError::TaskTree)?;
+    let fixed_start = parent
+        .get_fixed_start()
+        .map_err(ApplicationError::TaskTree)?;
+    let category = parent
+        .get_project_category_opt()
+        .map_err(ApplicationError::TaskTree)?;
+    let repetition_anchor = parent
+        .get_repetition_anchor()
+        .map_err(ApplicationError::TaskTree)?;
+
+    loop {
+        let occurrence = next_repetition_occurrence_times(
+            anchor,
+            interval_days,
+            repetition_start_time,
+            repetition_deadline_time,
+            days_in_advance,
+        )?;
+        anchor = occurrence.deadline_time;
+        let occurrence_date = try_logical_date(occurrence.deadline_time)?;
+        if occurrence_date >= horizon_end {
+            break;
+        }
+        if occurrence_date < horizon_start {
+            continue;
+        }
+
+        let projected_internal_id = projected_internal_id(source_task_id, occurrence.deadline_time);
+        let projected = TaskHandle::with_identity(
+            &format!(
+                "{}({}/{})",
+                name,
+                occurrence.deadline_time.month(),
+                occurrence.deadline_time.day()
+            ),
+            projected_internal_id,
+            last_synced_time,
+        )
+        .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_start_time(occurrence.start_time)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_deadline_time_opt(Some(occurrence.deadline_time))
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_estimated_work_seconds(estimate)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_priority(priority)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_atomic(atomic)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_fixed_start(fixed_start)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .set_project_category_opt(category)
+            .map_err(ApplicationError::TaskTree)?;
+        projected
+            .sync_clock(last_synced_time)
+            .map_err(ApplicationError::TaskTree)?;
+        candidates.push(TaskScheduleCandidate {
+            id: projected.get_id().map_err(ApplicationError::TaskTree)?,
+            occurrence: ScheduleOccurrenceKey::Projected {
+                source_task_id,
+                deadline: occurrence.deadline_time,
+            },
+            projected_metadata: Some(ProjectedTaskMetadata {
+                repetition_interval_days: interval_days,
+                repetition_start_time,
+                repetition_deadline_time,
+                repetition_anchor,
+                days_in_advance,
+            }),
+            task: projected,
+            first_available_time: max(occurrence.start_time, last_synced_time),
+            priority,
+            rank: 0,
+            deadline_time: Some(occurrence.deadline_time),
+            remaining_seconds: estimate,
+            dependency_ids: Vec::new(),
+            atomic,
+            fixed_start,
+            fixed_start_time: occurrence.start_time,
+            estimated_work_seconds: estimate,
+        });
+    }
+    Ok(())
+}
+
+fn projected_internal_id(source_task_id: Uuid, deadline: DateTime<Local>) -> Uuid {
+    let deadline_bits = deadline.timestamp() as i128 as u128;
+    Uuid::from_u128(source_task_id.as_u128().rotate_left(64) ^ deadline_bits)
 }
 
 /// schedule候補専用に、leafから祖先までの着手可能時刻をchecked計算する。
@@ -453,6 +713,9 @@ mod tests {
         let first_task_id = first_task.get_id().unwrap();
         let second_task_id = second_task.get_id().unwrap();
         let scheduled = |task: &TaskHandle, scheduled_end| ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual {
+                task_id: task.get_id().unwrap(),
+            },
             task: TaskView::try_from(task).unwrap(),
             first_available_time: start,
             scheduled_start: start,
@@ -478,5 +741,37 @@ mod tests {
             ends.get(&second_task_id),
             Some(&(start + Duration::minutes(3)))
         );
+    }
+
+    #[test]
+    fn scheduled_end_by_occurrenceはprojectedの内部identityではなくsemantic_keyで集約する() {
+        let start = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+        let source_task_id = Uuid::new_v4();
+        let occurrence = ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline: start + Duration::days(3),
+        };
+        let first_task = crate::test_support::new_task_handle("first internal").unwrap();
+        let second_task = crate::test_support::new_task_handle("second internal").unwrap();
+        let segment = |task: &TaskHandle, scheduled_end| ScheduledTaskView {
+            occurrence,
+            task: TaskView::try_from(task).unwrap(),
+            first_available_time: start,
+            scheduled_start: start,
+            scheduled_end,
+            scheduled_work_seconds: 60,
+            total_work_seconds: 120,
+            rank: 0,
+        };
+        let schedule = vec![
+            segment(&first_task, start + Duration::minutes(1)),
+            segment(&second_task, start + Duration::minutes(2)),
+        ];
+
+        let ends = scheduled_end_by_occurrence(&schedule);
+
+        assert_eq!(ends.len(), 1);
+        assert_eq!(ends.get(&occurrence), Some(&(start + Duration::minutes(2))));
+        assert!(scheduled_end_by_task(&schedule).is_empty());
     }
 }

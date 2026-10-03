@@ -41,8 +41,11 @@ fn candidate(
     remaining_seconds: i64,
 ) -> TaskScheduleCandidate {
     let task = crate::test_support::new_task_handle(name).unwrap();
+    let task_id = task.get_id().unwrap();
     TaskScheduleCandidate {
-        id: task.get_id().unwrap(),
+        id: task_id,
+        occurrence: super::ScheduleOccurrenceKey::Actual { task_id },
+        projected_metadata: None,
         task,
         first_available_time,
         priority,

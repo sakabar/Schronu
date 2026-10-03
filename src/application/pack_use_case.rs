@@ -305,7 +305,10 @@ fn collect_candidates(
     let mut seen_ids = HashSet::new();
     let mut candidates = Vec::new();
     for scheduled in schedule {
-        if !seen_ids.insert(scheduled.task.id) {
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        if !seen_ids.insert(task_id) {
             continue;
         }
         if !scheduled.is_leaf()
@@ -322,7 +325,7 @@ fn collect_candidates(
             .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
         {
             candidates.push(PackCandidate {
-                task_id: scheduled.task.id,
+                task_id,
                 name: scheduled.task.name.clone(),
                 priority: scheduled.task.priority,
                 planned_start: scheduled.scheduled_start,
@@ -359,16 +362,20 @@ fn calculate_daily_leeway(
         {
             continue;
         }
-        let is_repetitive = repository
-            .get_by_id(scheduled.task.id)
-            .map_err(ApplicationError::TaskTree)?
-            .map(|task| {
-                task.get_inherited_repetition_interval_days_opt()
-                    .map(|interval| interval.is_some())
-            })
-            .transpose()
-            .map_err(ApplicationError::TaskTree)?
-            .unwrap_or(false);
+        let is_repetitive = if scheduled.is_projected() {
+            true
+        } else {
+            repository
+                .get_by_id(scheduled.source_task_id())
+                .map_err(ApplicationError::TaskTree)?
+                .map(|task| {
+                    task.get_inherited_repetition_interval_days_opt()
+                        .map(|interval| interval.is_some())
+                })
+                .transpose()
+                .map_err(ApplicationError::TaskTree)?
+                .unwrap_or(false)
+        };
         for (date, capacity_seconds) in capacity_by_date {
             if !target_dates.contains(&date) {
                 continue;

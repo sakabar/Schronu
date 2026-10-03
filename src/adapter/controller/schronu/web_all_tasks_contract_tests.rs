@@ -1,6 +1,6 @@
 use super::web_service::build_all_task_rows;
 use super::{AllTaskRowDto, DeadlineDisplayKind, TaskDisplayKind, WebReadError};
-use crate::application::schedule_use_case::ScheduledTaskView;
+use crate::application::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use crate::application::task_use_case::get_task;
 use crate::entity::task::TaskHandle;
 use crate::test_support::TestTaskRepository;
@@ -20,6 +20,7 @@ fn all_task_rowはschedule順とsegment情報を保持し同一task分類を1回
     let task = get_task(&repository, task_id).unwrap().unwrap();
     let schedule = vec![
         ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual { task_id },
             task: task.clone(),
             first_available_time: start,
             scheduled_start: start,
@@ -29,6 +30,7 @@ fn all_task_rowはschedule順とsegment情報を保持し同一task分類を1回
             rank: 1,
         },
         ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual { task_id },
             task,
             first_available_time: start,
             scheduled_start: start + Duration::minutes(2),

@@ -1,6 +1,6 @@
 use super::output::{scheduled_task_view_json, task_view_json};
 use super::test_support::json_fixture;
-use crate::application::schedule_use_case::ScheduledTaskView;
+use crate::application::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use crate::application::task_use_case::TaskView;
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status};
 use chrono::{Local, NaiveTime, TimeZone};
@@ -72,6 +72,7 @@ fn scheduled_task_viewのserde表現はnested_taskを含む既存mcp_json契約�
     let first_available_time = Local.with_ymd_and_hms(2026, 8, 11, 12, 30, 0).unwrap();
     let scheduled_end = Local.with_ymd_and_hms(2026, 8, 11, 13, 15, 0).unwrap();
     let scheduled = ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Actual { task_id },
         task: TaskView {
             id: task_id,
             root_id,

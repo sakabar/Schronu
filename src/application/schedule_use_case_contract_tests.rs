@@ -1,7 +1,12 @@
 use super::interface::TaskRepositoryTrait;
-use super::schedule_use_case::{get_schedule, scheduled_logical_dates, ScheduledTaskView};
-use super::task_use_case::{get_task, ApplicationError};
-use crate::entity::task::{RepetitionAnchor, Status, TaskAttr, TaskHandle};
+use super::schedule_use_case::{
+    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
+    ScheduledTaskView,
+};
+use super::task_use_case::{
+    complete_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
+};
+use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -33,6 +38,7 @@ fn scheduled_segment_metadataは06時境界と入力順とrankに対応する() 
         .unwrap()
         .unwrap();
     let segment = |scheduled_start, rank| ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Actual { task_id: task.id },
         task: task.clone(),
         first_available_time: scheduled_start,
         scheduled_start,
@@ -164,6 +170,197 @@ fn get_scheduleの仮想回はcompletion基準でも現在期限から一定周�
             .map(|index| NaiveDate::from_ymd_opt(2026, 8, 11).unwrap() + Duration::days(index * 3))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn get_scheduleの仮想回はsemantic_identityを持ちrepository_task_idを持たない() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    let current_id = current.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ends = scheduled_end_by_occurrence(&schedule);
+
+    assert_eq!(ends.len(), 10);
+    assert_eq!(
+        schedule
+            .iter()
+            .filter_map(|item| item.actual_task_id())
+            .collect::<Vec<_>>(),
+        vec![current_id]
+    );
+    for projected in schedule.iter().filter(|item| item.is_projected()) {
+        assert_eq!(projected.actual_task_id(), None);
+        assert_eq!(projected.source_task_id(), parent_id);
+        assert_eq!(projected.task.id, parent_id);
+        assert!(matches!(
+            projected.occurrence,
+            ScheduleOccurrenceKey::Projected { source_task_id, .. } if source_task_id == parent_id
+        ));
+    }
+}
+
+#[test]
+fn get_scheduleはfixed_atomic_days_in_advanceを仮想回へ反映する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    parent.set_fixed_start(true).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent.set_days_in_advance(2).unwrap();
+    parent.set_priority(42).unwrap();
+    parent
+        .set_project_category_opt(Some(ProjectCategory::Recovery))
+        .unwrap();
+    parent.set_estimated_work_seconds(1_234).unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let first_projected = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .find(|item| {
+            matches!(
+                item.occurrence,
+                ScheduleOccurrenceKey::Projected { source_task_id, deadline }
+                    if source_task_id == parent_id
+                        && deadline.date_naive() == NaiveDate::from_ymd_opt(2026, 8, 14).unwrap()
+            )
+        })
+        .unwrap();
+
+    assert!(first_projected.task.fixed_start);
+    assert!(first_projected.task.atomic);
+    assert_eq!(first_projected.task.priority, 42);
+    assert_eq!(
+        first_projected.task.project_category,
+        Some(ProjectCategory::Recovery)
+    );
+    assert_eq!(first_projected.task.estimated_work_seconds, 1_234);
+    assert_eq!(first_projected.task.actual_work_seconds, 0);
+    assert_eq!(first_projected.task.repetition_interval_days, Some(3));
+    assert_eq!(first_projected.task.days_in_advance, 2);
+    assert_eq!(
+        first_projected.task.repetition_start_time,
+        Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap())
+    );
+    assert_eq!(
+        first_projected.task.repetition_deadline_time,
+        Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap())
+    );
+    assert_eq!(
+        first_projected.task.start_time,
+        Local.with_ymd_and_hms(2026, 8, 12, 18, 0, 0).unwrap()
+    );
+    assert_eq!(
+        first_projected.scheduled_start,
+        first_projected.task.start_time
+    );
+}
+
+#[test]
+fn get_scheduleは期限が窓内なら混雑で窓外へ終了する仮想回も保持する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 27, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    parent.set_fixed_start(true).unwrap();
+    parent.set_estimated_work_seconds(2 * 24 * 60 * 60).unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let projected = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.is_projected())
+        .unwrap();
+
+    assert_eq!(projected.source_task_id(), parent_id);
+    assert_eq!(
+        projected.task.deadline_time.unwrap().date_naive(),
+        NaiveDate::from_ymd_opt(2026, 9, 7).unwrap()
+    );
+    assert!(projected.scheduled_end > Local.with_ymd_and_hms(2026, 9, 8, 6, 0, 0).unwrap());
+}
+
+#[test]
+fn get_scheduleは空の反復親から展開せず最新の永続回だけをfrontierにする() {
+    let now = fixed_now();
+    let empty_parent = task_with_schedule("空", now, 15 * 60, 1);
+    empty_parent
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    let empty_repository = TestTaskRepository::new(vec![empty_parent], now);
+    assert!(get_schedule(&empty_repository).unwrap().is_empty());
+
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let mut latest_attr = TaskAttr::with_identity("筋トレ(8/14)", Uuid::new_v4(), now);
+    latest_attr.set_start_time(now + Duration::days(3));
+    latest_attr
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 14, 23, 0, 0).unwrap()))
+        .unwrap();
+    latest_attr.set_estimated_work_seconds(15 * 60);
+    latest_attr.set_atomic(true);
+    let latest = parent.create_as_last_child(latest_attr);
+    let latest_id = latest.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert!(schedule
+        .iter()
+        .any(|item| item.actual_task_id() == Some(latest_id)));
+    assert!(!schedule.iter().any(|item| {
+        matches!(
+            item.occurrence,
+            ScheduleOccurrenceKey::Projected { deadline, .. }
+                if deadline.date_naive() == NaiveDate::from_ymd_opt(2026, 8, 14).unwrap()
+        )
+    }));
+}
+
+#[test]
+fn complete_task後はcompletion基準の新しい実体回から重複なく再展開する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Completion);
+    let current_id = current.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], now);
+    let finished_at = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut next_id = || Uuid::new_v4();
+    let mut factory = TaskFactory::new(finished_at, &mut next_id);
+
+    let output = complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: current_id,
+            finished_at,
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+        &mut factory,
+    )
+    .unwrap();
+    let next_id = output.next_repetition_task_id.unwrap();
+    let schedule = get_schedule(&repository).unwrap();
+    let shifted_deadline = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+
+    assert_eq!(
+        schedule
+            .iter()
+            .filter(|item| item.task.deadline_time.unwrap().date_naive() == shifted_deadline)
+            .count(),
+        1
+    );
+    assert!(schedule
+        .iter()
+        .any(|item| item.actual_task_id() == Some(next_id)));
+    assert!(!schedule.iter().any(|item| {
+        matches!(
+            item.occurrence,
+            ScheduleOccurrenceKey::Projected { deadline, .. }
+                if deadline.date_naive() == shifted_deadline
+        )
+    }));
 }
 
 #[test]

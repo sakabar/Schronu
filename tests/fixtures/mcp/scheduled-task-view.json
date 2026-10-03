@@ -1,5 +1,9 @@
 {
   "first_available_time": "{{scheduled_start}}",
+  "occurrence": {
+    "kind": "actual",
+    "task_id": "{{task_id}}"
+  },
   "rank": 0,
   "scheduled_end": "{{scheduled_end}}",
   "scheduled_start": "{{scheduled_start}}",

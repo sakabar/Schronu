@@ -807,6 +807,7 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
         sorted_object_keys(&schedule[0]),
         vec![
             "first_available_time",
+            "occurrence",
             "rank",
             "scheduled_end",
             "scheduled_start",

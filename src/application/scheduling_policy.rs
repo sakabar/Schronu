@@ -41,8 +41,9 @@
 //! 詳しい例と実装上の理由は`docs/design/scheduling_policy.md`を参照する。
 
 use crate::application::scheduling_instrumentation::SchedulingInstrumentation;
-use crate::entity::task::TaskHandle;
-use chrono::{DateTime, Duration, Local};
+use crate::entity::task::{RepetitionAnchor, TaskHandle};
+use chrono::{DateTime, Duration, Local, NaiveTime};
+use serde::Serialize;
 use std::cell::RefCell;
 use std::cmp::{max, Reverse};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -51,9 +52,32 @@ use uuid::Uuid;
 
 const MIN_SPLIT_SEGMENT_SECONDS: i64 = 15 * 60;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleOccurrenceKey {
+    Actual {
+        task_id: Uuid,
+    },
+    Projected {
+        source_task_id: Uuid,
+        deadline: DateTime<Local>,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct ProjectedTaskMetadata {
+    pub(super) repetition_interval_days: i64,
+    pub(super) repetition_start_time: NaiveTime,
+    pub(super) repetition_deadline_time: NaiveTime,
+    pub(super) repetition_anchor: RepetitionAnchor,
+    pub(super) days_in_advance: i64,
+}
+
 #[derive(Clone)]
 pub(super) struct TaskScheduleCandidate {
     pub(super) id: Uuid,
+    pub(super) occurrence: ScheduleOccurrenceKey,
+    pub(super) projected_metadata: Option<ProjectedTaskMetadata>,
     pub(super) task: TaskHandle,
     pub(super) first_available_time: DateTime<Local>,
     pub(super) priority: i64,
@@ -70,6 +94,8 @@ pub(super) struct TaskScheduleCandidate {
 #[derive(Clone)]
 pub(super) struct ScheduledTask {
     pub(super) id: Uuid,
+    pub(super) occurrence: ScheduleOccurrenceKey,
+    pub(super) projected_metadata: Option<ProjectedTaskMetadata>,
     pub(super) task: TaskHandle,
     pub(super) first_available_time: DateTime<Local>,
     pub(super) scheduled_start: DateTime<Local>,
@@ -2553,6 +2579,8 @@ fn to_scheduled_task(
 ) -> ScheduledTask {
     ScheduledTask {
         id: candidate.id,
+        occurrence: candidate.occurrence,
+        projected_metadata: candidate.projected_metadata,
         task: candidate.task.clone(),
         first_available_time: candidate.first_available_time,
         scheduled_start,
