@@ -1496,6 +1496,22 @@ fn calendarとbandは製品経路で代表出力とansi_capabilityを維持す�
 }
 
 #[test]
+fn routine_loadは製品経路で共通集計を表示する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 3, 12, 0, 0).unwrap();
+    let routine = new_test_task_handle("日次レビュー").unwrap();
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    let occurrence = routine.create_as_last_child(new_test_task_attr("今日のレビュー"));
+    occurrence.set_estimated_work_seconds(30 * 60).unwrap();
+    occurrence.set_start_time(now).unwrap();
+
+    let actual = execute_calendar_command_for_test("荷", now, routine, 10 * 60);
+
+    assert!(actual.contains("今後28日の繰返負荷"), "{actual}");
+    assert!(actual.contains("プロジェクト / 繰返"), "{actual}");
+    assert!(actual.contains("日次レビュー / 日次レビュー\t1日\t00:30\t00:07\t1日\t10/03 00:30"), "{actual}");
+}
+
+#[test]
 fn test_execute_選_task_id省略時はfocus中taskをtodoに戻す() {
     let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
     let task = new_test_task_handle("focus対象").unwrap();

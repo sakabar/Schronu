@@ -6,14 +6,45 @@ use super::renderer::{
     CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
     FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
     LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
-    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
-    TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
+    RoutineLoadDisplay, RoutineLoadRow, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
+    TreeDisplay,
 };
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
+
+#[test]
+fn routine_load_displayは共通集計値を固定列で描画する() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadDisplay {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        rows: vec![RoutineLoadRow {
+            project_name: "生活".to_owned(),
+            routine_name: "週次家事".to_owned(),
+            repetition_interval_days: 7,
+            total_work_seconds: 4 * 60 * 60 + 20 * 60,
+            weekly_average_seconds: 65 * 60,
+            occurrence_day_count: 4,
+            peak_date: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(),
+            peak_work_seconds: 80 * 60,
+        }],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:今後28日の繰返負荷 (2026-10-03〜2026-10-30)",
+            "newline:プロジェクト / 繰返\t間隔\t28日合計\t週平均\t発生日数\t最大日",
+            "newline:生活 / 週次家事\t7日\t04:20\t01:05\t4日\t10/04 01:20",
+        ]
+    );
+}
 
 #[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
