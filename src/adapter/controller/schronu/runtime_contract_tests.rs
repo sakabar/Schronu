@@ -1506,7 +1506,7 @@ fn routine_loadは製品経路で共通集計を表示する() {
 
     let actual = execute_calendar_command_for_test("荷", now, routine, 10 * 60);
 
-    assert!(actual.contains("今後28日の繰返負荷"), "{actual}");
+    assert!(actual.contains("今日から7日後までの繰返負荷"), "{actual}");
     assert!(
         actual.contains("間隔")
             && actual.find("間隔").unwrap() < actual.find("プロジェクト / 繰返").unwrap(),

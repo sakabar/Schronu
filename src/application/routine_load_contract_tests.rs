@@ -29,7 +29,7 @@ fn segment(task: &TaskHandle, start: DateTime<Local>, seconds: i64) -> Scheduled
 }
 
 #[test]
-fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
+fn routine_loadは今日から7日後までを最寄りの繰返親ごとに集計する() {
     let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
     let project = TaskHandle::with_identity("生活", Uuid::from_u128(1), at(3)).unwrap();
     let weekly = child(&project, "週次家事", 2, at(3));
@@ -44,7 +44,8 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
         segment(&cleaning, at(3), 30 * 60),
         segment(&cleaning, at(3) + Duration::hours(1), 15 * 60),
         segment(&cleaning, at(4), 30 * 60),
-        segment(&cleaning, at(31), 45 * 60),
+        segment(&cleaning, at(10), 45 * 60),
+        segment(&cleaning, at(11), 60 * 60),
         segment(&dishes, at(3), 20 * 60),
         segment(&dishes, at(4), 20 * 60),
         segment(&one_off, at(3), 10 * 60),
@@ -52,11 +53,11 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
 
     let actual = build_routine_load_report(&repository, &schedule, today).unwrap();
 
-    assert_eq!(ROUTINE_LOAD_HORIZON_DAYS, 28);
+    assert_eq!(ROUTINE_LOAD_HORIZON_DAYS, 8);
     assert_eq!(actual.start_date, today);
     assert_eq!(
         actual.end_date,
-        NaiveDate::from_ymd_opt(2026, 10, 30).unwrap()
+        NaiveDate::from_ymd_opt(2026, 10, 10).unwrap()
     );
     assert_eq!(actual.rows.len(), 2);
 
@@ -66,8 +67,8 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
     assert_eq!(weekly_row.routine_task_id, Uuid::from_u128(2));
     assert_eq!(weekly_row.routine_name, "週次家事");
     assert_eq!(weekly_row.repetition_interval_days, 7);
-    assert_eq!(weekly_row.total_work_seconds, 75 * 60);
-    assert_eq!(weekly_row.occurrence_day_count, 2);
+    assert_eq!(weekly_row.total_work_seconds, 120 * 60);
+    assert_eq!(weekly_row.occurrence_day_count, 3);
     assert_eq!(weekly_row.peak_date, today);
     assert_eq!(weekly_row.peak_work_seconds, 45 * 60);
 

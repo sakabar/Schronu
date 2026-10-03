@@ -295,7 +295,7 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
     );
     assert_eq!(
         response.data.routine_load.end_date,
-        NaiveDate::from_ymd_opt(2026, 10, 2).unwrap()
+        NaiveDate::from_ymd_opt(2026, 9, 12).unwrap()
     );
 }
 

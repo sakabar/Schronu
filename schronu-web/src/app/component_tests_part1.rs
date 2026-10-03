@@ -213,7 +213,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                 rows: vec![band_day("2026-10-03", 0)],
                 routine_load_report: Some(RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-30".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
                     rows: vec![RoutineLoadRow {
                         project_task_id: "project-1".to_owned(),
                         project_name: "健康".to_owned(),
@@ -261,11 +261,14 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     dom.render_immediate_to_vec();
     let routine_html = dioxus::ssr::render(&dom);
 
-    assert!(routine_html.contains("今後28日の繰返負荷"), "{routine_html}");
-    assert!(routine_html.contains("10/3〜10/30"), "{routine_html}");
+    assert!(
+        routine_html.contains("今日から7日後までの繰返負荷"),
+        "{routine_html}"
+    );
+    assert!(routine_html.contains("10/3〜10/10"), "{routine_html}");
     for (class, heading) in [
         ("routine-load-interval", "間隔"),
-        ("routine-load-total", "28日合計"),
+        ("routine-load-total", "8日合計"),
         ("routine-load-occurrences", "発生日数"),
         ("routine-load-peak", "最大日"),
         ("routine-load-subject", "プロジェクト / 繰返"),
@@ -281,7 +284,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
         ..routine_html.find("</thead>").unwrap()];
     let heading_positions = [
         "間隔",
-        "28日合計",
+        "8日合計",
         "発生日数",
         "最大日",
         "プロジェクト / 繰返",
@@ -368,7 +371,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
                 rows: Vec::new(),
                 routine_load_report: Some(RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-30".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
                     rows: Vec::new(),
                 }),
                 observed_at_epoch_ms: None,
@@ -387,15 +390,15 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         "{daily_empty_html}"
     );
     assert!(
-        !daily_empty_html.contains("今後28日に発生する繰返負荷はありません。"),
+        !daily_empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
         "{daily_empty_html}"
     );
     dispatch_click(&empty_dom, empty_click_ids[2]);
     empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
-    assert!(empty_html.contains("10/3〜10/30"), "{empty_html}");
+    assert!(empty_html.contains("10/3〜10/10"), "{empty_html}");
     assert!(
-        empty_html.contains("今後28日に発生する繰返負荷はありません。"),
+        empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
         "{empty_html}"
     );
 }
@@ -1006,7 +1009,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
 }
 
 #[test]
-fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
+fn 負荷取得は7日帯と8日繰返負荷を同時に置換する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     let request_id = match state.request_load_band() {
@@ -1021,7 +1024,7 @@ fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
                 band_days: vec![band_day("2026-10-03", 1)],
                 routine_load: RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-30".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
                     rows: vec![RoutineLoadRow {
                         project_task_id: "project".to_owned(),
                         project_name: "生活".to_owned(),

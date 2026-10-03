@@ -20,7 +20,7 @@ use uuid::Uuid;
 fn routine_load_displayは共通集計値を固定列で描画する() {
     let display = DisplayModel::RoutineLoad(RoutineLoadReport {
         start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
         rows: vec![
             RoutineLoadRow {
                 project_task_id: Uuid::from_u128(1),
@@ -52,7 +52,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
 
     assert_eq!(
         writer.operations[0],
-        "newline:今後28日の繰返負荷 (2026-10-03〜2026-10-30)"
+        "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)"
     );
     let lines = writer.operations[1..]
         .iter()
@@ -61,7 +61,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
     let cells = [
         [
             "間隔",
-            "28日合計",
+            "8日合計",
             "発生日数",
             "最大日",
             "プロジェクト / 繰返",
@@ -102,7 +102,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
 fn routine_load_displayは空reportでも見出し幅と二空白区切りを使う() {
     let display = DisplayModel::RoutineLoad(RoutineLoadReport {
         start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
         rows: vec![],
     });
     let mut writer = TraceWriter::default();
@@ -112,8 +112,8 @@ fn routine_load_displayは空reportでも見出し幅と二空白区切りを使
     assert_eq!(
         writer.operations,
         [
-            "newline:今後28日の繰返負荷 (2026-10-03〜2026-10-30)",
-            "newline:間隔  28日合計  発生日数  最大日  プロジェクト / 繰返",
+            "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)",
+            "newline:間隔  8日合計  発生日数  最大日  プロジェクト / 繰返",
         ]
     );
 }

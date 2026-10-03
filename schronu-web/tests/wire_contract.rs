@@ -271,12 +271,12 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
 }
 
 #[test]
-fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
+fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
     let data = LoadData {
         band_days: Vec::new(),
         routine_load: RoutineLoadReport {
             start_date: "2026-10-03".to_owned(),
-            end_date: "2026-10-30".to_owned(),
+            end_date: "2026-10-10".to_owned(),
             rows: vec![RoutineLoadRow {
                 project_task_id: "project-id".to_owned(),
                 project_name: "生活".to_owned(),
@@ -297,7 +297,7 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
             "band_days": [],
             "routine_load": {
                 "start_date": "2026-10-03",
-                "end_date": "2026-10-30",
+                "end_date": "2026-10-10",
                 "rows": [{
                     "project_task_id": "project-id",
                     "project_name": "生活",
