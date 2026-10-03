@@ -34,7 +34,7 @@ use crate::entity::task::{
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use std::cmp::{max, min};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
@@ -880,6 +880,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // 日ごとの、前倒し可能なtaskの見積もりの和
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
+    let mut adjustable_occurrences_by_date: HashSet<(NaiveDate, ScheduleOccurrenceKey)> =
+        HashSet::new();
     let mut adjustable_scheduled_work_seconds_for_capacity_alert: HashMap<NaiveDate, i64> =
         HashMap::new();
 
@@ -956,13 +958,17 @@ pub(super) fn build_show_all_tasks_display_with_config(
             *scheduled_start,
         )?;
         if !adjustable_prefix_label.is_empty() {
-            let task_estimated_work_seconds = scheduled_task.task.estimated_work_seconds;
-            adjustable_estimated_work_seconds_map
-                .entry(logical_naive_date)
-                .and_modify(|estimated_work_seconds_val| {
-                    *estimated_work_seconds_val += task_estimated_work_seconds
-                })
-                .or_insert(task_estimated_work_seconds);
+            if adjustable_occurrences_by_date
+                .insert((logical_naive_date, scheduled_task.occurrence))
+            {
+                let task_estimated_work_seconds = scheduled_task.task.estimated_work_seconds;
+                adjustable_estimated_work_seconds_map
+                    .entry(logical_naive_date)
+                    .and_modify(|estimated_work_seconds_val| {
+                        *estimated_work_seconds_val += task_estimated_work_seconds
+                    })
+                    .or_insert(task_estimated_work_seconds);
+            }
             adjustable_scheduled_work_seconds_for_capacity_alert
                 .entry(logical_naive_date)
                 .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)

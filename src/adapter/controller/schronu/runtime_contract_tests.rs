@@ -5208,6 +5208,92 @@ fn 開始可能日より後ろへ配置されたprojected回は調整可能負�
 }
 
 #[test]
+fn 同じ日に分割されたprojected回の調整可能見積は一回だけ数える() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let projected_available_at = now + Duration::days(3);
+    let projected_scheduled_at = projected_available_at + Duration::days(1);
+    let root = new_test_task_handle("projected split adjustable fixture").unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+
+    let recurring = root.create_as_last_child(new_test_task_attr("3日ごとの分割task"));
+    recurring.set_estimated_work_seconds(60 * 60).unwrap();
+    recurring
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    recurring
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()))
+        .unwrap();
+    recurring
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()))
+        .unwrap();
+    let completed = recurring.create_as_last_child(new_test_task_attr("今回の分割task"));
+    completed.set_start_time(now).unwrap();
+    completed
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    completed.set_estimated_work_seconds(60 * 60).unwrap();
+    completed.set_orig_status(Status::Done).unwrap();
+
+    let overnight_blocker = add_scheduled_child_for_test(
+        &root,
+        "projectedを翌日へ送る固定予定",
+        projected_available_at,
+        24 * 60,
+    );
+    overnight_blocker.set_fixed_start(true).unwrap();
+    let split_blocker = add_scheduled_child_for_test(
+        &root,
+        "projectedを分割する固定予定",
+        projected_scheduled_at + Duration::minutes(30),
+        30,
+    );
+    split_blocker.set_fixed_start(true).unwrap();
+
+    let mut task_repository = TestTaskRepository::new(root, now);
+    let projected_segments = crate::application::schedule_use_case::get_schedule(&task_repository)
+        .unwrap()
+        .into_iter()
+        .filter(|scheduled| {
+            scheduled.is_projected()
+                && scheduled.scheduled_start.date_naive() == projected_scheduled_at.date_naive()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(projected_segments.len(), 2, "{projected_segments:?}");
+
+    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
+    let mut focused_task_id_opt = None;
+    let mut next_id = || Uuid::nil();
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let config = SchronuConfig::default();
+    let display = RuntimeTaskTreeCommandContext {
+        task_repository: &mut task_repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: &config,
+    }
+    .show_task_list(Some("暦"), TaskListOrder::ScheduledStartDesc, false)
+    .unwrap();
+    let DisplayModel::Sequence(models) = display else {
+        panic!("expected sequence, got {display:?}");
+    };
+    let calendar = models
+        .iter()
+        .find_map(|model| match model {
+            DisplayModel::Calendar(calendar) => Some(calendar),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected calendar, got {models:?}"));
+    let projected_row = calendar
+        .rows
+        .iter()
+        .find(|row| row.date == projected_scheduled_at.date_naive())
+        .expect("projected scheduled date");
+
+    assert_eq!(projected_row.adjustable_work_seconds, 60 * 60);
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
