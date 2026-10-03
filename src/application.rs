@@ -5,6 +5,7 @@ pub mod daily_capacity;
 pub mod flatten_use_case;
 pub mod interface;
 pub mod pack_use_case;
+mod projected_recurrence;
 pub mod repository_transaction;
 pub mod schedule_use_case;
 mod scheduled_capacity;
