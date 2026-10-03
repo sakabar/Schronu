@@ -1,48 +1,59 @@
 #![cfg(feature = "server")]
 
-use super::list_view::{DateButtonViewModel, ListView};
+use super::list_view::{CompletedListView, DateButtonViewModel, ListModeControl};
 use crate::client::state::ListMode;
 use crate::CompletedTaskRow;
+use chrono::{Local, TimeZone};
 use dioxus::prelude::*;
 
 fn completed_root() -> Element {
     rsx! {
-        ListView {
-            dates: vec![DateButtonViewModel {
-                logical_date: "2026-09-16".to_owned(),
-                label: "水 今日".to_owned(),
-                selected: true,
-            }],
-            rows: Vec::new(),
-            completed_rows: vec![
-                CompletedTaskRow {
-                    task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-                    task_name: "設計を仕上げる".to_owned(),
-                    project_name: "Schronu".to_owned(),
-                    completed_at_epoch_ms: 1_789_551_723_000,
-                    actual_work_seconds: 360_001,
-                    estimated_work_seconds: 359_999,
-                },
-                CompletedTaskRow {
-                    task_id: "00000000-0000-4000-8000-000000000002".to_owned(),
-                    task_name: "差分なし".to_owned(),
-                    project_name: "個人".to_owned(),
-                    completed_at_epoch_ms: 1_789_551_724_000,
-                    actual_work_seconds: 0,
-                    estimated_work_seconds: 0,
-                },
-            ],
-            list_mode: ListMode::Completed,
-            selected_logical_date: Some("2026-09-16".to_owned()),
-            active_task_ids: Vec::new(),
-            date_input_text: String::new(),
-            date_input_error: None,
-            filter_text: String::new(),
-            on_select_date: move |_| {},
-            on_date_input_change: move |_| {},
-            on_submit_date_input: move |_| {},
-            on_start_session: move |_| {},
-            on_filter_change: move |_| {},
+        div {
+            ListModeControl {
+                selected_mode: ListMode::Completed,
+                on_switch_list_mode: move |_| {},
+            }
+            CompletedListView {
+                dates: vec![DateButtonViewModel {
+                    logical_date: "2026-09-16".to_owned(),
+                    label: "水 今日".to_owned(),
+                    selected: true,
+                }],
+                rows: vec![
+                    CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                        task_name: "設計を仕上げる".to_owned(),
+                        project_name: "Schronu".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_723_000,
+                        actual_work_seconds: 360_001,
+                        estimated_work_seconds: 359_999,
+                    },
+                    CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000002".to_owned(),
+                        task_name: "差分なし".to_owned(),
+                        project_name: "個人".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_724_000,
+                        actual_work_seconds: 0,
+                        estimated_work_seconds: 0,
+                    },
+                    CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000003".to_owned(),
+                        task_name: "見積内".to_owned(),
+                        project_name: "個人".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_725_000,
+                        actual_work_seconds: 1,
+                        estimated_work_seconds: 3,
+                    },
+                ],
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
         }
     }
 }
@@ -57,7 +68,7 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         "予定",
         "完了",
         "9月16日の完了",
-        "2件",
+        "3件",
         "実績",
         "見積",
         "差",
@@ -67,6 +78,7 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         "99:59:59",
         "+00:00:02",
         "+00:00:00",
+        "-00:00:02",
         "Schronu",
         "設計を仕上げる",
     ] {
@@ -77,16 +89,22 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("task-defer"), "{html}");
     assert!(html.contains("completed-task-table-scroll"), "{html}");
     assert!(html.contains("<time"), "{html}");
+    let expected_local_time = Local
+        .timestamp_millis_opt(1_789_551_723_000)
+        .single()
+        .expect("valid timestamp")
+        .format("%H:%M:%S")
+        .to_string();
+    assert!(html.contains(&expected_local_time), "{html}");
 }
 
 #[test]
 fn 完了modeの検索はtask名だけを対象にする() {
     fn filtered_root() -> Element {
         rsx! {
-            ListView {
+            CompletedListView {
                 dates: Vec::new(),
-                rows: Vec::new(),
-                completed_rows: vec![CompletedTaskRow {
+                rows: vec![CompletedTaskRow {
                     task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
                     task_name: "対象外".to_owned(),
                     project_name: "SCHRONU".to_owned(),
@@ -94,16 +112,13 @@ fn 完了modeの検索はtask名だけを対象にする() {
                     actual_work_seconds: 1,
                     estimated_work_seconds: 2,
                 }],
-                list_mode: ListMode::Completed,
                 selected_logical_date: Some("2026-09-16".to_owned()),
-                active_task_ids: Vec::new(),
                 date_input_text: String::new(),
                 date_input_error: None,
                 filter_text: " schronu ".to_owned(),
                 on_select_date: move |_| {},
                 on_date_input_change: move |_| {},
                 on_submit_date_input: move |_| {},
-                on_start_session: move |_| {},
                 on_filter_change: move |_| {},
             }
         }
@@ -113,5 +128,36 @@ fn 完了modeの検索はtask名だけを対象にする() {
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("一致するタスクがありません。"), "{html}");
+    assert!(html.contains("9月16日の完了"), "{html}");
+    assert!(html.contains("0件"), "{html}");
     assert!(!html.contains(">SCHRONU<"), "{html}");
+}
+
+#[test]
+fn 完了modeの空結果を明示する() {
+    fn empty_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                rows: Vec::new(),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(empty_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("0件"), "{html}");
+    assert!(
+        html.contains("この日に完了したタスクはありません。"),
+        "{html}"
+    );
 }

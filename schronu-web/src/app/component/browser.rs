@@ -7,7 +7,7 @@ use super::super::component_models::{
 };
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::history_view::HistoryView;
-use super::super::list_view::{AllTasksViewStatus, ListView};
+use super::super::list_view::{AllTasksViewStatus, CompletedListView, ListModeControl, ListView};
 use super::super::load_view::LoadView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
@@ -16,7 +16,7 @@ use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
     RestoringShell, SessionChrome, UnavailableBufferPanel,
 };
-use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
 
@@ -66,6 +66,9 @@ pub(super) fn BrowserApp() -> Element {
         buffer,
         sessions,
         rows,
+        completed_rows,
+        list_mode,
+        selected_logical_date,
         band_rows,
         band_observed_at_epoch_ms,
         band_loading,
@@ -104,15 +107,16 @@ pub(super) fn BrowserApp() -> Element {
             client.background_refreshing(),
             client.refresh_failed(),
             client.server_actions_blocked(),
-            client.state().is_some_and(ClientState::has_scheduled_list),
+            client.state().is_some_and(ClientState::has_active_list),
             client.date_input().text().to_owned(),
             client.date_input().error().map(|error| error.to_string()),
             client.task_name_filter().to_owned(),
             client.all_tasks_visible_limit(),
         )
     };
-    let all_tasks_view_status =
-        (list_selection == ListSelection::All).then(|| match all_tasks_status {
+    let all_tasks_view_status = (list_mode == ListMode::Scheduled
+        && list_selection == ListSelection::All)
+        .then(|| match all_tasks_status {
             AllTasksStatus::NotLoaded | AllTasksStatus::Loading => AllTasksViewStatus::Loading,
             AllTasksStatus::Loaded => AllTasksViewStatus::Loaded,
             AllTasksStatus::Failed => AllTasksViewStatus::Failed(
@@ -182,43 +186,77 @@ pub(super) fn BrowserApp() -> Element {
                     on_action: move |action| dispatch_session_action(client, action),
                 }
             } else if active_tab == ActiveTab::List {
-                ListView {
-                    dates,
-                    rows,
-                    active_task_ids,
-                    date_input_text,
-                    date_input_error,
-                    filter_text,
-                    all_tasks_status: all_tasks_view_status,
-                    visible_row_limit: (list_selection == ListSelection::All)
-                        .then_some(all_tasks_visible_limit),
-                    has_more_rows: (list_selection == ListSelection::All).then_some(has_more_rows),
-                    mutations_locked,
-                    mutation_globally_blocked: global_blocked,
-                    server_actions_blocked,
-                    on_select_date: move |date| {
-                        client.write().clear_date_input(&BrowserLocalStorage);
-                        dispatch_action(client, ComponentAction::SelectDate(date));
-                    },
-                    on_select_all_tasks: move |_| {
+                section { class: "list-screen",
+                    ListModeControl {
+                        selected_mode: list_mode,
+                        on_switch_list_mode: move |mode| {
+                            dispatch_action(client, ComponentAction::SwitchListMode(mode));
+                        },
+                    }
+                    if list_mode == ListMode::Completed {
+                        CompletedListView {
+                            dates,
+                            rows: completed_rows,
+                            selected_logical_date,
+                            date_input_text,
+                            date_input_error,
+                            filter_text,
+                            server_actions_blocked,
+                            on_select_date: move |date| {
+                                client.write().clear_date_input(&BrowserLocalStorage);
+                                dispatch_action(client, ComponentAction::SelectDate(date));
+                            },
+                            on_date_input_change: move |text| {
+                                client.write().edit_date_input(&BrowserLocalStorage, text);
+                            },
+                            on_submit_date_input: move |_| {
+                                let action = client.write().submit_date_input(&BrowserLocalStorage);
+                                if let Some(action) = action {
+                                    dispatch_action(client, action);
+                                }
+                            },
+                            on_filter_change: move |filter| {
+                                client.write().edit_task_name_filter(&BrowserLocalStorage, filter);
+                            },
+                        }
+                    } else {
+                    ListView {
+                        dates,
+                        rows,
+                        active_task_ids,
+                        date_input_text,
+                        date_input_error,
+                        filter_text,
+                        all_tasks_status: all_tasks_view_status,
+                        visible_row_limit: (list_selection == ListSelection::All)
+                            .then_some(all_tasks_visible_limit),
+                        has_more_rows: (list_selection == ListSelection::All).then_some(has_more_rows),
+                        mutations_locked,
+                        mutation_globally_blocked: global_blocked,
+                        server_actions_blocked,
+                        on_select_date: move |date| {
+                            client.write().clear_date_input(&BrowserLocalStorage);
+                            dispatch_action(client, ComponentAction::SelectDate(date));
+                        },
+                        on_select_all_tasks: move |_| {
                         dispatch_action(client, ComponentAction::SelectAllTasks);
-                    },
-                    on_retry_all_tasks: move |_| {
+                        },
+                        on_retry_all_tasks: move |_| {
                         dispatch_action(client, ComponentAction::RetryAllTasks);
-                    },
-                    on_show_more: move |_| {
+                        },
+                        on_show_more: move |_| {
                         client.write().show_more_all_tasks();
-                    },
-                    on_date_input_change: move |text| {
+                        },
+                        on_date_input_change: move |text| {
                         client.write().edit_date_input(&BrowserLocalStorage, text);
-                    },
-                    on_submit_date_input: move |_| {
+                        },
+                        on_submit_date_input: move |_| {
                         let action = client.write().submit_date_input(&BrowserLocalStorage);
                         if let Some(action) = action {
                             dispatch_action(client, action);
                         }
-                    },
-                    on_start_session: move |(task, is_leaf)| {
+                        },
+                        on_start_session: move |(task, is_leaf)| {
                         let effect = client.write().start_session_from_list(
                             &BrowserLocalStorage,
                             browser_monotonic_now_ms(),
@@ -226,16 +264,18 @@ pub(super) fn BrowserApp() -> Element {
                             is_leaf,
                         );
                         dispatch_action_effect(client, effect);
-                    },
-                    on_defer_task: move |(task_id, expected_plan)| {
+                        },
+                        on_defer_task: move |(task_id, expected_plan)| {
                         dispatch_action(client, ComponentAction::DeferTask {
                             task_id,
                             expected_plan,
                         });
-                    },
-                    on_filter_change: move |filter| {
+                        },
+                        on_filter_change: move |filter| {
                         client.write().edit_task_name_filter(&BrowserLocalStorage, filter);
-                    },
+                        },
+                    }
+                    }
                 }
             } else if active_tab == ActiveTab::Load {
                 LoadView {

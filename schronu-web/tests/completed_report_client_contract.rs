@@ -1,5 +1,6 @@
+use chrono::{Datelike, NaiveDate};
 use schronu_web::client::date_buttons::logical_date_buttons_for_mode;
-use schronu_web::client::date_input::resolve_date_input_for_mode;
+use schronu_web::client::date_input::{resolve_date_input_for_mode, DateInputError};
 use schronu_web::client::state::{ClientEffect, ListMode, ServerFailure};
 use schronu_web::{CompletedTaskRow, WebSuccess};
 
@@ -173,5 +174,13 @@ fn 完了modeの月日は現在日以前の直近有効日へ解決する() {
             .unwrap()
             .logical_date,
         "2099-01-01"
+    );
+    let chrono_min = NaiveDate::MIN;
+    let next_day = chrono_min.succ_opt().unwrap();
+    let current = chrono_min.format("%Y-%m-%d").to_string();
+    let next_month_day = format!("{}/{}", next_day.month(), next_day.day());
+    assert_eq!(
+        resolve_date_input_for_mode(&next_month_day, &current, ListMode::Completed),
+        Err(DateInputError::DateOverflow)
     );
 }

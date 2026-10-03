@@ -16,11 +16,11 @@ use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
 use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
-use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
+use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, BandDay, BandDurations, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, BandDay, BandDurations, CompletedTaskRow, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
@@ -462,7 +462,11 @@ fn 日付入力actionは正規化して選択し日付buttonは入力をclearす
     let mut date_input = DateInputState::default();
     date_input.edit("9/16".to_owned());
 
-    let action = component_action_from_date_input(&mut date_input, "2026-09-16")
+    let action = component_action_from_date_input(
+        &mut date_input,
+        "2026-09-16",
+        crate::client::state::ListMode::Scheduled,
+    )
         .expect("valid date input must create one action");
     assert!(matches!(
         action,
@@ -622,7 +626,8 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
     let (mut defer_state, _) = initialize_client(&defer_storage, 1_000);
     defer_state.restore_view_state(&ViewState {
         snapshot: snapshot(1_000),
-        list: Some(StoredListView {
+        list_mode: crate::client::state::ListMode::Scheduled,
+        list: Some(StoredActiveList::Scheduled {
             logical_date: "2026-09-05".to_owned(),
             rows: Vec::new(),
         }),
@@ -831,6 +836,7 @@ fn 復元した負荷tabはbootstrap後に負荷を取得する() {
     let (mut state, _) = initialize_client(&storage, 1_000);
     state.restore_view_state(&ViewState {
         snapshot: load_snapshot(900),
+        list_mode: crate::client::state::ListMode::Scheduled,
         list: None,
         active_tab: ActiveTab::Load,
         task_name_filter: String::new(),
@@ -848,6 +854,7 @@ fn 復元した負荷tabはbootstrap失敗時に負荷を取得しない() {
     let (mut state, _) = initialize_client(&storage, 1_000);
     state.restore_view_state(&ViewState {
         snapshot: load_snapshot(900),
+        list_mode: crate::client::state::ListMode::Scheduled,
         list: None,
         active_tab: ActiveTab::Load,
         task_name_filter: String::new(),
@@ -1614,6 +1621,7 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         auto_session_in_flight,
         auto_session_empty,
         carry_lock,
+        ..
     } = model;
     let _ = (
         active_tab,

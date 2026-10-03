@@ -2,9 +2,10 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -15,6 +16,11 @@ pub(crate) trait WebGateway {
         &self,
         request: ListTasksRequest,
     ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError>;
+
+    async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError>;
 
     async fn list_all_tasks(
         &self,
@@ -59,6 +65,13 @@ impl WebGateway for ServerFunctionGateway {
         request: ListTasksRequest,
     ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError> {
         super::list_tasks(request).await
+    }
+
+    async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError> {
+        super::list_completed_tasks(request).await
     }
 
     async fn list_all_tasks(
@@ -111,6 +124,11 @@ pub(crate) enum ClientResponse {
         requested_date: String,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     },
+    ListCompletedTasks {
+        request_id: u64,
+        requested_date: String,
+        result: Result<WebSuccess<Vec<CompletedTaskRow>>, ServerFailure>,
+    },
     ListAllTasks {
         request_id: u64,
         request: ListAllTasksRequest,
@@ -157,6 +175,17 @@ pub(crate) async fn execute_effect<G: WebGateway>(
                 request_id,
                 requested_date,
                 result: normalize_endpoint_result(gateway.list_tasks(request).await),
+            })
+        }
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => {
+            let requested_date = request.logical_date.clone();
+            Some(ClientResponse::ListCompletedTasks {
+                request_id,
+                requested_date,
+                result: normalize_endpoint_result(gateway.list_completed_tasks(request).await),
             })
         }
         ClientEffect::ListAllTasks {
@@ -237,6 +266,17 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
                 state.apply_background_list_result(request_id, &requested_date, result)
             } else {
                 state.apply_list_result(request_id, &requested_date, result)
+            }
+        }
+        ClientResponse::ListCompletedTasks {
+            request_id,
+            requested_date,
+            result,
+        } => {
+            if background_list {
+                state.apply_background_completed_list_result(request_id, &requested_date, result)
+            } else {
+                state.apply_completed_list_result(request_id, &requested_date, result)
             }
         }
         ClientResponse::ListAllTasks {

@@ -2,18 +2,23 @@ use super::carry_lock_view::CarryLockViewModel;
 use super::component_runtime::project_date_button_models;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection, Outcome};
+use crate::client::state::{
+    ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection, Outcome,
+};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
-use crate::BandDay;
+use crate::{BandDay, CompletedTaskRow};
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub completed_rows: Vec<CompletedTaskRow>,
+    pub list_mode: ListMode,
+    pub selected_logical_date: Option<String>,
     pub band_rows: Vec<BandDay>,
     pub band_observed_at_epoch_ms: Option<i64>,
     pub band_loading: bool,
@@ -67,6 +72,9 @@ impl BrowserPageModel {
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows,
+            completed_rows: state.completed_rows().to_vec(),
+            list_mode: state.list_mode(),
+            selected_logical_date: state.selected_logical_date().map(str::to_owned),
             band_rows: state.band_rows().to_vec(),
             band_observed_at_epoch_ms: state.band_observed_at_epoch_ms(),
             band_loading: state.band_loading(),

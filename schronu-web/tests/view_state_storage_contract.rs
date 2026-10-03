@@ -1,7 +1,7 @@
 use schronu_web::client::state::{ActiveTab, ListMode};
 use schronu_web::client::view_state::{
-    load_view_state, store_view_state, StoredActiveList, StoredListView, ViewState,
-    ViewStateStoreError, VIEW_STATE_STORAGE_KEY,
+    load_view_state, store_view_state, StoredActiveList, ViewState, ViewStateStoreError,
+    VIEW_STATE_STORAGE_KEY,
 };
 use schronu_web::client::work_sessions::{KeyValueStorage, StorageError};
 use schronu_web::{CompletedTaskRow, ScheduledTaskRow, ServerSnapshot, SessionTask};
@@ -68,6 +68,29 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         active_tab: ActiveTab::List,
         task_name_filter: "".to_owned(),
         date_input_text: "2026/9/8".to_owned(),
+    };
+
+    store_view_state(&storage, &state).unwrap();
+    assert_eq!(load_view_state(&storage).state(), Some(&state));
+}
+
+#[test]
+fn view_state_v3は明示された将来の完了一覧日を保持する() {
+    let storage = MemoryStorage::default();
+    let state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "9999-12-31".to_owned(),
+            rows: Vec::new(),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: "9999/12/31".to_owned(),
     };
 
     store_view_state(&storage, &state).unwrap();
@@ -144,6 +167,14 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
         store_view_state(&storage, &state),
         Err(ViewStateStoreError::InvalidState)
     );
+    if let Some(StoredActiveList::Completed { rows, .. }) = &mut state.list {
+        rows[0].actual_work_seconds = 1;
+        rows[0].project_name = "  ".to_owned();
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
 }
 
 #[test]
@@ -204,7 +235,10 @@ fn view_stateの構築不正はstorage失敗と区別する() {
         "2026-09-09",
         vec![row("00000000-0000-4000-8000-000000000001", "task")],
     );
-    state.list.as_mut().unwrap().rows[0].task.task_name.clear();
+    let Some(StoredActiveList::Scheduled { rows, .. }) = state.list.as_mut() else {
+        panic!("scheduled list expected");
+    };
+    rows[0].task.task_name.clear();
 
     assert_eq!(
         store_view_state(&storage, &state),
@@ -220,7 +254,10 @@ fn view_stateは希望日時以上の期限制限日時を拒否する() {
         "2026-09-09",
         vec![row("00000000-0000-4000-8000-000000000001", "task")],
     );
-    let plan = &mut state.list.as_mut().unwrap().rows[0].defer_plan;
+    let Some(StoredActiveList::Scheduled { rows, .. }) = state.list.as_mut() else {
+        panic!("scheduled list expected");
+    };
+    let plan = &mut rows[0].defer_plan;
     plan.mode = schronu_web::DeferMode::DeadlineLimited;
     plan.effective_pending_until_epoch_ms = Some(plan.requested_pending_until_epoch_ms);
 

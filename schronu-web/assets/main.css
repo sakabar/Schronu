@@ -405,6 +405,12 @@ button:disabled {
         color: white;
     }
 
+    .list-mode-button.is-selected:hover:not(:disabled) {
+        border-color: transparent;
+        background: var(--green);
+        color: white;
+    }
+
     .primary-action:hover:not(:disabled),
     .session-start:hover:not(:disabled) {
         border-color: var(--green-dark);
@@ -618,6 +624,42 @@ button:disabled {
 .task-list-view {
     display: grid;
     gap: 0.5rem;
+    min-width: 0;
+}
+
+.list-screen {
+    display: grid;
+    min-width: 0;
+    gap: 0.5rem;
+}
+
+.list-mode-control {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: hidden;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface-muted);
+}
+
+.list-mode-button {
+    min-width: 0;
+    min-height: 36px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 0.35rem 0.75rem;
+}
+
+.list-mode-button + .list-mode-button {
+    border-left: 1px solid var(--line);
+}
+
+.list-mode-button.is-selected {
+    background: var(--green);
+    color: white;
+    font-weight: 750;
 }
 
 .list-controls {
@@ -728,6 +770,99 @@ button:disabled {
     color: var(--muted);
     padding: 2rem 1rem;
     text-align: center;
+}
+
+.completed-report {
+    display: grid;
+    min-width: 0;
+    gap: 0.5rem;
+}
+
+.completed-report-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.completed-report-heading h2,
+.completed-report-empty {
+    margin: 0;
+}
+
+.completed-report-heading h2 {
+    font-size: 1rem;
+}
+
+.completed-report-count {
+    color: var(--muted);
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.completed-report-empty {
+    border: 1px dashed var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--muted);
+    padding: 2rem 1rem;
+    text-align: center;
+}
+
+.completed-task-table-scroll {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    border: 1px solid var(--line);
+    background: var(--surface);
+}
+
+.completed-task-table-scroll:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: 2px;
+}
+
+.completed-task-table {
+    width: 100%;
+    min-width: 48rem;
+    border-collapse: collapse;
+}
+
+.completed-task-table th,
+.completed-task-table td {
+    padding: 0.45rem 0.55rem;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    white-space: normal;
+}
+
+.completed-task-table th {
+    background: var(--surface-muted);
+    color: var(--muted);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+}
+
+.completed-task-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.completed-task-table .completed-number {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.completed-difference.is-overrun {
+    color: var(--red);
+    font-weight: 700;
+}
+
+.completed-project,
+.completed-task-name {
+    min-width: 10rem;
+    overflow-wrap: anywhere;
 }
 
 .task-table-scroll {
