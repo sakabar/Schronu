@@ -258,6 +258,11 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         initial_html.contains("aria-pressed=true>繰返負荷"),
         "{initial_html}"
     );
+    assert!(
+        initial_html.contains("class=\"load-mode-tabs\" role=\"group\" aria-label=\"負荷表示\""),
+        "{initial_html}"
+    );
+    assert!(!initial_html.contains("role=\"tablist\""), "{initial_html}");
 
     assert_eq!(click_ids.len(), 3, "更新と2表示tabだけが初期表示される");
     dispatch_click(&dom, click_ids[2]);

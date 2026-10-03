@@ -67,7 +67,7 @@ pub(crate) fn LoadView(
                     if loading { "更新中…" } else { "更新" }
                 }
             }
-            div { class: "load-mode-tabs", role: "tablist", aria_label: "負荷表示",
+            div { class: "load-mode-tabs", role: "group", aria_label: "負荷表示",
                 button {
                     class: if mode() == LoadMode::Routine { "load-mode-tab is-selected" } else { "load-mode-tab" },
                     r#type: "button",
