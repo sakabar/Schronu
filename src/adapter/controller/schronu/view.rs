@@ -941,6 +941,35 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 .or_insert(estimated_work_seconds);
         }
 
+        let current_datetime_cursor_clone = current_datetime_cursor;
+
+        // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
+        if (*scheduled_start - current_datetime_cursor_clone).num_minutes() > 0 {
+            let blank_duration = *scheduled_start - current_datetime_cursor_clone;
+            let tmp_id = Uuid::new_v4();
+
+            if let Some(pattern) = pattern_opt {
+                if (pattern == "今" && *scheduled_start < next_logical_date_start)
+                    || (pattern == "明"
+                        && current_datetime_cursor_clone >= next_logical_date_start
+                        && (*scheduled_start - next_logical_date_start) < Duration::days(1))
+                    || (pattern == "近"
+                        && (*scheduled_start - next_logical_date_start) < Duration::days(1))
+                {
+                    task_list_display_rows.push(TaskListDisplayRow::new_gap(
+                        current_datetime_cursor_clone,
+                        0,
+                        tmp_id,
+                        0,
+                        blank_duration.num_minutes(),
+                    ));
+                }
+            }
+        }
+
+        current_datetime_cursor =
+            advance_display_datetime_cursor(current_datetime_cursor, *scheduled_end);
+
         let task_opt = id
             .map(|task_id| task_repository.get_by_id(task_id))
             .transpose()
@@ -1065,36 +1094,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                     .or_insert(estimated_work_seconds);
             }
 
-            let current_datetime_cursor_clone = &current_datetime_cursor.clone();
-            let start_datetime = scheduled_start;
-
-            // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
-            if (*scheduled_start - *current_datetime_cursor_clone).num_minutes() > 0 {
-                let blank_duration = *scheduled_start - *current_datetime_cursor_clone;
-                let tmp_id = Uuid::new_v4();
-
-                if let Some(pattern) = pattern_opt {
-                    if (pattern == "今" && *scheduled_start < next_logical_date_start)
-                        || (pattern == "明"
-                            && *current_datetime_cursor_clone >= next_logical_date_start
-                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
-                        || (pattern == "近"
-                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
-                    {
-                        task_list_display_rows.push(TaskListDisplayRow::new_gap(
-                            *current_datetime_cursor_clone,
-                            0,
-                            tmp_id,
-                            0,
-                            blank_duration.num_minutes(),
-                        ));
-                    }
-                }
-            }
-
             let end_datetime = *scheduled_end;
-            current_datetime_cursor =
-                advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
 
             // ! : 着手予定logical date内が締切。締切注意の意
             let deadline_icon: String = "!".to_string();
@@ -1131,7 +1131,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 task_id: id.expect("repository task branch requires actual identity"),
                 icon: icon.to_string(),
                 deadline: deadline_string,
-                scheduled_start: *start_datetime,
+                scheduled_start: *scheduled_start,
                 scheduled_end: end_datetime,
                 rank: *rank,
                 estimated_minutes: round_up_sec_as_minute(estimated_work_seconds),
