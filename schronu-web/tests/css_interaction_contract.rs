@@ -294,6 +294,16 @@ fn 完了表だけが狭幅で横scrollしmode選択は均等幅になる() {
     let table = block_body(MAIN_CSS, ".completed-task-table {");
     assert!(table.contains("width: 100%;"));
     assert!(table.contains("min-width: 48rem;"));
+
+    let summary = block_body(MAIN_CSS, ".completed-report-summary");
+    assert!(summary.contains("display: grid;"));
+    assert!(summary.contains("width: 100%;"));
+    assert!(summary.contains("min-width: 0;"));
+    assert!(summary.contains("repeat(auto-fit"));
+    assert!(summary.contains("minmax(min(100%,"));
+
+    let summary_item = block_body(MAIN_CSS, ".completed-report-summary-item");
+    assert!(summary_item.contains("min-width: 0;"));
 }
 
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
