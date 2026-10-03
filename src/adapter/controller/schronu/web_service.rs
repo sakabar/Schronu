@@ -13,11 +13,13 @@ mod all_tasks_performance_tests;
 
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
-    DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskRowDto,
+    DeadlineDisplayKind, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
+    completed_task_row_dto,
 };
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
@@ -30,6 +32,7 @@ use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
+use crate::application::completed_task_report::list_completed_task_report;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -144,6 +147,27 @@ impl WebService {
                 free_time_manager,
                 operation_now,
                 &schedule,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
+        })
+    }
+
+    pub fn list_completed_tasks_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        logical_date: NaiveDate,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRowDto>>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let data = list_completed_task_report(repository, logical_date)
+                .map_err(WebReadCoreError::Application)?
+                .into_iter()
+                .map(completed_task_row_dto)
+                .collect();
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
                 offset,
             )?;
             Ok(WebSuccess { snapshot, data })

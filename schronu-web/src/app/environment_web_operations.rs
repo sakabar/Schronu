@@ -1,14 +1,14 @@
 use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebOperations,
-    WebSuccess, WebWorkerHandle,
+    CompleteSessionResponse, CompletedTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto, BandDayDto,
-    CompleteSessionRequest as CoreCompleteSessionRequest,
+    CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskRowDto,
     DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
     RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
@@ -101,6 +101,18 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn list_completed_tasks(
+        &mut self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+        let operation_now = self.clock.now();
+        let logical_date = parse_strict_logical_date(&request.logical_date)?;
+        self.service()?
+            .list_completed_tasks_at(operation_now, logical_date)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
     fn list_all_tasks(
         &mut self,
         request: ListAllTasksRequest,
@@ -157,6 +169,15 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map(Into::into)
             .map_err(Into::into)
     }
+}
+
+fn parse_strict_logical_date(value: &str) -> Result<NaiveDate, WebError> {
+    let logical_date =
+        NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| invalid_input_error())?;
+    if logical_date.format("%Y-%m-%d").to_string() != value {
+        return Err(invalid_input_error());
+    }
+    Ok(logical_date)
 }
 
 impl From<CoreServerSnapshot> for ServerSnapshot {
@@ -243,6 +264,19 @@ impl From<AllTaskRowDto> for AllTaskRow {
     }
 }
 
+impl From<CompletedTaskRowDto> for CompletedTaskRow {
+    fn from(row: CompletedTaskRowDto) -> Self {
+        Self {
+            task_id: row.task_id,
+            task_name: row.task_name,
+            project_name: row.project_name,
+            completed_at_epoch_ms: row.completed_at_epoch_ms,
+            actual_work_seconds: row.actual_work_seconds,
+            estimated_work_seconds: row.estimated_work_seconds,
+        }
+    }
+}
+
 impl From<BandDayDto> for BandDay {
     fn from(day: BandDayDto) -> Self {
         Self {
@@ -313,6 +347,14 @@ trait ConvertData {
 
 impl ConvertData for Vec<ScheduledTaskRowDto> {
     type Output = Vec<ScheduledTaskRow>;
+
+    fn convert(self) -> Self::Output {
+        self.into_iter().map(Into::into).collect()
+    }
+}
+
+impl ConvertData for Vec<CompletedTaskRowDto> {
+    type Output = Vec<CompletedTaskRow>;
 
     fn convert(self) -> Self::Output {
         self.into_iter().map(Into::into).collect()
@@ -536,10 +578,16 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(completed.snapshot.observed_at_epoch_ms, now.timestamp_millis());
+        assert_eq!(
+            completed.snapshot.observed_at_epoch_ms,
+            now.timestamp_millis()
+        );
         assert_eq!(completed.snapshot.logical_date, "2026-09-05");
         assert_eq!(completed.data.len(), 2);
-        assert_eq!(completed.data[0].task_id, expected[0].hyphenated().to_string());
+        assert_eq!(
+            completed.data[0].task_id,
+            expected[0].hyphenated().to_string()
+        );
         assert_eq!(completed.data[0].task_name, "earlier project");
         assert_eq!(completed.data[0].project_name, "earlier project");
         assert_eq!(
@@ -548,7 +596,10 @@ mod tests {
         );
         assert_eq!(completed.data[0].actual_work_seconds, 11);
         assert_eq!(completed.data[0].estimated_work_seconds, 12);
-        assert_eq!(completed.data[1].task_id, expected[1].hyphenated().to_string());
+        assert_eq!(
+            completed.data[1].task_id,
+            expected[1].hyphenated().to_string()
+        );
 
         let error = operations
             .list_completed_tasks(ListCompletedTasksRequest {

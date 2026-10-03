@@ -1,7 +1,8 @@
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -29,6 +30,18 @@ pub async fn list_tasks(
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_list_completed_tasks")]
+pub async fn list_completed_tasks(
+    request: ListCompletedTasksRequest,
+) -> Result<WebOperationResult<WebSuccess<Vec<CompletedTaskRow>>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_completed_tasks(extract_worker().await?, request).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -123,6 +136,14 @@ async fn dispatch_list_tasks(
     request: ListTasksRequest,
 ) -> WebOperationResult<WebSuccess<Vec<ScheduledTaskRow>>> {
     worker.list_tasks(request).await
+}
+
+#[cfg(feature = "server")]
+async fn dispatch_list_completed_tasks(
+    worker: WebWorkerHandle,
+    request: ListCompletedTasksRequest,
+) -> WebOperationResult<WebSuccess<Vec<CompletedTaskRow>>> {
+    worker.list_completed_tasks(request).await
 }
 
 #[cfg(feature = "server")]

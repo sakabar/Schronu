@@ -70,6 +70,16 @@ pub struct ScheduledTaskRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskRow {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_name: String,
+    pub completed_at_epoch_ms: i64,
+    pub actual_work_seconds: i64,
+    pub estimated_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRow {
     pub task: SessionTask,
     pub segment_index: usize,
@@ -119,6 +129,11 @@ pub struct ListTasksRequest {
     pub logical_date: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListCompletedTasksRequest {
+    pub logical_date: String,
+}
+
 #[cfg(test)]
 mod completed_task_contract_tests {
     use super::{CompletedTaskRow, ListCompletedTasksRequest};
@@ -143,7 +158,8 @@ mod completed_task_contract_tests {
             estimated_work_seconds: 60,
         };
         let decoded =
-            serde_json::from_str::<CompletedTaskRow>(&serde_json::to_string(&row).unwrap()).unwrap();
+            serde_json::from_str::<CompletedTaskRow>(&serde_json::to_string(&row).unwrap())
+                .unwrap();
         assert_eq!(decoded, row);
     }
 }

@@ -1,12 +1,14 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
-    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
+    AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskRowDto, DeadlineDisplayKind,
+    DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     classify_deadline_display, format_deadline_remaining_time, misses_deadline,
     DeadlineDisplayStatus,
 };
+use crate::application::completed_task_report::CompletedTaskReportRow;
 use crate::application::daily_capacity::{
     calculate_daily_band_durations, calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
@@ -416,6 +418,19 @@ fn session_task_dto(
         task_name,
         estimated_work_seconds,
         actual_work_seconds,
+    }
+}
+
+pub(in crate::adapter::controller) fn completed_task_row_dto(
+    row: CompletedTaskReportRow,
+) -> CompletedTaskRowDto {
+    CompletedTaskRowDto {
+        task_id: row.task_id.hyphenated().to_string(),
+        task_name: row.task_name,
+        project_name: row.project_name,
+        completed_at_epoch_ms: row.completed_at.timestamp_millis(),
+        actual_work_seconds: row.actual_work_seconds,
+        estimated_work_seconds: row.estimated_work_seconds,
     }
 }
 

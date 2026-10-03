@@ -88,9 +88,9 @@ pub fn run_cli() {
 
 pub use storage_directory::resolve_project_storage_directory;
 pub use web_service::{
-    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
-    DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
-    WebReadError, WebReadOverflowError, WebService, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskRowDto,
+    DeadlineDisplayKind, DeferModeDto, DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, TaskDisplayKind, WebReadError, WebReadOverflowError, WebService, WebSuccess,
 };
 pub use web_session_write::{
     CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest,
