@@ -5030,7 +5030,11 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
         .unwrap();
     current.set_estimated_work_seconds(60 * 60).unwrap();
 
-    for pattern in [None, Some("3日ごとの筋トレ"), Some("2026/08/14")] {
+    for (pattern, expected_recovery_hours) in [
+        (None, "10.0"),
+        (Some("3日ごとの筋トレ"), "9.0"),
+        (Some("2026/08/14"), "1.0"),
+    ] {
         let mut task_repository = TestTaskRepository::new(parent.clone(), now);
         let mut free_time_manager = TestFreeTimeManager::default();
         let mut focused_task_id_opt = Some(current_id);
@@ -5060,6 +5064,10 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
             "{pattern:?}: {output}"
         );
         assert!(output.contains("3日ごとの筋トレ"), "{pattern:?}: {output}");
+        assert!(
+            output.contains(&format!("回復 {expected_recovery_hours}時間")),
+            "{pattern:?}: {output}"
+        );
         let projected_line = output
             .lines()
             .find(|line| line.starts_with("予定 "))
@@ -5067,6 +5075,27 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
         assert!(!projected_line.split_whitespace().any(|field| field == parent_id.to_string()));
         assert_eq!(focused_task_id_opt, Some(current_id));
     }
+
+    let mut task_repository = TestTaskRepository::new(parent, now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = Some(current_id);
+    let mut next_id = || Uuid::nil();
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let config = SchronuConfig::default();
+    let display = RuntimeTaskTreeCommandContext {
+        task_repository: &mut task_repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: &config,
+    }
+    .show_task_list(None, TaskListOrder::LowPriorityTail, false)
+    .unwrap();
+    let mut writer = TestWriter::new_for_pipe();
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert!(!writer.into_string().contains("予定 occurrence_key="));
+    assert_eq!(focused_task_id_opt, Some(current_id));
 }
 
 #[test]

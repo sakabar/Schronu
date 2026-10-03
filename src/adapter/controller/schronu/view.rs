@@ -310,7 +310,8 @@ pub(super) struct TaskListDisplayRow {
     pub(super) priority: i64,
     pub(super) work_seconds: i64,
     pub(super) project_category_opt: Option<ProjectCategory>,
-    pub(super) is_real_task: bool,
+    pub(super) is_actionable_task: bool,
+    pub(super) contributes_to_summary: bool,
     pub(super) give_up_candidate: bool,
     pub(super) display_row: TaskListRow,
 }
@@ -331,7 +332,8 @@ impl TaskListDisplayRow {
             priority,
             work_seconds: 0,
             project_category_opt: None,
-            is_real_task: false,
+            is_actionable_task: false,
+            contributes_to_summary: false,
             give_up_candidate: false,
             display_row: TaskListRow::Message { text: message },
         }
@@ -368,7 +370,8 @@ impl TaskListDisplayRow {
             priority,
             work_seconds,
             project_category_opt,
-            is_real_task: true,
+            is_actionable_task: true,
+            contributes_to_summary: true,
             give_up_candidate: false,
             display_row: TaskListRow::Task(task_row),
         }
@@ -388,7 +391,8 @@ impl TaskListDisplayRow {
             priority: row.priority,
             work_seconds,
             project_category_opt: row.project_category,
-            is_real_task: false,
+            is_actionable_task: false,
+            contributes_to_summary: true,
             give_up_candidate: false,
             display_row: TaskListRow::Projected(row),
         }
@@ -420,7 +424,7 @@ pub(super) fn summarize_scheduled_work_seconds_by_project_category(
 ) -> [i64; PROJECT_CATEGORY_SUMMARY_LEN] {
     let mut summary = [0; PROJECT_CATEGORY_SUMMARY_LEN];
 
-    for row in rows.iter().filter(|row| row.is_real_task) {
+    for row in rows.iter().filter(|row| row.contributes_to_summary) {
         let index = project_category_summary_index(row.project_category_opt);
         summary[index] += row.work_seconds;
     }
@@ -464,7 +468,7 @@ fn calculate_project_category_denominator_seconds(
 ) -> Result<i64, ApplicationError> {
     let mut dates = rows
         .iter()
-        .filter(|row| row.is_real_task)
+        .filter(|row| row.contributes_to_summary)
         .filter_map(|row| row.logical_naive_date_opt)
         .collect::<Vec<_>>();
     dates.sort();
@@ -522,7 +526,7 @@ pub(super) fn mark_give_up_candidate_rows(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            if row.is_real_task
+            if row.is_actionable_task
                 && row.work_seconds > 0
                 && row.logical_naive_date_opt == Some(target_date)
             {
@@ -1623,7 +1627,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
     let task_list_display = if !is_daily_summary_func {
-        for row in task_list_display_rows.iter().filter(|row| row.is_real_task) {
+        for row in task_list_display_rows
+            .iter()
+            .filter(|row| row.is_actionable_task)
+        {
             *focused_task_id_opt = Some(row.id);
         }
         let project_category_summary =
