@@ -4,7 +4,7 @@ use super::command_test_support::parse_command;
 use super::renderer::{
     render_display_model, CompletedTaskReportDisplay, DisplayModel, SchronuWriter,
 };
-use crate::application::completed_task_report::CompletedTaskReportRow;
+use crate::application::completed_task_report::{CompletedTaskReport, CompletedTaskReportRow};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone};
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
@@ -122,11 +122,11 @@ fn report_row(
     }
 }
 
-fn render(rows: Vec<CompletedTaskReportRow>) -> String {
+fn render(report: CompletedTaskReport) -> String {
     let mut writer = TestWriter(Vec::new());
     render_display_model(
         &mut writer,
-        &DisplayModel::CompletedTaskReport(CompletedTaskReportDisplay { rows }),
+        &DisplayModel::CompletedTaskReport(CompletedTaskReportDisplay { report }),
     )
     .unwrap();
     String::from_utf8(writer.0).unwrap()
@@ -134,15 +134,19 @@ fn render(rows: Vec<CompletedTaskReportRow>) -> String {
 
 #[test]
 fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_unabridged_tasks() {
-    let output = render(vec![
-        report_row(1, 8, 360_000, 1, "日本語", "末尾まで省略しない長いタスク名"),
-        report_row(2, 9, 0, 1, "abcdefghijklmnopqrs界tail", "second"),
-        report_row(3, 10, 1, 1, "e\u{301}", "zero"),
-    ]);
+    let output = render(CompletedTaskReport {
+        rows: vec![
+            report_row(1, 8, 360_000, 1, "日本語", "末尾まで省略しない長いタスク名"),
+            report_row(2, 9, 1, 1, "abcdefghijklmnopqrs界tail", "second"),
+            report_row(3, 10, 1, 1, "e\u{301}", "zero"),
+        ],
+        total_actual_work_seconds: 360_002,
+        available_seconds: 288_000,
+        recorded_percentage: Some(125),
+    });
     assert!(!output.contains('\t'));
     assert!(output.contains("100:00:00"));
     assert!(output.contains("+99:59:59"));
-    assert!(output.contains("-00:00:01"));
     assert!(output.contains("+00:00:00"));
     assert!(output.contains("abcdefghijklmnopqrs…"));
     assert!(!output.contains("tail"));
@@ -169,12 +173,40 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
         assert_eq!(suffix_at_width(line, 64), task);
         assert_eq!(UnicodeWidthStr::width(&line[..line.len() - task.len()]), 64);
     }
+    assert_eq!(
+        lines.last().copied(),
+        Some("実績合計: 100:00:02  利用可能: 80:00:00  記録率: 125%")
+    );
 }
 
 #[test]
 fn completed_report_renderer_explicitly_reports_empty_results() {
     assert_eq!(
-        render(Vec::new()),
-        "完了時刻  実績  見積  差  Project  タスク\n完了したタスクはありません。\n"
+        render(CompletedTaskReport {
+            rows: Vec::new(),
+            total_actual_work_seconds: 0,
+            available_seconds: 28_800,
+            recorded_percentage: Some(0),
+        }),
+        concat!(
+            "完了時刻  実績  見積  差  Project  タスク\n",
+            "完了したタスクはありません。\n",
+            "実績合計: 00:00:00  利用可能: 08:00:00  記録率: 0%\n",
+        )
+    );
+}
+
+#[test]
+fn completed_report_renderer_reports_unavailable_percentage_when_capacity_is_zero() {
+    assert_eq!(
+        render(CompletedTaskReport {
+            rows: Vec::new(),
+            total_actual_work_seconds: 0,
+            available_seconds: 0,
+            recorded_percentage: None,
+        })
+        .lines()
+        .last(),
+        Some("実績合計: 00:00:00  利用可能: 00:00:00  記録率: --")
     );
 }
