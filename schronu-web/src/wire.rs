@@ -1,4 +1,6 @@
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ServerSnapshot {
@@ -96,6 +98,27 @@ impl ScheduleOccurrence {
             Self::Projected { source_task_id, .. } => Some(source_task_id),
             Self::Actual { .. } | Self::LegacyActual => None,
         }
+    }
+
+    pub(crate) fn projected_identity(&self) -> Option<(Uuid, i64)> {
+        let Self::Projected {
+            occurrence_key,
+            source_task_id,
+        } = self
+        else {
+            return None;
+        };
+        let source_uuid = Uuid::parse_str(source_task_id).ok()?;
+        if source_uuid.hyphenated().to_string() != *source_task_id {
+            return None;
+        }
+        let (key_source, deadline_epoch_ms) = occurrence_key.split_once(':')?;
+        if key_source != source_task_id {
+            return None;
+        }
+        let deadline_epoch_ms = deadline_epoch_ms.parse::<i64>().ok()?;
+        DateTime::from_timestamp_millis(deadline_epoch_ms)?;
+        Some((source_uuid, deadline_epoch_ms))
     }
 }
 

@@ -222,7 +222,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 画面復元状態は別key `schronu_web.view_state.v1`へversion 2として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと`defer_plan`を含む全`ScheduledTaskRow`、選択tab、日付別・全件共通の検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。reload時は保存済みの日付別選択日と共有検索文字列を復元し、一覧tabを復元する場合も日付別を選択する。「全て」の選択、`AllTaskRow`、取得状態、cursor、描画上限は保存せず、reload時に未取得、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
 
-version 2の旧`ScheduledTaskRow`に`occurrence`がない場合は`LegacyActual`として復元し、既存`task.task_id`と`defer_plan`をactual行の契約として検証する。新しい予測行は`Projected`、`task_id: None`、`defer_plan: None`の組だけをvalidとし、source UUIDまたはoccurrence keyが不正ならview state全体を復元しない。
+version 2の旧`ScheduledTaskRow`に`occurrence`がない場合は`LegacyActual`として復元し、既存`task.task_id`と`defer_plan`をactual行の契約として検証する。新しい予測行は`Projected`、`task_id: None`、`defer_plan: None`の組だけをvalidとする。`occurrence_key`は`<source UUID>:<deadline epoch milliseconds>`のcanonical形式とし、source UUID、keyのUUID、行の`source_task_id`を一致させ、deadlineが有効なepoch millisecondsかつ行の`deadline_epoch_ms`と一致しなければview state全体を復元しない。
 
 ```json
 {

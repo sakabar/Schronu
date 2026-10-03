@@ -157,13 +157,17 @@ fn valid_occurrence(row: &ScheduledTaskRow) -> bool {
                 && row.defer_plan.is_some()
         }
         ScheduleOccurrence::Projected {
-            occurrence_key,
-            source_task_id,
+            occurrence_key: _,
+            source_task_id: _,
         } => {
             row.task.task_id.is_none()
-                && !occurrence_key.trim().is_empty()
-                && Uuid::parse_str(source_task_id).is_ok()
                 && row.defer_plan.is_none()
+                && row
+                    .occurrence
+                    .projected_identity()
+                    .is_some_and(|(_, deadline_epoch_ms)| {
+                        row.deadline_epoch_ms == Some(deadline_epoch_ms)
+                    })
         }
         ScheduleOccurrence::LegacyActual => {
             row.task

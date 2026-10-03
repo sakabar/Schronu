@@ -144,9 +144,10 @@ fn view_stateはprojected行をactionable_idなしで保存復元する() {
     let mut projected = row("00000000-0000-4000-8000-000000000001", "筋トレ(9/12)");
     projected.task.task_id = None;
     projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
-        occurrence_key: "parent:1789228800000".to_owned(),
+        occurrence_key: "00000000-0000-4000-8000-000000000010:1789228800000".to_owned(),
         source_task_id: "00000000-0000-4000-8000-000000000010".to_owned(),
     };
+    projected.deadline_epoch_ms = Some(1_789_228_800_000);
     projected.defer_plan = None;
     let state = view_state("2026-09-12", vec![projected]);
 
@@ -157,8 +158,45 @@ fn view_stateはprojected行をactionable_idなしで保存復元する() {
     assert!(restored.task.task_id.is_none());
     assert_eq!(
         restored.occurrence.occurrence_key(),
-        Some("parent:1789228800000")
+        Some("00000000-0000-4000-8000-000000000010:1789228800000")
     );
+}
+
+#[test]
+fn view_stateは非canonicalなprojected_occurrence_keyを全体ごと復元しない() {
+    let storage = MemoryStorage::default();
+    let source_task_id = "00000000-0000-4000-8000-000000000010";
+    let deadline_epoch_ms = 1_789_228_800_000_i64;
+    let mut projected = row("00000000-0000-4000-8000-000000000001", "筋トレ(9/12)");
+    projected.task.task_id = None;
+    projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
+        occurrence_key: format!("{source_task_id}:{deadline_epoch_ms}"),
+        source_task_id: source_task_id.to_owned(),
+    };
+    projected.deadline_epoch_ms = Some(deadline_epoch_ms);
+    projected.defer_plan = None;
+    let state = view_state("2026-09-12", vec![projected]);
+    store_view_state(&storage, &state).unwrap();
+    let valid_raw = storage.value.borrow().clone().unwrap();
+
+    for occurrence_key in [
+        "garbage".to_owned(),
+        format!("00000000-0000-4000-8000-000000000011:{deadline_epoch_ms}"),
+        format!("{source_task_id}:not-an-epoch"),
+        format!("{source_task_id}:9223372036854775807"),
+        format!("{source_task_id}:1789228800001"),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(&valid_raw).unwrap();
+        value["list"]["rows"][0]["occurrence"]["occurrence_key"] =
+            serde_json::Value::String(occurrence_key);
+        let raw = serde_json::to_string(&value).unwrap();
+        *storage.value.borrow_mut() = Some(raw.clone());
+
+        let loaded = load_view_state(&storage);
+
+        assert!(loaded.state().is_none(), "{raw}");
+        assert!(loaded.warning().is_some(), "{raw}");
+    }
 }
 
 fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {

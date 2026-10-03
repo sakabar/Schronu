@@ -160,6 +160,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NET-007**: 「記録して完了」と「計測を破棄して完了」は、実際の`complete_session`呼出しと`record_elapsed_seconds`の真偽を履歴へ記録し、失敗時もどちらを試みたか識別できること。
 - **REQ-NET-008**: 利用者起点のserver通信ではrequest開始からresponse適用まで画面全体に待機表示を出し、背面操作を無効にすること。ただし「全て」のpage取得はこの対象外とし、REQ-LIST-020の一覧内statusを用いること。SSR初期HTMLとhydration前の表示は全面overlayを出さず「画面を復元しています…」を表示すること。localStorage復元後の`bootstrap`と保存日付の`list_tasks`は背景更新とし、保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示すること。この背景更新statusは全tab共通でbottom navigation直上に浮遊表示し、表示・消去で本文の位置を変えないこと。背景更新中は「計測を破棄して再開」を含むlocal操作を許可し、日付選択・送信、負荷row・更新、自動セッション、先送り、記録・完了・競合再送、「計測を破棄して解除」はUIとreducerの両方で拒否すること。失敗時は保存一覧を維持して同じ浮遊表示に再試行buttonを表示すること。
 - **REQ-NET-010**: `schronu_web.view_state.v1`へ最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと全`ScheduledTaskRow`、選択tab、日付別・全件で共有する検索文字列、日付入力文字列をversion付きでatomicに保存すること。空一覧の成功も保存し、破損・未知version・不正行・read/write失敗はwarningにしてwork sessionやserver mutationをwrite-blockしないこと。選択tabが一覧の場合も日付別選択として復元し、「全て」の選択、取得結果、取得状態は保存しないこと。発火履歴、通信中state、error、確認dialogは保存しないこと。
+- **REQ-NET-010A**: projected行の`occurrence_key`は`<source UUID>:<deadline epoch milliseconds>`のcanonical形式とし、`source_task_id`との一致、日時の妥当性、行の`deadline_epoch_ms`との一致を満たさない保存値は不正行としてview state全体を復元しないこと。
 - **REQ-NET-009**: 完了実績競合とその再完了は、それぞれ実際に送信した全引数と失敗・成功を通常どおり履歴へ記録すること。「計測を再開」はlocalStorage操作なので履歴へ記録しないこと。
 
 ### 4.10 持ち歩きロック
