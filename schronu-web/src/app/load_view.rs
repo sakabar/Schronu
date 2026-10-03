@@ -48,7 +48,7 @@ pub(crate) fn LoadView(
                 div {
                     h2 {
                         if mode() == LoadMode::Routine {
-                            "今後28日の繰返負荷"
+                            "今日から7日後までの繰返負荷"
                         } else {
                             "今日から7日の負荷"
                         }
@@ -131,14 +131,14 @@ fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element
             span { "{report.rows.len()}件の繰返" }
         }
         if report.rows.is_empty() {
-            p { class: "load-status", "今後28日に発生する繰返負荷はありません。" }
+            p { class: "load-status", "今日から7日後までに発生する繰返負荷はありません。" }
         } else {
             div { class: "routine-load-table-wrap",
                 table { class: "routine-load-table",
                     thead {
                         tr {
                             th { class: "routine-load-interval", scope: "col", "間隔" }
-                            th { class: "routine-load-total", scope: "col", "28日合計" }
+                            th { class: "routine-load-total", scope: "col", "8日合計" }
                             th { class: "routine-load-occurrences", scope: "col", "発生日数" }
                             th { class: "routine-load-peak", scope: "col", "最大日" }
                             th { class: "routine-load-subject", scope: "col", "プロジェクト / 繰返" }

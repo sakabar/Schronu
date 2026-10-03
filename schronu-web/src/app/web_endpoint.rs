@@ -342,7 +342,7 @@ mod tests {
                     band_days: Vec::new(),
                     routine_load: RoutineLoadReport {
                         start_date: "2026-09-05".to_owned(),
-                        end_date: "2026-10-02".to_owned(),
+                        end_date: "2026-09-12".to_owned(),
                         rows: Vec::new(),
                     },
                 },

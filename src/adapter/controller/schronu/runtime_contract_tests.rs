@@ -1513,7 +1513,7 @@ fn routine_loadは製品経路で共通集計を表示する() {
         "{actual}"
     );
     assert!(
-        actual.contains("1日     00:30       1日  10/03 00:30  日次レビュー / 日次レビュー"),
+        actual.contains("1日    00:30       1日  10/03 00:30  日次レビュー / 日次レビュー"),
         "{actual}"
     );
 }

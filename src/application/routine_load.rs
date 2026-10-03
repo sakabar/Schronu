@@ -1,4 +1,4 @@
-//! 今後28日間の繰返負荷をCLIとWebへ共通提供する。
+//! 今日から7日後までの繰返負荷をCLIとWebへ共通提供する。
 
 use super::daily_capacity::try_logical_date;
 use super::interface::TaskRepositoryTrait;
@@ -9,7 +9,7 @@ use chrono::{Days, NaiveDate};
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
-pub const ROUTINE_LOAD_HORIZON_DAYS: u64 = 28;
+pub const ROUTINE_LOAD_HORIZON_DAYS: u64 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutineLoadReport {

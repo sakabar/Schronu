@@ -1130,7 +1130,7 @@ fn load_data(band_days: Vec<BandDay>) -> LoadData {
         band_days,
         routine_load: RoutineLoadReport {
             start_date: "2026-09-27".to_owned(),
-            end_date: "2026-10-24".to_owned(),
+            end_date: "2026-10-04".to_owned(),
             rows: Vec::new(),
         },
     }
