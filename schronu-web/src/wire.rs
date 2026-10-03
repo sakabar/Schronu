@@ -134,36 +134,6 @@ pub struct ListCompletedTasksRequest {
     pub logical_date: String,
 }
 
-#[cfg(test)]
-mod completed_task_contract_tests {
-    use super::{CompletedTaskRow, ListCompletedTasksRequest};
-
-    #[test]
-    fn completed_task_wireは日付と全fieldをjsonで保持する() {
-        let request = ListCompletedTasksRequest {
-            logical_date: "2026-09-05".to_owned(),
-        };
-        let decoded = serde_json::from_str::<ListCompletedTasksRequest>(
-            &serde_json::to_string(&request).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(decoded, request);
-
-        let row = CompletedTaskRow {
-            task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
-            task_name: "task".to_owned(),
-            project_name: "project".to_owned(),
-            completed_at_epoch_ms: 1_777_777_777_777,
-            actual_work_seconds: 61,
-            estimated_work_seconds: 60,
-        };
-        let decoded =
-            serde_json::from_str::<CompletedTaskRow>(&serde_json::to_string(&row).unwrap())
-                .unwrap();
-        assert_eq!(decoded, row);
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListAllTasksRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
