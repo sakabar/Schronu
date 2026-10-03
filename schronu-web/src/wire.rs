@@ -80,6 +80,14 @@ pub struct CompletedTaskRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskReport {
+    pub rows: Vec<CompletedTaskRow>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRow {
     pub task: SessionTask,
     pub segment_index: usize,

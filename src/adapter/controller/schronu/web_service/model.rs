@@ -80,6 +80,14 @@ pub struct CompletedTaskRowDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskReportDto {
+    pub rows: Vec<CompletedTaskRowDto>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRowDto {
     pub task: SessionTaskDto,
     pub segment_index: usize,

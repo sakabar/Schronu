@@ -67,6 +67,7 @@ pub(super) fn BrowserApp() -> Element {
         sessions,
         rows,
         completed_rows,
+        completed_report: _,
         list_mode,
         selected_logical_date,
         band_rows,

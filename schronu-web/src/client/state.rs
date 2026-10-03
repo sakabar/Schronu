@@ -15,7 +15,7 @@ use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
 };
-use crate::{CompletedTaskRow, ScheduledTaskRow, ServerSnapshot, WebError};
+use crate::{CompletedTaskReport, CompletedTaskRow, ScheduledTaskRow, ServerSnapshot, WebError};
 pub use all_tasks::{AllTasksStatus, ListSelection};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
@@ -161,7 +161,14 @@ impl ClientState {
     }
 
     pub fn completed_rows(&self) -> &[CompletedTaskRow] {
-        &self.read.completed_rows
+        self.read
+            .completed_report
+            .as_ref()
+            .map_or(&[], |report| report.rows.as_slice())
+    }
+
+    pub fn completed_report(&self) -> Option<&CompletedTaskReport> {
+        self.read.completed_report.as_ref()
     }
 
     pub fn list_mode(&self) -> ListMode {
@@ -198,10 +205,21 @@ impl ClientState {
                     self.read.selected_logical_date = Some(logical_date.clone());
                     self.read.scheduled_rows = rows.clone();
                 }
-                super::view_state::StoredActiveList::Completed { logical_date, rows } => {
+                super::view_state::StoredActiveList::Completed {
+                    logical_date,
+                    rows,
+                    total_actual_work_seconds,
+                    available_seconds,
+                    recorded_percentage,
+                } => {
                     self.read.list_mode = ListMode::Completed;
                     self.read.selected_logical_date = Some(logical_date.clone());
-                    self.read.completed_rows = rows.clone();
+                    self.read.completed_report = Some(CompletedTaskReport {
+                        rows: rows.clone(),
+                        total_actual_work_seconds: *total_actual_work_seconds,
+                        available_seconds: *available_seconds,
+                        recorded_percentage: *recorded_percentage,
+                    });
                 }
             }
             self.read.has_list = true;

@@ -2,7 +2,7 @@ use super::session_state::keeps_safety_marker;
 use super::*;
 use crate::client::date_buttons::logical_date_buttons_for_mode;
 use crate::{
-    CompletedTaskRow, DeferPlan, DeferTaskRequest, ListCompletedTasksRequest, ListTasksRequest,
+    CompletedTaskReport, DeferPlan, DeferTaskRequest, ListCompletedTasksRequest, ListTasksRequest,
     SessionTask, WebSuccess,
 };
 
@@ -12,7 +12,7 @@ pub(super) struct ReadState {
     pub(super) selected_logical_date: Option<String>,
     pub(super) list_mode: ListMode,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
-    pub(super) completed_rows: Vec<CompletedTaskRow>,
+    pub(super) completed_report: Option<CompletedTaskReport>,
     pub(super) has_list: bool,
     pub(super) auto_session_empty: bool,
     pub(super) auto_session_in_flight: bool,
@@ -32,7 +32,7 @@ impl ReadState {
             selected_logical_date: None,
             list_mode: ListMode::Scheduled,
             scheduled_rows: Vec::new(),
-            completed_rows: Vec::new(),
+            completed_report: None,
             has_list: false,
             auto_session_empty: false,
             auto_session_in_flight: false,
@@ -325,7 +325,7 @@ impl ClientState {
         &mut self,
         request_id: u64,
         requested_date: &str,
-        result: Result<WebSuccess<Vec<CompletedTaskRow>>, ServerFailure>,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
     ) -> ClientEffect {
         self.apply_completed_list_result_with_policy(request_id, requested_date, result, false)
     }
@@ -335,7 +335,7 @@ impl ClientState {
         &mut self,
         request_id: u64,
         requested_date: &str,
-        result: Result<WebSuccess<Vec<CompletedTaskRow>>, ServerFailure>,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
     ) -> ClientEffect {
         self.apply_completed_list_result_with_policy(request_id, requested_date, result, true)
     }
@@ -344,7 +344,7 @@ impl ClientState {
         &mut self,
         request_id: u64,
         requested_date: &str,
-        result: Result<WebSuccess<Vec<CompletedTaskRow>>, ServerFailure>,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
         preserve_across_logical_date_change: bool,
     ) -> ClientEffect {
         let invocation = ServerActionInvocation::ListCompletedTasks(ListCompletedTasksRequest {
@@ -372,7 +372,7 @@ impl ClientState {
                     || (snapshot_result.is_none() && same_logical_date)
                 {
                     self.read.selected_logical_date = Some(requested_date.to_owned());
-                    self.read.completed_rows = success.data;
+                    self.read.completed_report = Some(success.data);
                     self.read.has_list = true;
                 }
                 if snapshot_result.is_none() {
@@ -420,7 +420,7 @@ impl ClientState {
         if changed {
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
-            self.read.completed_rows.clear();
+            self.read.completed_report = None;
             self.read.has_list = false;
         }
         Some(changed)

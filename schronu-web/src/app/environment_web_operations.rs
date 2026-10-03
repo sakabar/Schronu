@@ -1,15 +1,15 @@
 use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, CompletedTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan,
-    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
+    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto, BandDayDto,
-    CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskRowDto,
-    DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
+    CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskReportDto,
+    CompletedTaskRowDto, DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
     RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
     ServerSnapshot as CoreServerSnapshot, SessionTaskDto, TaskDisplayKind as CoreTaskDisplayKind,
@@ -104,7 +104,7 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
     fn list_completed_tasks(
         &mut self,
         request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         let operation_now = self.clock.now();
         let logical_date = parse_strict_logical_date(&request.logical_date)?;
         self.service()?
@@ -277,6 +277,17 @@ impl From<CompletedTaskRowDto> for CompletedTaskRow {
     }
 }
 
+impl From<CompletedTaskReportDto> for CompletedTaskReport {
+    fn from(report: CompletedTaskReportDto) -> Self {
+        Self {
+            rows: report.rows.into_iter().map(Into::into).collect(),
+            total_actual_work_seconds: report.total_actual_work_seconds,
+            available_seconds: report.available_seconds,
+            recorded_percentage: report.recorded_percentage,
+        }
+    }
+}
+
 impl From<BandDayDto> for BandDay {
     fn from(day: BandDayDto) -> Self {
         Self {
@@ -353,11 +364,11 @@ impl ConvertData for Vec<ScheduledTaskRowDto> {
     }
 }
 
-impl ConvertData for Vec<CompletedTaskRowDto> {
-    type Output = Vec<CompletedTaskRow>;
+impl ConvertData for CompletedTaskReportDto {
+    type Output = CompletedTaskReport;
 
     fn convert(self) -> Self::Output {
-        self.into_iter().map(Into::into).collect()
+        self.into()
     }
 }
 
@@ -583,23 +594,26 @@ mod tests {
             now.timestamp_millis()
         );
         assert_eq!(completed.snapshot.logical_date, "2026-09-05");
-        assert_eq!(completed.data.len(), 2);
+        assert_eq!(completed.data.rows.len(), 2);
         assert_eq!(
-            completed.data[0].task_id,
+            completed.data.rows[0].task_id,
             expected[0].hyphenated().to_string()
         );
-        assert_eq!(completed.data[0].task_name, "earlier project");
-        assert_eq!(completed.data[0].project_name, "earlier project");
+        assert_eq!(completed.data.rows[0].task_name, "earlier project");
+        assert_eq!(completed.data.rows[0].project_name, "earlier project");
         assert_eq!(
-            completed.data[0].completed_at_epoch_ms,
+            completed.data.rows[0].completed_at_epoch_ms,
             (now - chrono::Duration::hours(2)).timestamp_millis()
         );
-        assert_eq!(completed.data[0].actual_work_seconds, 11);
-        assert_eq!(completed.data[0].estimated_work_seconds, 12);
+        assert_eq!(completed.data.rows[0].actual_work_seconds, 11);
+        assert_eq!(completed.data.rows[0].estimated_work_seconds, 12);
         assert_eq!(
-            completed.data[1].task_id,
+            completed.data.rows[1].task_id,
             expected[1].hyphenated().to_string()
         );
+        assert_eq!(completed.data.total_actual_work_seconds, 32);
+        assert_eq!(completed.data.available_seconds, 72_000);
+        assert_eq!(completed.data.recorded_percentage, Some(0));
 
         let error = operations
             .list_completed_tasks(ListCompletedTasksRequest {

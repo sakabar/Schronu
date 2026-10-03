@@ -9,8 +9,8 @@ mod wire;
 pub use web_worker::{WebOperations, WebWorkerHandle};
 pub use wire::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, CompletedTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan,
-    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
+    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };

@@ -154,6 +154,9 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
             list: Some(StoredActiveList::Completed {
                 logical_date: "2026-09-08".to_owned(),
                 rows: vec![cached_row.clone()],
+                total_actual_work_seconds: 120,
+                available_seconds: 600,
+                recorded_percentage: Some(20),
             }),
             active_tab: ActiveTab::List,
             task_name_filter: String::new(),
@@ -216,14 +219,19 @@ fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを�
         &completed_date,
         Ok(WebSuccess {
             snapshot: snapshot(1_002),
-            data: vec![CompletedTaskRow {
-                task_id: RECORD_ID.to_owned(),
-                task_name: "A日の完了".to_owned(),
-                project_name: "Schronu".to_owned(),
-                completed_at_epoch_ms: 1_789_000_000_000,
-                actual_work_seconds: 120,
-                estimated_work_seconds: 60,
-            }],
+            data: CompletedTaskReport {
+                rows: vec![CompletedTaskRow {
+                    task_id: RECORD_ID.to_owned(),
+                    task_name: "A日の完了".to_owned(),
+                    project_name: "Schronu".to_owned(),
+                    completed_at_epoch_ms: 1_789_000_000_000,
+                    actual_work_seconds: 120,
+                    estimated_work_seconds: 60,
+                }],
+                total_actual_work_seconds: 120,
+                available_seconds: 600,
+                recorded_percentage: Some(20),
+            },
         }),
     );
     let _ = state.switch_list_mode(crate::client::state::ListMode::Scheduled);

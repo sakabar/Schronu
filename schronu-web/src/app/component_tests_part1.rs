@@ -22,6 +22,8 @@ use crate::{
     web_error_codes, BandDay, BandDurations, CompletedTaskRow, RecordSessionResult, RetryAdvice,
     ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
+#[cfg(feature = "web")]
+use crate::CompletedTaskReport;
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
 use dioxus::prelude::*;

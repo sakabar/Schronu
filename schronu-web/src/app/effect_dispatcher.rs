@@ -2,7 +2,7 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
     DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
     WebError, WebSuccess,
@@ -20,7 +20,7 @@ pub(crate) trait WebGateway {
     async fn list_completed_tasks(
         &self,
         request: ListCompletedTasksRequest,
-    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError>;
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError>;
 
     async fn list_all_tasks(
         &self,
@@ -70,7 +70,7 @@ impl WebGateway for ServerFunctionGateway {
     async fn list_completed_tasks(
         &self,
         request: ListCompletedTasksRequest,
-    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError> {
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
         super::list_completed_tasks(request).await
     }
 
@@ -127,7 +127,7 @@ pub(crate) enum ClientResponse {
     ListCompletedTasks {
         request_id: u64,
         requested_date: String,
-        result: Result<WebSuccess<Vec<CompletedTaskRow>>, ServerFailure>,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
     },
     ListAllTasks {
         request_id: u64,

@@ -1,6 +1,6 @@
 use crate::{
     web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
-    CompletedTaskRow, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
     ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
     ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
@@ -19,7 +19,7 @@ pub trait WebOperations: 'static {
     fn list_completed_tasks(
         &mut self,
         request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>;
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError>;
     fn list_all_tasks(
         &mut self,
         request: ListAllTasksRequest,
@@ -54,7 +54,7 @@ enum WebWorkerCommand {
     },
     ListCompletedTasks {
         request: ListCompletedTasksRequest,
-        response: oneshot::Sender<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>>,
+        response: oneshot::Sender<Result<WebSuccess<CompletedTaskReport>, WebError>>,
     },
     ListAllTasks {
         request: ListAllTasksRequest,
@@ -117,7 +117,7 @@ impl WebWorkerHandle {
     pub async fn list_completed_tasks(
         &self,
         request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands
             .send(WebWorkerCommand::ListCompletedTasks { request, response })

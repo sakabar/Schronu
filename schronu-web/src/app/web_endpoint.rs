@@ -1,5 +1,5 @@
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
     DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
     WebError, WebSuccess,
@@ -38,7 +38,7 @@ pub async fn list_tasks(
 #[server(endpoint = "web_list_completed_tasks")]
 pub async fn list_completed_tasks(
     request: ListCompletedTasksRequest,
-) -> Result<WebOperationResult<WebSuccess<Vec<CompletedTaskRow>>>, ServerFnError> {
+) -> Result<WebOperationResult<WebSuccess<CompletedTaskReport>>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         Ok(dispatch_list_completed_tasks(extract_worker().await?, request).await)
@@ -142,7 +142,7 @@ async fn dispatch_list_tasks(
 async fn dispatch_list_completed_tasks(
     worker: WebWorkerHandle,
     request: ListCompletedTasksRequest,
-) -> WebOperationResult<WebSuccess<Vec<CompletedTaskRow>>> {
+) -> WebOperationResult<WebSuccess<CompletedTaskReport>> {
     worker.list_completed_tasks(request).await
 }
 
@@ -200,7 +200,7 @@ mod tests {
         dispatch_load_band, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+        AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
         DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
         RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
         SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
@@ -244,7 +244,7 @@ mod tests {
                 },
             )
             .await;
-            let _: WebOperationResult<WebSuccess<Vec<CompletedTaskRow>>> =
+            let _: WebOperationResult<WebSuccess<CompletedTaskReport>> =
                 dispatch_list_completed_tasks(
                     worker.clone(),
                     ListCompletedTasksRequest {
@@ -353,11 +353,16 @@ mod tests {
         fn list_completed_tasks(
             &mut self,
             _request: ListCompletedTasksRequest,
-        ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+        ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
             self.count();
             Ok(WebSuccess {
                 snapshot: snapshot(),
-                data: Vec::new(),
+                data: CompletedTaskReport {
+                    rows: Vec::new(),
+                    total_actual_work_seconds: 0,
+                    available_seconds: 0,
+                    recorded_percentage: None,
+                },
             })
         }
 

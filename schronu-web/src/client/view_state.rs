@@ -27,6 +27,9 @@ pub enum StoredActiveList {
     Completed {
         logical_date: String,
         rows: Vec<CompletedTaskRow>,
+        total_actual_work_seconds: i64,
+        available_seconds: i64,
+        recorded_percentage: Option<i64>,
     },
 }
 
@@ -178,10 +181,22 @@ fn valid_view_state(state: &ViewState) -> bool {
                     && valid_logical_date(logical_date)
                     && rows.iter().all(valid_row)
             }
-            StoredActiveList::Completed { logical_date, rows } => {
+            StoredActiveList::Completed {
+                logical_date,
+                rows,
+                total_actual_work_seconds,
+                available_seconds,
+                recorded_percentage,
+            } => {
                 state.list_mode == ListMode::Completed
                     && valid_logical_date(logical_date)
                     && rows.iter().all(valid_completed_row)
+                    && valid_completed_summary(
+                        rows,
+                        *total_actual_work_seconds,
+                        *available_seconds,
+                        *recorded_percentage,
+                    )
             }
         })
 }
@@ -237,6 +252,32 @@ fn valid_completed_row(row: &CompletedTaskRow) -> bool {
         && row.actual_work_seconds >= 0
         && row.estimated_work_seconds >= 0
         && valid_epoch(row.completed_at_epoch_ms)
+}
+
+fn valid_completed_summary(
+    rows: &[CompletedTaskRow],
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
+) -> bool {
+    if total_actual_work_seconds < 0 || available_seconds < 0 {
+        return false;
+    }
+    let row_total = rows
+        .iter()
+        .map(|row| i128::from(row.actual_work_seconds))
+        .sum::<i128>();
+    if row_total != i128::from(total_actual_work_seconds) {
+        return false;
+    }
+    let expected_percentage = if available_seconds == 0 {
+        None
+    } else {
+        let total = i128::from(total_actual_work_seconds);
+        let available = i128::from(available_seconds);
+        i64::try_from((total * 100 + available / 2) / available).ok()
+    };
+    recorded_percentage == expected_percentage
 }
 
 fn valid_epoch(epoch_ms: i64) -> bool {

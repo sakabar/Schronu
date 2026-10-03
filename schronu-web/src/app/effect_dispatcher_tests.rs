@@ -5,7 +5,7 @@ use super::effect_dispatcher::{
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
-    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskRow,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
     DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
     SessionTask, WebError, WebSuccess,
@@ -290,7 +290,7 @@ impl WebGateway for BootstrapGateway {
     async fn list_completed_tasks(
         &self,
         _request: ListCompletedTasksRequest,
-    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError> {
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
         unreachable!("bootstrap test gateway")
     }
 
@@ -356,13 +356,18 @@ impl WebGateway for FakeGateway {
     async fn list_completed_tasks(
         &self,
         request: ListCompletedTasksRequest,
-    ) -> Result<Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>, ServerFnError> {
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
         self.calls
             .borrow_mut()
             .push(format!("list_completed:{}", request.logical_date));
         Ok(Ok(WebSuccess {
             snapshot: snapshot(),
-            data: Vec::new(),
+            data: CompletedTaskReport {
+                rows: Vec::new(),
+                total_actual_work_seconds: 0,
+                available_seconds: 0,
+                recorded_percentage: None,
+            },
         }))
     }
 

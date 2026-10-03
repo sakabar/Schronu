@@ -9,7 +9,7 @@ use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
-use crate::{BandDay, CompletedTaskRow};
+use crate::{BandDay, CompletedTaskReport, CompletedTaskRow};
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
@@ -17,6 +17,7 @@ pub(crate) struct BrowserPageModel {
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
     pub completed_rows: Vec<CompletedTaskRow>,
+    pub completed_report: Option<CompletedTaskReport>,
     pub list_mode: ListMode,
     pub selected_logical_date: Option<String>,
     pub band_rows: Vec<BandDay>,
@@ -75,6 +76,7 @@ impl BrowserPageModel {
             sessions: project_session_cards_for_browser(state),
             rows,
             completed_rows: project_active_completed_rows(state),
+            completed_report: project_active_completed_report(state),
             list_mode: state.list_mode(),
             selected_logical_date: state.selected_logical_date().map(str::to_owned),
             band_rows: state.band_rows().to_vec(),
@@ -112,6 +114,13 @@ pub(super) fn project_active_completed_rows(state: &ClientState) -> Vec<Complete
     } else {
         Vec::new()
     }
+}
+
+pub(super) fn project_active_completed_report(state: &ClientState) -> Option<CompletedTaskReport> {
+    state
+        .has_completed_list()
+        .then(|| state.completed_report().cloned())
+        .flatten()
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
