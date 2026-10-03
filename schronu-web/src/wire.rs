@@ -112,11 +112,14 @@ impl ScheduleOccurrence {
         if source_uuid.hyphenated().to_string() != *source_task_id {
             return None;
         }
-        let (key_source, deadline_epoch_ms) = occurrence_key.split_once(':')?;
+        let (key_source, deadline_text) = occurrence_key.split_once(':')?;
         if key_source != source_task_id {
             return None;
         }
-        let deadline_epoch_ms = deadline_epoch_ms.parse::<i64>().ok()?;
+        let deadline_epoch_ms = deadline_text.parse::<i64>().ok()?;
+        if deadline_epoch_ms.to_string() != deadline_text {
+            return None;
+        }
         DateTime::from_timestamp_millis(deadline_epoch_ms)?;
         Some((source_uuid, deadline_epoch_ms))
     }

@@ -179,16 +179,32 @@ fn view_stateは非canonicalなprojected_occurrence_keyを全体ごと復元し�
     store_view_state(&storage, &state).unwrap();
     let valid_raw = storage.value.borrow().clone().unwrap();
 
-    for occurrence_key in [
-        "garbage".to_owned(),
-        format!("00000000-0000-4000-8000-000000000011:{deadline_epoch_ms}"),
-        format!("{source_task_id}:not-an-epoch"),
-        format!("{source_task_id}:9223372036854775807"),
-        format!("{source_task_id}:1789228800001"),
+    for (occurrence_key, row_deadline_epoch_ms) in [
+        ("garbage".to_owned(), deadline_epoch_ms),
+        (
+            format!("00000000-0000-4000-8000-000000000011:{deadline_epoch_ms}"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:not-an-epoch"), deadline_epoch_ms),
+        (
+            format!("{source_task_id}:9223372036854775807"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:1789228800001"), deadline_epoch_ms),
+        (
+            format!("{source_task_id}:+1789228800000"),
+            deadline_epoch_ms,
+        ),
+        (
+            format!("{source_task_id}:01789228800000"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:-0"), 0),
     ] {
         let mut value: serde_json::Value = serde_json::from_str(&valid_raw).unwrap();
         value["list"]["rows"][0]["occurrence"]["occurrence_key"] =
             serde_json::Value::String(occurrence_key);
+        value["list"]["rows"][0]["deadline_epoch_ms"] = row_deadline_epoch_ms.into();
         let raw = serde_json::to_string(&value).unwrap();
         *storage.value.borrow_mut() = Some(raw.clone());
 
