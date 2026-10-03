@@ -853,6 +853,46 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
 }
 
 #[test]
+fn get_scheduleは非rootの実taskの親子identityを保持する() {
+    let now = fixed_now();
+    let root = new_task_handle("schedule root").unwrap();
+    let root_id = root.get_id().unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+    let parent = root.create_as_last_child(new_task_attr("scheduled parent"));
+    let parent_id = parent.get_id().unwrap();
+    parent.set_start_time(now).unwrap();
+    parent.set_estimated_work_seconds(15 * 60).unwrap();
+    let child = parent.create_as_last_child(new_task_attr("scheduled child"));
+    let child_id = child.get_id().unwrap();
+    child.set_start_time(now).unwrap();
+    child.set_estimated_work_seconds(5 * 60).unwrap();
+    root.sync_clock(now).unwrap();
+    let repository = RecordingRepository::new(vec![root]);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(json!({
+            "jsonrpc": "2.0",
+            "id": "get-nested-schedule",
+            "method": "tools/call",
+            "params": {"name": "get_schedule"}
+        }))
+        .unwrap();
+    let schedule = response["result"]["structuredContent"]["schedule"]
+        .as_array()
+        .unwrap();
+    let parent_row = schedule
+        .iter()
+        .find(|row| row["task_id"] == parent_id.to_string())
+        .expect("scheduled parent row");
+
+    assert_eq!(parent_row["task"]["id"], parent_id.to_string());
+    assert_eq!(parent_row["task"]["root_id"], root_id.to_string());
+    assert_eq!(parent_row["task"]["parent_id"], root_id.to_string());
+    assert_eq!(parent_row["task"]["child_ids"], json!([child_id]));
+}
+
+#[test]
 fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task_idを付けない() {
     let now = fixed_now();
     let parent = new_task_handle("3-day routine").unwrap();
