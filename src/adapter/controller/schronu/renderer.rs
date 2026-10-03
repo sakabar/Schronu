@@ -1,4 +1,5 @@
 use crate::{
+    application::routine_load::RoutineLoadReport,
     application::session_progress::calculate_session_progress,
     entity::task::{ProjectCategory, TaskAttr, TaskTreeError},
 };
@@ -338,6 +339,7 @@ pub(super) enum DisplayModel {
     TaskListMetrics(TaskListMetricsDisplay),
     Calendar(CalendarDisplay),
     Band(BandDisplay),
+    RoutineLoad(RoutineLoadReport),
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
     Focus(FocusDisplay),
@@ -363,6 +365,7 @@ impl DisplayModel {
             | Self::TaskList(_)
             | Self::TaskListMetrics(_)
             | Self::Calendar(_)
+            | Self::RoutineLoad(_)
             | Self::Band(_)
             | Self::Pack(_)
             | Self::Flatten(_)
@@ -425,6 +428,7 @@ pub(super) fn render_display_model(
         }
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Band(band) => render_band_display(writer, band)?,
+        DisplayModel::RoutineLoad(report) => render_routine_load_report(writer, report)?,
         DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
         DisplayModel::Flatten(flatten) => render_flatten_display(writer, flatten)?,
         DisplayModel::Focus(focus) => render_focus_display(writer, focus)?,
@@ -435,6 +439,37 @@ pub(super) fn render_display_model(
         }
     }
     Ok(())
+}
+
+fn render_routine_load_report(
+    writer: &mut dyn SchronuWriter,
+    report: &RoutineLoadReport,
+) -> Result<(), std::io::Error> {
+    writer.writeln_newline(&format!(
+        "今後28日の繰返負荷 ({}〜{})",
+        report.start_date.format("%Y-%m-%d"),
+        report.end_date.format("%Y-%m-%d")
+    ))?;
+    writer.writeln_newline("プロジェクト / 繰返\t間隔\t28日合計\t週平均\t発生日数\t最大日")?;
+    for row in &report.rows {
+        writer.writeln_newline(&format!(
+            "{} / {}\t{}日\t{}\t{}\t{}日\t{} {}",
+            row.project_name,
+            row.routine_name,
+            row.repetition_interval_days,
+            format_hours_minutes(row.total_work_seconds),
+            format_hours_minutes(row.weekly_average_seconds),
+            row.occurrence_day_count,
+            row.peak_date.format("%m/%d"),
+            format_hours_minutes(row.peak_work_seconds),
+        ))?;
+    }
+    Ok(())
+}
+
+fn format_hours_minutes(seconds: i64) -> String {
+    let minutes = seconds.max(0) / 60;
+    format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 fn render_task_list_display(

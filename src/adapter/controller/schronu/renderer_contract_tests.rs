@@ -6,10 +6,10 @@ use super::renderer::{
     CalendarSummary, DebugTreeRow, DisplayModel, ErrorCapturingWriter, FlattenDisplay,
     FlattenReason, FlattenReasonSummary, FlattenRow, FlattenUnresolvedDay, FocusDisplay,
     LeafTreeRow, MessageLevel, PackDisplay, PackRow, RenderMode, SchronuWriter, SpreadsheetTaskRow,
-    RoutineLoadDisplay, RoutineLoadRow, TaskCategoryWorkSeconds, TaskListDisplay,
-    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
-    TreeDisplay,
+    TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
+    TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
 };
+use crate::application::routine_load::{RoutineLoadReport, RoutineLoadRow};
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use std::io::Write;
@@ -18,11 +18,13 @@ use uuid::Uuid;
 
 #[test]
 fn routine_load_displayは共通集計値を固定列で描画する() {
-    let display = DisplayModel::RoutineLoad(RoutineLoadDisplay {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
         start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
         end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
         rows: vec![RoutineLoadRow {
+            project_task_id: Uuid::from_u128(1),
             project_name: "生活".to_owned(),
+            routine_task_id: Uuid::from_u128(2),
             routine_name: "週次家事".to_owned(),
             repetition_interval_days: 7,
             total_work_seconds: 4 * 60 * 60 + 20 * 60,

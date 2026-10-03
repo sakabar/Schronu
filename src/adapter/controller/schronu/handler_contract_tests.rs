@@ -1166,6 +1166,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
                 | CommandKind::NonRepetitive
                 | CommandKind::Calendar
                 | CommandKind::Band
+                | CommandKind::RoutineLoad
                 | CommandKind::Children
                 | CommandKind::Deepest
         );

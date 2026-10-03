@@ -13,6 +13,7 @@ fn interactive再描画判断はtyped_command_kindだけで決まる() {
         CommandKind::Today,
         CommandKind::Calendar,
         CommandKind::Band,
+        CommandKind::RoutineLoad,
         CommandKind::DeferRoutines,
         CommandKind::Flatten,
         CommandKind::Pack,
@@ -69,7 +70,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
     );
     assert_eq!(
         all_command_kinds.len(),
-        55,
+        56,
         "shared representative command fixture must cover every CommandKind"
     );
     for (index, kind) in all_command_kinds.iter().enumerate() {
@@ -90,6 +91,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::Today
             | CommandKind::Calendar
             | CommandKind::Band
+            | CommandKind::RoutineLoad
             | CommandKind::DeferRoutines
             | CommandKind::Flatten
             | CommandKind::Pack => true,
