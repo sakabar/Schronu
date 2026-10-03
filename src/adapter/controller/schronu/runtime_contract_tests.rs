@@ -5099,6 +5099,51 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
 }
 
 #[test]
+fn projected回の後の空き時間はprojected回の終了から数える() {
+    let now = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
+    let tomorrow = now + Duration::days(1);
+    let root = new_test_task_handle("projected gap fixture").unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+
+    let recurring = root.create_as_last_child(new_test_task_attr("3日ごとの筋トレ"));
+    recurring.set_estimated_work_seconds(60 * 60).unwrap();
+    recurring.set_fixed_start(true).unwrap();
+    recurring
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    recurring
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()))
+        .unwrap();
+    recurring
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()))
+        .unwrap();
+    let completed = recurring.create_as_last_child(new_test_task_attr("前回の筋トレ"));
+    completed.set_start_time(now - Duration::days(2)).unwrap();
+    completed
+        .set_deadline_time_opt(Some(now - Duration::days(2) + Duration::hours(1)))
+        .unwrap();
+    completed.set_estimated_work_seconds(60 * 60).unwrap();
+    completed.set_orig_status(Status::Done).unwrap();
+
+    let following = root.create_as_last_child(new_test_task_attr("projected後の実task"));
+    following
+        .set_start_time(tomorrow + Duration::hours(2))
+        .unwrap();
+    following
+        .set_deadline_time_opt(Some(tomorrow + Duration::hours(3)))
+        .unwrap();
+    following.set_estimated_work_seconds(60 * 60).unwrap();
+    following.set_fixed_start(true).unwrap();
+
+    let result = execute_command_for_test(root, now, None, "全 明");
+
+    assert!(result.output.contains("予定 occurrence_key=projected:"), "{}", result.output);
+    assert!(result.output.contains("projected後の実task"), "{}", result.output);
+    assert!(result.output.contains("60分間の空き時間"), "{}", result.output);
+    assert!(!result.output.contains("1560分間の空き時間"), "{}", result.output);
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
