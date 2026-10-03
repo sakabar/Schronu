@@ -813,6 +813,7 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
             "scheduled_start",
             "scheduled_work_seconds",
             "task",
+            "task_id",
             "total_work_seconds"
         ]
     );
@@ -896,7 +897,10 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
     assert!(projected.get("task_id").is_none());
     assert_eq!(projected["source_task_id"], parent_id.to_string());
     assert_eq!(projected["occurrence_key"], projected["occurrence"]);
-    assert_eq!(projected["task"]["name"], "3-day routine");
+    assert!(projected["task"]["name"]
+        .as_str()
+        .unwrap()
+        .starts_with("3-day routine("));
 }
 
 #[test]

@@ -118,6 +118,19 @@ pub(super) struct TaskListTaskRow {
     pub(super) give_up_candidate: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct ProjectedTaskListRow {
+    pub(super) occurrence_key: String,
+    pub(super) source_task_id: Uuid,
+    pub(super) scheduled_start: DateTime<Local>,
+    pub(super) scheduled_end: DateTime<Local>,
+    pub(super) estimated_minutes: i64,
+    pub(super) priority: i64,
+    pub(super) project_category: Option<ProjectCategory>,
+    pub(super) deadline: DateTime<Local>,
+    pub(super) task_name: String,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TaskListTaskKind {
     Fixed,
@@ -148,6 +161,7 @@ pub(super) struct TaskListColumns {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskListRow {
     Task(TaskListTaskRow),
+    Projected(ProjectedTaskListRow),
     Gap { minutes: i64 },
     DayGap { days: i64 },
     DateBoundary,
@@ -1066,6 +1080,20 @@ fn format_alert_overrun(seconds: i64) -> String {
 pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
     match row {
         TaskListRow::Task(row) => format_task_list_task_row(row),
+        TaskListRow::Projected(row) => format!(
+            "予定 occurrence_key={} source_task_id={} {}({})-{}~{} {}分 {} priority={} deadline={} {}",
+            row.occurrence_key,
+            row.source_task_id,
+            row.scheduled_start.format("%m/%d"),
+            weekday_jp(row.scheduled_start.weekday()),
+            row.scheduled_start.format("%H:%M"),
+            row.scheduled_end.format("%H:%M"),
+            row.estimated_minutes,
+            project_category_symbol(row.project_category),
+            row.priority,
+            row.deadline.to_rfc3339(),
+            row.task_name,
+        ),
         TaskListRow::Gap { minutes } => format!(
             "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
         ),
@@ -1118,6 +1146,11 @@ fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool
             }
             format_task_list_columns(&columns)
         }
+        TaskListRow::Projected(row) => ansi_foreground(
+            &format_task_list_row(&TaskListRow::Projected(row.clone())),
+            REPETITIVE_COLOR,
+            supports_ansi_color,
+        ),
         _ => format_task_list_row(row),
     }
 }

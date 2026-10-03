@@ -52,6 +52,8 @@ function fail_incomplete_task_row(line_number) {
     exit 1
 }
 
+# Persisted task rows begin with a four-digit segment index. Read-only projected
+# schedule rows begin with "予定" and are deliberately excluded from A-J sync.
 /^[0-9]/ {
     line = $0
     invalid = 0

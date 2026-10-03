@@ -1,3 +1,4 @@
+use crate::application::schedule_use_case::ScheduleOccurrenceKey;
 use crate::application::schedule_use_case::ScheduledTaskView;
 use crate::application::task_use_case::TaskView;
 use serde_json::Value;
@@ -7,5 +8,26 @@ pub(super) fn task_view_json(task: &TaskView) -> Value {
 }
 
 pub(super) fn scheduled_task_view_json(scheduled: &ScheduledTaskView) -> Value {
-    serde_json::to_value(scheduled).expect("ScheduledTaskView serialization is infallible")
+    let mut value =
+        serde_json::to_value(scheduled).expect("ScheduledTaskView serialization is infallible");
+    let object = value
+        .as_object_mut()
+        .expect("ScheduledTaskView serializes as an object");
+    match scheduled.occurrence {
+        ScheduleOccurrenceKey::Actual { task_id } => {
+            object.insert("task_id".to_string(), Value::String(task_id.to_string()));
+        }
+        ScheduleOccurrenceKey::Projected { source_task_id, .. } => {
+            object.insert(
+                "occurrence_key".to_string(),
+                serde_json::to_value(scheduled.occurrence)
+                    .expect("ScheduleOccurrenceKey serialization is infallible"),
+            );
+            object.insert(
+                "source_task_id".to_string(),
+                Value::String(source_task_id.to_string()),
+            );
+        }
+    }
+    value
 }

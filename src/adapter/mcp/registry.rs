@@ -24,7 +24,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "get_schedule",
-            "description": "Return calculated schedule segments whose intervals overlap the selected range of local logical days. Logical days start at 06:00 local time.",
+            "description": "Return calculated schedule segments whose intervals overlap the selected range of local logical days. Logical days start at 06:00 local time. Stored occurrences include actionable task_id. Read-only projected recurrence occurrences instead include occurrence_key and source_task_id, without task_id.",
             "inputSchema": generated_input_schema::<GetScheduleInput>()
         }),
         json!({

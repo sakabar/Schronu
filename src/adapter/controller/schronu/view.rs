@@ -9,8 +9,9 @@ use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
     BandDisplay, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
     CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel,
-    SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
+    ProjectedTaskListRow, SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
+    TreeDisplay,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
@@ -24,7 +25,7 @@ use crate::application::daily_capacity::{
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
-    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates,
+    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
@@ -370,6 +371,26 @@ impl TaskListDisplayRow {
             is_real_task: true,
             give_up_candidate: false,
             display_row: TaskListRow::Task(task_row),
+        }
+    }
+
+    fn new_projected(
+        logical_naive_date: NaiveDate,
+        rank: usize,
+        work_seconds: i64,
+        row: ProjectedTaskListRow,
+    ) -> Self {
+        TaskListDisplayRow {
+            scheduled_start: row.scheduled_start,
+            logical_naive_date_opt: Some(logical_naive_date),
+            rank,
+            id: row.source_task_id,
+            priority: row.priority,
+            work_seconds,
+            project_category_opt: row.project_category,
+            is_real_task: false,
+            give_up_candidate: false,
+            display_row: TaskListRow::Projected(row),
         }
     }
 
@@ -1284,6 +1305,87 @@ pub(super) fn build_show_all_tasks_display_with_config(
                     task_list_display_rows.push(task_list_display_row.clone());
                 }
             }
+        } else if let ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline,
+        } = scheduled_task.occurrence
+        {
+            let deadline_display_status =
+                classify_deadline_display(Some(&deadline), *scheduled_end, logical_naive_date)?;
+            let has_deadline_icon = matches!(
+                deadline_display_status,
+                DeadlineDisplayStatus::Overrun | DeadlineDisplayStatus::DueWithinLogicalDate
+            );
+            let occurrence_key = format!("projected:{source_task_id}:{}", deadline.to_rfc3339());
+            let task_name = scheduled_task.task.name.clone();
+            let row = TaskListDisplayRow::new_projected(
+                logical_naive_date,
+                *rank,
+                scheduled_work_seconds,
+                ProjectedTaskListRow {
+                    occurrence_key,
+                    source_task_id,
+                    scheduled_start: *scheduled_start,
+                    scheduled_end: *scheduled_end,
+                    estimated_minutes: round_up_sec_as_minute(scheduled_work_seconds),
+                    priority: scheduled_task.task.priority,
+                    project_category: scheduled_task.task.project_category,
+                    deadline,
+                    task_name: task_name.clone(),
+                },
+            );
+            let include = match pattern_opt.as_deref() {
+                None => true,
+                Some("暦" | "calendar" | "cal" | "帯" | "band" | "単") => false,
+                Some("葉") => scheduled_task.is_leaf(),
+                Some("枝") => !scheduled_task.is_leaf(),
+                Some("印" | "〆") => has_deadline_icon,
+                Some("v" | "超") => deadline_display_status == DeadlineDisplayStatus::Overrun,
+                Some("今") => scheduled_next_logical_date_start
+                    .is_some_and(|boundary| boundary == next_logical_date_start),
+                Some("明") => scheduled_next_logical_date_start.is_some_and(|boundary| {
+                    boundary - next_logical_date_start == Duration::days(1)
+                }),
+                Some("近") => scheduled_next_logical_date_start.is_some_and(|boundary| {
+                    matches!((boundary - next_logical_date_start).num_days(), 0 | 1)
+                }),
+                Some("週") => scheduled_next_logical_date_start
+                    .is_some_and(|boundary| boundary - next_logical_date_start < Duration::days(7)),
+                Some("末") => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let through_sunday = 6 - today;
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        boundary - next_logical_date_start <= Duration::days(through_sunday)
+                    })
+                }
+                Some("翌") => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let through_sunday = 6 - today;
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        let diff = boundary - next_logical_date_start;
+                        Duration::days(through_sunday) < diff
+                            && diff <= Duration::days(through_sunday + 7)
+                    })
+                }
+                Some(pattern) if days_of_week.contains(&pattern) => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let target = days_of_week
+                        .iter()
+                        .position(|day| *day == pattern)
+                        .expect("matched weekday") as i64;
+                    let difference = (7 + target - today) % 7;
+                    let days = if difference == 0 { 7 } else { difference };
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        boundary - next_logical_date_start == Duration::days(days)
+                    })
+                }
+                Some(_) if yyyymmdd_pattern_date == Some(logical_naive_date) => true,
+                Some(pattern) if integer_reg.is_match(pattern) => false,
+                Some(pattern) => task_name.to_lowercase().contains(&pattern.to_lowercase()),
+            };
+            if include && display_order != TaskListDisplayOrder::LowPriorityTail {
+                task_list_display_rows.push(row);
+            }
         }
     }
 
@@ -1521,7 +1623,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
     let task_list_display = if !is_daily_summary_func {
-        for row in task_list_display_rows.iter() {
+        for row in task_list_display_rows.iter().filter(|row| row.is_real_task) {
             *focused_task_id_opt = Some(row.id);
         }
         let project_category_summary =

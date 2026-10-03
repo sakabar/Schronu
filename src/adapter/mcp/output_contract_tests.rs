@@ -122,9 +122,10 @@ fn scheduled_task_viewのserde表現は操作用task_identityを含まない() {
     expected["task"]["status"] = json!("pending");
 
     let serialized = serde_json::to_value(&scheduled).unwrap();
+    let mcp_output = scheduled_task_view_json(&scheduled);
 
-    assert_eq!(serialized, scheduled_task_view_json(&scheduled));
-    assert_eq!(serialized, expected);
+    assert!(serialized.get("task_id").is_none());
+    assert_eq!(mcp_output, expected);
 }
 
 #[test]

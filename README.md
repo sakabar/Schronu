@@ -300,6 +300,8 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
 
+`get_schedule`の保存済みoccurrenceは変更操作に使える`task_id`を持ちます。繰り返しの将来回を示すread-onlyのprojected occurrenceは、一意な`occurrence_key`と繰り返し元の`source_task_id`を持ち、`task_id`を持ちません。CLIの`全`と日付・名前filterではこれを`予定`行として表示し、SpreadsheetのA〜J列へはcopyしません。
+
 `create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
 
 `defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。この補正では完了するoccurrenceとその全子孫を対象とし、各taskの実作業秒数が正ならその値を、0なら見積秒数を用いた合計を今回のみなし実績とします。保存済みの実作業秒数は補完値で上書きしません。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
@@ -613,7 +615,7 @@ schronu> 全 2026/09/26
 
 `全`は06:00を境界とするlogical dateごとに予定開始時刻の降順で表示します。`全 <pattern>`のどの絞り込みも、まずtaskを選別し、選別済みの`TaskListDisplayRow`を予定順へ並べた後、隣接する表示taskだけから日付区切りを計算します。隣り合うtaskのlogical dateが翌日に変わる場合はtask名欄の直前までの88マスの横線、2日以上離れる場合は88本の横線に続けて間に予定のない日数を「N日間の空き時間」と表示し、後ろを横線で埋めて全体を157マスに揃えます。いずれも後続taskの直前へ表示し、検索不一致taskの日付は日数計算に含めません。
 
-task一覧は、標準出力が端末の場合にtask名をANSI 256色で表示します。固定taskは濃いマゼンタ(127)、繰返taskは青(33)、単発taskは橙(208)です。予定上の締切超過`v`のiconと締切列は赤(196)、超過せず着手予定logical date内に締切が来る`!`のiconと締切列は黄(214)、犠牲候補`A`のiconは濃紫(129)、それより先の締切列は明緑(34)で表示します。通常の`-`と今日着手予定の`/`は無色です。この配色は`全`、`今`、`尾`とそれらのfilter表示に共通です。色は付加情報であり、既存の`【繰】`、`!`、`v`、`A`、`/`、`-`は維持します。パイプ・リダイレクト時はANSI escape sequenceを含まず、A〜J列のtask行と日付境界の非task行をプレーンテキストで出力します。`shell/copy_for_spreadsheet.sh`は非task行を無視するため、SpreadsheetのA〜J列定義は変わりません。
+task一覧は、標準出力が端末の場合にtask名をANSI 256色で表示します。固定taskは濃いマゼンタ(127)、繰返taskは青(33)、単発taskは橙(208)です。予定上の締切超過`v`のiconと締切列は赤(196)、超過せず着手予定logical date内に締切が来る`!`のiconと締切列は黄(214)、犠牲候補`A`のiconは濃紫(129)、それより先の締切列は明緑(34)で表示します。通常の`-`と今日着手予定の`/`は無色です。この配色は`全`、`今`、`尾`とそれらのfilter表示に共通です。色は付加情報であり、既存の`【繰】`、`!`、`v`、`A`、`/`、`-`は維持します。パイプ・リダイレクト時はANSI escape sequenceを含まず、A〜J列のtask行と日付境界の非task行をプレーンテキストで出力します。read-onlyの繰り返し予測は`予定`で始まる専用行になり、安定したoccurrence keyと元taskのUUIDを参照情報として表示します。`shell/copy_for_spreadsheet.sh`はこれらの非task行を無視するため、SpreadsheetのA〜J列定義は変わりません。
 
 末尾側から犠牲候補を確認したい場合は、以下のように表示します。
 
