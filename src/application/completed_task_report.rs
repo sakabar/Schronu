@@ -1,3 +1,79 @@
+use crate::application::daily_capacity::{try_logical_date_start, try_next_logical_date_start};
+use crate::application::interface::TaskRepositoryTrait;
+use crate::application::task_list::{
+    list_tasks, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
+};
+use crate::application::task_use_case::ApplicationError;
+use crate::entity::task::Status;
+use chrono::{DateTime, Local, NaiveDate};
+use serde::Serialize;
+use std::collections::HashMap;
+use uuid::Uuid;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompletedTaskReportRow {
+    pub task_id: Uuid,
+    pub task_name: String,
+    pub project_name: String,
+    pub completed_at: DateTime<Local>,
+    pub actual_work_seconds: i64,
+    pub estimated_work_seconds: i64,
+}
+
+pub fn list_completed_task_report(
+    repository: &dyn TaskRepositoryTrait,
+    logical_date: NaiveDate,
+) -> Result<Vec<CompletedTaskReportRow>, ApplicationError> {
+    let from = try_logical_date_start(logical_date)?;
+    let until = try_next_logical_date_start(from)?;
+    let project_names = repository
+        .get_all_projects()
+        .into_iter()
+        .map(|project| {
+            Ok((
+                project.get_id().map_err(ApplicationError::TaskTree)?,
+                project.get_name().map_err(ApplicationError::TaskTree)?,
+            ))
+        })
+        .collect::<Result<HashMap<_, _>, ApplicationError>>()?;
+
+    let tasks = list_tasks(
+        repository,
+        ListTasksFilter {
+            period: Some(TaskPeriodFilter {
+                field: TaskPeriodField::CompletedAt,
+                from,
+                until,
+            }),
+            statuses: vec![Status::Done],
+            categories: vec![],
+        },
+    )?;
+
+    let mut rows = tasks
+        .into_iter()
+        .map(|task| {
+            let project_name = project_names
+                .get(&task.root_id)
+                .cloned()
+                .ok_or(ApplicationError::TaskNotFound(task.root_id))?;
+            let completed_at = task
+                .end_time
+                .expect("completed-at period filter only returns tasks with completion times");
+            Ok(CompletedTaskReportRow {
+                task_id: task.id,
+                task_name: task.name,
+                project_name,
+                completed_at,
+                actual_work_seconds: task.actual_work_seconds,
+                estimated_work_seconds: task.estimated_work_seconds,
+            })
+        })
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
+    rows.sort_by_key(|row| (row.completed_at, row.task_id));
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::list_completed_task_report;
@@ -87,7 +163,8 @@ mod tests {
         let mut lower_id_attr = completed_attr("lower id child", same_time, 21, 22);
         lower_id_attr.set_id(Uuid::from_u128(1));
         let lower_id_child = parent.create_child(lower_id_attr).unwrap();
-        let repository = TestTaskRepository::new(vec![root.clone()], same_time + Duration::hours(2));
+        let repository =
+            TestTaskRepository::new(vec![root.clone()], same_time + Duration::hours(2));
 
         let report = list_completed_task_report(&repository, logical_date).unwrap();
 
