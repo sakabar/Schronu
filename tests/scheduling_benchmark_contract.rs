@@ -99,6 +99,7 @@ fn recurring_projectionは入力数と窓内回数に有界に展開する() {
 
         assert_eq!(metrics.candidate_count, candidate_limit);
         assert_eq!(projected_count, source_count * PROJECTED_PER_SOURCE);
+        assert!(metrics.projection_step_count <= source_count * (PROJECTED_PER_SOURCE + 1));
         assert!(metrics.dependency_candidate_probe_count <= candidate_limit);
         assert!(metrics.selection_candidate_probe_count <= candidate_limit);
         assert!(metrics.release_candidate_probe_count <= candidate_limit);
@@ -106,6 +107,28 @@ fn recurring_projectionは入力数と窓内回数に有界に展開する() {
         assert_eq!(metrics.schedule_rebuild_count, 1);
         assert_eq!(metrics.sort_count, 2);
     }
+}
+
+#[test]
+fn recurring_projectionは古いfrontierから窓内まで定数stepで飛ばす() {
+    const SOURCE_COUNT: usize = 8;
+    const PROJECTED_PER_SOURCE: usize = 28;
+    const CONSTANT_OVERHEAD_PER_SOURCE: usize = 2;
+    let fixture = SchedulingFixture::old_recurring_projection(FixtureSize::Small).unwrap();
+    let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+    let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+
+    assert_eq!(
+        schedule.iter().filter(|task| task.is_projected()).count(),
+        SOURCE_COUNT * PROJECTED_PER_SOURCE
+    );
+    assert!(
+        metrics.projection_step_count
+            <= SOURCE_COUNT * (PROJECTED_PER_SOURCE + CONSTANT_OVERHEAD_PER_SOURCE),
+        "old frontier projection steps exceeded the window-bound limit: {}",
+        metrics.projection_step_count
+    );
 }
 
 #[test]

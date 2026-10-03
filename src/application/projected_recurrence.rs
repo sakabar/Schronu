@@ -1,5 +1,6 @@
 use crate::application::daily_capacity::try_logical_date;
 use crate::application::interface::TaskRepositoryTrait;
+use crate::application::scheduling_instrumentation::{record_schedule, ScheduleEvent};
 use crate::application::scheduling_policy::{
     ProjectedTaskMetadata, ScheduleOccurrenceKey, TaskScheduleCandidate,
 };
@@ -181,13 +182,17 @@ fn append_projected_occurrences(
         .get_repetition_anchor()
         .map_err(ApplicationError::TaskTree)?;
 
-    let mut occurrence = next_repetition_occurrence_times(
-        anchor,
-        interval_days,
-        repetition_start_time,
-        repetition_deadline_time,
-        days_in_advance,
-    )?;
+    let next_occurrence = |anchor, interval_days| {
+        record_schedule(ScheduleEvent::ProjectionStep);
+        next_repetition_occurrence_times(
+            anchor,
+            interval_days,
+            repetition_start_time,
+            repetition_deadline_time,
+            days_in_advance,
+        )
+    };
+    let mut occurrence = next_occurrence(anchor, interval_days)?;
     let first_occurrence_date = try_logical_date(occurrence.deadline_time)?;
     if first_occurrence_date < horizon_start {
         let projection_range_error = || ApplicationError::LogicalDateOutOfRange {
@@ -216,13 +221,7 @@ fn append_projected_occurrences(
                 datetime: anchor,
             },
         )?;
-        occurrence = next_repetition_occurrence_times(
-            anchor,
-            jump_days,
-            repetition_start_time,
-            repetition_deadline_time,
-            days_in_advance,
-        )?;
+        occurrence = next_occurrence(anchor, jump_days)?;
     }
 
     loop {
@@ -293,13 +292,7 @@ fn append_projected_occurrences(
             fixed_start_time: occurrence.start_time,
             estimated_work_seconds: estimate,
         });
-        occurrence = next_repetition_occurrence_times(
-            anchor,
-            interval_days,
-            repetition_start_time,
-            repetition_deadline_time,
-            days_in_advance,
-        )?;
+        occurrence = next_occurrence(anchor, interval_days)?;
     }
     Ok(())
 }

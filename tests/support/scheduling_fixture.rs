@@ -77,7 +77,7 @@ impl SchedulingFixture {
             ))?;
             projects.push(task);
         }
-        Ok(Self {
+        Ok(SchedulingFixture {
             projects,
             now,
             seed: TYPICAL_SEED,
@@ -114,53 +114,14 @@ impl SchedulingFixture {
 
     #[allow(dead_code)]
     pub fn recurring_projection(size: FixtureSize) -> Result<Self, TaskTreeError> {
-        let source_count = match size {
-            FixtureSize::Small => 8,
-            FixtureSize::Typical => 64,
-            FixtureSize::Stress => 256,
-        };
         let now = fixed_now();
-        let mut sequence = 0_u64;
-        let mut projects = Vec::with_capacity(source_count);
+        build_recurring_projection(size, 3, now + Duration::hours(14))
+    }
 
-        for index in 0..source_count {
-            let parent = new_task(
-                &format!("fixture-recurring-source-{index:04}"),
-                &mut sequence,
-                now,
-                Status::Todo,
-            )?;
-            parent.set_estimated_work_seconds(60)?;
-            parent.set_atomic(true)?;
-            parent.set_repetition_interval_days_opt(Some(3))?;
-            parent.set_repetition_anchor(RepetitionAnchor::Deadline)?;
-            parent.set_repetition_start_time_opt(Some((now + Duration::hours(9)).time()))?;
-            parent.set_repetition_deadline_time_opt(Some((now + Duration::hours(14)).time()))?;
-
-            let mut current = new_attr(
-                &format!("fixture-recurring-occurrence-{index:04}"),
-                &mut sequence,
-                now,
-                Status::Todo,
-            );
-            current.set_start_time(now);
-            current
-                .set_deadline_time_opt(Some(now + Duration::hours(14)))
-                .expect("the occurrence is not itself a repeating task");
-            current.set_estimated_work_seconds(60);
-            current.set_atomic(true);
-            parent.create_child(current)?;
-            projects.push(parent);
-        }
-
-        Ok(Self {
-            projects,
-            now,
-            seed: match size {
-                FixtureSize::Small | FixtureSize::Typical => TYPICAL_SEED,
-                FixtureSize::Stress => STRESS_SEED,
-            },
-        })
+    #[allow(dead_code)]
+    pub fn old_recurring_projection(size: FixtureSize) -> Result<Self, TaskTreeError> {
+        let now = fixed_now();
+        build_recurring_projection(size, 1, now + Duration::hours(14) - Duration::days(3_650))
     }
 
     #[allow(dead_code)]
@@ -300,6 +261,60 @@ impl SchedulingFixture {
             seed: STRESS_SEED,
         })
     }
+}
+
+fn build_recurring_projection(
+    size: FixtureSize,
+    interval_days: i64,
+    frontier_deadline: DateTime<Local>,
+) -> Result<SchedulingFixture, TaskTreeError> {
+    let source_count = match size {
+        FixtureSize::Small => 8,
+        FixtureSize::Typical => 64,
+        FixtureSize::Stress => 256,
+    };
+    let now = fixed_now();
+    let mut sequence = 0_u64;
+    let mut projects = Vec::with_capacity(source_count);
+
+    for index in 0..source_count {
+        let parent = new_task(
+            &format!("fixture-recurring-source-{index:04}"),
+            &mut sequence,
+            now,
+            Status::Todo,
+        )?;
+        parent.set_estimated_work_seconds(60)?;
+        parent.set_atomic(true)?;
+        parent.set_repetition_interval_days_opt(Some(interval_days))?;
+        parent.set_repetition_anchor(RepetitionAnchor::Deadline)?;
+        parent.set_repetition_start_time_opt(Some((now + Duration::hours(9)).time()))?;
+        parent.set_repetition_deadline_time_opt(Some((now + Duration::hours(14)).time()))?;
+
+        let mut current = new_attr(
+            &format!("fixture-recurring-occurrence-{index:04}"),
+            &mut sequence,
+            now,
+            Status::Todo,
+        );
+        current.set_start_time(frontier_deadline - Duration::hours(5));
+        current
+            .set_deadline_time_opt(Some(frontier_deadline))
+            .expect("the occurrence is not itself a repeating task");
+        current.set_estimated_work_seconds(60);
+        current.set_atomic(true);
+        parent.create_child(current)?;
+        projects.push(parent);
+    }
+
+    Ok(SchedulingFixture {
+        projects,
+        now,
+        seed: match size {
+            FixtureSize::Small | FixtureSize::Typical => TYPICAL_SEED,
+            FixtureSize::Stress => STRESS_SEED,
+        },
+    })
 }
 
 fn fixed_now() -> DateTime<Local> {

@@ -9,6 +9,7 @@ pub(crate) enum ScheduleEvent {
     ReleaseCandidateProbe,
     AtomicReleaseCacheProbe,
     AtomicReleaseCacheEntries(usize),
+    ProjectionStep,
     SlackProbes(usize),
     Sort,
     Rebuild,
@@ -132,6 +133,7 @@ mod collector {
         pub release_candidate_probe_count: usize,
         pub atomic_release_cache_probe_count: usize,
         pub atomic_release_cache_peak_entry_count: usize,
+        pub projection_step_count: usize,
         pub slack_probe_count: usize,
         pub sort_count: usize,
         pub schedule_rebuild_count: usize,
@@ -259,6 +261,7 @@ mod collector {
                     metrics.atomic_release_cache_peak_entry_count =
                         metrics.atomic_release_cache_peak_entry_count.max(count);
                 }
+                ScheduleEvent::ProjectionStep => metrics.projection_step_count += 1,
                 ScheduleEvent::SlackProbes(count) => metrics.slack_probe_count += count,
                 ScheduleEvent::Sort => metrics.sort_count += 1,
                 ScheduleEvent::Rebuild => metrics.schedule_rebuild_count += 1,
@@ -323,6 +326,7 @@ mod tests {
             record_schedule(ScheduleEvent::Segment);
             record_schedule(ScheduleEvent::AtomicReleaseCacheEntries(2));
             record_schedule(ScheduleEvent::AtomicReleaseCacheEntries(5));
+            record_schedule(ScheduleEvent::ProjectionStep);
             record_schedule(ScheduleEvent::SlackProbes(7));
             42
         });
@@ -331,6 +335,7 @@ mod tests {
         assert_eq!(metrics.candidate_count, 3);
         assert_eq!(metrics.segment_count, 1);
         assert_eq!(metrics.atomic_release_cache_peak_entry_count, 5);
+        assert_eq!(metrics.projection_step_count, 1);
         assert_eq!(metrics.slack_probe_count, 7);
     }
 
