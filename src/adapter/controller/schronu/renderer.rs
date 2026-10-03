@@ -1,5 +1,5 @@
 use crate::{
-    application::completed_task_report::CompletedTaskReportRow,
+    application::completed_task_report::CompletedTaskReport,
     application::session_progress::calculate_session_progress,
     entity::task::{ProjectCategory, TaskAttr, TaskTreeError},
 };
@@ -39,7 +39,21 @@ pub(super) struct SpreadsheetTaskRow<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct CompletedTaskReportDisplay {
-    pub(super) rows: Vec<CompletedTaskReportRow>,
+    pub(super) report: CompletedTaskReport,
+}
+
+#[cfg(test)]
+impl CompletedTaskReportDisplay {
+    pub(super) fn empty() -> Self {
+        Self {
+            report: CompletedTaskReport {
+                rows: Vec::new(),
+                total_actual_work_seconds: 0,
+                available_seconds: 0,
+                recorded_percentage: None,
+            },
+        }
+    }
 }
 
 pub(super) fn format_spreadsheet_task_row(row: &SpreadsheetTaskRow<'_>) -> String {
@@ -493,6 +507,7 @@ fn render_completed_task_report_display(
 ) -> Result<(), std::io::Error> {
     const HEADERS: [&str; 6] = ["完了時刻", "実績", "見積", "差", "Project", "タスク"];
     let rows = display
+        .report
         .rows
         .iter()
         .map(|row| {
@@ -542,12 +557,21 @@ fn render_completed_task_report_display(
 
     writer.writeln_newline(&format_row(HEADERS))?;
     if rows.is_empty() {
-        return writer.writeln_newline("完了したタスクはありません。");
+        writer.writeln_newline("完了したタスクはありません。")?;
+    } else {
+        for row in &rows {
+            writer.writeln_newline(&format_row(row.each_ref().map(String::as_str)))?;
+        }
     }
-    for row in &rows {
-        writer.writeln_newline(&format_row(row.each_ref().map(String::as_str)))?;
-    }
-    Ok(())
+    let percentage = display
+        .report
+        .recorded_percentage
+        .map_or_else(|| "--".to_string(), |value| format!("{value}%"));
+    writer.writeln_newline(&format!(
+        "実績合計: {}  利用可能: {}  記録率: {percentage}",
+        format_elapsed_seconds(display.report.total_actual_work_seconds),
+        format_elapsed_seconds(display.report.available_seconds),
+    ))
 }
 
 fn render_task_list_display(

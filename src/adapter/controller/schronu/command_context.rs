@@ -12,7 +12,7 @@ use super::view::{
     build_tree_display, get_weekday_jp, TaskListDisplayOrder,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
-use crate::application::completed_task_report::list_completed_task_report;
+use crate::application::completed_task_report::build_completed_task_report;
 use crate::application::daily_capacity::{
     try_local_date_and_time, try_logical_date, try_logical_date_start, try_next_logical_date_start,
 };
@@ -1507,7 +1507,12 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
         logical_date: NaiveDate,
     ) -> Result<CompletedTaskReportDisplay, ApplicationError> {
         Ok(CompletedTaskReportDisplay {
-            rows: list_completed_task_report(self.task_repository, logical_date)?,
+            report: build_completed_task_report(
+                self.task_repository,
+                self.free_time_manager,
+                logical_date,
+                self.config.end_of_day_offset_minutes,
+            )?,
         })
     }
 }

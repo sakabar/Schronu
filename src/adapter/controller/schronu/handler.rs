@@ -1445,7 +1445,7 @@ mod task_generation_context_tests {
             &mut self,
             _logical_date: NaiveDate,
         ) -> Result<CompletedTaskReportDisplay, ApplicationError> {
-            Ok(CompletedTaskReportDisplay { rows: Vec::new() })
+            Ok(CompletedTaskReportDisplay::empty())
         }
     }
 

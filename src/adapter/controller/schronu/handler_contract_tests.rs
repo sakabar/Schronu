@@ -297,7 +297,7 @@ impl ProjectCommandContext for TraceProjectContext {
         &mut self,
         _logical_date: NaiveDate,
     ) -> Result<super::renderer::CompletedTaskReportDisplay, ApplicationError> {
-        Ok(super::renderer::CompletedTaskReportDisplay { rows: Vec::new() })
+        Ok(super::renderer::CompletedTaskReportDisplay::empty())
     }
 }
 
