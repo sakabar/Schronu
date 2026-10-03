@@ -449,6 +449,38 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
 }
 
 #[test]
+fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactionで返す() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 30, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task_with_actual(seeded_at, 0, false);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service
+        .complete_session_at(
+            operation_now,
+            CompleteSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                ended_at_epoch_ms: None,
+                expected_actual_work_seconds: 0,
+                record_elapsed_seconds: false,
+            },
+        )
+        .unwrap();
+
+    let report = service
+        .list_completed_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
+        .unwrap()
+        .data;
+
+    assert_eq!(report.rows.len(), 1);
+    assert_eq!(report.rows[0].actual_work_seconds, 1_800);
+    assert_eq!(report.total_actual_work_seconds, 1_800);
+    assert_eq!(report.available_seconds, 68_400);
+    assert_eq!(report.recorded_percentage, Some(3));
+}
+
+#[test]
 fn serviceはweb_lock競合をrepository読込前にtyped_errorで返す() {
     let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
     let fixture = WebReadServiceFixture::new();

@@ -2,7 +2,7 @@ use chrono::{Datelike, NaiveDate};
 use schronu_web::client::date_buttons::logical_date_buttons_for_mode;
 use schronu_web::client::date_input::{resolve_date_input_for_mode, DateInputError};
 use schronu_web::client::state::{ClientEffect, ListMode, ServerFailure};
-use schronu_web::{CompletedTaskRow, WebSuccess};
+use schronu_web::{CompletedTaskReport, CompletedTaskRow, WebSuccess};
 
 mod client_state_support;
 use client_state_support::*;
@@ -15,6 +15,15 @@ fn completed_row(task_id: &str, task_name: &str) -> CompletedTaskRow {
         completed_at_epoch_ms: 1_789_551_723_000,
         actual_work_seconds: 120,
         estimated_work_seconds: 60,
+    }
+}
+
+fn completed_report(task_id: &str, task_name: &str) -> CompletedTaskReport {
+    CompletedTaskReport {
+        rows: vec![completed_row(task_id, task_name)],
+        total_actual_work_seconds: 120,
+        available_seconds: 600,
+        recorded_percentage: Some(20),
     }
 }
 
@@ -44,10 +53,14 @@ fn list_modeは予定をdefaultにして切替先endpointを1回選ぶ() {
         &request.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-16", 2),
-            data: vec![completed_row(TASK_ID, "完了task")],
+            data: completed_report(TASK_ID, "完了task"),
         }),
     );
     assert_eq!(state.completed_rows().len(), 1);
+    assert_eq!(
+        state.completed_report().unwrap().recorded_percentage,
+        Some(20)
+    );
 
     let (_, scheduled_request) = list_effect(state.switch_list_mode(ListMode::Scheduled));
     assert_eq!(scheduled_request.logical_date, "2026-09-16");
@@ -80,12 +93,54 @@ fn 異なるmodeと古い完了一覧responseは表示を上書きしない() {
         &request.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-16", 2),
-            data: vec![completed_row(TASK_ID, "古い")],
+            data: completed_report(TASK_ID, "古い"),
         }),
     );
 
     assert_eq!(state.list_mode(), ListMode::Scheduled);
     assert!(state.completed_rows().is_empty());
+    assert!(state.completed_report().is_none());
+}
+
+#[test]
+fn 古い完了一覧responseは新しいrowsとsummaryをatomicに保持する() {
+    let storage = FakeStorage::default();
+    let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-16", 1)));
+    let (old_id, old_request) = completed_effect(state.switch_list_mode(ListMode::Completed));
+    let (new_id, new_request) = completed_effect(state.request_completed_list("2026-09-16"));
+    let mut current = completed_report(TASK_ID, "新しい");
+    current.total_actual_work_seconds = 300;
+    current.rows[0].actual_work_seconds = 300;
+    current.recorded_percentage = Some(50);
+    state.apply_completed_list_result(
+        new_id,
+        &new_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-16", 3),
+            data: current,
+        }),
+    );
+
+    state.apply_completed_list_result(
+        old_id,
+        &old_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-16", 2),
+            data: completed_report(OTHER_TASK_ID, "古い"),
+        }),
+    );
+
+    assert_eq!(state.completed_rows()[0].task_name, "新しい");
+    assert_eq!(
+        state.completed_report().unwrap().total_actual_work_seconds,
+        300
+    );
+    assert_eq!(
+        state.completed_report().unwrap().recorded_percentage,
+        Some(50)
+    );
 }
 
 #[test]
@@ -117,7 +172,7 @@ fn 完了一覧errorは既存rowを保持して履歴へ記録する() {
         &first.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-16", 2),
-            data: vec![completed_row(TASK_ID, "保持")],
+            data: completed_report(TASK_ID, "保持"),
         }),
     );
     let (retry_id, retry) = completed_effect(state.request_completed_list("2026-09-16"));
@@ -153,7 +208,7 @@ fn mode切替先の完了一覧errorは保持rowをactive一覧にしない() {
         &completed_request.logical_date,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-16", 2),
-            data: vec![completed_row(TASK_ID, "A日の完了")],
+            data: completed_report(TASK_ID, "A日の完了"),
         }),
     );
     let _ = state.switch_list_mode(ListMode::Scheduled);

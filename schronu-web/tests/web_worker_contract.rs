@@ -1,6 +1,6 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
-    CompletedTaskRow, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
     ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
     ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
@@ -61,7 +61,7 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
                 .await,
             Ok(WebSuccess {
                 snapshot: snapshot(9),
-                data: Vec::new(),
+                data: completed_report(),
             })
         );
         assert_eq!(
@@ -220,7 +220,7 @@ impl WebOperations for StackWorkloadOperations {
     fn list_completed_tasks(
         &mut self,
         _request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         unreachable!()
     }
 
@@ -272,7 +272,7 @@ impl WebOperations for PanickingOperations {
     fn list_completed_tasks(
         &mut self,
         _request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         unreachable!()
     }
 
@@ -332,14 +332,14 @@ impl WebOperations for RecordingOperations {
     fn list_completed_tasks(
         &mut self,
         request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         self.events
             .lock()
             .unwrap()
             .push(Event::ListCompleted(request.logical_date));
         Ok(WebSuccess {
             snapshot: snapshot(9),
-            data: Vec::new(),
+            data: completed_report(),
         })
     }
 
@@ -430,6 +430,15 @@ fn task() -> SessionTask {
         task_name: "task".to_owned(),
         estimated_work_seconds: 900,
         actual_work_seconds: 456,
+    }
+}
+
+fn completed_report() -> CompletedTaskReport {
+    CompletedTaskReport {
+        rows: Vec::new(),
+        total_actual_work_seconds: 3_600,
+        available_seconds: 28_800,
+        recorded_percentage: Some(13),
     }
 }
 

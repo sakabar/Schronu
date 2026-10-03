@@ -64,6 +64,9 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         list: Some(StoredActiveList::Completed {
             logical_date: "2026-09-08".to_owned(),
             rows: Vec::new(),
+            total_actual_work_seconds: 0,
+            available_seconds: 43_200,
+            recorded_percentage: Some(0),
         }),
         active_tab: ActiveTab::List,
         task_name_filter: "".to_owned(),
@@ -87,6 +90,9 @@ fn view_state_v3は明示された将来の完了一覧日を保持する() {
         list: Some(StoredActiveList::Completed {
             logical_date: "9999-12-31".to_owned(),
             rows: Vec::new(),
+            total_actual_work_seconds: 0,
+            available_seconds: 0,
+            recorded_percentage: None,
         }),
         active_tab: ActiveTab::List,
         task_name_filter: String::new(),
@@ -197,6 +203,9 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
                 actual_work_seconds: 1,
                 estimated_work_seconds: 1,
             }],
+            total_actual_work_seconds: 1,
+            available_seconds: 10,
+            recorded_percentage: Some(10),
         }),
         active_tab: ActiveTab::List,
         task_name_filter: String::new(),
@@ -218,6 +227,47 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
     if let Some(StoredActiveList::Completed { rows, .. }) = &mut state.list {
         rows[0].actual_work_seconds = 1;
         rows[0].project_name = "  ".to_owned();
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+}
+
+#[test]
+fn view_state_v3は不整合な完了summaryを拒否する() {
+    let storage = MemoryStorage::default();
+    let mut state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-09".to_owned(),
+            rows: Vec::new(),
+            total_actual_work_seconds: -1,
+            available_seconds: 10,
+            recorded_percentage: Some(0),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    };
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+
+    if let Some(StoredActiveList::Completed {
+        total_actual_work_seconds,
+        recorded_percentage,
+        ..
+    }) = &mut state.list
+    {
+        *total_actual_work_seconds = 0;
+        *recorded_percentage = Some(1);
     }
     assert_eq!(
         store_view_state(&storage, &state),
