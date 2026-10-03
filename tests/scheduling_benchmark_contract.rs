@@ -82,6 +82,28 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
 }
 
 #[test]
+fn recurring_projectionは入力数と窓内回数に有界に展開する() {
+    const OCCURRENCES_PER_SOURCE: usize = 10;
+    const PROJECTED_PER_SOURCE: usize = OCCURRENCES_PER_SOURCE - 1;
+
+    for (size, source_count) in [
+        (FixtureSize::Typical, 64_usize),
+        (FixtureSize::Stress, 256_usize),
+    ] {
+        let fixture = SchedulingFixture::recurring_projection(size).unwrap();
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+
+        let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
+        let projected_count = schedule.iter().filter(|task| task.is_projected()).count();
+
+        assert_eq!(metrics.candidate_count, source_count * OCCURRENCES_PER_SOURCE);
+        assert_eq!(projected_count, source_count * PROJECTED_PER_SOURCE);
+        assert_eq!(metrics.schedule_rebuild_count, 1);
+        assert_eq!(metrics.sort_count, 2);
+    }
+}
+
+#[test]
 fn distinct_deadline_scheduleはdeadline_groupを対数探索する() {
     const CANDIDATE_COUNT: usize = 512;
     let fixture = SchedulingFixture::distinct_deadlines(CANDIDATE_COUNT).unwrap();
