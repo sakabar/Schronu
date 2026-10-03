@@ -232,6 +232,24 @@ fn copy_for_spreadsheetは日付境界と空き日行を無視する() {
 }
 
 #[test]
+fn copy_for_spreadsheetはprojected予定行を無視する() {
+    let cli_output = "予定 occurrence_key=projected:11111111-1111-1111-1111-111111111111:2026-06-24T07:00:00+09:00 source_task_id=11111111-1111-1111-1111-111111111111 06/24(火)-06:00~07:00 60分 回 priority=7 deadline=2026-06-24T07:00:00+09:00 3日ごとの筋トレ\n\
+0000 22222222-2222-2222-2222-222222222222 - ____-00:30 06/21(土)-10:00~10:30 0 30 01 維 実体task\n";
+
+    let copied = run_script("shell/copy_for_spreadsheet.sh", &[], cli_output);
+    let task_rows = copied
+        .lines()
+        .filter(|line| line.chars().any(|character| character != '\t'))
+        .collect::<Vec<_>>();
+
+    assert_eq!(task_rows.len(), 1);
+    assert_eq!(
+        task_rows[0].split('\t').nth(1),
+        Some("22222222-2222-2222-2222-222222222222")
+    );
+}
+
+#[test]
 fn copy_for_spreadsheetは新しい論理日の最初のp列へ睡眠420分を算入する() {
     let cli_output = fs::read_to_string(repository_path(
         "tests/fixtures/spreadsheet/sleep-boundary-cli-output.txt",

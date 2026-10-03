@@ -849,6 +849,57 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
 }
 
 #[test]
+fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task_idを付けない() {
+    let now = fixed_now();
+    let parent = new_task_handle("3-day routine").unwrap();
+    let parent_id = parent.get_id().unwrap();
+    parent.set_estimated_work_seconds(60 * 60).unwrap();
+    parent.set_repetition_interval_days_opt(Some(3)).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(now.time()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some((now + Duration::hours(1)).time()))
+        .unwrap();
+    let current = parent.create_as_last_child(new_task_attr("current routine"));
+    let current_id = current.get_id().unwrap();
+    current.set_start_time(now).unwrap();
+    current
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    current.set_estimated_work_seconds(60 * 60).unwrap();
+    let repository = RecordingRepository::new(vec![parent]);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "projected-schedule",
+            "get_schedule",
+            json!({"from": "2026-10-03", "until": "2026-10-08"}),
+        ))
+        .unwrap();
+    let schedule = response["result"]["structuredContent"]["schedule"]
+        .as_array()
+        .unwrap();
+    let actual = schedule
+        .iter()
+        .find(|row| row["occurrence"]["kind"] == "actual")
+        .unwrap_or_else(|| panic!("actual row missing: {schedule:?}"));
+    let projected = schedule
+        .iter()
+        .find(|row| row["occurrence"]["kind"] == "projected")
+        .unwrap_or_else(|| panic!("projected row missing: {schedule:?}"));
+
+    assert_eq!(actual["task_id"], current_id.to_string());
+    assert!(actual.get("source_task_id").is_none());
+    assert!(actual.get("occurrence_key").is_none());
+    assert!(projected.get("task_id").is_none());
+    assert_eq!(projected["source_task_id"], parent_id.to_string());
+    assert_eq!(projected["occurrence_key"], projected["occurrence"]);
+    assert_eq!(projected["task"]["name"], "3-day routine");
+}
+
+#[test]
 fn get_scheduleは引数なしで現在から次の論理日境界までの予定だけを返す() {
     let now = Local::now();
     let current_task = new_task_handle("current task").unwrap();

@@ -5004,6 +5004,72 @@ fn calendarとbandはprojected回を総作業量と反復負荷へ反映する()
 }
 
 #[test]
+fn 全と名前日付filterはprojected回をread_only予定行で表示しfocusを変えない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let parent = new_test_task_handle("3日ごとの筋トレ").unwrap();
+    let parent_id = parent.get_id().unwrap();
+    parent.set_estimated_work_seconds(60 * 60).unwrap();
+    parent.set_priority(7).unwrap();
+    parent
+        .set_project_category_opt(Some(ProjectCategory::Recovery))
+        .unwrap();
+    parent
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()))
+        .unwrap();
+    let current = parent.create_as_last_child(new_test_task_attr("今回の筋トレ"));
+    let current_id = current.get_id().unwrap();
+    current.set_start_time(now).unwrap();
+    current
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    current.set_estimated_work_seconds(60 * 60).unwrap();
+
+    for pattern in [None, Some("3日ごとの筋トレ"), Some("2026/08/14")] {
+        let mut task_repository = TestTaskRepository::new(parent.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::default();
+        let mut focused_task_id_opt = Some(current_id);
+        let mut next_id = || Uuid::nil();
+        let mut task_factory = TaskFactory::new(now, &mut next_id);
+        let config = SchronuConfig::default();
+        let display = RuntimeTaskTreeCommandContext {
+            task_repository: &mut task_repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: &config,
+        }
+        .show_task_list(
+            pattern,
+            TaskListOrder::ScheduledStartDesc,
+            pattern.is_some_and(|value| value.contains('/')),
+        )
+        .unwrap();
+        let mut writer = TestWriter::new_for_pipe();
+        render_display_model(&mut writer, &display).unwrap();
+        let output = writer.into_string();
+
+        assert!(output.contains("予定 occurrence_key=projected:"), "{pattern:?}: {output}");
+        assert!(
+            output.contains(&format!("source_task_id={parent_id}")),
+            "{pattern:?}: {output}"
+        );
+        assert!(output.contains("3日ごとの筋トレ"), "{pattern:?}: {output}");
+        let projected_line = output
+            .lines()
+            .find(|line| line.starts_with("予定 "))
+            .expect("projected row");
+        assert!(!projected_line.split_whitespace().any(|field| field == parent_id.to_string()));
+        assert_eq!(focused_task_id_opt, Some(current_id));
+    }
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
