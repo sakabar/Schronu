@@ -23,7 +23,7 @@ pub(crate) fn LoadView(
     on_refresh: EventHandler<()>,
     on_select_date: EventHandler<String>,
 ) -> Element {
-    let mut mode = use_signal(|| LoadMode::Routine);
+    let mut mode = use_signal(|| LoadMode::Band);
     let view_class = match (mode(), error.is_some()) {
         (LoadMode::Routine, true) => "load-view is-routine has-error",
         (LoadMode::Routine, false) => "load-view is-routine",
@@ -50,7 +50,7 @@ pub(crate) fn LoadView(
                         if mode() == LoadMode::Routine {
                             "今後28日の繰返負荷"
                         } else {
-                            "直近7日の負荷"
+                            "今日から7日の負荷"
                         }
                     }
                     p { class: "load-updated", "{updated}" }
@@ -69,18 +69,18 @@ pub(crate) fn LoadView(
             }
             div { class: "load-mode-tabs", role: "group", aria_label: "負荷表示",
                 button {
+                    class: if mode() == LoadMode::Band { "load-mode-tab is-selected" } else { "load-mode-tab" },
+                    r#type: "button",
+                    aria_pressed: mode() == LoadMode::Band,
+                    onclick: move |_| mode.set(LoadMode::Band),
+                    "日別負荷"
+                }
+                button {
                     class: if mode() == LoadMode::Routine { "load-mode-tab is-selected" } else { "load-mode-tab" },
                     r#type: "button",
                     aria_pressed: mode() == LoadMode::Routine,
                     onclick: move |_| mode.set(LoadMode::Routine),
                     "繰返負荷"
-                }
-                button {
-                    class: if mode() == LoadMode::Band { "load-mode-tab is-selected" } else { "load-mode-tab" },
-                    r#type: "button",
-                    aria_pressed: mode() == LoadMode::Band,
-                    onclick: move |_| mode.set(LoadMode::Band),
-                    "7日負荷"
                 }
             }
             if let Some(error) = error {

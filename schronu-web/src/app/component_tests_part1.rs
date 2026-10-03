@@ -118,9 +118,7 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
 }
 
 fn render_band_load_view(dom: &mut VirtualDom) -> String {
-    let click_ids = rebuild_with_click_listeners(dom);
-    dispatch_click(dom, click_ids[2]);
-    dom.render_immediate_to_vec();
+    rebuild_with_click_listeners(dom);
     dioxus::ssr::render(dom)
 }
 
@@ -167,7 +165,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     let mut dom = VirtualDom::new(root);
     let html = render_band_load_view(&mut dom);
 
-    assert!(html.contains("直近7日の負荷"), "{html}");
+    assert!(html.contains("今日から7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
         html.contains("余差累+01:15、空差累-00:45"),
@@ -202,7 +200,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 }
 
 #[test]
-fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する() {
+fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替する() {
     fn root() -> Element {
         rsx! {
             LoadView {
@@ -236,8 +234,24 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
     let click_ids = rebuild_with_click_listeners(&mut dom);
     let initial_html = dioxus::ssr::render(&dom);
 
-    assert!(initial_html.contains("今後28日の繰返負荷"), "{initial_html}");
-    assert!(initial_html.contains("10/3〜10/30"), "{initial_html}");
+    assert!(initial_html.contains("今日から7日の負荷"), "{initial_html}");
+    assert!(initial_html.contains("帯の凡例"), "{initial_html}");
+    assert!(!initial_html.contains("routine-load-table"), "{initial_html}");
+    assert!(
+        initial_html.contains("aria-pressed=true>日別負荷"),
+        "{initial_html}"
+    );
+    let daily_tab = initial_html.find(">日別負荷</button>").unwrap();
+    let routine_tab = initial_html.find(">繰返負荷</button>").unwrap();
+    assert!(daily_tab < routine_tab, "{initial_html}");
+    assert_eq!(click_ids.len(), 4, "更新と2表示tabと日別rowが初期表示される");
+
+    dispatch_click(&dom, click_ids[2]);
+    dom.render_immediate_to_vec();
+    let routine_html = dioxus::ssr::render(&dom);
+
+    assert!(routine_html.contains("今後28日の繰返負荷"), "{routine_html}");
+    assert!(routine_html.contains("10/3〜10/30"), "{routine_html}");
     for (class, heading) in [
         ("routine-load-interval", "間隔"),
         ("routine-load-total", "28日合計"),
@@ -247,14 +261,14 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         ("routine-load-subject", "プロジェクト / 繰返"),
     ] {
         assert!(
-            initial_html.contains(&format!(
+            routine_html.contains(&format!(
                 "<th class=\"{class}\" scope=\"col\">{heading}</th>"
             )),
-            "missing {heading}: {initial_html}"
+            "missing {heading}: {routine_html}"
         );
     }
-    let table_header = &initial_html[initial_html.find("<thead>").unwrap()
-        ..initial_html.find("</thead>").unwrap()];
+    let table_header = &routine_html[routine_html.find("<thead>").unwrap()
+        ..routine_html.find("</thead>").unwrap()];
     let heading_positions = [
         "間隔",
         "28日合計",
@@ -268,8 +282,8 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         heading_positions.windows(2).all(|pair| pair[0] < pair[1]),
         "{table_header}"
     );
-    let table_body = &initial_html[initial_html.find("<tbody>").unwrap()
-        ..initial_html.find("</tbody>").unwrap()];
+    let table_body = &routine_html[routine_html.find("<tbody>").unwrap()
+        ..routine_html.find("</tbody>").unwrap()];
     let value_positions = ["2日ごと", "28:00", "07:00", "14日", "10/4 03:00", "運動"]
         .map(|value| table_body.find(value).unwrap());
     assert!(
@@ -287,25 +301,18 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         assert!(table_body.contains(cell), "missing {cell}: {table_body}");
     }
     for value in ["運動", "健康", "2日ごと", "28:00", "07:00", "14日", "10/4 03:00"] {
-        assert!(initial_html.contains(value), "missing {value}: {initial_html}");
+        assert!(routine_html.contains(value), "missing {value}: {routine_html}");
     }
     assert!(
-        initial_html.contains("aria-pressed=true>繰返負荷"),
-        "{initial_html}"
+        routine_html.contains("aria-pressed=true>繰返負荷"),
+        "{routine_html}"
     );
     assert!(
-        initial_html.contains("class=\"load-mode-tabs\" role=\"group\" aria-label=\"負荷表示\""),
-        "{initial_html}"
+        routine_html.contains("class=\"load-mode-tabs\" role=\"group\" aria-label=\"負荷表示\""),
+        "{routine_html}"
     );
-    assert!(!initial_html.contains("role=\"tablist\""), "{initial_html}");
-
-    assert_eq!(click_ids.len(), 3, "更新と2表示tabだけが初期表示される");
-    dispatch_click(&dom, click_ids[2]);
-    dom.render_immediate_to_vec();
-    let band_html = dioxus::ssr::render(&dom);
-    assert!(band_html.contains("直近7日の負荷"), "{band_html}");
-    assert!(band_html.contains("帯の凡例"), "{band_html}");
-    assert!(!band_html.contains("routine-load-table"), "{band_html}");
+    assert!(!routine_html.contains("role=\"tablist\""), "{routine_html}");
+    assert!(!routine_html.contains("帯の凡例"), "{routine_html}");
 }
 
 #[test]
@@ -324,7 +331,9 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         }
     }
     let mut loading_dom = VirtualDom::new(loading);
-    loading_dom.rebuild_in_place();
+    let loading_click_ids = rebuild_with_click_listeners(&mut loading_dom);
+    dispatch_click(&loading_dom, loading_click_ids[2]);
+    loading_dom.render_immediate_to_vec();
     let loading_html = dioxus::ssr::render(&loading_dom);
     assert!(
         loading_html.contains("繰返負荷を取得しています…"),
@@ -350,7 +359,9 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         }
     }
     let mut empty_dom = VirtualDom::new(empty);
-    empty_dom.rebuild_in_place();
+    let empty_click_ids = rebuild_with_click_listeners(&mut empty_dom);
+    dispatch_click(&empty_dom, empty_click_ids[2]);
+    empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
     assert!(empty_html.contains("10/3〜10/30"), "{empty_html}");
     assert!(
