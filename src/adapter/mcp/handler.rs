@@ -11,8 +11,8 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
-    defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_category,
-    set_deadline, set_estimate, ApplicationError, TaskFactory,
+    defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_actual_work,
+    set_category, set_deadline, set_estimate, ApplicationError, TaskFactory,
 };
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -332,6 +332,11 @@ fn call_update_task<R: TaskRepositoryTrait>(
 
     if let Some(estimated_work_minutes) = input.estimated_work_minutes {
         if let Err(error) = set_estimate(repository, input.task_id, estimated_work_minutes) {
+            return update_task_application_error_response(id, error);
+        }
+    }
+    if let Some(actual_work_seconds) = input.actual_work_seconds {
+        if let Err(error) = set_actual_work(repository, input.task_id, actual_work_seconds) {
             return update_task_application_error_response(id, error);
         }
     }

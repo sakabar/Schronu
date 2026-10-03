@@ -980,6 +980,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_eq!(
         property_names(tools, "update_task"),
         vec![
+            "actual_work_seconds",
             "category",
             "deadline_time",
             "estimated_work_minutes",
@@ -1033,6 +1034,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     );
     assert_string_property(tools, "update_task", "task_id", Some("uuid"));
     assert_non_negative_integer_property(tools, "update_task", "estimated_work_minutes");
+    assert_non_negative_integer_property(tools, "update_task", "actual_work_seconds");
     assert_nullable_string_property(tools, "update_task", "deadline_time", Some("date-time"));
     assert_nullable_string_property(tools, "update_task", "category", None);
 
@@ -1087,6 +1089,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_eq!(
         update_fields,
         vec![
+            vec!["actual_work_seconds"],
             vec!["category"],
             vec!["deadline_time"],
             vec!["estimated_work_minutes"]

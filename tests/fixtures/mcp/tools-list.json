@@ -329,13 +329,18 @@
     "name": "complete_task"
   },
   {
-    "description": "Update an existing task's estimate, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, deadline, then category order.",
+    "description": "Update an existing task's estimate, actual work seconds, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, actual work, deadline, then category order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
         {
           "required": [
             "estimated_work_minutes"
+          ]
+        },
+        {
+          "required": [
+            "actual_work_seconds"
           ]
         },
         {
@@ -350,6 +355,11 @@
         }
       ],
       "properties": {
+        "actual_work_seconds": {
+          "description": "Set the task's actual work duration to a non-negative integer number of seconds. Omit this field to leave the actual work unchanged.",
+          "minimum": 0,
+          "type": "integer"
+        },
         "category": {
           "description": "Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.",
           "anyOf": [

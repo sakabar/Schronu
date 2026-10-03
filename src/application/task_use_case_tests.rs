@@ -2470,18 +2470,20 @@ fn complete_task_実績加算がoverflowする場合はerrorにして変更し�
 }
 
 #[test]
-fn update_use_cases_見積もり締切カテゴリを設定して解除する() {
+fn update_use_cases_見積もり実績締切カテゴリを設定して解除する() {
     let task = crate::test_support::new_task_handle("更新").unwrap();
     let task_id = task.get_id().unwrap();
     let mut repository = TestTaskRepository::new(vec![task], fixed_now());
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
 
     set_estimate(&mut repository, task_id, 45).unwrap();
+    set_actual_work(&mut repository, task_id, 900).unwrap();
     set_deadline(&mut repository, task_id, Some(deadline)).unwrap();
     set_category(&mut repository, task_id, Some(ProjectCategory::Recovery)).unwrap();
 
     let task = repository.get_by_id(task_id).unwrap().unwrap();
     assert_eq!(task.get_estimated_work_seconds().unwrap(), 45 * 60);
+    assert_eq!(task.get_actual_work_seconds().unwrap(), 900);
     assert_eq!(task.get_deadline_time_opt().unwrap(), Some(deadline));
     assert_eq!(
         task.get_project_category_opt().unwrap(),
@@ -2501,6 +2503,10 @@ fn update_use_cases_未知uuidはtask_not_foundを返す() {
 
     assert_eq!(
         set_estimate(&mut repository, task_id, 10),
+        Err(ApplicationError::TaskNotFound(task_id))
+    );
+    assert_eq!(
+        set_actual_work(&mut repository, task_id, 10),
         Err(ApplicationError::TaskNotFound(task_id))
     );
     assert_eq!(
@@ -2537,6 +2543,31 @@ fn update_use_cases_未知uuidはtask_not_foundを返す() {
     assert_eq!(
         set_category(&mut repository, task_id, None),
         Err(ApplicationError::TaskNotFound(task_id))
+    );
+}
+
+#[test]
+fn set_actual_work_負数を拒否して変更しない() {
+    let task = crate::test_support::new_task_handle("実績更新対象").unwrap();
+    task.set_actual_work_seconds(900).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
+
+    assert_eq!(
+        set_actual_work(&mut repository, task_id, -1),
+        Err(ApplicationError::InvalidInput {
+            field: "actual_work_seconds",
+            reason: "must not be negative",
+        })
+    );
+    assert_eq!(
+        repository
+            .get_by_id(task_id)
+            .unwrap()
+            .unwrap()
+            .get_actual_work_seconds()
+            .unwrap(),
+        900
     );
 }
 

@@ -54,7 +54,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "update_task",
-            "description": "Update an existing task's estimate, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, deadline, then category order.",
+            "description": "Update an existing task's estimate, actual work seconds, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, actual work, deadline, then category order.",
             "inputSchema": generated_input_schema::<UpdateTaskInput>()
         }),
     ]

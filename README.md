@@ -292,7 +292,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `defer_task` | `task_id`、`pending_until` | original statusをPendingにして延期する。deadline policyにより指定時刻が早まる場合がある |
 | `defer_routine_task` | `task_id` | 親の反復間隔に従ってdeadlineと開始時刻を次周期へ移し、original statusをTodoへ戻す |
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
-| `update_task` | `task_id`と、`estimated_work_minutes`、`deadline_time`、`category`のうち1つ以上 | 見積もり・deadline・root projectのcategoryを更新する |
+| `update_task` | `task_id`と、`estimated_work_minutes`、`actual_work_seconds`、`deadline_time`、`category`のうち1つ以上 | 見積もり・実作業秒数・deadline・root projectのcategoryを更新する |
 
 `list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。`query`はtask名をUnicode lowercaseへ変換した部分一致で検索し、Unicode正規化は行いません。空文字列は検索filterなしとして扱います。`root_task_id`は指定task自身とそのsubtreeだけを対象にし、存在しないUUIDは`task_not_found`です。同じ配列内の値はOR、各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
 
@@ -304,7 +304,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。この補正では完了するoccurrenceとその全子孫を対象とし、各taskの実作業秒数が正ならその値を、0なら見積秒数を用いた合計を今回のみなし実績とします。保存済みの実作業秒数は補完値で上書きしません。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
 
-`update_task`へ複数の更新fieldを渡した場合は、見積もり、deadline、categoryの順に適用します。非`null`の`deadline_time`は、未完了の対象taskと未完了の子孫に上限として適用し、既存のより早いdeadlineは維持します。対象taskが完了済みなら、対象と子孫のdeadlineを変更しません。`deadline_time: null`は対象taskだけのdeadlineを解除します。`category`は対象taskが属するroot projectへ設定され、`category: null`で解除できます。各fieldの省略時はその値を変更しません。
+`update_task`へ複数の更新fieldを渡した場合は、見積もり、実作業秒数、deadline、categoryの順に適用します。`actual_work_seconds`は完了状態にかかわらず対象taskの実作業秒数を非負の絶対値で上書きし、`0`でリセットできます。非`null`の`deadline_time`は、未完了の対象taskと未完了の子孫に上限として適用し、既存のより早いdeadlineは維持します。対象taskが完了済みなら、対象と子孫のdeadlineを変更しません。`deadline_time: null`は対象taskだけのdeadlineを解除します。`category`は対象taskが属するroot projectへ設定され、`category: null`で解除できます。各fieldの省略時はその値を変更しません。
 
 例:
 

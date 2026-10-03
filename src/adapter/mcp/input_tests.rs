@@ -352,6 +352,7 @@ fn state_change_input_payload_and_patch_values_are_preserved() {
         update.estimated_work_minutes,
         OptionalValue::Missing
     ));
+    assert!(matches!(update.actual_work_seconds, OptionalValue::Missing));
     assert!(matches!(update.deadline_time, NullablePatch::Missing));
     assert!(matches!(update.category, NullablePatch::Null));
 
@@ -366,6 +367,7 @@ fn state_change_input_payload_and_patch_values_are_preserved() {
     let update = decode_input::<UpdateTaskInput>(&json!({
         "task_id": task_id,
         "estimated_work_minutes": 30,
+        "actual_work_seconds": 900,
         "deadline_time": "2026-08-19T10:00:00+09:00",
         "category": "earning"
     }))
@@ -373,6 +375,10 @@ fn state_change_input_payload_and_patch_values_are_preserved() {
     assert!(matches!(
         update.estimated_work_minutes,
         OptionalValue::Value(value) if value.0 == 30
+    ));
+    assert!(matches!(
+        update.actual_work_seconds,
+        OptionalValue::Value(value) if value.0 == 900
     ));
     assert!(matches!(
         update.deadline_time,
@@ -549,6 +555,14 @@ fn update_task_input_cases() -> Vec<ContractCase> {
             json!({"task_id": task_id, "estimated_work_minutes": 0}),
         ),
         valid_case(
+            "update actual work",
+            json!({"task_id": task_id, "actual_work_seconds": 0}),
+        ),
+        valid_case(
+            "actual work accepts i64 maximum",
+            json!({"task_id": task_id, "actual_work_seconds": i64::MAX}),
+        ),
+        valid_case(
             "set update deadline",
             json!({
                 "task_id": task_id,
@@ -625,6 +639,37 @@ fn update_task_input_cases() -> Vec<ContractCase> {
             json!({"task_id": task_id, "estimated_work_minutes": u64::MAX}),
             true,
             "estimated_work_minutes",
+            "is outside the supported integer range",
+        ),
+        schema_case(
+            "actual work cannot be null",
+            json!({"task_id": task_id, "actual_work_seconds": null}),
+            "actual_work_seconds",
+            "must be a non-negative integer",
+        ),
+        schema_case(
+            "actual work cannot be negative",
+            json!({"task_id": task_id, "actual_work_seconds": -1}),
+            "actual_work_seconds",
+            "must be a non-negative integer",
+        ),
+        schema_case(
+            "actual work cannot be fractional",
+            json!({"task_id": task_id, "actual_work_seconds": 1.5}),
+            "actual_work_seconds",
+            "must be a non-negative integer",
+        ),
+        schema_case(
+            "actual work has wrong type",
+            json!({"task_id": task_id, "actual_work_seconds": "1"}),
+            "actual_work_seconds",
+            "must be a non-negative integer",
+        ),
+        semantic_case_with_schema_acceptance(
+            "actual work outside i64 range",
+            json!({"task_id": task_id, "actual_work_seconds": u64::MAX}),
+            true,
+            "actual_work_seconds",
             "is outside the supported integer range",
         ),
         schema_case(

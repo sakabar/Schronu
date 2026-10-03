@@ -938,6 +938,7 @@ fn update_task_handlerはtyped_valueを公開field順に適用する() {
         UpdateTaskInput {
             task_id: UuidValue(task_id),
             estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+            actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),
             deadline_time: NullablePatch::Value(Rfc3339DateTime(deadline)),
             category: NullablePatch::Value(ProjectCategoryValue::Recovery),
         },
@@ -951,6 +952,7 @@ fn update_task_handlerはtyped_valueを公開field順に適用する() {
         json!({"task_id": task_id.to_string()})
     );
     assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 45 * 60);
+    assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 900);
     assert_eq!(
         task_observer.get_deadline_time_opt().unwrap(),
         Some(deadline)
@@ -982,6 +984,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         UpdateTaskInput {
             task_id: UuidValue(task_id),
             estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+            actual_work_seconds: OptionalValue::Missing,
             deadline_time: NullablePatch::Missing,
             category: NullablePatch::Missing,
         },
@@ -1021,6 +1024,7 @@ fn update_task_handlerはtyped_missingを変更せずnullを解除に変換す�
         UpdateTaskInput {
             task_id: UuidValue(task_id),
             estimated_work_minutes: OptionalValue::Missing,
+            actual_work_seconds: OptionalValue::Missing,
             deadline_time: NullablePatch::Null,
             category: NullablePatch::Null,
         },
@@ -1055,6 +1059,7 @@ fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() 
         UpdateTaskInput {
             task_id: UuidValue(task_id),
             estimated_work_minutes: OptionalValue::Value(NonNegativeI64(i64::MAX)),
+            actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),
             deadline_time: NullablePatch::Value(Rfc3339DateTime(requested_deadline)),
             category: NullablePatch::Value(ProjectCategoryValue::Investment),
         },

@@ -584,6 +584,7 @@ fn additional_work_seconds_schema(generator: &mut SchemaGenerator) -> Schema {
 #[derive(Clone, Copy)]
 enum UpdateTaskField {
     EstimatedWorkMinutes,
+    ActualWorkSeconds,
     DeadlineTime,
     Category,
 }
@@ -592,6 +593,7 @@ impl UpdateTaskField {
     fn name(self) -> &'static str {
         match self {
             Self::EstimatedWorkMinutes => "estimated_work_minutes",
+            Self::ActualWorkSeconds => "actual_work_seconds",
             Self::DeadlineTime => "deadline_time",
             Self::Category => "category",
         }
@@ -602,14 +604,18 @@ impl UpdateTaskField {
             Self::EstimatedWorkMinutes => {
                 !matches!(fields.estimated_work_minutes, OptionalValue::Missing)
             }
+            Self::ActualWorkSeconds => {
+                !matches!(fields.actual_work_seconds, OptionalValue::Missing)
+            }
             Self::DeadlineTime => !matches!(fields.deadline_time, NullablePatch::Missing),
             Self::Category => !matches!(fields.category, NullablePatch::Missing),
         }
     }
 }
 
-const UPDATE_TASK_FIELDS: [UpdateTaskField; 3] = [
+const UPDATE_TASK_FIELDS: [UpdateTaskField; 4] = [
     UpdateTaskField::EstimatedWorkMinutes,
+    UpdateTaskField::ActualWorkSeconds,
     UpdateTaskField::DeadlineTime,
     UpdateTaskField::Category,
 ];
@@ -620,6 +626,7 @@ const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field
 pub(super) struct UpdateTaskInput {
     pub(super) task_id: UuidValue,
     pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    pub(super) actual_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
     pub(super) category: NullablePatch<ProjectCategoryValue>,
 }
@@ -627,6 +634,7 @@ pub(super) struct UpdateTaskInput {
 pub(super) struct UpdateTaskChanges {
     pub(super) task_id: Uuid,
     pub(super) estimated_work_minutes: Option<i64>,
+    pub(super) actual_work_seconds: Option<i64>,
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
     pub(super) category: Option<Option<ProjectCategory>>,
 }
@@ -636,6 +644,10 @@ impl UpdateTaskInput {
         let estimated_work_minutes = match self.estimated_work_minutes {
             OptionalValue::Missing => None,
             OptionalValue::Value(minutes) => Some(minutes.0),
+        };
+        let actual_work_seconds = match self.actual_work_seconds {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(seconds) => Some(seconds.0),
         };
         let deadline_time = match self.deadline_time {
             NullablePatch::Missing => None,
@@ -651,6 +663,7 @@ impl UpdateTaskInput {
         UpdateTaskChanges {
             task_id: self.task_id.0,
             estimated_work_minutes,
+            actual_work_seconds,
             deadline_time,
             category,
         }
@@ -666,6 +679,9 @@ struct UpdateTaskInputFields {
     /// Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.
     #[serde(default)]
     estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    /// Set the task's actual work duration to a non-negative integer number of seconds. Omit this field to leave the actual work unchanged.
+    #[serde(default)]
+    actual_work_seconds: OptionalValue<NonNegativeI64>,
     /// For a non-null RFC 3339 date-time with Z or a numeric UTC offset, apply it as a deadline upper bound to the unfinished target and its unfinished descendants; existing earlier deadlines are preserved. If the selected target is completed, neither it nor any descendants are changed. Pass null to clear only the selected task's deadline. Omit this field to leave the deadline unchanged.
     #[serde(default)]
     deadline_time: NullablePatch<Rfc3339DateTime>,
@@ -690,6 +706,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
         Ok(Self {
             task_id: fields.task_id,
             estimated_work_minutes: fields.estimated_work_minutes,
+            actual_work_seconds: fields.actual_work_seconds,
             deadline_time: fields.deadline_time,
             category: fields.category,
         })
