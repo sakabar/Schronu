@@ -11,7 +11,7 @@ use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::DeferMode;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
-use chrono::{Duration, Local, NaiveDate, TimeZone};
+use chrono::{Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,11 +122,20 @@ impl WebReadServiceFixture {
         let parent = TaskHandle::with_identity("routine", parent_id, now).unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
         parent.set_estimated_work_seconds(600).unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(19, 0, 0).unwrap()))
+            .unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(20, 0, 0).unwrap()))
+            .unwrap();
         let child = parent
             .create_child(TaskAttr::with_identity("occurrence", child_id, now))
             .unwrap();
         child.set_estimated_work_seconds(600).unwrap();
         child.set_actual_work_seconds(300).unwrap();
+        child
+            .set_deadline_time_opt(Some(now + Duration::hours(1)))
+            .unwrap();
 
         let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
         repository.sync_clock(now).unwrap();
@@ -196,6 +205,34 @@ impl WebReadServiceFixture {
             })
             .collect()
     }
+}
+
+#[test]
+fn 日付別と全件serviceは繰り返しの将来回をread_only行として返す() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (parent_id, child_id) = fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let future = service
+        .list_tasks_at(
+            operation_now,
+            NaiveDate::from_ymd_opt(2026, 9, 12).unwrap(),
+        )
+        .unwrap();
+    let all = service.list_all_tasks_at(operation_now, None).unwrap();
+
+    assert_eq!(future.data.len(), 1);
+    assert!(future.data[0].task.task_id.is_none());
+    assert_eq!(future.data[0].occurrence.source_task_id(), Some(parent_id));
+    assert_eq!(future.data[0].task.actual_work_seconds, 0);
+    assert_eq!(future.data[0].task.task_name, "routine");
+    assert!(all.data.rows.iter().any(|row| {
+        row.task.task_id.is_none() && row.occurrence.source_task_id() == Some(parent_id)
+    }));
+    assert!(all.data.rows.iter().any(|row| {
+        row.task.task_id.as_deref() == Some(&child_id.hyphenated().to_string())
+    }));
 }
 
 #[test]
