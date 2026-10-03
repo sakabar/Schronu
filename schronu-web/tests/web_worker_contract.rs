@@ -1,8 +1,9 @@
 use schronu_web::{
-    web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
+    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
     CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
-    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    RoutineLoadReport, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+    WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -68,7 +69,7 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
             worker.load_band().await,
             Ok(WebSuccess {
                 snapshot: snapshot(8),
-                data: Vec::new(),
+                data: load_data(),
             })
         );
         assert_eq!(
@@ -368,11 +369,11 @@ impl WebOperations for RecordingOperations {
         })
     }
 
-    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+    fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
         self.events.lock().unwrap().push(Event::LoadBand);
         Ok(WebSuccess {
             snapshot: snapshot(8),
-            data: Vec::new(),
+            data: load_data(),
         })
     }
 
@@ -421,6 +422,17 @@ fn snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
         observed_at_epoch_ms,
         logical_date: "2026-09-05".to_owned(),
         buffer_seconds: 60,
+    }
+}
+
+fn load_data() -> LoadData {
+    LoadData {
+        band_days: Vec::new(),
+        routine_load: RoutineLoadReport {
+            start_date: "2026-09-05".to_owned(),
+            end_date: "2026-09-12".to_owned(),
+            rows: Vec::new(),
+        },
     }
 }
 

@@ -19,8 +19,9 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, BandDay, BandDurations, CompletedTaskRow, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, BandDay, BandDurations, CompletedTaskRow, LoadData, RecordSessionResult,
+    RetryAdvice, RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 #[cfg(feature = "web")]
 use crate::CompletedTaskReport;
@@ -118,6 +119,11 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     );
 }
 
+fn render_band_load_view(dom: &mut VirtualDom) -> String {
+    rebuild_with_click_listeners(dom);
+    dioxus::ssr::render(dom)
+}
+
 #[test]
 fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知する() {
     fn root() -> Element {
@@ -159,10 +165,9 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
-    assert!(html.contains("直近7日の負荷"), "{html}");
+    assert!(html.contains("今日から7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
         html.contains("余差累+01:15、空差累-00:45"),
@@ -194,6 +199,210 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     );
     assert!(html.contains("超過 01:30"), "{html}");
     assert!(html.contains("超過0時間0分"), "{html}");
+}
+
+#[test]
+fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替する() {
+    #[derive(Clone)]
+    struct Props {
+        refresh_count: Arc<Mutex<usize>>,
+    }
+
+    fn root(props: Props) -> Element {
+        let refresh_count = Arc::clone(&props.refresh_count);
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-10-03", 0)],
+                routine_load_report: Some(RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
+                    rows: vec![RoutineLoadRow {
+                        project_task_id: "project-1".to_owned(),
+                        project_name: "健康".to_owned(),
+                        routine_task_id: "routine-1".to_owned(),
+                        routine_name: "運動".to_owned(),
+                        repetition_interval_days: 2,
+                        total_work_seconds: 28 * 60 * 60,
+                        occurrence_day_count: 14,
+                        peak_date: "2026-10-04".to_owned(),
+                        peak_work_seconds: 3 * 60 * 60,
+                    }],
+                }),
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| *refresh_count.lock().unwrap() += 1,
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let refresh_count = Arc::new(Mutex::new(0));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        Props {
+            refresh_count: Arc::clone(&refresh_count),
+        },
+    );
+    let click_ids = rebuild_with_click_listeners(&mut dom);
+    let initial_html = dioxus::ssr::render(&dom);
+
+    assert!(initial_html.contains("今日から7日の負荷"), "{initial_html}");
+    assert!(initial_html.contains("帯の凡例"), "{initial_html}");
+    assert!(!initial_html.contains("routine-load-table"), "{initial_html}");
+    assert!(
+        initial_html.contains("aria-pressed=true>日別負荷"),
+        "{initial_html}"
+    );
+    let daily_tab = initial_html.find(">日別負荷</button>").unwrap();
+    let routine_tab = initial_html.find(">繰返負荷</button>").unwrap();
+    assert!(daily_tab < routine_tab, "{initial_html}");
+    assert_eq!(click_ids.len(), 4, "更新と2表示tabと日別rowが初期表示される");
+
+    dispatch_click(&dom, click_ids[2]);
+    dom.render_immediate_to_vec();
+    let routine_html = dioxus::ssr::render(&dom);
+
+    assert!(
+        routine_html.contains("今日から7日後までの繰返負荷"),
+        "{routine_html}"
+    );
+    assert!(routine_html.contains("10/3〜10/10"), "{routine_html}");
+    for (class, heading) in [
+        ("routine-load-interval", "間隔"),
+        ("routine-load-total", "8日合計"),
+        ("routine-load-occurrences", "発生日数"),
+        ("routine-load-peak", "最大日"),
+        ("routine-load-subject", "プロジェクト / 繰返"),
+    ] {
+        assert!(
+            routine_html.contains(&format!(
+                "<th class=\"{class}\" scope=\"col\">{heading}</th>"
+            )),
+            "missing {heading}: {routine_html}"
+        );
+    }
+    let table_header = &routine_html[routine_html.find("<thead>").unwrap()
+        ..routine_html.find("</thead>").unwrap()];
+    let heading_positions = [
+        "間隔",
+        "8日合計",
+        "発生日数",
+        "最大日",
+        "プロジェクト / 繰返",
+    ]
+    .map(|heading| table_header.find(heading).unwrap());
+    assert!(
+        heading_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{table_header}"
+    );
+    let table_body = &routine_html[routine_html.find("<tbody>").unwrap()
+        ..routine_html.find("</tbody>").unwrap()];
+    let value_positions = ["2日", "28:00", "14日", "10/4 03:00", "運動"]
+        .map(|value| table_body.find(value).unwrap());
+    assert!(
+        value_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{table_body}"
+    );
+    for cell in [
+        "<td class=\"routine-load-interval\">2日</td>",
+        "<td class=\"routine-load-total routine-load-number\">28:00</td>",
+        "<td class=\"routine-load-occurrences routine-load-number\">14日</td>",
+        "<td class=\"routine-load-peak\">10/4 03:00</td>",
+        "<th class=\"routine-load-subject\" scope=\"row\"><div class=\"routine-load-subject-scroll\" tabindex=0><strong class=\"routine-load-name\">運動</strong><span class=\"routine-load-project\">健康</span></div></th>",
+    ] {
+        assert!(table_body.contains(cell), "missing {cell}: {table_body}");
+    }
+    for value in ["運動", "健康", "2日", "28:00", "14日", "10/4 03:00"] {
+        assert!(routine_html.contains(value), "missing {value}: {routine_html}");
+    }
+    assert!(!routine_html.contains("週平均"), "{routine_html}");
+    assert!(!routine_html.contains("routine-load-weekly"), "{routine_html}");
+    assert!(!table_body.contains("日ごと"), "{table_body}");
+    assert!(
+        routine_html.contains("aria-pressed=true>繰返負荷"),
+        "{routine_html}"
+    );
+    assert!(
+        routine_html.contains("class=\"load-mode-tabs\" role=\"group\" aria-label=\"負荷表示\""),
+        "{routine_html}"
+    );
+    assert!(!routine_html.contains("role=\"tablist\""), "{routine_html}");
+    assert!(!routine_html.contains("帯の凡例"), "{routine_html}");
+    assert_eq!(*refresh_count.lock().unwrap(), 0, "表示切替で通信を要求しない");
+}
+
+#[test]
+fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する() {
+    fn loading() -> Element {
+        rsx! {
+            LoadView {
+                rows: Vec::new(),
+                routine_load_report: None,
+                observed_at_epoch_ms: None,
+                loading: true,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+    let mut loading_dom = VirtualDom::new(loading);
+    let loading_click_ids = rebuild_with_click_listeners(&mut loading_dom);
+    let daily_loading_html = dioxus::ssr::render(&loading_dom);
+    assert!(
+        daily_loading_html.contains("負荷を取得しています…"),
+        "{daily_loading_html}"
+    );
+    assert!(
+        !daily_loading_html.contains("繰返負荷を取得しています…"),
+        "{daily_loading_html}"
+    );
+    dispatch_click(&loading_dom, loading_click_ids[2]);
+    loading_dom.render_immediate_to_vec();
+    let loading_html = dioxus::ssr::render(&loading_dom);
+    assert!(
+        loading_html.contains("繰返負荷を取得しています…"),
+        "{loading_html}"
+    );
+    assert!(loading_html.contains("更新中…"), "{loading_html}");
+
+    fn empty() -> Element {
+        rsx! {
+            LoadView {
+                rows: Vec::new(),
+                routine_load_report: Some(RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
+                    rows: Vec::new(),
+                }),
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+    let mut empty_dom = VirtualDom::new(empty);
+    let empty_click_ids = rebuild_with_click_listeners(&mut empty_dom);
+    let daily_empty_html = dioxus::ssr::render(&empty_dom);
+    assert!(
+        daily_empty_html.contains("負荷は未取得です。"),
+        "{daily_empty_html}"
+    );
+    assert!(
+        !daily_empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
+        "{daily_empty_html}"
+    );
+    dispatch_click(&empty_dom, empty_click_ids[2]);
+    empty_dom.render_immediate_to_vec();
+    let empty_html = dioxus::ssr::render(&empty_dom);
+    assert!(empty_html.contains("10/3〜10/10"), "{empty_html}");
+    assert!(
+        empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
+        "{empty_html}"
+    );
 }
 
 #[test]
@@ -232,8 +441,7 @@ fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let today_start = html
         .find("<button class=\"load-day is-today\"")
         .expect("today row must exist");
@@ -307,8 +515,7 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let today_start = html
         .find("<button class=\"load-day is-today\"")
         .expect("today row must exist");
@@ -356,8 +563,7 @@ fn 負荷viewは残り容量zeroを空barとして表示する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let focus_start = html
         .find("<span class=\"load-focus-group\"")
         .expect("remaining focus group must exist");
@@ -401,8 +607,7 @@ fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert_eq!(
         html.matches("class=\"load-overflow-fill\" style=\"width:100.0000%\"")
@@ -430,8 +635,7 @@ fn 負荷viewはerror時にcompact固定高を解除するclassを付ける() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert!(html.contains("<section class=\"load-view has-error\""), "{html}");
 }
@@ -453,8 +657,7 @@ fn 背景更新中の負荷操作はbuttonを無効化する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert_eq!(html.matches(" disabled").count(), 2, "{html}");
 }
@@ -786,7 +989,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
         first_id,
         Ok(WebSuccess {
             snapshot: load_snapshot(1_100),
-            data: vec![band_day("2026-09-27", 1)],
+            data: load_data(vec![band_day("2026-09-27", 1)]),
         }),
     );
     assert!(state.band_rows().is_empty());
@@ -795,7 +998,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
         second_id,
         Ok(WebSuccess {
             snapshot: load_snapshot(1_200),
-            data: vec![band_day("2026-09-27", 2)],
+            data: load_data(vec![band_day("2026-09-27", 2)]),
         }),
     );
     assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
@@ -810,6 +1013,43 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
     );
     assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
     assert!(state.band_error().is_some());
+}
+
+#[test]
+fn 負荷取得は7日帯と8日繰返負荷を同時に置換する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    let request_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    state.apply_load_band_result(
+        request_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_100),
+            data: LoadData {
+                band_days: vec![band_day("2026-10-03", 1)],
+                routine_load: RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-10".to_owned(),
+                    rows: vec![RoutineLoadRow {
+                        project_task_id: "project".to_owned(),
+                        project_name: "生活".to_owned(),
+                        routine_task_id: "routine".to_owned(),
+                        routine_name: "日次".to_owned(),
+                        repetition_interval_days: 1,
+                        total_work_seconds: 3_600,
+                        occurrence_day_count: 4,
+                        peak_date: "2026-10-03".to_owned(),
+                        peak_work_seconds: 1_800,
+                    }],
+                },
+            },
+        }),
+    );
+
+    assert_eq!(state.band_rows().len(), 1);
+    assert_eq!(state.routine_load_report().unwrap().rows[0].routine_name, "日次");
 }
 
 #[test]
@@ -890,6 +1130,17 @@ fn band_day(logical_date: &str, unavailable_seconds: i64) -> BandDay {
             repetitive_seconds: 0,
             non_repetitive_seconds: 0,
             rho_leeway_seconds: 0,
+        },
+    }
+}
+
+fn load_data(band_days: Vec<BandDay>) -> LoadData {
+    LoadData {
+        band_days,
+        routine_load: RoutineLoadReport {
+            start_date: "2026-09-27".to_owned(),
+            end_date: "2026-10-04".to_owned(),
+            rows: Vec::new(),
         },
     }
 }

@@ -9,7 +9,7 @@ use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
-use crate::{BandDay, CompletedTaskReport};
+use crate::{BandDay, CompletedTaskReport, RoutineLoadReport};
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
@@ -20,6 +20,7 @@ pub(crate) struct BrowserPageModel {
     pub list_mode: ListMode,
     pub selected_logical_date: Option<String>,
     pub band_rows: Vec<BandDay>,
+    pub routine_load_report: Option<RoutineLoadReport>,
     pub band_observed_at_epoch_ms: Option<i64>,
     pub band_loading: bool,
     pub band_error: Option<String>,
@@ -78,6 +79,7 @@ impl BrowserPageModel {
             list_mode: state.list_mode(),
             selected_logical_date: state.selected_logical_date().map(str::to_owned),
             band_rows: state.band_rows().to_vec(),
+            routine_load_report: state.routine_load_report().cloned(),
             band_observed_at_epoch_ms: state.band_observed_at_epoch_ms(),
             band_loading: state.band_loading(),
             band_error: state.band_error().map(str::to_owned),

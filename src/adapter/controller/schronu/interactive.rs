@@ -248,6 +248,7 @@ pub(super) fn should_suppress_leaf_tasks_after_command(kind: CommandKind) -> boo
             | CommandKind::Today
             | CommandKind::Calendar
             | CommandKind::Band
+            | CommandKind::RoutineLoad
             | CommandKind::DeferRoutines
             | CommandKind::Flatten
             | CommandKind::Pack

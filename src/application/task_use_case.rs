@@ -87,6 +87,9 @@ pub enum ApplicationError {
         operation: &'static str,
         value: i128,
     },
+    RoutineLoadCalculationOverflow {
+        routine_task_id: Uuid,
+    },
     DeferPlanChanged {
         expected: DeferMode,
         actual: DeferMode,
@@ -164,6 +167,10 @@ impl fmt::Display for ApplicationError {
             Self::CompletedReportCalculationOverflow { operation, value } => write!(
                 formatter,
                 "completed report calculation overflow: operation={operation}, value={value}"
+            ),
+            Self::RoutineLoadCalculationOverflow { routine_task_id } => write!(
+                formatter,
+                "routine load calculation overflow: routine_task_id={routine_task_id}"
             ),
             Self::DeferPlanChanged { expected, actual } => write!(
                 formatter,

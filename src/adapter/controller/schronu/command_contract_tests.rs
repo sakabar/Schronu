@@ -26,6 +26,7 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
         (&["単", "non_repetitive"][..], CommandKind::NonRepetitive),
         (&["暦", "cal"][..], CommandKind::Calendar),
         (&["帯", "band"][..], CommandKind::Band),
+        (&["荷", "routine-load"][..], CommandKind::RoutineLoad),
         (&["見", "focus", "fc"][..], CommandKind::Focus),
         (&["選", "pick"][..], CommandKind::Pick),
         (&["開", "open", "op"][..], CommandKind::Open),
@@ -270,6 +271,14 @@ fn all_commands_enforce_argument_bounds() {
             minimum: 0,
             maximum: Some(0),
             usage: "帯",
+        },
+        Case {
+            command: "荷",
+            mode: ParseMode::NonInteractive,
+            valid_arguments: &[],
+            minimum: 0,
+            maximum: Some(0),
+            usage: "荷",
         },
         Case {
             command: "開",

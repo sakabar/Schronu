@@ -459,6 +459,16 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
                 false,
             )?)
         }
+        Command::Action(CommandAction::NoArguments {
+            kind: CommandKind::RoutineLoad,
+            ..
+        }) => {
+            semantic_display = Some(context.show_task_list(
+                Some("荷"),
+                TaskListOrder::ScheduledStartDesc,
+                false,
+            )?)
+        }
         Command::Action(CommandAction::Pick { task_id }) => context.pick(*task_id)?,
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Parent,

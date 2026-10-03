@@ -1,6 +1,6 @@
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
-    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
     RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
     WebError, WebSuccess,
 };
@@ -60,7 +60,7 @@ pub async fn list_all_tasks(
 }
 
 #[server(endpoint = "web_load_band")]
-pub async fn load_band() -> Result<WebOperationResult<WebSuccess<Vec<BandDay>>>, ServerFnError> {
+pub async fn load_band() -> Result<WebOperationResult<WebSuccess<LoadData>>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         Ok(dispatch_load_band(extract_worker().await?).await)
@@ -155,9 +155,7 @@ async fn dispatch_list_all_tasks(
 }
 
 #[cfg(feature = "server")]
-async fn dispatch_load_band(
-    worker: WebWorkerHandle,
-) -> WebOperationResult<WebSuccess<Vec<BandDay>>> {
+async fn dispatch_load_band(worker: WebWorkerHandle) -> WebOperationResult<WebSuccess<LoadData>> {
     worker.load_band().await
 }
 
@@ -200,10 +198,11 @@ mod tests {
         dispatch_load_band, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
         DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
-        RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-        SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+        LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+        ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
+        WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -259,7 +258,7 @@ mod tests {
                 },
             )
             .await;
-            let _: WebOperationResult<WebSuccess<Vec<BandDay>>> =
+            let _: WebOperationResult<WebSuccess<LoadData>> =
                 dispatch_load_band(worker.clone()).await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
@@ -381,11 +380,18 @@ mod tests {
             })
         }
 
-        fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
             self.count();
             Ok(WebSuccess {
                 snapshot: snapshot(),
-                data: Vec::new(),
+                data: LoadData {
+                    band_days: Vec::new(),
+                    routine_load: RoutineLoadReport {
+                        start_date: "2026-09-05".to_owned(),
+                        end_date: "2026-09-12".to_owned(),
+                        rows: Vec::new(),
+                    },
+                },
             })
         }
 

@@ -2,8 +2,9 @@ use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
     DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
@@ -11,9 +12,9 @@ use schronu::adapter::controller::{
     CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskReportDto,
     CompletedTaskRowDto, DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
-    RecordSessionRequest as CoreRecordSessionRequest, ScheduledTaskRowDto,
-    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, TaskDisplayKind as CoreTaskDisplayKind,
-    WebService, WebSuccess as CoreWebSuccess,
+    LoadDataDto, RecordSessionRequest as CoreRecordSessionRequest, RoutineLoadReportDto,
+    RoutineLoadRowDto, ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto,
+    TaskDisplayKind as CoreTaskDisplayKind, WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
@@ -124,7 +125,7 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
-    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+    fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
         let operation_now = self.clock.now();
         self.service()?
             .load_band_at(operation_now)
@@ -305,6 +306,32 @@ impl From<BandDayDto> for BandDay {
     }
 }
 
+impl From<RoutineLoadRowDto> for RoutineLoadRow {
+    fn from(row: RoutineLoadRowDto) -> Self {
+        Self {
+            project_task_id: row.project_task_id,
+            project_name: row.project_name,
+            routine_task_id: row.routine_task_id,
+            routine_name: row.routine_name,
+            repetition_interval_days: row.repetition_interval_days,
+            total_work_seconds: row.total_work_seconds,
+            occurrence_day_count: row.occurrence_day_count,
+            peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
+            peak_work_seconds: row.peak_work_seconds,
+        }
+    }
+}
+
+impl From<RoutineLoadReportDto> for RoutineLoadReport {
+    fn from(report: RoutineLoadReportDto) -> Self {
+        Self {
+            start_date: report.start_date.format("%Y-%m-%d").to_string(),
+            end_date: report.end_date.format("%Y-%m-%d").to_string(),
+            rows: report.rows.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
 impl From<RecordSessionRequest> for CoreRecordSessionRequest {
     fn from(request: RecordSessionRequest) -> Self {
         Self {
@@ -372,11 +399,14 @@ impl ConvertData for CompletedTaskReportDto {
     }
 }
 
-impl ConvertData for Vec<BandDayDto> {
-    type Output = Vec<BandDay>;
+impl ConvertData for LoadDataDto {
+    type Output = LoadData;
 
     fn convert(self) -> Self::Output {
-        self.into_iter().map(Into::into).collect()
+        LoadData {
+            band_days: self.band_days.into_iter().map(Into::into).collect(),
+            routine_load: self.routine_load.into(),
+        }
     }
 }
 

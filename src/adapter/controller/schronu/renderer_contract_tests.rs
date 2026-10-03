@@ -9,11 +9,114 @@ use super::renderer::{
     TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode, TaskListMetricsDisplay,
     TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
 };
+use crate::application::routine_load::{RoutineLoadReport, RoutineLoadRow};
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
+
+#[test]
+fn routine_load_displayは共通集計値を固定列で描画する() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
+        rows: vec![
+            RoutineLoadRow {
+                project_task_id: Uuid::from_u128(1),
+                project_name: "生活".to_owned(),
+                routine_task_id: Uuid::from_u128(2),
+                routine_name: "週次家事".to_owned(),
+                repetition_interval_days: 7,
+                total_work_seconds: 4 * 60 * 60 + 20 * 60,
+                occurrence_day_count: 4,
+                peak_date: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(),
+                peak_work_seconds: 80 * 60,
+            },
+            RoutineLoadRow {
+                project_task_id: Uuid::from_u128(3),
+                project_name: "非常に長いプロジェクト名".to_owned(),
+                routine_task_id: Uuid::from_u128(4),
+                routine_name: "月次レビュー".to_owned(),
+                repetition_interval_days: 30,
+                total_work_seconds: 123 * 60 * 60 + 45 * 60,
+                occurrence_day_count: 28,
+                peak_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+                peak_work_seconds: 100 * 60 * 60,
+            },
+        ],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations[0],
+        "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)"
+    );
+    let lines = writer.operations[1..]
+        .iter()
+        .map(|line| line.strip_prefix("newline:").unwrap())
+        .collect::<Vec<_>>();
+    let cells = [
+        [
+            "間隔",
+            "8日合計",
+            "発生日数",
+            "最大日",
+            "プロジェクト / 繰返",
+        ],
+        ["7日", "04:20", "4日", "10/04 01:20", "生活 / 週次家事"],
+        [
+            "30日",
+            "123:45",
+            "28日",
+            "10/30 100:00",
+            "非常に長いプロジェクト名 / 月次レビュー",
+        ],
+    ];
+    for column in 0..4 {
+        let ends = lines
+            .iter()
+            .zip(cells.iter())
+            .map(|(line, row)| {
+                let start = line.find(row[column]).unwrap();
+                UnicodeWidthStr::width(&line[..start]) + UnicodeWidthStr::width(row[column])
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            ends.windows(2).all(|pair| pair[0] == pair[1]),
+            "column {column}: {lines:?}"
+        );
+    }
+    for (line, row) in lines.iter().zip(cells.iter()) {
+        let positions = row
+            .iter()
+            .map(|cell| line.find(cell).unwrap())
+            .collect::<Vec<_>>();
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{line}");
+    }
+}
+
+#[test]
+fn routine_load_displayは空reportでも見出し幅と二空白区切りを使う() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
+        rows: vec![],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert_eq!(
+        writer.operations,
+        [
+            "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)",
+            "newline:間隔  8日合計  発生日数  最大日  プロジェクト / 繰返",
+        ]
+    );
+}
 
 #[test]
 fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {

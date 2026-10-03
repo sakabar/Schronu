@@ -2,8 +2,9 @@ use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
     DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, TaskDisplayKind, WebError, WebSuccess,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
+    WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -318,6 +319,50 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
                 "repetitive_seconds": 3,
                 "non_repetitive_seconds": 4,
                 "rho_leeway_seconds": 5
+            }
+        }),
+    );
+}
+
+#[test]
+fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
+    let data = LoadData {
+        band_days: Vec::new(),
+        routine_load: RoutineLoadReport {
+            start_date: "2026-10-03".to_owned(),
+            end_date: "2026-10-10".to_owned(),
+            rows: vec![RoutineLoadRow {
+                project_task_id: "project-id".to_owned(),
+                project_name: "生活".to_owned(),
+                routine_task_id: "routine-id".to_owned(),
+                routine_name: "週次家事".to_owned(),
+                repetition_interval_days: 7,
+                total_work_seconds: 15_600,
+                occurrence_day_count: 4,
+                peak_date: "2026-10-04".to_owned(),
+                peak_work_seconds: 4_800,
+            }],
+        },
+    };
+
+    assert_json_round_trip(
+        &data,
+        json!({
+            "band_days": [],
+            "routine_load": {
+                "start_date": "2026-10-03",
+                "end_date": "2026-10-10",
+                "rows": [{
+                    "project_task_id": "project-id",
+                    "project_name": "生活",
+                    "routine_task_id": "routine-id",
+                    "routine_name": "週次家事",
+                    "repetition_interval_days": 7,
+                    "total_work_seconds": 15_600,
+                    "occurrence_day_count": 4,
+                    "peak_date": "2026-10-04",
+                    "peak_work_seconds": 4_800
+                }]
             }
         }),
     );

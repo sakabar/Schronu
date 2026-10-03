@@ -275,19 +275,46 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
 
     let response = service.load_band_at(operation_now).unwrap();
 
-    assert_eq!(response.data.len(), 7);
+    assert_eq!(response.data.band_days.len(), 7);
     assert_eq!(
-        response.data[0].logical_date,
+        response.data.band_days[0].logical_date,
         NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
     );
     assert_eq!(
-        response.data[6].logical_date,
+        response.data.band_days[6].logical_date,
         NaiveDate::from_ymd_opt(2026, 9, 11).unwrap()
     );
     assert!(response
         .data
+        .band_days
         .iter()
         .all(|row| row.durations.unavailable_seconds >= 0));
+    assert_eq!(
+        response.data.routine_load.start_date,
+        NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
+    );
+    assert_eq!(
+        response.data.routine_load.end_date,
+        NaiveDate::from_ymd_opt(2026, 9, 12).unwrap()
+    );
+}
+
+#[test]
+fn 負荷serviceは繰返負荷を共通集計結果から返す() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service.load_band_at(operation_now).unwrap();
+
+    assert_eq!(response.data.routine_load.rows.len(), 1);
+    let row = &response.data.routine_load.rows[0];
+    assert_eq!(row.project_name, "routine");
+    assert_eq!(row.routine_name, "routine");
+    assert_eq!(row.repetition_interval_days, 7);
+    assert_eq!(row.total_work_seconds, 300);
+    assert_eq!(row.occurrence_day_count, 1);
 }
 
 #[test]
