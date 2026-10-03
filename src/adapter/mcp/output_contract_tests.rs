@@ -120,9 +120,36 @@ fn scheduled_task_viewのserde表現は操作用task_identityを含まない() {
     expected["first_available_time"] = json!(first_available_time.to_rfc3339());
     expected["total_work_seconds"] = json!(1_800);
     expected["task"]["status"] = json!("pending");
+    expected["task"]["root_id"] = json!(root_id.to_string());
 
     let serialized = serde_json::to_value(&scheduled).unwrap();
-    let mcp_output = scheduled_task_view_json(&scheduled);
+    let full_task = TaskView {
+        id: task_id,
+        root_id,
+        parent_id: None,
+        child_ids: vec![],
+        name: scheduled.task.name.clone(),
+        status: scheduled.task.status,
+        original_status: scheduled.task.original_status,
+        is_on_other_side: scheduled.task.is_on_other_side,
+        atomic: scheduled.task.atomic,
+        fixed_start: scheduled.task.fixed_start,
+        pending_until: scheduled.task.pending_until,
+        priority: scheduled.task.priority,
+        create_time: scheduled.task.create_time,
+        start_time: scheduled.task.start_time,
+        end_time: scheduled.task.end_time,
+        deadline_time: scheduled.task.deadline_time,
+        estimated_work_seconds: scheduled.task.estimated_work_seconds,
+        actual_work_seconds: scheduled.task.actual_work_seconds,
+        repetition_interval_days: scheduled.task.repetition_interval_days,
+        repetition_start_time: scheduled.task.repetition_start_time,
+        repetition_deadline_time: scheduled.task.repetition_deadline_time,
+        repetition_anchor: scheduled.task.repetition_anchor,
+        days_in_advance: scheduled.task.days_in_advance,
+        project_category: scheduled.task.project_category,
+    };
+    let mcp_output = scheduled_task_view_json(&scheduled, Some(&full_task));
 
     assert!(serialized.get("task_id").is_none());
     assert_eq!(mcp_output, expected);

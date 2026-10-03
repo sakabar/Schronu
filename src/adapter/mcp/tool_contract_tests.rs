@@ -834,7 +834,10 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
             ],
         )
     );
-    assert!(schedule[0]["task"].get("id").is_none());
+    assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
+    assert_eq!(schedule[0]["task"]["root_id"], task_id.to_string());
+    assert_eq!(schedule[0]["task"]["parent_id"], serde_json::Value::Null);
+    assert_eq!(schedule[0]["task"]["child_ids"], json!([]));
     assert_eq!(schedule[0]["task"]["name"], "scheduled task");
     assert_eq!(schedule[0]["first_available_time"], synced_now.to_rfc3339());
     assert_eq!(schedule[0]["scheduled_start"], synced_now.to_rfc3339());
@@ -901,6 +904,9 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
         .as_str()
         .unwrap()
         .starts_with("3-day routine("));
+    for identity in ["id", "root_id", "parent_id", "child_ids"] {
+        assert!(projected["task"].get(identity).is_none(), "{identity}");
+    }
 }
 
 #[test]
