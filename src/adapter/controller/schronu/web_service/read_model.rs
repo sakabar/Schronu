@@ -442,3 +442,36 @@ pub(in crate::adapter::controller) fn calculate_buffer_seconds(
             )
         })
 }
+
+#[cfg(test)]
+mod completed_task_report_tests {
+    use super::completed_task_row_dto;
+    use crate::application::completed_task_report::CompletedTaskReportRow;
+    use chrono::{Local, TimeZone};
+    use uuid::Uuid;
+
+    #[test]
+    fn application_rowの全fieldをdtoへ保持する() {
+        let completed_at = Local
+            .with_ymd_and_hms(2026, 9, 5, 8, 7, 6)
+            .single()
+            .unwrap();
+        let row = CompletedTaskReportRow {
+            task_id: Uuid::from_u128(1),
+            task_name: "task".to_owned(),
+            project_name: "project".to_owned(),
+            completed_at,
+            actual_work_seconds: 3_661,
+            estimated_work_seconds: 3_600,
+        };
+
+        let dto = completed_task_row_dto(row);
+
+        assert_eq!(dto.task_id, Uuid::from_u128(1).hyphenated().to_string());
+        assert_eq!(dto.task_name, "task");
+        assert_eq!(dto.project_name, "project");
+        assert_eq!(dto.completed_at_epoch_ms, completed_at.timestamp_millis());
+        assert_eq!(dto.actual_work_seconds, 3_661);
+        assert_eq!(dto.estimated_work_seconds, 3_600);
+    }
+}

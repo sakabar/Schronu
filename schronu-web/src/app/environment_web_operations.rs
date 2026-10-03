@@ -386,12 +386,13 @@ mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
         web_error_codes, CompleteSessionRequest, DeferMode, DeferPlan, DeferTaskRequest,
-        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, WebOperations,
+        ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, RecordSessionRequest,
+        WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use schronu::adapter::gateway::task_repository::TaskRepository;
     use schronu::application::interface::TaskRepositoryTrait;
-    use schronu::entity::task::TaskHandle;
+    use schronu::entity::task::{Status, TaskHandle};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -514,6 +515,50 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
+    #[test]
+    fn completedはstrictな日付をserviceへ渡しsnapshotと完了行を保持する() {
+        let fixture = Fixture::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+        let expected = fixture.seed_completed_tasks(now);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut operations = EnvironmentWebOperations::with_environment_and_clock(
+            Some(fixture.config.clone().into_os_string()),
+            Some(fixture.storage.clone().into_os_string()),
+            CountingClock {
+                now,
+                calls: Arc::clone(&calls),
+            },
+        );
+
+        let completed = operations
+            .list_completed_tasks(ListCompletedTasksRequest {
+                logical_date: "2026-09-05".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(completed.snapshot.observed_at_epoch_ms, now.timestamp_millis());
+        assert_eq!(completed.snapshot.logical_date, "2026-09-05");
+        assert_eq!(completed.data.len(), 2);
+        assert_eq!(completed.data[0].task_id, expected[0].hyphenated().to_string());
+        assert_eq!(completed.data[0].task_name, "earlier project");
+        assert_eq!(completed.data[0].project_name, "earlier project");
+        assert_eq!(
+            completed.data[0].completed_at_epoch_ms,
+            (now - chrono::Duration::hours(2)).timestamp_millis()
+        );
+        assert_eq!(completed.data[0].actual_work_seconds, 11);
+        assert_eq!(completed.data[0].estimated_work_seconds, 12);
+        assert_eq!(completed.data[1].task_id, expected[1].hyphenated().to_string());
+
+        let error = operations
+            .list_completed_tasks(ListCompletedTasksRequest {
+                logical_date: "2026-9-5".to_owned(),
+            })
+            .unwrap_err();
+        assert_eq!(error.code, web_error_codes::INVALID_INPUT);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     struct CountingClock {
         now: DateTime<Local>,
         calls: Arc<AtomicUsize>,
@@ -590,6 +635,32 @@ mod tests {
             repository.start_new_project(task).unwrap();
             repository.save().unwrap();
             task_id
+        }
+
+        fn seed_completed_tasks(&self, now: DateTime<Local>) -> [uuid::Uuid; 2] {
+            let earlier_id = uuid::Uuid::from_u128(1);
+            let later_id = uuid::Uuid::from_u128(2);
+            let earlier = TaskHandle::with_identity("earlier project", earlier_id, now).unwrap();
+            earlier.set_orig_status(Status::Done).unwrap();
+            earlier
+                .set_end_time_opt(Some(now - chrono::Duration::hours(2)))
+                .unwrap();
+            earlier.set_actual_work_seconds(11).unwrap();
+            earlier.set_estimated_work_seconds(12).unwrap();
+            let later = TaskHandle::with_identity("later project", later_id, now).unwrap();
+            later.set_orig_status(Status::Done).unwrap();
+            later
+                .set_end_time_opt(Some(now - chrono::Duration::hours(1)))
+                .unwrap();
+            later.set_actual_work_seconds(21).unwrap();
+            later.set_estimated_work_seconds(22).unwrap();
+            let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+            repository.sync_clock(now).unwrap();
+            repository.load().unwrap();
+            repository.start_new_project(later).unwrap();
+            repository.start_new_project(earlier).unwrap();
+            repository.save().unwrap();
+            [earlier_id, later_id]
         }
     }
 
