@@ -25,7 +25,8 @@ fn component_actionはrank非0の手動session追加を拒否する() {
 fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加を許可する() {
     let storage = MemoryStorage::default();
     let cached_row = ScheduledTaskRow {
-        task: task(RECORD_ID),
+        task: task(RECORD_ID).into(),
+        occurrence: crate::ScheduleOccurrence::Actual { task_id: RECORD_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_600_000,
         deadline_epoch_ms: None,
@@ -34,12 +35,12 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
         task_display_kind: crate::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: crate::DeferPlan {
+        defer_plan: Some(crate::DeferPlan {
             mode: crate::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_789_086_000_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     };
     store_view_state(
         &storage,
@@ -80,7 +81,7 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
             &storage,
             1_000,
             ComponentAction::AddSession {
-                task: cached_row.task,
+                task: cached_row.task.actionable_task().unwrap(),
                 is_leaf: true,
             },
         ),
@@ -165,7 +166,8 @@ fn local画面変更はview_stateへ保存して次のmountで復元する() {
 fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置換する() {
     let storage = MemoryStorage::default();
     let cached_row = ScheduledTaskRow {
-        task: task(RECORD_ID),
+        task: task(RECORD_ID).into(),
+        occurrence: crate::ScheduleOccurrence::Actual { task_id: RECORD_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_600_000,
         deadline_epoch_ms: None,
@@ -174,12 +176,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         task_display_kind: crate::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: crate::DeferPlan {
+        defer_plan: Some(crate::DeferPlan {
             mode: crate::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_789_086_000_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     };
     store_view_state(
         &storage,
@@ -249,7 +251,8 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     );
     assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
     let refreshed_row = ScheduledTaskRow {
-        task: task(COMPLETE_ID),
+        task: task(COMPLETE_ID).into(),
+        occurrence: crate::ScheduleOccurrence::Actual { task_id: COMPLETE_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_300_000_000,
         schedule_end_epoch_ms: 1_789_300_600_000,
         deadline_epoch_ms: None,
@@ -258,12 +261,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         task_display_kind: crate::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: crate::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: crate::DeferPlan {
+        defer_plan: Some(crate::DeferPlan {
             mode: crate::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_789_386_400_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     };
     orchestrator.apply_response(
         &storage,

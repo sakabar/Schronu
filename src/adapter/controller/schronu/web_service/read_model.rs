@@ -1,7 +1,8 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
     AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
-    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
+    ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
+    TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     classify_deadline_display, format_deadline_remaining_time, misses_deadline,
@@ -53,10 +54,8 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
     logical_dates
         .into_iter()
         .zip(schedule)
-        .filter(|(_, segment)| segment.actual_task_id().is_some())
         .enumerate()
         .map(|(segment_index, (logical_date, segment))| {
-            let task_id = segment.actual_task_id().expect("actual segments only");
             let deadline = segment.task.deadline_time;
             let deadline_label = format_deadline_remaining_time(
                 deadline.as_ref(),
@@ -67,12 +66,15 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
             let (task_display_kind, deadline_display_kind) =
                 classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(AllTaskRowDto {
-                task: session_task_dto(
-                    task_id.hyphenated().to_string(),
+                task: scheduled_task_dto(
+                    segment
+                        .actual_task_id()
+                        .map(|id| id.hyphenated().to_string()),
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
                 ),
+                occurrence: occurrence_dto(segment),
                 segment_index,
                 schedule_date: logical_date.format("%Y-%m-%d").to_string(),
                 deadline_epoch_ms: deadline.map(|value| value.timestamp_millis()),
@@ -294,14 +296,12 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
         .zip(schedule)
         .collect::<Vec<_>>();
     dated_segments.retain(|(date, _)| *date == logical_date);
-    dated_segments.retain(|(_, segment)| segment.actual_task_id().is_some());
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
     let mut task_kind_cache = HashMap::new();
     dated_segments
         .into_iter()
         .map(|(_, segment)| {
-            let task_id = segment.actual_task_id().expect("actual segments only");
             let deadline = segment.task.deadline_time;
             let deadline_label = format_deadline_remaining_time(
                 deadline.as_ref(),
@@ -312,12 +312,15 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
             let (task_display_kind, deadline_display_kind) =
                 classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(ScheduledTaskRowDto {
-                task: session_task_dto(
-                    task_id.hyphenated().to_string(),
+                task: scheduled_task_dto(
+                    segment
+                        .actual_task_id()
+                        .map(|id| id.hyphenated().to_string()),
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
                 ),
+                occurrence: occurrence_dto(segment),
                 schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),
                 schedule_end_epoch_ms: segment.scheduled_end.timestamp_millis(),
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
@@ -326,10 +329,14 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 task_display_kind,
                 deadline_display_kind,
                 is_leaf: segment.is_leaf(),
-                defer_plan: defer_plan_dto(
-                    plan_defer_task(repository, task_id, logical_date)
-                        .map_err(WebReadCoreError::Application)?,
-                ),
+                defer_plan: segment
+                    .actual_task_id()
+                    .map(|task_id| {
+                        plan_defer_task(repository, task_id, logical_date)
+                            .map(defer_plan_dto)
+                            .map_err(WebReadCoreError::Application)
+                    })
+                    .transpose()?,
             })
         })
         .collect()
@@ -341,12 +348,16 @@ fn classify_display_kinds(
     logical_date: NaiveDate,
     task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
 ) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
-    let task_id = segment.actual_task_id().ok_or({
-        WebReadCoreError::Application(ApplicationError::InvalidInput {
-            field: "occurrence",
-            reason: "projected occurrence has no actionable task ID",
-        })
-    })?;
+    let Some(task_id) = segment.actual_task_id() else {
+        return Ok((
+            if segment.task.fixed_start {
+                TaskDisplayKind::Fixed
+            } else {
+                TaskDisplayKind::Repetitive
+            },
+            classify_deadline_kind(segment, logical_date)?,
+        ));
+    };
     let task_display_kind = if let Some(kind) = task_kind_cache.get(&task_id) {
         *kind
     } else {
@@ -373,20 +384,30 @@ fn classify_display_kinds(
         task_kind_cache.insert(task_id, kind);
         kind
     };
-    let deadline_display_kind = match classify_deadline_display(
-        segment.task.deadline_time.as_ref(),
-        segment.scheduled_end,
-        logical_date,
-    )
-    .map_err(WebReadCoreError::Application)?
-    {
-        DeadlineDisplayStatus::None => DeadlineDisplayKind::None,
-        DeadlineDisplayStatus::Overrun => DeadlineDisplayKind::Overrun,
-        DeadlineDisplayStatus::DueWithinLogicalDate => DeadlineDisplayKind::Today,
-        DeadlineDisplayStatus::Future => DeadlineDisplayKind::Future,
-    };
+    Ok((
+        task_display_kind,
+        classify_deadline_kind(segment, logical_date)?,
+    ))
+}
 
-    Ok((task_display_kind, deadline_display_kind))
+fn classify_deadline_kind(
+    segment: &ScheduledTaskView,
+    logical_date: NaiveDate,
+) -> Result<DeadlineDisplayKind, WebReadCoreError> {
+    Ok(
+        match classify_deadline_display(
+            segment.task.deadline_time.as_ref(),
+            segment.scheduled_end,
+            logical_date,
+        )
+        .map_err(WebReadCoreError::Application)?
+        {
+            DeadlineDisplayStatus::None => DeadlineDisplayKind::None,
+            DeadlineDisplayStatus::Overrun => DeadlineDisplayKind::Overrun,
+            DeadlineDisplayStatus::DueWithinLogicalDate => DeadlineDisplayKind::Today,
+            DeadlineDisplayStatus::Future => DeadlineDisplayKind::Future,
+        },
+    )
 }
 
 fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {
@@ -430,6 +451,41 @@ fn session_task_dto(
         task_name,
         estimated_work_seconds,
         actual_work_seconds,
+    }
+}
+
+fn scheduled_task_dto(
+    task_id: Option<String>,
+    task_name: String,
+    estimated_work_seconds: i64,
+    actual_work_seconds: i64,
+) -> ScheduledTaskDto {
+    ScheduledTaskDto {
+        task_id,
+        task_name,
+        estimated_work_seconds,
+        actual_work_seconds,
+    }
+}
+
+fn occurrence_dto(segment: &ScheduledTaskView) -> ScheduleOccurrenceDto {
+    match segment.occurrence {
+        crate::application::schedule_use_case::ScheduleOccurrenceKey::Actual { task_id } => {
+            ScheduleOccurrenceDto::Actual {
+                task_id: task_id.hyphenated().to_string(),
+            }
+        }
+        crate::application::schedule_use_case::ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline,
+        } => ScheduleOccurrenceDto::Projected {
+            occurrence_key: format!(
+                "{}:{}",
+                source_task_id.hyphenated(),
+                deadline.timestamp_millis()
+            ),
+            source_task_id: source_task_id.hyphenated().to_string(),
+        },
     }
 }
 

@@ -888,6 +888,23 @@ button:disabled {
     touch-action: pan-x pan-y pinch-zoom;
 }
 
+.projected-task-badge {
+    display: inline-block;
+    margin-right: 0.4rem;
+    padding: 0.05rem 0.3rem;
+    border: 1px solid currentColor;
+    border-radius: 0.25rem;
+    font-size: 0.75rem;
+    line-height: 1.2;
+}
+
+.projected-task-source {
+    margin-left: 0.5rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
 .task-name-scroll:focus-visible {
     outline: 3px solid rgb(54 119 189 / 35%);
     outline-offset: -3px;

@@ -125,13 +125,39 @@ fn view_stateは希望日時以上の期限制限日時を拒否する() {
         "2026-09-09",
         vec![row("00000000-0000-4000-8000-000000000001", "task")],
     );
-    let plan = &mut state.list.as_mut().unwrap().rows[0].defer_plan;
+    let plan = state.list.as_mut().unwrap().rows[0]
+        .defer_plan
+        .as_mut()
+        .unwrap();
     plan.mode = schronu_web::DeferMode::DeadlineLimited;
     plan.effective_pending_until_epoch_ms = Some(plan.requested_pending_until_epoch_ms);
 
     assert_eq!(
         store_view_state(&storage, &state),
         Err(ViewStateStoreError::InvalidState)
+    );
+}
+
+#[test]
+fn view_stateはprojected行をactionable_idなしで保存復元する() {
+    let storage = MemoryStorage::default();
+    let mut projected = row("00000000-0000-4000-8000-000000000001", "筋トレ(9/12)");
+    projected.task.task_id = None;
+    projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
+        occurrence_key: "parent:1789228800000".to_owned(),
+        source_task_id: "00000000-0000-4000-8000-000000000010".to_owned(),
+    };
+    projected.defer_plan = None;
+    let state = view_state("2026-09-12", vec![projected]);
+
+    store_view_state(&storage, &state).unwrap();
+    let loaded = load_view_state(&storage).into_state().unwrap();
+
+    let restored = &loaded.list.unwrap().rows[0];
+    assert!(restored.task.task_id.is_none());
+    assert_eq!(
+        restored.occurrence.occurrence_key(),
+        Some("parent:1789228800000")
     );
 }
 
@@ -159,6 +185,10 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
             task_name: task_name.to_owned(),
             estimated_work_seconds: 900,
             actual_work_seconds: 60,
+        }
+        .into(),
+        occurrence: schronu_web::ScheduleOccurrence::Actual {
+            task_id: task_id.to_owned(),
         },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_900_000,
@@ -168,11 +198,11 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
         task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: schronu_web::DeferPlan {
+        defer_plan: Some(schronu_web::DeferPlan {
             mode: schronu_web::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_789_086_400_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     }
 }

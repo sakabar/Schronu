@@ -199,7 +199,9 @@ pub fn ListView(
                                 TaskRow {
                                     key: "{row.row_key}",
                                     show_separators,
-                                    active: active_task_ids.iter().any(|task_id| task_id == &row.task.task_id),
+                                    active: row.task.task_id.as_ref().is_some_and(|row_task_id| {
+                                        active_task_ids.iter().any(|task_id| task_id == row_task_id)
+                                    }),
                                     row,
                                     mutations_locked,
                                     mutation_globally_blocked,
@@ -292,7 +294,7 @@ fn TaskRow(
         format!("{}: セッションに追加", row.task.task_name)
     };
     let button_text = if active { "✓" } else { "＋" };
-    let task = row.task.clone();
+    let task = row.task.actionable_task();
     let defer_task_id = row.task.task_id.clone();
     let defer_task_id_on_confirm = defer_task_id.clone();
     let defer_plan = row.defer_plan.clone();
@@ -309,6 +311,8 @@ fn TaskRow(
         )
     });
     let is_leaf = row.is_leaf;
+    let is_projected = row.occurrence.is_projected();
+    let source_task_id = row.occurrence.source_task_id().map(str::to_owned);
     let schedule_display = row.schedule_display.clone();
     let schedule_accessible_label = match &schedule_display {
         ScheduleDisplayViewModel::Daily {
@@ -337,7 +341,8 @@ fn TaskRow(
         }
         tr { class: row_class,
             td { class: "session-cell",
-                if is_leaf {
+                if is_leaf && !is_projected {
+                    if let Some(task) = task {
                     button {
                         class: "session-start",
                         r#type: "button",
@@ -351,7 +356,8 @@ fn TaskRow(
                         span { class: "session-start-full-label", "セッション" }
                         span { class: "session-start-compact-label", aria_hidden: "true", "{button_text}" }
                     }
-                    if let Some(defer_plan) = defer_plan {
+                    }
+                    if let (Some(defer_plan), Some(defer_task_id)) = (defer_plan, defer_task_id) {
                         button {
                             class: "task-defer",
                             r#type: "button",
@@ -398,7 +404,17 @@ fn TaskRow(
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,
+                    if is_projected {
+                        span { class: "projected-task-badge", "予定" }
+                    }
                     "{row.task.task_name}"
+                    if let Some(source_task_id) = source_task_id.as_deref() {
+                        span {
+                            class: "projected-task-source",
+                            aria_label: format!("繰り返し元タスク {source_task_id}"),
+                            "元: {source_task_id}"
+                        }
+                    }
                 }
             }
         }
@@ -428,8 +444,11 @@ fn TaskRow(
                                 onclick: move |_| {
                                     if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
                                         confirming_defer.set(false);
-                                        if let Some(plan) = defer_plan_on_confirm.clone() {
-                                            on_defer_task.call((defer_task_id_on_confirm.clone(), plan));
+                                        if let (Some(task_id), Some(plan)) = (
+                                            defer_task_id_on_confirm.clone(),
+                                            defer_plan_on_confirm.clone(),
+                                        ) {
+                                            on_defer_task.call((task_id, plan));
                                         }
                                     }
                                 },

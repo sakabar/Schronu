@@ -139,6 +139,7 @@ impl WebReadServiceFixture {
 
         let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
         repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
         repository.start_new_project(parent).unwrap();
         repository.save().unwrap();
         (parent_id, child_id)
@@ -215,10 +216,7 @@ fn 日付別と全件serviceは繰り返しの将来回をread_only行として�
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     let future = service
-        .list_tasks_at(
-            operation_now,
-            NaiveDate::from_ymd_opt(2026, 9, 12).unwrap(),
-        )
+        .list_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap())
         .unwrap();
     let all = service.list_all_tasks_at(operation_now, None).unwrap();
 
@@ -226,13 +224,35 @@ fn 日付別と全件serviceは繰り返しの将来回をread_only行として�
     assert!(future.data[0].task.task_id.is_none());
     assert_eq!(future.data[0].occurrence.source_task_id(), Some(parent_id));
     assert_eq!(future.data[0].task.actual_work_seconds, 0);
-    assert_eq!(future.data[0].task.task_name, "routine");
+    assert_eq!(future.data[0].task.task_name, "routine(9/12)");
     assert!(all.data.rows.iter().any(|row| {
         row.task.task_id.is_none() && row.occurrence.source_task_id() == Some(parent_id)
     }));
-    assert!(all.data.rows.iter().any(|row| {
-        row.task.task_id.as_deref() == Some(&child_id.hyphenated().to_string())
+    assert!(all
+        .data
+        .rows
+        .iter()
+        .any(|row| { row.task.task_id.as_deref() == Some(&child_id.hyphenated().to_string()) }));
+}
+
+#[test]
+fn 全件serviceはprojected行を含めても500行境界とsnapshot順序を保つ() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_fixed_tasks(operation_now, 501);
+    let (parent_id, _) = fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let first = service.list_all_tasks_at(operation_now, None).unwrap();
+    assert_eq!(first.data.rows.len(), 500);
+    let second = service
+        .list_all_tasks_at(operation_now, first.data.next_cursor)
+        .unwrap();
+
+    assert!(second.data.rows.iter().any(|row| {
+        row.occurrence.source_task_id() == Some(parent_id) && row.task.task_id.is_none()
     }));
+    assert!(second.data.next_cursor.is_none());
 }
 
 #[test]
@@ -251,7 +271,7 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
             .data
             .rows
             .iter()
-            .map(|row| row.task.task_id.clone())
+            .filter_map(|row| row.task.task_id.clone())
             .collect::<Vec<_>>(),
         task_ids[..500]
             .iter()
@@ -290,11 +310,11 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
     assert_eq!(second.data.rows[0].segment_index, 500);
     assert_eq!(
         second.data.rows[0].task.task_id,
-        task_ids[500].hyphenated().to_string()
+        Some(task_ids[500].hyphenated().to_string())
     );
     assert_ne!(
         second.data.rows[0].task.task_id,
-        added_id.hyphenated().to_string()
+        Some(added_id.hyphenated().to_string())
     );
     assert_eq!(second.data.next_cursor, None);
     assert!(matches!(
@@ -375,17 +395,17 @@ fn 全件serviceは実repositoryの親葉pending葉をschedule順のrowへ変換
     let parent = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == parent_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(parent_id.hyphenated().to_string()))
         .unwrap();
     let child = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == child_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(child_id.hyphenated().to_string()))
         .unwrap();
     let pending = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == pending_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(pending_id.hyphenated().to_string()))
         .unwrap();
     assert!(!parent.is_leaf);
     assert!(child.is_leaf);
@@ -404,7 +424,7 @@ fn 全件serviceは同じtaskの複数segmentを別rowとして保持する() {
     let task_rows = page
         .rows
         .iter()
-        .filter(|row| row.task.task_id == task_id.hyphenated().to_string())
+        .filter(|row| row.task.task_id == Some(task_id.hyphenated().to_string()))
         .collect::<Vec<_>>();
     assert_eq!(task_rows.len(), 2);
     assert_ne!(task_rows[0].segment_index, task_rows[1].segment_index);
@@ -458,7 +478,7 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(all.data.rows[0].schedule_date, "2026-09-05");
     assert_eq!(
         all.data.rows[0].task.task_id,
-        task_id.hyphenated().to_string()
+        Some(task_id.hyphenated().to_string())
     );
     assert_eq!(
         all.data.rows[0].deadline_label,
@@ -471,7 +491,7 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(all.data.rows[0].is_leaf, listed.data[0].is_leaf);
     assert_eq!(
         listed.data[0].task.task_id,
-        task_id.hyphenated().to_string()
+        Some(task_id.hyphenated().to_string())
     );
     assert_eq!(listed.data[0].task.actual_work_seconds, 300);
     assert_eq!(

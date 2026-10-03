@@ -36,6 +36,10 @@ fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) 
             task_name: task_name.to_owned(),
             estimated_work_seconds: 900,
             actual_work_seconds: 300,
+        }
+        .into(),
+        occurrence: crate::ScheduleOccurrence::Actual {
+            task_id: task_id.to_owned(),
         },
         segment_index,
         schedule_date: "2026-09-06".to_owned(),
@@ -325,7 +329,7 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     parent.misses_deadline = true;
     parent.deadline_display_kind = crate::DeadlineDisplayKind::None;
     let rows = project_all_task_rows(&[fixed, repetitive, parent]);
-    assert_eq!(rows[0].row_key, "all:12");
+    assert_eq!(rows[0].row_key, "all:same:2026-09-06:12");
     assert_eq!(
         rows[0].schedule_display,
         crate::client::view_projection::ScheduleDisplayViewModel::AllTasksDate {
@@ -333,7 +337,7 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
         }
     );
     assert!(rows[0].defer_plan.is_none());
-    assert_eq!(rows[1].row_key, "all:13");
+    assert_eq!(rows[1].row_key, "all:same:2026-09-06:13");
     assert!(!rows[2].is_leaf);
     assert_eq!(rows[0].task_display_kind, crate::TaskDisplayKind::Fixed);
     assert_eq!(
@@ -419,8 +423,8 @@ fn all検索後は一致taskだけから日付区切りを再計算する() {
 
     assert_eq!(projected.rows.len(), 2);
     assert!(!projected.has_more);
-    assert_eq!(projected.rows[0].row_key, "all:10");
-    assert_eq!(projected.rows[1].row_key, "all:12");
+    assert_eq!(projected.rows[0].row_key, "all:first:2026-09-06:10");
+    assert_eq!(projected.rows[1].row_key, "all:after-gap:2026-09-10:12");
     assert_eq!(
         projected.rows[1].gap_before.as_deref(),
         Some("3日間の空き時間")
@@ -467,7 +471,7 @@ fn all行の区切りはtask件数上限に含めずさらに表示で先頭か�
 
     let filtered = project_visible_all_task_rows(&rows, "検索", 501);
     assert_eq!(filtered.rows.len(), 501);
-    assert_eq!(filtered.rows[500].row_key, "all:500");
+    assert_eq!(filtered.rows[500].row_key, "all:task-500:2026-09-10:500");
     assert_eq!(
         filtered.rows[500].gap_before.as_deref(),
         Some("3日間の空き時間")
@@ -496,6 +500,6 @@ fn all生rowは検索後に表示上限までだけprojectionする() {
     let projected = project_visible_all_task_rows(&rows, "  検索対象 task  ", 500);
     assert_eq!(projected.rows.len(), 500);
     assert!(projected.has_more);
-    assert_eq!(projected.rows[0].row_key, "all:0");
-    assert_eq!(projected.rows[499].row_key, "all:998");
+    assert_eq!(projected.rows[0].row_key, "all:task-0:2026-09-06:0");
+    assert_eq!(projected.rows[499].row_key, "all:task-998:2026-09-06:998");
 }

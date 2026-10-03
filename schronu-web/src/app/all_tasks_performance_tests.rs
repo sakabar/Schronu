@@ -96,6 +96,10 @@ fn all_task_rows(count: usize) -> Vec<AllTaskRow> {
                 },
                 estimated_work_seconds: 1_800,
                 actual_work_seconds: 0,
+            }
+            .into(),
+            occurrence: crate::ScheduleOccurrence::Actual {
+                task_id: format!("00000000-0000-4000-8000-{index:012x}"),
             },
             segment_index: index,
             schedule_date: "2026-09-05".to_owned(),

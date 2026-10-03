@@ -1,7 +1,7 @@
 use super::date_buttons::logical_date_buttons;
 use super::state::ActiveTab;
 use super::work_sessions::{KeyValueStorage, StorageError};
-use crate::{DeferMode, ScheduledTaskRow, ServerSnapshot};
+use crate::{DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot};
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -138,7 +138,7 @@ fn valid_logical_date(logical_date: &str) -> bool {
 }
 
 fn valid_row(row: &ScheduledTaskRow) -> bool {
-    Uuid::parse_str(&row.task.task_id).is_ok()
+    valid_occurrence(row)
         && !row.task.task_name.trim().is_empty()
         && row.task.estimated_work_seconds >= 0
         && row.task.actual_work_seconds >= 0
@@ -146,25 +146,54 @@ fn valid_row(row: &ScheduledTaskRow) -> bool {
         && valid_epoch(row.schedule_end_epoch_ms)
         && row.schedule_start_epoch_ms <= row.schedule_end_epoch_ms
         && row.deadline_epoch_ms.is_none_or(valid_epoch)
-        && valid_epoch(row.defer_plan.requested_pending_until_epoch_ms)
-        && match row.defer_plan.mode {
+        && row.defer_plan.as_ref().is_none_or(valid_defer_plan)
+}
+
+fn valid_occurrence(row: &ScheduledTaskRow) -> bool {
+    match &row.occurrence {
+        ScheduleOccurrence::Actual { task_id } => {
+            row.task.task_id.as_deref() == Some(task_id.as_str())
+                && Uuid::parse_str(task_id).is_ok()
+                && row.defer_plan.is_some()
+        }
+        ScheduleOccurrence::Projected {
+            occurrence_key,
+            source_task_id,
+        } => {
+            row.task.task_id.is_none()
+                && !occurrence_key.trim().is_empty()
+                && Uuid::parse_str(source_task_id).is_ok()
+                && row.defer_plan.is_none()
+        }
+        ScheduleOccurrence::LegacyActual => {
+            row.task
+                .task_id
+                .as_deref()
+                .is_some_and(|task_id| Uuid::parse_str(task_id).is_ok())
+                && row.defer_plan.is_some()
+        }
+    }
+}
+
+fn valid_defer_plan(defer_plan: &DeferPlan) -> bool {
+    valid_epoch(defer_plan.requested_pending_until_epoch_ms)
+        && match defer_plan.mode {
             DeferMode::Normal => {
-                row.defer_plan.effective_pending_until_epoch_ms.is_none()
-                    && row.defer_plan.repetition_interval_days.is_none()
+                defer_plan.effective_pending_until_epoch_ms.is_none()
+                    && defer_plan.repetition_interval_days.is_none()
             }
             DeferMode::DeadlineLimited => {
-                row.defer_plan
+                defer_plan
                     .effective_pending_until_epoch_ms
                     .is_some_and(|effective| {
                         valid_epoch(effective)
-                            && effective < row.defer_plan.requested_pending_until_epoch_ms
+                            && effective < defer_plan.requested_pending_until_epoch_ms
                     })
-                    && row.defer_plan.repetition_interval_days.is_none()
+                    && defer_plan.repetition_interval_days.is_none()
             }
             DeferMode::RoutinePeriod => {
-                row.defer_plan.effective_pending_until_epoch_ms.is_none()
-                    && row
-                        .defer_plan
+                defer_plan.effective_pending_until_epoch_ms.is_none()
+                    && defer_plan
                         .repetition_interval_days
                         .is_some_and(|days| days > 0)
             }

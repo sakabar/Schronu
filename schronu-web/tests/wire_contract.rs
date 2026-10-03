@@ -2,7 +2,8 @@ use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
     ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError, WebSuccess,
+    ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
+    WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -21,7 +22,10 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         actual_work_seconds: 300,
     };
     let row = ScheduledTaskRow {
-        task: task.clone(),
+        task: task.clone().into(),
+        occurrence: ScheduleOccurrence::Actual {
+            task_id: task.task_id.clone(),
+        },
         schedule_start_epoch_ms: 1_788_565_500_000,
         schedule_end_epoch_ms: 1_788_566_100_000,
         deadline_epoch_ms: Some(1_788_566_400_000),
@@ -30,12 +34,12 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         task_display_kind: TaskDisplayKind::Fixed,
         deadline_display_kind: DeadlineDisplayKind::Future,
         is_leaf: true,
-        defer_plan: DeferPlan {
+        defer_plan: Some(DeferPlan {
             mode: DeferMode::DeadlineLimited,
             requested_pending_until_epoch_ms: 1_788_650_400_000,
             effective_pending_until_epoch_ms: Some(1_788_566_100_000),
             repetition_interval_days: None,
-        },
+        }),
     };
 
     assert_json_round_trip(
@@ -84,7 +88,10 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
             snapshot: snapshot.clone(),
             data: AllTaskPage {
                 rows: vec![AllTaskRow {
-                    task: task.clone(),
+                    task: task.clone().into(),
+                    occurrence: ScheduleOccurrence::Actual {
+                        task_id: task.task_id.clone(),
+                    },
                     segment_index: 0,
                     schedule_date: "2026-09-05".to_owned(),
                     deadline_epoch_ms: None,
@@ -110,6 +117,10 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                         "task_name": "wire task",
                         "estimated_work_seconds": 900,
                         "actual_work_seconds": 300
+                    },
+                    "occurrence": {
+                        "kind": "actual",
+                        "task_id": "00000000-0000-0000-0000-000000000001"
                     },
                     "segment_index": 0,
                     "schedule_date": "2026-09-05",
@@ -141,6 +152,10 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                     "task_name": "wire task",
                     "estimated_work_seconds": 900,
                     "actual_work_seconds": 300
+                },
+                "occurrence": {
+                    "kind": "actual",
+                    "task_id": "00000000-0000-0000-0000-000000000001"
                 },
                 "schedule_start_epoch_ms": 1_788_565_500_000_i64,
                 "schedule_end_epoch_ms": 1_788_566_100_000_i64,
@@ -293,6 +308,44 @@ fn 旧一覧payloadは表示分類fieldがなくてもdeserializeできる() {
     assert_eq!(scheduled.task_display_kind, TaskDisplayKind::NonRepetitive);
     assert_eq!(scheduled.deadline_display_kind, DeadlineDisplayKind::None);
     assert!(scheduled.misses_deadline);
+    assert_eq!(scheduled.occurrence, ScheduleOccurrence::LegacyActual);
+    assert_eq!(
+        scheduled.task.task_id.as_deref(),
+        Some("00000000-0000-0000-0000-000000000001")
+    );
+}
+
+#[test]
+fn projected一覧payloadはactionable_task_idを持たず安定identityを保持する() {
+    let projected: ScheduledTaskRow = serde_json::from_value(json!({
+        "task": {
+            "task_name": "筋トレ(9/8)",
+            "estimated_work_seconds": 900,
+            "actual_work_seconds": 0
+        },
+        "occurrence": {
+            "kind": "projected",
+            "occurrence_key": "parent:1788876000000",
+            "source_task_id": "00000000-0000-0000-0000-000000000010"
+        },
+        "schedule_start_epoch_ms": 1_788_876_000_000_i64,
+        "schedule_end_epoch_ms": 1_788_876_900_000_i64,
+        "deadline_epoch_ms": 1_788_879_600_000_i64,
+        "deadline_label": "____-00:45",
+        "misses_deadline": false,
+        "task_display_kind": "repetitive",
+        "deadline_display_kind": "today",
+        "is_leaf": true
+    }))
+    .unwrap();
+
+    assert!(projected.task.task_id.is_none());
+    assert!(projected.task.actionable_task().is_none());
+    assert!(projected.defer_plan.is_none());
+    assert_eq!(
+        projected.occurrence.occurrence_key(),
+        Some("parent:1788876000000")
+    );
 }
 
 #[test]

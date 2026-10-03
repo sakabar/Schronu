@@ -10,7 +10,7 @@ use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
 #[test]
-fn projected_occurrenceはsession・defer操作用rowを構築しない() {
+fn projected_occurrenceはread_onlyの一覧rowを構築する() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
     let source_task_id = Uuid::from_u128(901);
     let task = TaskHandle::with_identity("projected", source_task_id, start).unwrap();
@@ -36,8 +36,18 @@ fn projected_occurrenceはsession・defer操作用rowを構築しない() {
         build_scheduled_task_rows(&repository, &schedule, start.date_naive(), start).unwrap();
     let all_rows = build_all_task_rows(&repository, &schedule, start).unwrap();
 
-    assert!(scheduled_rows.is_empty());
-    assert!(all_rows.is_empty());
+    assert_eq!(scheduled_rows.len(), 1);
+    assert_eq!(all_rows.len(), 1);
+    assert!(scheduled_rows[0].task.task_id.is_none());
+    assert!(scheduled_rows[0].defer_plan.is_none());
+    assert_eq!(scheduled_rows[0].task.actual_work_seconds, 0);
+    let expected_source_task_id = source_task_id.hyphenated().to_string();
+    assert!(matches!(
+        scheduled_rows[0].occurrence,
+        super::web_service::ScheduleOccurrenceDto::Projected { ref source_task_id, .. }
+            if source_task_id == &expected_source_task_id
+    ));
+    assert!(all_rows[0].task.task_id.is_none());
 }
 
 #[test]
@@ -108,9 +118,18 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let rows = build_scheduled_task_rows(&repository, &schedule, date, day_start).unwrap();
 
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].task.task_id, second_id.hyphenated().to_string());
-    assert_eq!(rows[1].task.task_id, first_id.hyphenated().to_string());
-    assert_eq!(rows[2].task.task_id, first_id.hyphenated().to_string());
+    assert_eq!(
+        rows[0].task.task_id,
+        Some(second_id.hyphenated().to_string())
+    );
+    assert_eq!(
+        rows[1].task.task_id,
+        Some(first_id.hyphenated().to_string())
+    );
+    assert_eq!(
+        rows[2].task.task_id,
+        Some(first_id.hyphenated().to_string())
+    );
     assert_eq!(
         rows[0].schedule_start_epoch_ms,
         rows[1].schedule_start_epoch_ms
@@ -150,7 +169,7 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     .unwrap();
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].task.task_id, task_id.hyphenated().to_string());
+    assert_eq!(rows[0].task.task_id, Some(task_id.hyphenated().to_string()));
     assert_eq!(rows[0].task.task_name, "DTO task");
     assert_eq!(rows[0].task.estimated_work_seconds, 1_800);
     assert_eq!(rows[0].task.actual_work_seconds, 300);
@@ -163,16 +182,17 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     assert_eq!(rows[0].deadline_label, "____-07:40");
     assert!(!rows[0].misses_deadline);
     assert!(rows[0].is_leaf);
-    assert_eq!(rows[0].defer_plan.mode, DeferModeDto::DeadlineLimited);
+    let defer_plan = rows[0].defer_plan.as_ref().unwrap();
+    assert_eq!(defer_plan.mode, DeferModeDto::DeadlineLimited);
     assert_eq!(
-        rows[0].defer_plan.requested_pending_until_epoch_ms,
+        defer_plan.requested_pending_until_epoch_ms,
         Local
             .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
             .unwrap()
             .timestamp_millis()
     );
     assert_eq!(
-        rows[0].defer_plan.effective_pending_until_epoch_ms,
+        defer_plan.effective_pending_until_epoch_ms,
         Some(
             Local
                 .with_ymd_and_hms(2026, 9, 5, 15, 25, 0)

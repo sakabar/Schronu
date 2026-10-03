@@ -14,7 +14,8 @@ mod all_tasks_performance_tests;
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
     AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
-    DeferPlanDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
+    DeferPlanDto, ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto, ServerSnapshot,
+    SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,

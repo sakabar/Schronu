@@ -54,8 +54,43 @@ pub struct SessionTaskDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScheduledTaskDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    pub task_name: String,
+    pub estimated_work_seconds: i64,
+    pub actual_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleOccurrenceDto {
+    Actual {
+        task_id: String,
+    },
+    Projected {
+        occurrence_key: String,
+        source_task_id: String,
+    },
+    #[default]
+    LegacyActual,
+}
+
+impl ScheduleOccurrenceDto {
+    #[cfg(test)]
+    pub fn source_task_id(&self) -> Option<uuid::Uuid> {
+        match self {
+            Self::Projected { source_task_id, .. } => uuid::Uuid::parse_str(source_task_id).ok(),
+            Self::Actual { .. } | Self::LegacyActual => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskRowDto {
-    pub task: SessionTaskDto,
+    pub task: ScheduledTaskDto,
+    #[serde(default)]
+    pub occurrence: ScheduleOccurrenceDto,
     pub schedule_start_epoch_ms: i64,
     pub schedule_end_epoch_ms: i64,
     pub deadline_epoch_ms: Option<i64>,
@@ -66,12 +101,15 @@ pub struct ScheduledTaskRowDto {
     #[serde(default)]
     pub deadline_display_kind: DeadlineDisplayKind,
     pub is_leaf: bool,
-    pub defer_plan: DeferPlanDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_plan: Option<DeferPlanDto>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRowDto {
-    pub task: SessionTaskDto,
+    pub task: ScheduledTaskDto,
+    #[serde(default)]
+    pub occurrence: ScheduleOccurrenceDto,
     pub segment_index: usize,
     pub schedule_date: String,
     pub deadline_epoch_ms: Option<i64>,

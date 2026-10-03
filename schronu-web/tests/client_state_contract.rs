@@ -229,6 +229,25 @@ fn rank非0の一覧taskは手動sessionへ追加しない() {
 }
 
 #[test]
+fn projected一覧taskはleafでも手動sessionへ追加しない() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 2_000).unwrap();
+    let mut projected = row(TASK_ID, 0);
+    projected.task.task_id = None;
+    projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
+        occurrence_key: "parent:1788876000000".to_owned(),
+        source_task_id: OTHER_TASK_ID.to_owned(),
+    };
+    projected.defer_plan = None;
+
+    assert_eq!(
+        state.add_session_from_row(&storage, &projected),
+        ClientEffect::None
+    );
+    assert!(state.sessions().is_empty());
+}
+
+#[test]
 fn bufferは成功したsession破棄で未作業時間を再計算する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000_000).unwrap();
@@ -921,7 +940,7 @@ fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加�
         request_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 2),
-            data: Some(row(TASK_ID, 0).task),
+            data: Some(row(TASK_ID, 0).task.actionable_task().unwrap()),
         }),
     );
     assert!(state.sessions().is_empty());

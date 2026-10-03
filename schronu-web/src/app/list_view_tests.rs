@@ -227,7 +227,10 @@ fn named_row(
 ) -> ListRowViewModel {
     ListRowViewModel {
         row_key: format!("row:{task_id}"),
-        task: task(task_id, task_name),
+        task: task(task_id, task_name).into(),
+        occurrence: crate::ScheduleOccurrence::Actual {
+            task_id: task_id.to_owned(),
+        },
         deadline_label: "____-01:00".to_owned(),
         schedule_display: ScheduleDisplayViewModel::Daily {
             start_hh_mm: "11:25".to_owned(),
@@ -251,6 +254,34 @@ fn named_row(
         }),
         defer_confirmation: None,
     }
+}
+
+#[test]
+fn projected行は予定と元taskを表示しsessionと先送り操作を描画しない() {
+    let mut projected = named_row("unused", "筋トレ(9/8)", false, true);
+    projected.task.task_id = None;
+    projected.occurrence = crate::ScheduleOccurrence::Projected {
+        occurrence_key: "parent:1788876000000".to_owned(),
+        source_task_id: "00000000-0000-0000-0000-000000000010".to_owned(),
+    };
+    projected.defer_plan = None;
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![projected],
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("projected-task-badge"), "{html}");
+    assert!(html.contains("予定"), "{html}");
+    assert!(
+        html.contains("元: 00000000-0000-0000-0000-000000000010"),
+        "{html}"
+    );
+    assert!(!html.contains("class=\"session-start\""), "{html}");
+    assert!(!html.contains("class=\"task-defer\""), "{html}");
 }
 
 #[test]

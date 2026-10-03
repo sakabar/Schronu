@@ -133,11 +133,12 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-020**: 全件取得中、失敗、無効化のstatusは一覧領域内へ表示し、全面overlayと背面の`inert`を使用しないこと。全件取得中もtab、曜日button、日付入力を操作でき、日付入力は「全て」表示中も常に表示して、妥当な送信時は指定日の日付別一覧へ切り替えること。
 - **REQ-LIST-021**: 全件検索は取得完了時だけ表示し、日付別一覧と共有する検索文字列を使うこと。日付別との往復、全件一覧の無効化、reload後も維持し、セッション追加成功時は操作元にかかわらず共有検索文字列を消去すること。
 - **REQ-LIST-022**: 全件一覧は検索後の先頭500行だけを描画し、「さらに表示」で500行ずつ増やすこと。共有検索文字列を変更またはclearした場合は、選択中の一覧にかかわらず描画上限を500へ戻すこと。
-- **REQ-LIST-023**: 全件行は`get_schedule`が返す全実task segmentと1対1で、同一taskの複数segment、対応順、連続する`segment_index`を保持すること。予定列はsegmentのlogical dateを`YYYY/MM/DD(曜)`で表示し、締切label、締切・taskの表示分類、葉判定は日付別一覧と共通のserver計算を用い、clientで再分類しないこと。
+- **REQ-LIST-023**: 全件行は`get_schedule`が返す実taskと繰り返し予測の全segmentと1対1で、同一occurrenceの複数segment、対応順、連続する`segment_index`を保持すること。予定列はsegmentのlogical dateを`YYYY/MM/DD(曜)`で表示し、締切label、締切・taskの表示分類、葉判定は日付別一覧と共通のserver計算を用い、clientで再分類しないこと。
 - **REQ-LIST-024**: 全件一覧ではrank 0行にセッション追加だけを表示し、先送りを表示しないこと。rank非0の操作cellは空とし、同一UUIDのセッションが存在する場合は全segmentを追加済み表示にすること。列幅はviewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`とし、日付別一覧の列幅とtask名cell内横scrollを維持すること。
 - **REQ-LIST-025**: `record_session`、`complete_session`、`defer_task`の成功時だけ全件状態を無効化し、遅延した全件responseで古い一覧を復活させないこと。localのセッション追加、破棄、再開では無効化しないこと。
 - **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。
 - **REQ-LIST-027**: 日付別一覧は、選択日が現在logical dateならsnapshot観測時刻から先頭taskまで、および先行taskの最遅終了時刻から次task開始までの1分以上を「N分間の空き時間」として次taskの直前へ表示すること。現在日以外の先頭task前と最終task後は表示せず、trim後の検索文字列が空でない間は分単位の空き時間を表示しないこと。全件一覧はtask名検索後に表示上限内となる実taskのみを予定順で投影し、隣接する表示task日間の予定のないlogical date数を「N日間の空き時間」として次taskの直前へ表示すること。空き日がなく翌logical dateへ変わる場合は次task行の上へ全幅の境界線を表示し、検索中も両方を表示すること。検索不一致taskの日付は差分に含めず、空き時間行と境界線を500task件数、cursor、`segment_index`に含めないこと。
+- **REQ-LIST-028**: 日付別・全件一覧は28日窓へ展開された繰り返し予測もschedule順に表示すること。予測行は「予定」badgeと繰り返し元task UUIDを表示し、task名検索、予定日時・時間、締切警告、繰返色を実task行と同じ規則で適用すること。予測行はactionableなtask UUIDを持たず、rankにかかわらずセッション追加・先送りを表示またはdispatchしないこと。`is_leaf`を操作可否へ読み替えないこと。
 
 ### 4.8 負荷画面
 

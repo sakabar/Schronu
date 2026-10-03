@@ -67,7 +67,10 @@ impl ClientState {
         storage: &S,
         row: &ScheduledTaskRow,
     ) -> ClientEffect {
-        self.add_session_from_list_task(storage, &row.task, row.is_leaf)
+        let Some(task) = row.task.actionable_task() else {
+            return ClientEffect::None;
+        };
+        self.add_session_from_list_task(storage, &task, row.is_leaf)
     }
 
     pub(crate) fn add_session_from_list_task<S: KeyValueStorage>(

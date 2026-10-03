@@ -34,6 +34,71 @@ pub struct SessionTask {
     pub actual_work_seconds: i64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScheduledTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    pub task_name: String,
+    pub estimated_work_seconds: i64,
+    pub actual_work_seconds: i64,
+}
+
+impl ScheduledTask {
+    pub fn actionable_task(&self) -> Option<SessionTask> {
+        Some(SessionTask {
+            task_id: self.task_id.clone()?,
+            task_name: self.task_name.clone(),
+            estimated_work_seconds: self.estimated_work_seconds,
+            actual_work_seconds: self.actual_work_seconds,
+        })
+    }
+}
+
+impl From<SessionTask> for ScheduledTask {
+    fn from(task: SessionTask) -> Self {
+        Self {
+            task_id: Some(task.task_id),
+            task_name: task.task_name,
+            estimated_work_seconds: task.estimated_work_seconds,
+            actual_work_seconds: task.actual_work_seconds,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScheduleOccurrence {
+    Actual {
+        task_id: String,
+    },
+    Projected {
+        occurrence_key: String,
+        source_task_id: String,
+    },
+    #[default]
+    LegacyActual,
+}
+
+impl ScheduleOccurrence {
+    pub fn is_projected(&self) -> bool {
+        matches!(self, Self::Projected { .. })
+    }
+
+    pub fn occurrence_key(&self) -> Option<&str> {
+        match self {
+            Self::Projected { occurrence_key, .. } => Some(occurrence_key),
+            Self::Actual { .. } | Self::LegacyActual => None,
+        }
+    }
+
+    pub fn source_task_id(&self) -> Option<&str> {
+        match self {
+            Self::Projected { source_task_id, .. } => Some(source_task_id),
+            Self::Actual { .. } | Self::LegacyActual => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskDisplayKind {
@@ -55,7 +120,9 @@ pub enum DeadlineDisplayKind {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskRow {
-    pub task: SessionTask,
+    pub task: ScheduledTask,
+    #[serde(default)]
+    pub occurrence: ScheduleOccurrence,
     pub schedule_start_epoch_ms: i64,
     pub schedule_end_epoch_ms: i64,
     pub deadline_epoch_ms: Option<i64>,
@@ -66,12 +133,15 @@ pub struct ScheduledTaskRow {
     #[serde(default)]
     pub deadline_display_kind: DeadlineDisplayKind,
     pub is_leaf: bool,
-    pub defer_plan: DeferPlan,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub defer_plan: Option<DeferPlan>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRow {
-    pub task: SessionTask,
+    pub task: ScheduledTask,
+    #[serde(default)]
+    pub occurrence: ScheduleOccurrence,
     pub segment_index: usize,
     pub schedule_date: String,
     pub deadline_epoch_ms: Option<i64>,
@@ -146,6 +216,10 @@ mod all_task_contract_tests {
                 task_name: "name".to_owned(),
                 estimated_work_seconds: 1,
                 actual_work_seconds: 0,
+            }
+            .into(),
+            occurrence: ScheduleOccurrence::Actual {
+                task_id: "task".to_owned(),
             },
             segment_index: 0,
             schedule_date: "2026-09-05".to_owned(),
