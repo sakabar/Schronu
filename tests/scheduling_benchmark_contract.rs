@@ -95,9 +95,14 @@ fn recurring_projectionは入力数と窓内回数に有界に展開する() {
 
         let (schedule, metrics) = get_schedule_diagnostics(&repository).unwrap();
         let projected_count = schedule.iter().filter(|task| task.is_projected()).count();
+        let candidate_limit = source_count * OCCURRENCES_PER_SOURCE;
 
-        assert_eq!(metrics.candidate_count, source_count * OCCURRENCES_PER_SOURCE);
+        assert_eq!(metrics.candidate_count, candidate_limit);
         assert_eq!(projected_count, source_count * PROJECTED_PER_SOURCE);
+        assert!(metrics.dependency_candidate_probe_count <= candidate_limit);
+        assert!(metrics.selection_candidate_probe_count <= candidate_limit);
+        assert!(metrics.release_candidate_probe_count <= candidate_limit);
+        assert!(metrics.slack_probe_count <= candidate_limit * 16);
         assert_eq!(metrics.schedule_rebuild_count, 1);
         assert_eq!(metrics.sort_count, 2);
     }
