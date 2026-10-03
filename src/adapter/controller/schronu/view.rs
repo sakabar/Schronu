@@ -103,26 +103,35 @@ pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
     format_task_list_columns(&task_list_columns(row, TaskListIconMode::Original))
 }
 
+#[cfg(test)]
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
     is_leaf: bool,
     last_synced_time: DateTime<Local>,
 ) -> Result<String, ApplicationError> {
-    if !is_leaf
-        || task
-            .get_is_on_other_side()
-            .map_err(ApplicationError::TaskTree)?
-    {
-        return Ok("".to_string());
-    }
-
-    let planned_date = try_logical_date(dt)?;
-    let available_datetime = max(
+    let is_on_other_side = task
+        .get_is_on_other_side()
+        .map_err(ApplicationError::TaskTree)?;
+    let first_available_time = max(
         task.get_start_time().map_err(ApplicationError::TaskTree)?,
         last_synced_time,
     );
-    let available_date = try_logical_date(available_datetime)?;
+    get_schedule_adjustable_prefix_label(is_on_other_side, is_leaf, first_available_time, dt)
+}
+
+fn get_schedule_adjustable_prefix_label(
+    is_on_other_side: bool,
+    is_leaf: bool,
+    first_available_time: DateTime<Local>,
+    scheduled_start: DateTime<Local>,
+) -> Result<String, ApplicationError> {
+    if !is_leaf || is_on_other_side {
+        return Ok("".to_string());
+    }
+
+    let planned_date = try_logical_date(scheduled_start)?;
+    let available_date = try_logical_date(first_available_time)?;
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -884,7 +893,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
         .zip(&scheduled_logical_dates)
         .enumerate()
     {
-        let dt = &scheduled_task.first_available_time;
         let scheduled_start = &scheduled_task.scheduled_start;
         let scheduled_end = &scheduled_task.scheduled_end;
         let scheduled_work_seconds = scheduled_task.scheduled_work_seconds;
@@ -941,6 +949,26 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 .or_insert(estimated_work_seconds);
         }
 
+        let adjustable_prefix_label = get_schedule_adjustable_prefix_label(
+            scheduled_task.task.is_on_other_side,
+            scheduled_task.is_leaf(),
+            scheduled_task.first_available_time,
+            *scheduled_start,
+        )?;
+        if !adjustable_prefix_label.is_empty() {
+            let task_estimated_work_seconds = scheduled_task.task.estimated_work_seconds;
+            adjustable_estimated_work_seconds_map
+                .entry(logical_naive_date)
+                .and_modify(|estimated_work_seconds_val| {
+                    *estimated_work_seconds_val += task_estimated_work_seconds
+                })
+                .or_insert(task_estimated_work_seconds);
+            adjustable_scheduled_work_seconds_for_capacity_alert
+                .entry(logical_naive_date)
+                .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
+                .or_insert(scheduled_work_seconds);
+        }
+
         let current_datetime_cursor_clone = current_datetime_cursor;
 
         // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
@@ -995,16 +1023,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
             }
 
-            // 前倒し可能なタスクの見積もり時間をカウントする
-            let adjustable_prefix_label = get_adjustable_prefix_label(
-                &task,
-                *dt,
-                scheduled_task.is_leaf(),
-                last_synced_time,
-            )?;
-            let task_estimated_work_seconds = task
-                .get_estimated_work_seconds()
-                .map_err(ApplicationError::TaskTree)?;
             let task_deadline_time_opt = task
                 .get_deadline_time_opt()
                 .map_err(ApplicationError::TaskTree)?;
@@ -1022,19 +1040,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             } else {
                 TaskListTaskKind::NonRepetitive
             };
-
-            if !adjustable_prefix_label.is_empty() {
-                adjustable_estimated_work_seconds_map
-                    .entry(logical_naive_date)
-                    .and_modify(|estimated_work_seconds_val| {
-                        *estimated_work_seconds_val += task_estimated_work_seconds
-                    })
-                    .or_insert(task_estimated_work_seconds);
-                adjustable_scheduled_work_seconds_for_capacity_alert
-                    .entry(logical_naive_date)
-                    .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
-                    .or_insert(scheduled_work_seconds);
-            }
 
             let name = format!(
                 "{}{}{}",
@@ -1321,7 +1326,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 DeadlineDisplayStatus::Overrun | DeadlineDisplayStatus::DueWithinLogicalDate
             );
             let occurrence_key = format!("projected:{source_task_id}:{}", deadline.to_rfc3339());
-            let task_name = scheduled_task.task.name.clone();
+            let task_name = format!("{adjustable_prefix_label}{}", scheduled_task.task.name);
             let row = TaskListDisplayRow::new_projected(
                 logical_naive_date,
                 *rank,
