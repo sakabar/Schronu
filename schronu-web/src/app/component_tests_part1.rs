@@ -117,6 +117,13 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     );
 }
 
+fn render_band_load_view(dom: &mut VirtualDom) -> String {
+    let click_ids = rebuild_with_click_listeners(dom);
+    dispatch_click(dom, click_ids[2]);
+    dom.render_immediate_to_vec();
+    dioxus::ssr::render(dom)
+}
+
 #[test]
 fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知する() {
     fn root() -> Element {
@@ -158,8 +165,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert!(html.contains("直近7日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
@@ -253,8 +259,8 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         "{initial_html}"
     );
 
-    assert_eq!(click_ids.len(), 4, "2表示tab、更新、負荷日rowの順を保つ");
-    dispatch_click(&dom, click_ids[1]);
+    assert_eq!(click_ids.len(), 3, "更新と2表示tabだけが初期表示される");
+    dispatch_click(&dom, click_ids[2]);
     dom.render_immediate_to_vec();
     let band_html = dioxus::ssr::render(&dom);
     assert!(band_html.contains("直近7日の負荷"), "{band_html}");
@@ -298,8 +304,7 @@ fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let today_start = html
         .find("<button class=\"load-day is-today\"")
         .expect("today row must exist");
@@ -373,8 +378,7 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let today_start = html
         .find("<button class=\"load-day is-today\"")
         .expect("today row must exist");
@@ -422,8 +426,7 @@ fn 負荷viewは残り容量zeroを空barとして表示する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
     let focus_start = html
         .find("<span class=\"load-focus-group\"")
         .expect("remaining focus group must exist");
@@ -467,8 +470,7 @@ fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert_eq!(
         html.matches("class=\"load-overflow-fill\" style=\"width:100.0000%\"")
@@ -496,8 +498,7 @@ fn 負荷viewはerror時にcompact固定高を解除するclassを付ける() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert!(html.contains("<section class=\"load-view has-error\""), "{html}");
 }
@@ -519,8 +520,7 @@ fn 背景更新中の負荷操作はbuttonを無効化する() {
     }
 
     let mut dom = VirtualDom::new(root);
-    dom.rebuild_in_place();
-    let html = dioxus::ssr::render(&dom);
+    let html = render_band_load_view(&mut dom);
 
     assert_eq!(html.matches(" disabled").count(), 2, "{html}");
 }

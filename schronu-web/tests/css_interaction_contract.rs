@@ -136,7 +136,7 @@ fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
     assert!(wrapper.contains("overflow-x: auto;"));
     assert!(wrapper.contains("max-width: 100%;"));
 
-    let table = block_body(MAIN_CSS, ".routine-load-table");
+    let table = block_body(MAIN_CSS, ".routine-load-table {");
     assert!(table.contains("min-width:"));
     assert!(table.contains("width: 100%;"));
 }

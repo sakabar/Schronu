@@ -1,14 +1,21 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
-use crate::{BandDay, BandDurations};
+use crate::{BandDay, BandDurations, RoutineLoadReport, RoutineLoadRow};
 use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
 use dioxus::prelude::*;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 
+#[derive(Clone, Copy, PartialEq)]
+enum LoadMode {
+    Routine,
+    Band,
+}
+
 #[component]
 pub(crate) fn LoadView(
     rows: Vec<BandDay>,
+    routine_load_report: Option<RoutineLoadReport>,
     observed_at_epoch_ms: Option<i64>,
     loading: bool,
     error: Option<String>,
@@ -16,10 +23,12 @@ pub(crate) fn LoadView(
     on_refresh: EventHandler<()>,
     on_select_date: EventHandler<String>,
 ) -> Element {
-    let view_class = if error.is_some() {
-        "load-view has-error"
-    } else {
-        "load-view"
+    let mut mode = use_signal(|| LoadMode::Routine);
+    let view_class = match (mode(), error.is_some()) {
+        (LoadMode::Routine, true) => "load-view is-routine has-error",
+        (LoadMode::Routine, false) => "load-view is-routine",
+        (LoadMode::Band, true) => "load-view has-error",
+        (LoadMode::Band, false) => "load-view",
     };
     let updated = observed_at_epoch_ms
         .and_then(|epoch| Local.timestamp_millis_opt(epoch).single())
@@ -34,10 +43,16 @@ pub(crate) fn LoadView(
         })
         .unwrap_or_else(|| "未取得".to_owned());
     rsx! {
-        section { class: view_class, aria_label: "直近7日の負荷",
+        section { class: view_class, aria_label: "負荷",
             div { class: "load-toolbar",
                 div {
-                    h2 { "直近7日の負荷" }
+                    h2 {
+                        if mode() == LoadMode::Routine {
+                            "今後28日の繰返負荷"
+                        } else {
+                            "直近7日の負荷"
+                        }
+                    }
                     p { class: "load-updated", "{updated}" }
                 }
                 button {
@@ -52,28 +67,118 @@ pub(crate) fn LoadView(
                     if loading { "更新中…" } else { "更新" }
                 }
             }
-            BandLegend {}
+            div { class: "load-mode-tabs", role: "tablist", aria_label: "負荷表示",
+                button {
+                    class: if mode() == LoadMode::Routine { "load-mode-tab is-selected" } else { "load-mode-tab" },
+                    r#type: "button",
+                    aria_pressed: mode() == LoadMode::Routine,
+                    onclick: move |_| mode.set(LoadMode::Routine),
+                    "繰返負荷"
+                }
+                button {
+                    class: if mode() == LoadMode::Band { "load-mode-tab is-selected" } else { "load-mode-tab" },
+                    r#type: "button",
+                    aria_pressed: mode() == LoadMode::Band,
+                    onclick: move |_| mode.set(LoadMode::Band),
+                    "7日負荷"
+                }
+            }
             if let Some(error) = error {
                 p { class: "load-error", role: "alert", "{error}" }
             }
-            if rows.is_empty() && loading {
-                p { class: "load-status", role: "status", "負荷を取得しています…" }
-            } else if rows.is_empty() {
-                p { class: "load-status", "負荷は未取得です。" }
+            if mode() == LoadMode::Routine {
+                RoutineLoadTable { report: routine_load_report, loading }
             } else {
-                div { class: "load-days",
-                    for (index, row) in rows.into_iter().enumerate() {
-                        BandDayRow {
-                            row,
-                            today: index == 0,
-                            disabled: server_actions_blocked,
-                            on_select_date,
+                BandLegend {}
+                if rows.is_empty() && loading {
+                    p { class: "load-status", role: "status", "負荷を取得しています…" }
+                } else if rows.is_empty() {
+                    p { class: "load-status", "負荷は未取得です。" }
+                } else {
+                    div { class: "load-days",
+                        for (index, row) in rows.into_iter().enumerate() {
+                            BandDayRow {
+                                row,
+                                today: index == 0,
+                                disabled: server_actions_blocked,
+                                on_select_date,
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+#[component]
+fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element {
+    let Some(report) = report else {
+        return if loading {
+            rsx! { p { class: "load-status", role: "status", "繰返負荷を取得しています…" } }
+        } else {
+            rsx! { p { class: "load-status", "繰返負荷は未取得です。" } }
+        };
+    };
+    let range = format!(
+        "{}〜{}",
+        format_short_date(&report.start_date),
+        format_short_date(&report.end_date)
+    );
+    rsx! {
+        div { class: "routine-load-summary",
+            strong { "{range}" }
+            span { "{report.rows.len()}件の繰返" }
+        }
+        if report.rows.is_empty() {
+            p { class: "load-status", "今後28日に発生する繰返負荷はありません。" }
+        } else {
+            div { class: "routine-load-table-wrap",
+                table { class: "routine-load-table",
+                    thead {
+                        tr {
+                            th { scope: "col", "プロジェクト / 繰返" }
+                            th { scope: "col", "間隔" }
+                            th { scope: "col", "28日合計" }
+                            th { scope: "col", "週平均" }
+                            th { scope: "col", "発生日数" }
+                            th { scope: "col", "最大日" }
+                        }
+                    }
+                    tbody {
+                        for row in report.rows {
+                            RoutineLoadTableRow { row }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
+    rsx! {
+        tr {
+            th { scope: "row",
+                strong { class: "routine-load-name", "{row.routine_name}" }
+                span { class: "routine-load-project", "{row.project_name}" }
+            }
+            td { "{row.repetition_interval_days}日ごと" }
+            td { class: "routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
+            td { class: "routine-load-number", "{format_unsigned(row.weekly_average_seconds)}" }
+            td { class: "routine-load-number", "{row.occurrence_day_count}日" }
+            td { class: "routine-load-peak",
+                "{format_short_date(&row.peak_date)} {format_unsigned(row.peak_work_seconds)}"
+            }
+        }
+    }
+}
+
+fn format_short_date(value: &str) -> String {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .map(|date| format!("{}/{}", date.month(), date.day()))
+        .unwrap_or_else(|_| value.to_owned())
 }
 
 #[component]

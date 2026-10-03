@@ -67,6 +67,7 @@ pub(super) fn BrowserApp() -> Element {
         sessions,
         rows,
         band_rows,
+        routine_load_report,
         band_observed_at_epoch_ms,
         band_loading,
         band_error,
@@ -240,6 +241,7 @@ pub(super) fn BrowserApp() -> Element {
             } else if active_tab == ActiveTab::Load {
                 LoadView {
                     rows: band_rows,
+                    routine_load_report,
                     observed_at_epoch_ms: band_observed_at_epoch_ms,
                     loading: band_loading,
                     error: band_error,
