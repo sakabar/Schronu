@@ -89,7 +89,6 @@ pub(super) fn BrowserApp() -> Element {
         auto_session_empty,
         carry_lock,
     } = model;
-    let completed_rows = completed_report.map_or_else(Vec::new, |report| report.rows);
     let mutations_locked = carry_lock.mutations_locked();
     let (
         server_effect_in_flight,
@@ -197,7 +196,7 @@ pub(super) fn BrowserApp() -> Element {
                     if list_mode == ListMode::Completed {
                         CompletedListView {
                             dates,
-                            rows: completed_rows,
+                            report: completed_report,
                             selected_logical_date,
                             date_input_text,
                             date_input_error,

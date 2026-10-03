@@ -62,7 +62,7 @@ WebSuccess<T> {
 
 - `bootstrap`: `ServerSnapshot`
 - `list_tasks`: `WebSuccess<Vec<ScheduledTaskRow>>`
-- `list_completed_tasks`: `WebSuccess<Vec<CompletedTaskRow>>`
+- `list_completed_tasks`: `WebSuccess<CompletedTaskReport>`
 - `list_all_tasks`: `WebSuccess<AllTaskPage>`
 - `auto_session`: `WebSuccess<Option<SessionTask>>`
 - `record_session`: `WebSuccess<RecordSessionResult>`
@@ -131,6 +131,13 @@ CompletedTaskRow {
     completed_at_epoch_ms: i64,
     actual_work_seconds: i64,
     estimated_work_seconds: i64,
+}
+
+CompletedTaskReport {
+    rows: Vec<CompletedTaskRow>,
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
 }
 ```
 
@@ -272,8 +279,9 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 ### 4.3 `list_completed_tasks(date)`
 
 - 入力: `logical_date: YYYY-MM-DD`
-- 成功出力: `WebSuccess<Vec<CompletedTaskRow>>`
+- 成功出力: `WebSuccess<CompletedTaskReport>`
 - 指定logical dateの06:00から翌日06:00未満に完了したtaskを完了時刻昇順で返す。
+- 実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日の設定済み日次終端までの`busy_time_slot`を除いた利用可能秒数と、実績合計を利用可能秒数で割って四捨五入した整数%を返す。利用可能時間0秒では記録率を`None`とし、100%を上限にしない。
 - task dataは変更しない。
 
 ### 4.4 `list_all_tasks(cursor)`
@@ -423,7 +431,7 @@ list_mode: Scheduled | Completed
 date_buttons: Vec<LogicalDateButton>
 selected_logical_date: Option<YYYY-MM-DD>
 scheduled_rows: Vec<ScheduledTaskRow>
-completed_rows: Vec<CompletedTaskRow>
+completed_report: Option<CompletedTaskReport>
 task_name_filter: String
 list_selection: Date | All
 all_tasks_load: NotLoaded
@@ -636,8 +644,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
-- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と件数を表示し、0件は「この日に完了したタスクはありません。」とする。日次合計は表示しない。
-- 完了一覧は`完了、実績、見積、差、Project、タスク`のsemantic tableとする。完了時刻はlocal `HH:MM:SS`の`time`要素、実績・見積は秒精度で100時間以上を保持する`HH:MM:SS`、差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。超過の赤色は符号の代替にしない。数値列はtabular digitsで右寄せし、Projectとtask名はtruncateしない。320px幅ではtable containerだけを横scrollさせ、page全体を横overflowさせない。
+- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
+- 完了一覧は`完了、実績、見積、差、Project、タスク`のsemantic tableとする。完了時刻はlocal `HH:MM:SS`の`time`要素、実績・見積・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。超過の赤色は符号の代替にしない。数値列はtabular digitsで右寄せし、Projectとtask名はtruncateしない。集計は狭幅で折り返し、320px幅ではtable containerだけを横scrollさせてpage全体を横overflowさせない。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。

@@ -140,9 +140,9 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-027**: 日付別一覧は、選択日が現在logical dateならsnapshot観測時刻から先頭taskまで、および先行taskの最遅終了時刻から次task開始までの1分以上を「N分間の空き時間」として次taskの直前へ表示すること。現在日以外の先頭task前と最終task後は表示せず、trim後の検索文字列が空でない間は分単位の空き時間を表示しないこと。全件一覧はtask名検索後に表示上限内となる実taskのみを予定順で投影し、隣接する表示task日間の予定のないlogical date数を「N日間の空き時間」として次taskの直前へ表示すること。空き日がなく翌logical dateへ変わる場合は次task行の上へ全幅の境界線を表示し、検索中も両方を表示すること。検索不一致taskの日付は差分に含めず、空き時間行と境界線を500task件数、cursor、`segment_index`に含めないこと。
 - **REQ-LIST-028**: 一覧画面上部に均等幅の「予定」「完了」segmented controlを表示し、active modeを`aria-selected`と`aria-pressed`で識別すること。初期modeは予定とし、切替時は選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけ最新snapshotの現在logical dateへ戻すこと。
 - **REQ-LIST-029**: 完了modeではsnapshotの現在logical dateから今日、昨日、7日前までの8buttonを降順表示すること。年省略の`M/D`は現在logical date以前の直近有効日へ解決し、閏日は直近の有効年まで安全に遡ること。Chrono下限を越える場合はvalidation errorとし、`YYYY/M/D`は将来日を含め指定年を維持すること。
-- **REQ-LIST-030**: 完了modeは`完了、実績、見積、差、Project、タスク`のsemantic tableとし、見出しを`M月D日の完了`、補助表示を件数とする。0件は「この日に完了したタスクはありません。」と表示し、日次合計は表示しないこと。
-- **REQ-LIST-031**: 完了時刻はepoch millisecondsをbrowser local timeの`HH:MM:SS`としてsemanticな`time`要素で表示し、実績・見積は秒精度`HH:MM:SS`、100時間以上も省略しないこと。差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。超過を赤にする場合も符号を保持し、数値列はtabular digitsで右寄せすること。
-- **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、wrapまたは完了表container内の横scrollで到達可能にすること。320px幅でもpage全体を横overflowさせないこと。
+- **REQ-LIST-030**: 完了modeは`完了、実績、見積、差、Project、タスク`のsemantic tableとし、見出しを`M月D日の完了`、補助表示を検索後の件数とする。見出しとtableの間には選択日全体の実績合計、`busy_time_slot`を除いた利用可能時間、記録率をsemanticなlabel/value構造で常時表示すること。検索はtableと件数だけを絞り、集計値を変更しないこと。0件は集計値と「この日に完了したタスクはありません。」を表示すること。
+- **REQ-LIST-031**: 完了時刻はepoch millisecondsをbrowser local timeの`HH:MM:SS`としてsemanticな`time`要素で表示し、実績・見積・実績合計・利用可能時間は秒精度`HH:MM:SS`で100時間以上も省略しないこと。実績0秒は見積時間を有効実績として行、差、合計へ使用すること。差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とすること。超過を赤にする場合も符号を保持し、数値列はtabular digitsで右寄せすること。
+- **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、wrapまたは完了表container内の横scrollで到達可能にすること。集計表示は狭幅で折り返し、320px幅でもpage全体を横overflowさせないこと。
 - **REQ-LIST-033**: 完了modeはread-onlyとし、「全て」、セッション追加、先送りをDOMへ描画しないこと。task名検索は予定・全件・完了で共有し、完了modeでも前後trimとUnicode小文字化の部分一致をtask名だけへ適用し、Project名は検索対象にしないこと。
 - **REQ-LIST-034**: 予定行と完了行はactive mode付きで保持し、異なるmodeまたは古いrequestのresponseで表示を上書きしないこと。mutation後の一覧再取得はactive modeのendpointを使い、完了modeでtaskを完了した直後は同じ完了一覧へ新しいrowを反映できること。
 

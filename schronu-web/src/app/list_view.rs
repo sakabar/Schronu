@@ -8,7 +8,10 @@ use crate::client::view_projection::task_name_matches;
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 use crate::client::view_projection::ScheduleDisplayViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
-use crate::{CompletedTaskRow, DeadlineDisplayKind, DeferPlan, SessionTask, TaskDisplayKind};
+use crate::{
+    CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferPlan, SessionTask,
+    TaskDisplayKind,
+};
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,7 +251,7 @@ pub fn ListModeControl(
 #[component]
 pub fn CompletedListView(
     dates: Vec<DateButtonViewModel>,
-    rows: Vec<CompletedTaskRow>,
+    report: Option<CompletedTaskReport>,
     selected_logical_date: Option<String>,
     date_input_text: String,
     date_input_error: Option<String>,
@@ -260,6 +263,12 @@ pub fn CompletedListView(
     on_filter_change: EventHandler<String>,
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
+    let summary = report.as_ref().map(|report| CompletedReportSummary {
+        total_actual_work_seconds: report.total_actual_work_seconds,
+        available_seconds: report.available_seconds,
+        recorded_percentage: report.recorded_percentage,
+    });
+    let rows = report.map_or_else(Vec::new, |report| report.rows);
     let matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task_name))
@@ -334,6 +343,7 @@ pub fn CompletedListView(
             CompletedTaskTable {
                 logical_date: selected_logical_date,
                 rows: matching_rows,
+                summary,
                 empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
             }
         }
@@ -368,6 +378,7 @@ fn ListModeButton(
 fn CompletedTaskTable(
     logical_date: Option<String>,
     rows: Vec<CompletedTaskRow>,
+    summary: Option<CompletedReportSummary>,
     empty_message: Option<String>,
 ) -> Element {
     let title = logical_date
@@ -385,6 +396,9 @@ fn CompletedTaskTable(
                     h2 { "{title}" }
                     span { class: "completed-report-count", "0件" }
                 }
+                if let Some(summary) = summary {
+                    CompletedReportSummaryView { summary }
+                }
                 p {
                     class: "completed-report-empty",
                     role: "status",
@@ -398,6 +412,9 @@ fn CompletedTaskTable(
             div { class: "completed-report-heading",
                 h2 { "{title}" }
                 span { class: "completed-report-count", "{count}件" }
+            }
+            if let Some(summary) = summary {
+                CompletedReportSummaryView { summary }
             }
             div { class: "completed-task-table-scroll", tabindex: 0,
                 table { class: "completed-task-table",
@@ -417,6 +434,38 @@ fn CompletedTaskTable(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompletedReportSummary {
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
+}
+
+#[component]
+fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
+    let total_actual = format_hh_mm_ss(i128::from(summary.total_actual_work_seconds));
+    let available = format_hh_mm_ss(i128::from(summary.available_seconds));
+    let recorded_percentage = summary
+        .recorded_percentage
+        .map_or_else(|| "--".to_owned(), |percentage| format!("{percentage}%"));
+    rsx! {
+        dl { class: "completed-report-summary", aria_label: "完了日の集計",
+            div { class: "completed-report-summary-item",
+                dt { "実績合計" }
+                dd { "{total_actual}" }
+            }
+            div { class: "completed-report-summary-item",
+                dt { "利用可能" }
+                dd { "{available}" }
+            }
+            div { class: "completed-report-summary-item",
+                dt { "記録率" }
+                dd { "{recorded_percentage}" }
             }
         }
     }
