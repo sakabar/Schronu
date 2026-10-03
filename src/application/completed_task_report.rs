@@ -1,5 +1,7 @@
-use crate::application::daily_capacity::{try_logical_date_start, try_next_logical_date_start};
-use crate::application::interface::TaskRepositoryTrait;
+use crate::application::daily_capacity::{
+    try_logical_date_end, try_logical_date_start, try_next_logical_date_start,
+};
+use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::task_list::{
     list_tasks, ListTasksFilter, TaskPeriodField, TaskPeriodFilter,
 };
@@ -18,6 +20,57 @@ pub struct CompletedTaskReportRow {
     pub completed_at: DateTime<Local>,
     pub actual_work_seconds: i64,
     pub estimated_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompletedTaskReport {
+    pub rows: Vec<CompletedTaskReportRow>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+pub fn build_completed_task_report(
+    repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
+    logical_date: NaiveDate,
+    end_of_day_offset_minutes: i64,
+) -> Result<CompletedTaskReport, ApplicationError> {
+    let rows = list_completed_task_report(repository, logical_date)?;
+    let total_actual_work_seconds_i128 = rows
+        .iter()
+        .map(|row| i128::from(row.actual_work_seconds))
+        .sum::<i128>();
+    let total_actual_work_seconds =
+        i64::try_from(total_actual_work_seconds_i128).map_err(|_| {
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "total_actual_work_seconds",
+                value: total_actual_work_seconds_i128,
+            }
+        })?;
+    let start = try_logical_date_start(logical_date)?;
+    let end = try_logical_date_end(logical_date, end_of_day_offset_minutes)?;
+    let available_seconds = free_time_manager.get_free_seconds(&start, &end);
+    let recorded_percentage = if available_seconds == 0 {
+        None
+    } else {
+        let numerator = total_actual_work_seconds_i128 * 100;
+        let denominator = i128::from(available_seconds);
+        let rounded = (numerator + denominator / 2) / denominator;
+        Some(i64::try_from(rounded).map_err(|_| {
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "recorded_percentage",
+                value: rounded,
+            }
+        })?)
+    };
+
+    Ok(CompletedTaskReport {
+        rows,
+        total_actual_work_seconds,
+        available_seconds,
+        recorded_percentage,
+    })
 }
 
 pub fn list_completed_task_report(
@@ -65,7 +118,11 @@ pub fn list_completed_task_report(
                 task_name: task.name,
                 project_name,
                 completed_at,
-                actual_work_seconds: task.actual_work_seconds,
+                actual_work_seconds: if task.actual_work_seconds == 0 {
+                    task.estimated_work_seconds
+                } else {
+                    task.actual_work_seconds
+                },
                 estimated_work_seconds: task.estimated_work_seconds,
             })
         })
@@ -101,28 +158,16 @@ mod tests {
     }
 
     impl FreeTimeManagerTrait for RecordingFreeTimeManager {
-        fn get_free_minutes(
-            &mut self,
-            _start: &DateTime<Local>,
-            _end: &DateTime<Local>,
-        ) -> i64 {
+        fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
             unreachable!("completed report must preserve second precision")
         }
 
-        fn get_free_seconds(
-            &mut self,
-            start: &DateTime<Local>,
-            end: &DateTime<Local>,
-        ) -> i64 {
+        fn get_free_seconds(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
             self.requested_intervals.push((*start, *end));
             self.free_seconds
         }
 
-        fn get_busy_minutes(
-            &mut self,
-            _start: &DateTime<Local>,
-            _end: &DateTime<Local>,
-        ) -> i64 {
+        fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
             0
         }
 
@@ -267,13 +312,9 @@ mod tests {
         let repository = TestTaskRepository::new(vec![root], local_time(11, 12, 0, 0));
         let mut free_time_manager = RecordingFreeTimeManager::new(1_234);
 
-        let report = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap();
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
 
         assert_eq!(report.total_actual_work_seconds, 300);
         assert_eq!(report.available_seconds, 1_234);
@@ -292,13 +333,9 @@ mod tests {
             local_time(11, 12, 0, 0),
         );
         let mut free_time_manager = RecordingFreeTimeManager::new(8);
-        let rounded = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap();
+        let rounded =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
         assert_eq!(rounded.recorded_percentage, Some(13));
 
         let repository = TestTaskRepository::new(
@@ -306,13 +343,9 @@ mod tests {
             local_time(11, 12, 0, 0),
         );
         let mut free_time_manager = RecordingFreeTimeManager::new(4);
-        let over_one_hundred = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap();
+        let over_one_hundred =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
         assert_eq!(over_one_hundred.recorded_percentage, Some(125));
     }
 
@@ -325,13 +358,9 @@ mod tests {
         );
         let mut free_time_manager = RecordingFreeTimeManager::new(0);
 
-        let report = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap();
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
 
         assert_eq!(report.recorded_percentage, None);
     }
@@ -348,13 +377,9 @@ mod tests {
         );
         let mut free_time_manager = RecordingFreeTimeManager::new(1);
 
-        let error = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap_err();
+        let error =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap_err();
 
         assert_eq!(
             error,
@@ -379,13 +404,9 @@ mod tests {
         );
         let mut free_time_manager = RecordingFreeTimeManager::new(1);
 
-        let error = build_completed_task_report(
-            &repository,
-            &mut free_time_manager,
-            logical_date,
-            120,
-        )
-        .unwrap_err();
+        let error =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap_err();
 
         assert_eq!(
             error,
