@@ -114,6 +114,7 @@ pub(crate) fn scheduled_logical_dates(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn scheduled_end_by_task(
     schedule: &[ScheduledTaskView],
 ) -> HashMap<Uuid, DateTime<Local>> {

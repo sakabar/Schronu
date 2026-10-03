@@ -24,7 +24,7 @@ use crate::application::daily_capacity::{
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::schedule_use_case::{
-    get_schedule, scheduled_end_by_task, scheduled_logical_dates,
+    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
@@ -191,17 +191,22 @@ fn deadline_alert_issues(
     scheduled_tasks: &[crate::application::schedule_use_case::ScheduledTaskView],
     today: NaiveDate,
 ) -> Result<DeadlineAlertIssues, ApplicationError> {
-    let scheduled_ends = scheduled_end_by_task(scheduled_tasks);
-    let deadlines_by_task = scheduled_tasks
+    let scheduled_ends = scheduled_end_by_occurrence(scheduled_tasks);
+    let deadlines_by_occurrence = scheduled_tasks
         .iter()
-        .filter_map(|scheduled| scheduled.actual_task_id().zip(scheduled.task.deadline_time))
+        .filter_map(|scheduled| {
+            scheduled
+                .task
+                .deadline_time
+                .map(|deadline| (scheduled.occurrence, deadline))
+        })
         .collect::<HashMap<_, _>>();
     let mut today_issue = None;
     let mut tomorrow_issue = None;
     let mut weekly_issue = None;
 
-    for (task_id, scheduled_end) in scheduled_ends {
-        let Some(deadline) = deadlines_by_task.get(&task_id) else {
+    for (occurrence, scheduled_end) in scheduled_ends {
+        let Some(deadline) = deadlines_by_occurrence.get(&occurrence) else {
             continue;
         };
         let overrun_seconds = (scheduled_end - *deadline).num_seconds();
@@ -892,6 +897,25 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .and_modify(|cnt| *cnt += 1)
             .or_insert(1);
 
+        let estimated_work_seconds = scheduled_work_seconds;
+        total_estimated_work_seconds_of_the_date_counter
+            .entry(logical_naive_date)
+            .and_modify(|total_seconds| *total_seconds += estimated_work_seconds)
+            .or_insert(estimated_work_seconds);
+        if let Some(deadline_time) = deadline_time_opt {
+            let deadline_naive_date = try_logical_date(*deadline_time)?;
+            deadline_estimated_work_seconds_map
+                .entry(deadline_naive_date)
+                .and_modify(|deadline_seconds| *deadline_seconds += estimated_work_seconds)
+                .or_insert(estimated_work_seconds);
+        }
+        if scheduled_task.is_projected() {
+            repetitive_task_estimated_work_seconds_map
+                .entry(logical_naive_date)
+                .and_modify(|repetitive_seconds| *repetitive_seconds += estimated_work_seconds)
+                .or_insert(estimated_work_seconds);
+        }
+
         let task_opt = id
             .map(|task_id| task_repository.get_by_id(task_id))
             .transpose()
@@ -1007,18 +1031,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
             // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
             // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
-            let estimated_work_seconds = scheduled_work_seconds;
-            if let Some(deadline_time) = deadline_time_opt {
-                let deadline_naive_date = try_logical_date(*deadline_time)?;
-
-                deadline_estimated_work_seconds_map
-                    .entry(deadline_naive_date)
-                    .and_modify(|deadline_estimated_work_seconds| {
-                        *deadline_estimated_work_seconds += estimated_work_seconds
-                    })
-                    .or_insert(estimated_work_seconds);
-            }
-
             if inherited_repetition_interval_days_opt.is_some() {
                 repetitive_task_estimated_work_seconds_map
                     .entry(logical_naive_date)
@@ -1058,13 +1070,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let end_datetime = *scheduled_end;
             current_datetime_cursor =
                 advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
-
-            total_estimated_work_seconds_of_the_date_counter
-                .entry(logical_naive_date)
-                .and_modify(|estimated_work_seconds_val| {
-                    *estimated_work_seconds_val += estimated_work_seconds
-                })
-                .or_insert(estimated_work_seconds);
 
             // ! : 着手予定logical date内が締切。締切注意の意
             let deadline_icon: String = "!".to_string();

@@ -4934,6 +4934,76 @@ fn task_list_contextは製品fixtureからtyped_sequenceと実値を返す() {
 }
 
 #[test]
+fn calendarとbandはprojected回を総作業量と反復負荷へ反映する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let projected_date = now.date_naive() + Duration::days(3);
+    let parent = new_test_task_handle("3日ごとの筋トレ").unwrap();
+    parent.set_estimated_work_seconds(60 * 60).unwrap();
+    parent.set_fixed_start(true).unwrap();
+    parent
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()))
+        .unwrap();
+    let current = parent.create_as_last_child(new_test_task_attr("今回の筋トレ"));
+    current.set_start_time(now).unwrap();
+    current
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    current.set_estimated_work_seconds(60 * 60).unwrap();
+    current.set_fixed_start(true).unwrap();
+
+    for pattern in ["暦", "帯"] {
+        let mut task_repository = TestTaskRepository::new(parent.clone(), now);
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
+        let mut focused_task_id_opt = None;
+        let mut next_id = || Uuid::nil();
+        let mut task_factory = TaskFactory::new(now, &mut next_id);
+        let config = SchronuConfig::default();
+        let display = RuntimeTaskTreeCommandContext {
+            task_repository: &mut task_repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: &config,
+        }
+        .show_task_list(Some(pattern), TaskListOrder::ScheduledStartDesc, false)
+        .unwrap();
+        let DisplayModel::Sequence(models) = display else {
+            panic!("{pattern}: expected sequence, got {display:?}");
+        };
+
+        match &models[0] {
+            DisplayModel::Calendar(calendar) => {
+                let row = calendar
+                    .rows
+                    .iter()
+                    .find(|row| row.date == projected_date)
+                    .unwrap();
+                assert_eq!(row.task_count, 1);
+                assert_eq!(row.free_time_diff_minutes, 0);
+                assert_eq!(row.non_repetitive_free_minutes, 0);
+                assert_eq!(row.deadline_diff_seconds, 0);
+            }
+            DisplayModel::Band(band) => {
+                let row = band
+                    .rows
+                    .iter()
+                    .find(|row| row.date == projected_date)
+                    .unwrap();
+                assert_eq!(row.durations.repetitive_seconds, 60 * 60);
+                assert_eq!(row.durations.non_repetitive_seconds, 0);
+            }
+            other => panic!("{pattern}: unexpected display: {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn test_execute_set_project_category_表示記号でカテゴリを設定する() {
     let now = Local.with_ymd_and_hms(2026, 5, 17, 12, 0, 0).unwrap();
     let focus_started_datetime = now;
