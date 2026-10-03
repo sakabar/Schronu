@@ -238,16 +238,18 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
 
     assert!(initial_html.contains("今後28日の繰返負荷"), "{initial_html}");
     assert!(initial_html.contains("10/3〜10/30"), "{initial_html}");
-    for heading in [
-        "間隔",
-        "28日合計",
-        "週平均",
-        "発生日数",
-        "最大日",
-        "プロジェクト / 繰返",
+    for (class, heading) in [
+        ("routine-load-interval", "間隔"),
+        ("routine-load-total", "28日合計"),
+        ("routine-load-weekly", "週平均"),
+        ("routine-load-occurrences", "発生日数"),
+        ("routine-load-peak", "最大日"),
+        ("routine-load-subject", "プロジェクト / 繰返"),
     ] {
         assert!(
-            initial_html.contains(&format!("scope=\"col\">{heading}")),
+            initial_html.contains(&format!(
+                "<th class=\"{class}\" scope=\"col\">{heading}</th>"
+            )),
             "missing {heading}: {initial_html}"
         );
     }
@@ -266,16 +268,6 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         heading_positions.windows(2).all(|pair| pair[0] < pair[1]),
         "{table_header}"
     );
-    for class in [
-        "routine-load-interval",
-        "routine-load-total",
-        "routine-load-weekly",
-        "routine-load-occurrences",
-        "routine-load-peak",
-        "routine-load-subject",
-    ] {
-        assert!(initial_html.contains(&format!("class=\"{class}")), "missing {class}: {initial_html}");
-    }
     let table_body = &initial_html[initial_html.find("<tbody>").unwrap()
         ..initial_html.find("</tbody>").unwrap()];
     let value_positions = ["2日ごと", "28:00", "07:00", "14日", "10/4 03:00", "運動"]
@@ -284,6 +276,16 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
         value_positions.windows(2).all(|pair| pair[0] < pair[1]),
         "{table_body}"
     );
+    for cell in [
+        "<td class=\"routine-load-interval\">2日ごと</td>",
+        "<td class=\"routine-load-total routine-load-number\">28:00</td>",
+        "<td class=\"routine-load-weekly routine-load-number\">07:00</td>",
+        "<td class=\"routine-load-occurrences routine-load-number\">14日</td>",
+        "<td class=\"routine-load-peak\">10/4 03:00</td>",
+        "<th class=\"routine-load-subject\" scope=\"row\"><strong class=\"routine-load-name\">運動</strong><span class=\"routine-load-project\">健康</span></th>",
+    ] {
+        assert!(table_body.contains(cell), "missing {cell}: {table_body}");
+    }
     for value in ["運動", "健康", "2日ごと", "28:00", "07:00", "14日", "10/4 03:00"] {
         assert!(initial_html.contains(value), "missing {value}: {initial_html}");
     }
