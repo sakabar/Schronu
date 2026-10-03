@@ -3,7 +3,7 @@ use super::component::{
     SessionChrome, UnavailableBufferPanel,
 };
 #[cfg(feature = "web")]
-use super::component_models::{project_active_completed_rows, BrowserPageModel};
+use super::component_models::{project_active_completed_report, BrowserPageModel};
 use super::component_runtime::{
     component_action_from_date_button, component_action_from_date_input,
     component_action_from_session_action, component_actions_from_session_action, initialize_client,

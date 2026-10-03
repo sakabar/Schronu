@@ -266,7 +266,7 @@ fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを�
     );
 
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
-    assert!(project_active_completed_rows(&state).is_empty());
+    assert!(project_active_completed_report(&state).is_none());
     assert!(state.display_error().is_some());
 }
 

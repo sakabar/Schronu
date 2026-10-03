@@ -66,8 +66,7 @@ pub(super) fn BrowserApp() -> Element {
         buffer,
         sessions,
         rows,
-        completed_rows,
-        completed_report: _,
+        completed_report,
         list_mode,
         selected_logical_date,
         band_rows,
@@ -90,6 +89,7 @@ pub(super) fn BrowserApp() -> Element {
         auto_session_empty,
         carry_lock,
     } = model;
+    let completed_rows = completed_report.map_or_else(Vec::new, |report| report.rows);
     let mutations_locked = carry_lock.mutations_locked();
     let (
         server_effect_in_flight,

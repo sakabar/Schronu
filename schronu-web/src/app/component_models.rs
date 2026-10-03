@@ -9,14 +9,13 @@ use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
-use crate::{BandDay, CompletedTaskReport, CompletedTaskRow};
+use crate::{BandDay, CompletedTaskReport};
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
-    pub completed_rows: Vec<CompletedTaskRow>,
     pub completed_report: Option<CompletedTaskReport>,
     pub list_mode: ListMode,
     pub selected_logical_date: Option<String>,
@@ -75,7 +74,6 @@ impl BrowserPageModel {
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows,
-            completed_rows: project_active_completed_rows(state),
             completed_report: project_active_completed_report(state),
             list_mode: state.list_mode(),
             selected_logical_date: state.selected_logical_date().map(str::to_owned),
@@ -105,14 +103,6 @@ impl BrowserPageModel {
             auto_session_empty: state.auto_session_empty(),
             carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
         }
-    }
-}
-
-pub(super) fn project_active_completed_rows(state: &ClientState) -> Vec<CompletedTaskRow> {
-    if state.has_completed_list() {
-        state.completed_rows().to_vec()
-    } else {
-        Vec::new()
     }
 }
 
