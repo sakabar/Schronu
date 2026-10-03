@@ -2091,6 +2091,25 @@ fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除
 }
 
 #[test]
+fn completed_commandは製品handlerからapplication_queryを通して完了taskを表示する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let completed_at = Local.with_ymd_and_hms(2026, 8, 11, 8, 2, 3).unwrap();
+    let task = new_test_task_handle("完了レポート対象").unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    task.set_end_time_opt(Some(completed_at)).unwrap();
+    task.set_actual_work_seconds(65).unwrap();
+    task.set_estimated_work_seconds(60).unwrap();
+
+    let result = execute_command_for_test(task, now, None, "済");
+
+    assert!(result.output.contains("完了時刻"));
+    assert!(result.output.contains("08:02:03"));
+    assert!(result.output.contains("00:01:05"));
+    assert!(result.output.contains("+00:00:05"));
+    assert!(result.output.contains("完了レポート対象"));
+}
+
+#[test]
 fn test_execute_all_project_categoryで絞り込む() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("カテゴリ対象タスク").unwrap();

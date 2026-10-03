@@ -1,9 +1,10 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult,
-    RetryAdvice, RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskDisplayKind, WebError, WebSuccess,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
+    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
+    WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -234,6 +235,59 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
             "observed_at_epoch_ms": 1_788_565_500_123_i64,
             "logical_date": "2026-09-05",
             "buffer_seconds": -61
+        }),
+    );
+}
+
+#[test]
+fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
+    assert_json_round_trip(
+        &ListCompletedTasksRequest {
+            logical_date: "2026-09-05".to_owned(),
+        },
+        json!({"logical_date": "2026-09-05"}),
+    );
+
+    assert_json_round_trip(
+        &WebSuccess {
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 1_788_565_500_123,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: -61,
+            },
+            data: CompletedTaskReport {
+                rows: vec![CompletedTaskRow {
+                    task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+                    task_name: "wire task".to_owned(),
+                    project_name: "wire project".to_owned(),
+                    completed_at_epoch_ms: 1_788_565_499_999,
+                    actual_work_seconds: 901,
+                    estimated_work_seconds: 900,
+                }],
+                total_actual_work_seconds: 901,
+                available_seconds: 43_200,
+                recorded_percentage: Some(2),
+            },
+        },
+        json!({
+            "snapshot": {
+                "observed_at_epoch_ms": 1_788_565_500_123_i64,
+                "logical_date": "2026-09-05",
+                "buffer_seconds": -61
+            },
+            "data": {
+                "rows": [{
+                    "task_id": "00000000-0000-0000-0000-000000000001",
+                    "task_name": "wire task",
+                    "project_name": "wire project",
+                    "completed_at_epoch_ms": 1_788_565_499_999_i64,
+                    "actual_work_seconds": 901,
+                    "estimated_work_seconds": 900
+                }],
+                "total_actual_work_seconds": 901,
+                "available_seconds": 43_200,
+                "recorded_percentage": 2
+            }
         }),
     );
 }

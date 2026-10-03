@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, fmt};
 
 use crate::{
-    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListTasksRequest,
-    RecordSessionRequest,
+    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    ListTasksRequest, RecordSessionRequest,
 };
 
 const MAX_HISTORY_ENTRIES: usize = 100;
@@ -11,6 +11,7 @@ const MAX_HISTORY_ENTRIES: usize = 100;
 pub enum Operation {
     Bootstrap,
     ListTasks,
+    ListCompletedTasks,
     ListAllTasks,
     LoadBand,
     AutoSession,
@@ -33,6 +34,7 @@ pub enum Outcome {
 pub enum ServerActionInvocation {
     Bootstrap,
     ListTasks(ListTasksRequest),
+    ListCompletedTasks(ListCompletedTasksRequest),
     ListAllTasks(ListAllTasksRequest),
     LoadBand,
     AutoSession,
@@ -46,6 +48,7 @@ impl ServerActionInvocation {
         match self {
             Self::Bootstrap => Operation::Bootstrap,
             Self::ListTasks(_) => Operation::ListTasks,
+            Self::ListCompletedTasks(_) => Operation::ListCompletedTasks,
             Self::ListAllTasks(_) => Operation::ListAllTasks,
             Self::LoadBand => Operation::LoadBand,
             Self::AutoSession => Operation::AutoSession,
@@ -65,6 +68,7 @@ impl ServerActionInvocation {
             Self::DeferTask(request) => Some(&request.task_id),
             Self::Bootstrap
             | Self::ListTasks(_)
+            | Self::ListCompletedTasks(_)
             | Self::ListAllTasks(_)
             | Self::LoadBand
             | Self::AutoSession => None,
@@ -79,6 +83,11 @@ impl fmt::Display for ServerActionInvocation {
             Self::ListTasks(request) => {
                 write!(formatter, "list_tasks(logical_date: {:?})", request.logical_date)
             }
+            Self::ListCompletedTasks(request) => write!(
+                formatter,
+                "list_completed_tasks(logical_date: {:?})",
+                request.logical_date
+            ),
             Self::ListAllTasks(request) => {
                 write!(formatter, "list_all_tasks(cursor: {:?})", request.cursor)
             }

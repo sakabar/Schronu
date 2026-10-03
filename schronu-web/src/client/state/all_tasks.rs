@@ -32,7 +32,7 @@ enum AllTasksLoadState {
 }
 
 pub(super) struct AllTasksState {
-    selection: ListSelection,
+    pub(super) selection: ListSelection,
     load: AllTasksLoadState,
 }
 
@@ -86,7 +86,7 @@ impl ClientState {
 
     pub fn select_logical_date(&mut self, logical_date: &str) -> ClientEffect {
         self.all_tasks.selection = ListSelection::Date;
-        self.request_list(logical_date)
+        self.request_active_list(logical_date)
     }
 
     pub fn select_all_tasks(&mut self) -> ClientEffect {

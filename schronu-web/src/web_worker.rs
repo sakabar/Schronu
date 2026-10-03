@@ -1,8 +1,8 @@
 use crate::{
     web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
-    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebSuccess,
+    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -16,6 +16,10 @@ pub trait WebOperations: 'static {
         &mut self,
         request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>;
+    fn list_completed_tasks(
+        &mut self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError>;
     fn list_all_tasks(
         &mut self,
         request: ListAllTasksRequest,
@@ -47,6 +51,10 @@ enum WebWorkerCommand {
     ListTasks {
         request: ListTasksRequest,
         response: oneshot::Sender<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>>,
+    },
+    ListCompletedTasks {
+        request: ListCompletedTasksRequest,
+        response: oneshot::Sender<Result<WebSuccess<CompletedTaskReport>, WebError>>,
     },
     ListAllTasks {
         request: ListAllTasksRequest,
@@ -102,6 +110,17 @@ impl WebWorkerHandle {
         let (response, receiver) = oneshot::channel();
         self.commands
             .send(WebWorkerCommand::ListTasks { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
+    pub async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::ListCompletedTasks { request, response })
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
@@ -172,6 +191,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::ListTasks { request, response } => {
                 let _ = response.send(operations.list_tasks(request));
+            }
+            WebWorkerCommand::ListCompletedTasks { request, response } => {
+                let _ = response.send(operations.list_completed_tasks(request));
             }
             WebWorkerCommand::ListAllTasks { request, response } => {
                 let _ = response.send(operations.list_all_tasks(request));

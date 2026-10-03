@@ -96,6 +96,24 @@ pub struct ScheduledTaskRow {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskRow {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_name: String,
+    pub completed_at_epoch_ms: i64,
+    pub actual_work_seconds: i64,
+    pub estimated_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskReport {
+    pub rows: Vec<CompletedTaskRow>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRow {
     pub task: SessionTask,
     pub segment_index: usize,
@@ -142,6 +160,11 @@ pub struct WebSuccess<T> {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ListTasksRequest {
+    pub logical_date: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ListCompletedTasksRequest {
     pub logical_date: String,
 }
 

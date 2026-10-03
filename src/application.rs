@@ -1,6 +1,7 @@
 #[cfg(feature = "benchmarking")]
 #[doc(hidden)]
 pub mod benchmarking;
+pub mod completed_task_report;
 pub mod daily_capacity;
 pub mod flatten_use_case;
 pub mod interface;

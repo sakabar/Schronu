@@ -1505,7 +1505,11 @@ fn StatefulDateInputHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                 on_date_input_change: move |text| date_input.write().edit(text),
                 on_submit_date_input: move |_| {
                     if let Some(ComponentAction::SelectDate(date)) =
-                        component_action_from_date_input(&mut date_input.write(), "2026-09-16")
+                        component_action_from_date_input(
+                            &mut date_input.write(),
+                            "2026-09-16",
+                            crate::client::state::ListMode::Scheduled,
+                        )
                     {
                         submit_events.borrow_mut().push(format!("server:{date}"));
                     }

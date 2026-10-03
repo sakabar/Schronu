@@ -367,6 +367,35 @@ fn session_progressは見積も100_percent位置に常時表示の境界線を�
     assert!(marker.contains("pointer-events: none;"));
 }
 
+#[test]
+fn 完了表だけが狭幅で横scrollしmode選択は均等幅になる() {
+    let list_screen = block_body(MAIN_CSS, ".list-screen");
+    assert!(list_screen.contains("display: grid;"));
+    assert!(list_screen.contains("min-width: 0;"));
+
+    let mode_control = block_body(MAIN_CSS, ".list-mode-control");
+    assert!(mode_control.contains("grid-template-columns: repeat(2, minmax(0, 1fr));"));
+
+    let scroll = block_body(MAIN_CSS, ".completed-task-table-scroll");
+    assert!(scroll.contains("width: 100%;"));
+    assert!(scroll.contains("min-width: 0;"));
+    assert!(scroll.contains("overflow-x: auto;"));
+
+    let table = block_body(MAIN_CSS, ".completed-task-table {");
+    assert!(table.contains("width: 100%;"));
+    assert!(table.contains("min-width: 48rem;"));
+
+    let summary = block_body(MAIN_CSS, ".completed-report-summary");
+    assert!(summary.contains("display: grid;"));
+    assert!(summary.contains("width: 100%;"));
+    assert!(summary.contains("min-width: 0;"));
+    assert!(summary.contains("repeat(auto-fit"));
+    assert!(summary.contains("minmax(min(100%,"));
+
+    let summary_item = block_body(MAIN_CSS, ".completed-report-summary-item");
+    assert!(summary_item.contains("min-width: 0;"));
+}
+
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {
     let header_start = source
         .find(header)
