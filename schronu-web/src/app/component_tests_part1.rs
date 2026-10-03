@@ -269,6 +269,57 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
 }
 
 #[test]
+fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する() {
+    fn loading() -> Element {
+        rsx! {
+            LoadView {
+                rows: Vec::new(),
+                routine_load_report: None,
+                observed_at_epoch_ms: None,
+                loading: true,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+    let mut loading_dom = VirtualDom::new(loading);
+    loading_dom.rebuild_in_place();
+    let loading_html = dioxus::ssr::render(&loading_dom);
+    assert!(
+        loading_html.contains("繰返負荷を取得しています…"),
+        "{loading_html}"
+    );
+    assert!(loading_html.contains("更新中…"), "{loading_html}");
+
+    fn empty() -> Element {
+        rsx! {
+            LoadView {
+                rows: Vec::new(),
+                routine_load_report: Some(RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-30".to_owned(),
+                    rows: Vec::new(),
+                }),
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+    let mut empty_dom = VirtualDom::new(empty);
+    empty_dom.rebuild_in_place();
+    let empty_html = dioxus::ssr::render(&empty_dom);
+    assert!(empty_html.contains("10/3〜10/30"), "{empty_html}");
+    assert!(
+        empty_html.contains("今後28日に発生する繰返負荷はありません。"),
+        "{empty_html}"
+    );
+}
+
+#[test]
 fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
     fn root() -> Element {
         let today = BandDay {
