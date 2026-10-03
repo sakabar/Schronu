@@ -137,7 +137,7 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
     let output = render(CompletedTaskReport {
         rows: vec![
             report_row(1, 8, 360_000, 1, "日本語", "末尾まで省略しない長いタスク名"),
-            report_row(2, 9, 1, 1, "abcdefghijklmnopqrs界tail", "second"),
+            report_row(2, 9, 1, 2, "abcdefghijklmnopqrs界tail", "second"),
             report_row(3, 10, 1, 1, "e\u{301}", "zero"),
         ],
         total_actual_work_seconds: 360_002,
@@ -147,6 +147,7 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
     assert!(!output.contains('\t'));
     assert!(output.contains("100:00:00"));
     assert!(output.contains("+99:59:59"));
+    assert!(output.contains("-00:00:01"));
     assert!(output.contains("+00:00:00"));
     assert!(output.contains("abcdefghijklmnopqrs…"));
     assert!(!output.contains("tail"));
