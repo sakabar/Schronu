@@ -5964,7 +5964,7 @@ fn test_execute_flatten_15分以下fragmentを避けたtaskを丸ごと翌論理
     )
     .unwrap()
     .into_iter()
-    .filter(|scheduled| scheduled.task.id == target.get_id().unwrap())
+    .filter(|scheduled| scheduled.actual_task_id() == Some(target.get_id().unwrap()))
     .map(|scheduled| (scheduled.scheduled_start, scheduled.scheduled_end))
     .collect::<Vec<_>>();
 
@@ -6586,7 +6586,7 @@ fn test_execute_calendarとband_分割taskの調整可能時間をsegment単位�
             crate::application::schedule_use_case::get_schedule(&repository)
                 .unwrap()
                 .into_iter()
-                .filter(|scheduled| scheduled.task.id == target_id)
+                .filter(|scheduled| scheduled.actual_task_id() == Some(target_id))
                 .map(|scheduled| scheduled.scheduled_work_seconds)
                 .collect::<Vec<_>>();
         assert_eq!(segment_work_seconds, [60 * 60, 60 * 60, 60 * 60]);
@@ -6999,7 +6999,7 @@ fn test_execute_calendarとband_締切日の見積合計超過だけでは締切
         let scheduled_end = crate::application::schedule_use_case::get_schedule(&repository)
             .unwrap()
             .into_iter()
-            .filter(|scheduled| scheduled.task.id == task_id)
+            .filter(|scheduled| scheduled.actual_task_id() == Some(task_id))
             .map(|scheduled| scheduled.scheduled_end)
             .max()
             .unwrap();
@@ -7097,7 +7097,7 @@ fn test_execute_calendarとband_分割taskの最終終了を一件として締�
         let exact_segments = crate::application::schedule_use_case::get_schedule(&repository)
             .unwrap()
             .into_iter()
-            .filter(|scheduled| scheduled.task.id == exact_target_id)
+            .filter(|scheduled| scheduled.actual_task_id() == Some(exact_target_id))
             .collect::<Vec<_>>();
         assert_eq!(exact_segments.len(), 2);
         assert_eq!(exact_segments.last().unwrap().scheduled_end, exact_deadline);
@@ -7114,7 +7114,7 @@ fn test_execute_calendarとband_分割taskの最終終了を一件として締�
         let late_segments = crate::application::schedule_use_case::get_schedule(&repository)
             .unwrap()
             .into_iter()
-            .filter(|scheduled| scheduled.task.id == late_target_id)
+            .filter(|scheduled| scheduled.actual_task_id() == Some(late_target_id))
             .collect::<Vec<_>>();
         assert_eq!(late_segments.len(), 2);
         assert_eq!(late_segments.last().unwrap().scheduled_end, exact_deadline);

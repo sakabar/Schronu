@@ -127,7 +127,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_internal(
         }
         let current_planned_start_opt = current_schedule
             .iter()
-            .find(|scheduled| scheduled.task.id == candidate.task_id)
+            .find(|scheduled| scheduled.actual_task_id() == Some(candidate.task_id))
             .map(|scheduled| scheduled.scheduled_start);
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
@@ -242,7 +242,7 @@ fn find_placement_start(
             get_schedule_with_task_first_available_time(repository, request.task_id, trial_time)?;
         let task_segments = schedule
             .iter()
-            .filter(|scheduled| scheduled.task.id == request.task_id)
+            .filter(|scheduled| scheduled.actual_task_id() == Some(request.task_id))
             .collect::<Vec<_>>();
 
         if placement_fits_target_day(

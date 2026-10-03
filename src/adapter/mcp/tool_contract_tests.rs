@@ -833,7 +833,7 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
             ],
         )
     );
-    assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
+    assert!(schedule[0]["task"].get("id").is_none());
     assert_eq!(schedule[0]["task"]["name"], "scheduled task");
     assert_eq!(schedule[0]["first_available_time"], synced_now.to_rfc3339());
     assert_eq!(schedule[0]["scheduled_start"], synced_now.to_rfc3339());

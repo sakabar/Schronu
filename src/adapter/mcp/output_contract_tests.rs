@@ -63,7 +63,7 @@ fn task_viewのserde表現は既存mcp_json契約と一致する() {
 }
 
 #[test]
-fn scheduled_task_viewのserde表現はnested_taskを含む既存mcp_json契約と一致する() {
+fn scheduled_task_viewのserde表現は操作用task_identityを含まない() {
     let task_id = Uuid::parse_str("13d302b4-9660-4783-afef-77181ff690f5").unwrap();
     let root_id = Uuid::parse_str("33258548-4f9d-441d-91fa-0302a3343035").unwrap();
     let create_time = Local.with_ymd_and_hms(2026, 8, 1, 9, 0, 0).unwrap();
@@ -98,7 +98,8 @@ fn scheduled_task_viewのserde表現はnested_taskを含む既存mcp_json契約�
             repetition_anchor: RepetitionAnchor::Deadline,
             days_in_advance: 0,
             project_category: None,
-        },
+        }
+        .into(),
         first_available_time,
         scheduled_start,
         scheduled_end,
@@ -118,7 +119,6 @@ fn scheduled_task_viewのserde表現はnested_taskを含む既存mcp_json契約�
     );
     expected["first_available_time"] = json!(first_available_time.to_rfc3339());
     expected["total_work_seconds"] = json!(1_800);
-    expected["task"]["root_id"] = json!(root_id.to_string());
     expected["task"]["status"] = json!("pending");
 
     let serialized = serde_json::to_value(&scheduled).unwrap();

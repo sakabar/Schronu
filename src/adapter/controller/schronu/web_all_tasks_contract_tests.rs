@@ -21,7 +21,7 @@ fn all_task_rowはschedule順とsegment情報を保持し同一task分類を1回
     let schedule = vec![
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id },
-            task: task.clone(),
+            task: task.clone().into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end: start + Duration::seconds(300),
@@ -31,7 +31,7 @@ fn all_task_rowはschedule順とsegment情報を保持し同一task分類を1回
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id },
-            task,
+            task: task.into(),
             first_available_time: start,
             scheduled_start: start + Duration::minutes(2),
             scheduled_end: start + Duration::minutes(7),

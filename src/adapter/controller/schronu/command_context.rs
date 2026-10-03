@@ -224,7 +224,10 @@ fn scheduled_leaf_starts_on_schronu_day(
 
     let mut starts = HashMap::new();
     for scheduled in get_schedule(task_repository)? {
-        if !leaf_task_ids.contains(&scheduled.task.id) {
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        if !leaf_task_ids.contains(&task_id) {
             continue;
         }
         let scheduled_day_start =
@@ -233,7 +236,7 @@ fn scheduled_leaf_starts_on_schronu_day(
             continue;
         }
         starts
-            .entry(scheduled.task.id)
+            .entry(task_id)
             .or_insert_with(Vec::new)
             .push(scheduled.scheduled_start);
     }

@@ -1,6 +1,6 @@
 use super::web_service::{
-    build_auto_session_dto, build_band_days, build_scheduled_task_rows, DeadlineDisplayKind,
-    DeferModeDto, TaskDisplayKind,
+    build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
+    DeadlineDisplayKind, DeferModeDto, TaskDisplayKind,
 };
 use crate::application::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use crate::application::task_use_case::get_task;
@@ -8,6 +8,37 @@ use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
+
+#[test]
+fn projected_occurrenceはsession・defer操作用rowを構築しない() {
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
+    let source_task_id = Uuid::from_u128(901);
+    let task = TaskHandle::with_identity("projected", source_task_id, start).unwrap();
+    let repository = TestTaskRepository::new(vec![task.clone()], start);
+    let schedule = [ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline: start + Duration::days(3),
+        },
+        task: get_task(&repository, source_task_id)
+            .unwrap()
+            .unwrap()
+            .into(),
+        first_available_time: start,
+        scheduled_start: start,
+        scheduled_end: start + Duration::minutes(10),
+        scheduled_work_seconds: 600,
+        total_work_seconds: 600,
+        rank: 0,
+    }];
+
+    let scheduled_rows =
+        build_scheduled_task_rows(&repository, &schedule, start.date_naive(), start).unwrap();
+    let all_rows = build_all_task_rows(&repository, &schedule, start).unwrap();
+
+    assert!(scheduled_rows.is_empty());
+    assert!(all_rows.is_empty());
+}
 
 #[test]
 fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位に返す() {
@@ -24,7 +55,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let schedule = vec![
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
-            task: first.clone(),
+            task: first.clone().into(),
             first_available_time: day_start - Duration::minutes(1),
             scheduled_start: day_start - Duration::minutes(1),
             scheduled_end: day_start,
@@ -34,7 +65,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
-            task: first.clone(),
+            task: first.clone().into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(3),
             scheduled_end: day_start + Duration::hours(3) + Duration::seconds(600),
@@ -44,7 +75,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: second_id },
-            task: second,
+            task: second.into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(1),
             scheduled_end: day_start + Duration::hours(1) + Duration::seconds(900),
@@ -54,7 +85,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
-            task: first.clone(),
+            task: first.clone().into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(1),
             scheduled_end: day_start + Duration::hours(1) + Duration::seconds(300),
@@ -64,7 +95,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
-            task: first,
+            task: first.into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::days(1),
             scheduled_end: day_start + Duration::days(1) + Duration::seconds(300),
@@ -105,7 +136,7 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
         &repository,
         &[ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id },
-            task,
+            task: task.into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end: start + Duration::seconds(1_200),
@@ -197,7 +228,8 @@ fn listのdtoは予定終了が締切を過ぎる場合だけmisses_deadlineに�
             },
             task: get_task(&repository, handle.get_id().unwrap())
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,
@@ -239,7 +271,7 @@ fn listは固定・祖先から継承した繰返・単発を分類する() {
         .enumerate()
         .map(|(index, id)| ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: id },
-            task: get_task(&repository, id).unwrap().unwrap(),
+            task: get_task(&repository, id).unwrap().unwrap().into(),
             first_available_time: start,
             scheduled_start: start + Duration::minutes(index as i64 * 10),
             scheduled_end: start + Duration::minutes(index as i64 * 10 + 5),
@@ -291,7 +323,8 @@ fn listは締切なし・超過・当日・将来をlogical_date境界で分類�
             },
             task: get_task(&repository, handle.get_id().unwrap())
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,
@@ -338,7 +371,7 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
                 occurrence: ScheduleOccurrenceKey::Actual {
                     task_id: rank_zero_id,
                 },
-                task: rank_zero_task,
+                task: rank_zero_task.into(),
                 first_available_time: start,
                 scheduled_start: start,
                 scheduled_end: start + Duration::minutes(10),
@@ -350,7 +383,7 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
                 occurrence: ScheduleOccurrenceKey::Actual {
                     task_id: rank_one_id,
                 },
-                task: rank_one_task,
+                task: rank_one_task.into(),
                 first_available_time: start,
                 scheduled_start: start + Duration::minutes(10),
                 scheduled_end: start + Duration::minutes(20),
@@ -384,7 +417,7 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
     let schedule = vec![
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
-            task: first_view,
+            task: first_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now,
             scheduled_end: operation_now + Duration::minutes(10),
@@ -396,7 +429,7 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
             occurrence: ScheduleOccurrenceKey::Actual {
                 task_id: adjustable_id,
             },
-            task: adjustable_view,
+            task: adjustable_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now + Duration::days(2),
             scheduled_end: operation_now + Duration::days(2) + Duration::minutes(30),
@@ -474,7 +507,7 @@ fn 負荷は祖先から継承した繰返を単発から分離する() {
     let child_view = get_task(&repository, child_id).unwrap().unwrap();
     let schedule = [ScheduledTaskView {
         occurrence: ScheduleOccurrenceKey::Actual { task_id: child_id },
-        task: child_view,
+        task: child_view.into(),
         first_available_time: operation_now,
         scheduled_start: operation_now,
         scheduled_end: operation_now + Duration::minutes(10),

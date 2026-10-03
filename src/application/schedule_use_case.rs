@@ -8,9 +8,10 @@ use crate::application::scheduling_policy::{
 use crate::application::task_use_case::{next_repetition_occurrence_times, ApplicationError};
 use crate::application::task_view::TaskView;
 use crate::entity::task::{
-    extract_leaf_tasks_from_project_with_pending, TaskHandle, TaskTreeError,
+    extract_leaf_tasks_from_project_with_pending, ProjectCategory, RepetitionAnchor, Status,
+    TaskHandle, TaskTreeError,
 };
-use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime};
 use serde::Serialize;
 use std::cmp::{max, min};
 use std::collections::HashMap;
@@ -19,13 +20,64 @@ use uuid::Uuid;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ScheduledTaskView {
     pub occurrence: ScheduleOccurrenceKey,
-    pub task: TaskView,
+    pub task: ScheduledTaskPayload,
     pub first_available_time: DateTime<Local>,
     pub scheduled_start: DateTime<Local>,
     pub scheduled_end: DateTime<Local>,
     pub scheduled_work_seconds: i64,
     pub total_work_seconds: i64,
     pub rank: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ScheduledTaskPayload {
+    pub name: String,
+    pub status: Status,
+    pub original_status: Status,
+    pub is_on_other_side: bool,
+    pub atomic: bool,
+    pub fixed_start: bool,
+    pub pending_until: Option<DateTime<Local>>,
+    pub priority: i64,
+    pub create_time: DateTime<Local>,
+    pub start_time: DateTime<Local>,
+    pub end_time: Option<DateTime<Local>>,
+    pub deadline_time: Option<DateTime<Local>>,
+    pub estimated_work_seconds: i64,
+    pub actual_work_seconds: i64,
+    pub repetition_interval_days: Option<i64>,
+    pub repetition_start_time: Option<NaiveTime>,
+    pub repetition_deadline_time: Option<NaiveTime>,
+    pub repetition_anchor: RepetitionAnchor,
+    pub days_in_advance: i64,
+    pub project_category: Option<ProjectCategory>,
+}
+
+impl From<TaskView> for ScheduledTaskPayload {
+    fn from(task: TaskView) -> Self {
+        Self {
+            name: task.name,
+            status: task.status,
+            original_status: task.original_status,
+            is_on_other_side: task.is_on_other_side,
+            atomic: task.atomic,
+            fixed_start: task.fixed_start,
+            pending_until: task.pending_until,
+            priority: task.priority,
+            create_time: task.create_time,
+            start_time: task.start_time,
+            end_time: task.end_time,
+            deadline_time: task.deadline_time,
+            estimated_work_seconds: task.estimated_work_seconds,
+            actual_work_seconds: task.actual_work_seconds,
+            repetition_interval_days: task.repetition_interval_days,
+            repetition_start_time: task.repetition_start_time,
+            repetition_deadline_time: task.repetition_deadline_time,
+            repetition_anchor: task.repetition_anchor,
+            days_in_advance: task.days_in_advance,
+            project_category: task.project_category,
+        }
+    }
 }
 
 impl ScheduledTaskView {
@@ -159,12 +211,6 @@ pub(crate) fn get_schedule_from_context_with_overrides(
         .map(|scheduled| {
             let mut task =
                 TaskView::try_from(&scheduled.task).map_err(ApplicationError::TaskTree)?;
-            if let ScheduleOccurrenceKey::Projected { source_task_id, .. } = scheduled.occurrence {
-                task.id = source_task_id;
-                task.root_id = source_task_id;
-                task.parent_id = None;
-                task.child_ids.clear();
-            }
             if let Some(metadata) = scheduled.projected_metadata {
                 task.repetition_interval_days = Some(metadata.repetition_interval_days);
                 task.repetition_start_time = Some(metadata.repetition_start_time);
@@ -174,7 +220,7 @@ pub(crate) fn get_schedule_from_context_with_overrides(
             }
             Ok(ScheduledTaskView {
                 occurrence: scheduled.occurrence,
-                task,
+                task: task.into(),
                 first_available_time: scheduled.first_available_time,
                 scheduled_start: scheduled.scheduled_start,
                 scheduled_end: scheduled.scheduled_end,
@@ -763,7 +809,7 @@ mod tests {
             occurrence: ScheduleOccurrenceKey::Actual {
                 task_id: task.get_id().unwrap(),
             },
-            task: TaskView::try_from(task).unwrap(),
+            task: TaskView::try_from(task).unwrap().into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,
@@ -802,7 +848,7 @@ mod tests {
         let second_task = crate::test_support::new_task_handle("second internal").unwrap();
         let segment = |task: &TaskHandle, scheduled_end| ScheduledTaskView {
             occurrence,
-            task: TaskView::try_from(task).unwrap(),
+            task: TaskView::try_from(task).unwrap().into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,

@@ -39,7 +39,7 @@ fn scheduled_segment_metadataは06時境界と入力順とrankに対応する() 
         .unwrap();
     let segment = |scheduled_start, rank| ScheduledTaskView {
         occurrence: ScheduleOccurrenceKey::Actual { task_id: task.id },
-        task: task.clone(),
+        task: task.clone().into(),
         first_available_time: scheduled_start,
         scheduled_start,
         scheduled_end: scheduled_start + Duration::minutes(15),
@@ -133,7 +133,7 @@ fn get_scheduleは3日周期を28日窓へ現在回を含む10回展開する() 
     assert_eq!(
         schedule
             .iter()
-            .filter(|segment| segment.task.id == current.get_id().unwrap())
+            .filter(|segment| segment.actual_task_id() == Some(current.get_id().unwrap()))
             .count(),
         1
     );
@@ -195,7 +195,10 @@ fn get_scheduleの仮想回はsemantic_identityを持ちrepository_task_idを持
     for projected in schedule.iter().filter(|item| item.is_projected()) {
         assert_eq!(projected.actual_task_id(), None);
         assert_eq!(projected.source_task_id(), parent_id);
-        assert_eq!(projected.task.id, parent_id);
+        assert!(serde_json::to_value(&projected.task)
+            .unwrap()
+            .get("id")
+            .is_none());
         assert!(matches!(
             projected.occurrence,
             ScheduleOccurrenceKey::Projected { source_task_id, .. } if source_task_id == parent_id
@@ -433,18 +436,24 @@ fn get_schedule_slackに余裕があればpriorityを優先しdoneを除外す�
     let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0].task.id, high_priority_task.get_id().unwrap());
+    assert_eq!(
+        actual[0].actual_task_id(),
+        Some(high_priority_task.get_id().unwrap())
+    );
     assert_eq!(actual[0].task.name, "高優先度");
     assert_eq!(actual[0].scheduled_start, now);
     assert_eq!(actual[0].scheduled_end, now + Duration::minutes(30));
     assert_eq!(actual[0].scheduled_work_seconds, 30 * 60);
     assert_eq!(actual[0].total_work_seconds, 30 * 60);
     assert_eq!(actual[0].rank, 0);
-    assert_eq!(actual[1].task.id, deadline_task.get_id().unwrap());
+    assert_eq!(
+        actual[1].actual_task_id(),
+        Some(deadline_task.get_id().unwrap())
+    );
     assert_eq!(actual[1].scheduled_start, now + Duration::minutes(30));
     assert!(!actual
         .iter()
-        .any(|entry| entry.task.id == done_task.get_id().unwrap()));
+        .any(|entry| entry.actual_task_id() == Some(done_task.get_id().unwrap())));
     assert_eq!(repository.save_count(), 0);
     assert_eq!(
         repository
@@ -467,8 +476,8 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 
     let actual = get_schedule(&repository).unwrap();
 
-    assert_eq!(actual[0].task.id, next.get_id().unwrap());
-    assert_eq!(actual[1].task.id, lowest.get_id().unwrap());
+    assert_eq!(actual[0].actual_task_id(), Some(next.get_id().unwrap()));
+    assert_eq!(actual[1].actual_task_id(), Some(lowest.get_id().unwrap()));
 }
 
 #[test]
@@ -576,11 +585,11 @@ fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let actual = get_schedule(&repository).unwrap();
     let child_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == child.get_id().unwrap())
+        .find(|entry| entry.actual_task_id() == Some(child.get_id().unwrap()))
         .unwrap();
     let parent_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == parent.get_id().unwrap())
+        .find(|entry| entry.actual_task_id() == Some(parent.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(
@@ -606,7 +615,7 @@ fn get_schedule_非atomic_taskを未来の高優先度taskの前後へ分割す�
     let actual = get_schedule(&repository).unwrap();
     let low_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == low_priority.get_id().unwrap())
+        .filter(|entry| entry.actual_task_id() == Some(low_priority.get_id().unwrap()))
         .collect::<Vec<_>>();
 
     assert_eq!(low_segments.len(), 2);
@@ -634,7 +643,7 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
     let actual = get_schedule(&repository).unwrap();
     let atomic_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == atomic_task.get_id().unwrap())
+        .filter(|entry| entry.actual_task_id() == Some(atomic_task.get_id().unwrap()))
         .collect::<Vec<_>>();
 
     assert_eq!(atomic_segments.len(), 1);
@@ -654,7 +663,7 @@ fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する
     let scheduled = get_schedule(&repository).unwrap();
     let fixed_segment = scheduled
         .iter()
-        .find(|segment| segment.task.id == fixed.get_id().unwrap())
+        .find(|segment| segment.actual_task_id() == Some(fixed.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(fixed_segment.scheduled_start, fixed_start);
@@ -690,7 +699,7 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
     let schedule = get_schedule(&repository).unwrap();
     let child_schedule = schedule
         .iter()
-        .find(|segment| segment.task.id == child.get_id().unwrap())
+        .find(|segment| segment.actual_task_id() == Some(child.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(child_schedule.first_available_time, child_start);
@@ -733,14 +742,17 @@ fn get_schedule_stops_at_repeating_task_boundary() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(!ids.contains(&root.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
             .unwrap()
             .rank,
         0
@@ -770,12 +782,12 @@ fn get_schedule_preserves_normal_ancestor_deadline_across_repeating_boundary() {
     let schedule = get_schedule(&repository).unwrap();
     let occurrence_schedule = schedule
         .iter()
-        .find(|item| item.task.id == occurrence.get_id().unwrap())
+        .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
         .unwrap();
     assert!(occurrence_schedule.scheduled_end <= ancestor_deadline);
     assert!(!schedule
         .iter()
-        .any(|item| item.task.id == root.get_id().unwrap()));
+        .any(|item| item.actual_task_id() == Some(root.get_id().unwrap())));
 }
 
 #[test]
@@ -794,7 +806,10 @@ fn get_schedule_excludes_common_ancestor_but_keeps_normal_sibling() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(ids.contains(&sibling.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
@@ -819,7 +834,10 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence_child.get_id().unwrap()));
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
@@ -827,7 +845,7 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence_child.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence_child.get_id().unwrap()))
             .unwrap()
             .rank,
         0
@@ -835,7 +853,7 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
             .unwrap()
             .rank,
         1
@@ -940,7 +958,7 @@ fn get_scheduleはfixedで未使用のpending近傍時刻を加算せず指定wi
     let schedule = get_schedule(&repository).unwrap();
     let fixed = schedule
         .iter()
-        .find(|segment| segment.task.id == task_id)
+        .find(|segment| segment.actual_task_id() == Some(task_id))
         .unwrap();
 
     assert_eq!(fixed.scheduled_start, fixed_start);
@@ -965,7 +983,7 @@ fn get_scheduleはfixedで未使用のdependency近傍時刻を加算せず指�
     let schedule = get_schedule(&repository).unwrap();
     let fixed = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(fixed.scheduled_start, fixed_start);
@@ -990,11 +1008,11 @@ fn get_scheduleはflexible祖先のdeadline補正と子から親の順序を維�
     let schedule = get_schedule(&repository).unwrap();
     let child_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == child_id)
+        .find(|segment| segment.actual_task_id() == Some(child_id))
         .unwrap();
     let parent_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(child_segment.scheduled_start, now);
@@ -1022,11 +1040,11 @@ fn get_scheduleは祖先時刻の既存残秒式とcandidate残秒を区別す�
     let schedule = get_schedule(&repository).unwrap();
     let child_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == child_id)
+        .find(|segment| segment.actual_task_id() == Some(child_id))
         .unwrap();
     let parent_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(child_segment.first_available_time, now + Duration::hours(1));

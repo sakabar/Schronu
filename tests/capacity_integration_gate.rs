@@ -242,7 +242,7 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
     let busy_probe_fixed_segment = get_schedule(&busy_probe_repository)
         .unwrap()
         .into_iter()
-        .find(|segment| segment.task.id == busy_probe_fixed_id)
+        .find(|segment| segment.actual_task_id() == Some(busy_probe_fixed_id))
         .unwrap();
     assert_eq!(
         busy_probe_fixed_segment.scheduled_start,
@@ -278,7 +278,7 @@ fn fixed容量はbusy控除と論理日配賦をpackとflattenで一致させる
     let fixed_segment = get_schedule(&schedule_repository)
         .unwrap()
         .into_iter()
-        .find(|segment| segment.task.id == fixture.fixed_id)
+        .find(|segment| segment.actual_task_id() == Some(fixture.fixed_id))
         .unwrap();
     assert_eq!(fixed_segment.scheduled_start, fixture.operation_datetime);
     assert_eq!(fixed_segment.scheduled_end, datetime(2026, 8, 12, 6, 30));
@@ -476,7 +476,7 @@ fn flexible容量はbusy控除と論理日配賦をpackとflattenで一致させ
     let flexible_segments = get_schedule(&schedule_repository)
         .unwrap()
         .into_iter()
-        .filter(|segment| segment.task.id == fixture.flexible_id)
+        .filter(|segment| segment.actual_task_id() == Some(fixture.flexible_id))
         .collect::<Vec<_>>();
     assert_eq!(flexible_segments.len(), 1);
     let flexible_segment = &flexible_segments[0];

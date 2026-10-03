@@ -53,8 +53,10 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
     logical_dates
         .into_iter()
         .zip(schedule)
+        .filter(|(_, segment)| segment.actual_task_id().is_some())
         .enumerate()
         .map(|(segment_index, (logical_date, segment))| {
+            let task_id = segment.actual_task_id().expect("actual segments only");
             let deadline = segment.task.deadline_time;
             let deadline_label = format_deadline_remaining_time(
                 deadline.as_ref(),
@@ -66,7 +68,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(AllTaskRowDto {
                 task: session_task_dto(
-                    segment.task.id.hyphenated().to_string(),
+                    task_id.hyphenated().to_string(),
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
@@ -108,12 +110,16 @@ where
             continue;
         }
         *totals.entry(date).or_default() += segment.scheduled_work_seconds;
+        let Some(task_id) = segment.actual_task_id() else {
+            *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
+            continue;
+        };
         let task = repository
-            .get_by_id(segment.task.id)
+            .get_by_id(task_id)
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .ok_or({
-                WebReadCoreError::Application(ApplicationError::TaskNotFound(segment.task.id))
-            })?;
+            .ok_or(WebReadCoreError::Application(
+                ApplicationError::TaskNotFound(task_id),
+            ))?;
         if task
             .get_inherited_repetition_interval_days_opt()
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
@@ -288,12 +294,14 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
         .zip(schedule)
         .collect::<Vec<_>>();
     dated_segments.retain(|(date, _)| *date == logical_date);
+    dated_segments.retain(|(_, segment)| segment.actual_task_id().is_some());
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
     let mut task_kind_cache = HashMap::new();
     dated_segments
         .into_iter()
         .map(|(_, segment)| {
+            let task_id = segment.actual_task_id().expect("actual segments only");
             let deadline = segment.task.deadline_time;
             let deadline_label = format_deadline_remaining_time(
                 deadline.as_ref(),
@@ -305,7 +313,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
             Ok(ScheduledTaskRowDto {
                 task: session_task_dto(
-                    segment.task.id.hyphenated().to_string(),
+                    task_id.hyphenated().to_string(),
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
@@ -319,7 +327,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_display_kind,
                 is_leaf: segment.is_leaf(),
                 defer_plan: defer_plan_dto(
-                    plan_defer_task(repository, segment.task.id, logical_date)
+                    plan_defer_task(repository, task_id, logical_date)
                         .map_err(WebReadCoreError::Application)?,
                 ),
             })
@@ -333,15 +341,21 @@ fn classify_display_kinds(
     logical_date: NaiveDate,
     task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
 ) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
-    let task_display_kind = if let Some(kind) = task_kind_cache.get(&segment.task.id) {
+    let task_id = segment.actual_task_id().ok_or({
+        WebReadCoreError::Application(ApplicationError::InvalidInput {
+            field: "occurrence",
+            reason: "projected occurrence has no actionable task ID",
+        })
+    })?;
+    let task_display_kind = if let Some(kind) = task_kind_cache.get(&task_id) {
         *kind
     } else {
         let task = repository
-            .get_by_id(segment.task.id)
+            .get_by_id(task_id)
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .ok_or({
-                WebReadCoreError::Application(ApplicationError::TaskNotFound(segment.task.id))
-            })?;
+            .ok_or(WebReadCoreError::Application(
+                ApplicationError::TaskNotFound(task_id),
+            ))?;
         let kind = if task
             .fixed_start_applies_to_schedule()
             .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
@@ -356,7 +370,7 @@ fn classify_display_kinds(
         } else {
             TaskDisplayKind::NonRepetitive
         };
-        task_kind_cache.insert(segment.task.id, kind);
+        task_kind_cache.insert(task_id, kind);
         kind
     };
     let deadline_display_kind = match classify_deadline_display(

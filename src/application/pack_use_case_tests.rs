@@ -274,7 +274,9 @@ fn calculate_daily_leewayは反復親のfixed_startを予約容量に使わな�
         occurrence: super::super::scheduling_policy::ScheduleOccurrenceKey::Actual {
             task_id: repetition_parent.get_id().unwrap(),
         },
-        task: super::super::task_view::TaskView::try_from(&repetition_parent).unwrap(),
+        task: super::super::task_view::TaskView::try_from(&repetition_parent)
+            .unwrap()
+            .into(),
         first_available_time: scheduled_start,
         scheduled_start,
         scheduled_end: scheduled_start + Duration::hours(1),

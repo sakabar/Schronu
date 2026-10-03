@@ -194,12 +194,7 @@ fn deadline_alert_issues(
     let scheduled_ends = scheduled_end_by_task(scheduled_tasks);
     let deadlines_by_task = scheduled_tasks
         .iter()
-        .filter_map(|scheduled| {
-            scheduled
-                .task
-                .deadline_time
-                .map(|deadline| (scheduled.task.id, deadline))
-        })
+        .filter_map(|scheduled| scheduled.actual_task_id().zip(scheduled.task.deadline_time))
         .collect::<HashMap<_, _>>();
     let mut today_issue = None;
     let mut tomorrow_issue = None;
@@ -866,7 +861,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let total_work_seconds = scheduled_task.total_work_seconds;
         let rank = &scheduled_task.rank;
         let deadline_time_opt = &scheduled_task.task.deadline_time;
-        let id = &scheduled_task.task.id;
+        let id = scheduled_task.actual_task_id();
         let logical_naive_date = *logical_naive_date;
         let needs_scheduled_boundary = pattern_opt.as_ref().is_some_and(|pattern| {
             pattern == "今"
@@ -897,9 +892,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .and_modify(|cnt| *cnt += 1)
             .or_insert(1);
 
-        let task_opt = task_repository
-            .get_by_id(*id)
-            .map_err(ApplicationError::TaskTree)?;
+        let task_opt = id
+            .map(|task_id| task_repository.get_by_id(task_id))
+            .transpose()
+            .map_err(ApplicationError::TaskTree)?
+            .flatten();
         if let Some(task) = task_opt {
             let inherited_repetition_interval_days_opt = task
                 .get_inherited_repetition_interval_days_opt()
@@ -1101,7 +1098,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             let task_row = TaskListTaskRow {
                 ind,
-                task_id: *id,
+                task_id: id.expect("repository task branch requires actual identity"),
                 icon: icon.to_string(),
                 deadline: deadline_string,
                 scheduled_start: *start_datetime,
@@ -1120,7 +1117,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 *scheduled_start,
                 logical_naive_date,
                 *rank,
-                *id,
+                id.expect("repository task branch requires actual identity"),
                 task_priority,
                 estimated_work_seconds,
                 task_project_category_opt,

@@ -209,7 +209,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_internal(
             let trial_schedule = trial_schedule_result?;
             let trial_scheduled_start = trial_schedule
                 .iter()
-                .filter(|scheduled| scheduled.task.id == candidate.task_id)
+                .filter(|scheduled| scheduled.actual_task_id() == Some(candidate.task_id))
                 .map(|scheduled| scheduled.scheduled_start)
                 .min();
             let made_progress = trial_scheduled_start.is_some_and(|scheduled_start| {
