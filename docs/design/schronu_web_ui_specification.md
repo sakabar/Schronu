@@ -196,7 +196,7 @@ RoutineLoadRow {
 
 `load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、各segmentから最寄りの繰返間隔を持つ祖先へ帰属させる。同じ繰返祖先の日別segment秒数を合算し、28日合計、その4分の1の週平均、異なるlogical date数である発生日数、日別合計が最大となる最大日を求める。最大日が同値なら早いlogical dateを採用し、rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
 
-負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷はsemantic tableで表示し、列は「間隔」「28日合計」「週平均」「発生日数」「最大日」「プロジェクト / 繰返」の順とする。先頭5列は`6rem`、`6.5rem`、`6rem`、`6.5rem`、`8.5rem`の固定幅で右揃えし、末尾の名前列は最小`14rem`の左揃えとする。tableの最小幅は`47.5rem`とし、専用wrapperだけを横scroll可能にしてpage全体の横overflowを増やさない。
+負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷はsemantic tableで表示し、列は「間隔」「28日合計」「週平均」「発生日数」「最大日」「プロジェクト / 繰返」の順とする。間隔値は`N日`とし、「ごと」は付けない。通常幅では先頭5列を`6rem`、`6.5rem`、`6rem`、`6.5rem`、`8.5rem`で右揃えし、末尾の名前列へ残り幅を割り当てる。`46rem`以下では6列を`11%`、`15%`、`13.5%`、`14%`、`18%`、`28.5%`へ圧縮し、見出しと数値の折返しを許可する。tableと外側wrapperは横scrollさせず、末尾row header内の繰返名とプロジェクト名をまとめたfocus可能な領域だけを横scroll可能にする。
 
 7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 
@@ -854,7 +854,7 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 固定された「セッション」「一覧」「負荷」「発火履歴」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
-- 負荷内の初期表示が先頭の「日別負荷」で見出しが「今日から7日の負荷」であること、通信なしに「繰返負荷」へ切り替わること、28日集計表のheaderと値、空・取得中状態、専用wrapperだけの横scrollをcomponent testとCSS contract testで確認する。
+- 負荷内の初期表示が先頭の「日別負荷」で見出しが「今日から7日の負荷」であること、通信なしに「繰返負荷」へ切り替わること、28日集計表のheaderと値、間隔の`N日`表記、空・取得中状態、6列圧縮、末尾の名前cell内だけの横scrollをcomponent testとCSS contract testで確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。

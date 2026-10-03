@@ -131,14 +131,16 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
-fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
+fn routine_load_table_scrolls_only_the_subject_column() {
     let wrapper = block_body(MAIN_CSS, ".routine-load-table-wrap");
-    assert!(wrapper.contains("overflow-x: auto;"));
+    assert!(wrapper.contains("overflow-x: visible;"));
+    assert!(!wrapper.contains("overflow-x: auto;"));
     assert!(wrapper.contains("max-width: 100%;"));
 
     let table = block_body(MAIN_CSS, ".routine-load-table {");
-    assert!(table.contains("min-width: 47.5rem;"));
+    assert!(table.contains("min-width: 0;"));
     assert!(table.contains("width: 100%;"));
+    assert!(table.contains("table-layout: fixed;"));
 
     for (selector, width) in [
         (".routine-load-interval", "6rem"),
@@ -163,8 +165,55 @@ fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
     }
 
     let subject = block_body(MAIN_CSS, ".routine-load-subject");
-    assert!(subject.contains("min-width: 14rem;"));
+    assert!(subject.contains("min-width: 0;"));
+    assert!(subject.contains("overflow: hidden;"));
     assert!(subject.contains("text-align: left;"));
+
+    let subject_scroll = block_body(MAIN_CSS, ".routine-load-subject-scroll");
+    for contract in [
+        "min-width: 0;",
+        "width: 100%;",
+        "overflow-x: auto;",
+        "overflow-y: hidden;",
+        "overscroll-behavior-inline: contain;",
+        "white-space: nowrap;",
+        "scrollbar-width: thin;",
+        "touch-action: pan-x pan-y pinch-zoom;",
+    ] {
+        assert!(
+            subject_scroll.contains(contract),
+            "missing {contract}: {subject_scroll}"
+        );
+    }
+    let subject_focus = block_body(MAIN_CSS, ".routine-load-subject-scroll:focus-visible");
+    assert!(subject_focus.contains("outline:"));
+
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    for (selector, width) in [
+        (".routine-load-interval", "11%"),
+        (".routine-load-total", "15%"),
+        (".routine-load-weekly", "13.5%"),
+        (".routine-load-occurrences", "14%"),
+        (".routine-load-peak", "18%"),
+        (".routine-load-subject", "28.5%"),
+    ] {
+        let column = block_body(narrow, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(column.contains("min-width: 0;"), "{selector}: {column}");
+        assert!(
+            !column.contains("overflow-x: auto;"),
+            "{selector}: {column}"
+        );
+    }
+    let narrow_cells = block_body(
+        narrow,
+        ".routine-load-table th,\n    .routine-load-table td",
+    );
+    assert!(narrow_cells.contains("white-space: normal;"));
+    assert!(narrow_cells.contains("overflow-wrap: anywhere;"));
 
     let peak_column = block_body(MAIN_CSS, ".routine-load-table .routine-load-peak {");
     assert!(!peak_column.contains("color:"));

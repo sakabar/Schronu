@@ -1132,7 +1132,7 @@ button:disabled {
 
 .routine-load-table-wrap {
     max-width: 100%;
-    overflow-x: auto;
+    overflow-x: visible;
     border: 1px solid var(--line);
     border-radius: 0.7rem;
     background: var(--surface);
@@ -1140,7 +1140,8 @@ button:disabled {
 
 .routine-load-table {
     width: 100%;
-    min-width: 47.5rem;
+    min-width: 0;
+    table-layout: fixed;
     border-collapse: collapse;
     font-size: 0.82rem;
 }
@@ -1217,8 +1218,25 @@ button:disabled {
 }
 
 .routine-load-table .routine-load-subject {
-    min-width: 14rem;
+    min-width: 0;
+    overflow: hidden;
     text-align: left;
+}
+
+.routine-load-subject-scroll {
+    min-width: 0;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.routine-load-subject-scroll:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: -3px;
 }
 
 .band-legend {
@@ -1434,6 +1452,45 @@ button:disabled {
     .tab-button {
         min-height: 40px;
         padding: 0.4rem 0.35rem;
+    }
+
+    .routine-load-table th,
+    .routine-load-table td {
+        padding: 0.55rem 0.2rem;
+        font-size: 0.7rem;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+        white-space: normal;
+    }
+
+    .routine-load-table .routine-load-interval {
+        width: 11%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-total {
+        width: 15%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-weekly {
+        width: 13.5%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-occurrences {
+        width: 14%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-peak {
+        width: 18%;
+        min-width: 0;
+    }
+
+    .routine-load-table .routine-load-subject {
+        width: 28.5%;
+        min-width: 0;
     }
 
 }

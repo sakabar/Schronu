@@ -296,25 +296,26 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     );
     let table_body = &routine_html[routine_html.find("<tbody>").unwrap()
         ..routine_html.find("</tbody>").unwrap()];
-    let value_positions = ["2日ごと", "28:00", "07:00", "14日", "10/4 03:00", "運動"]
+    let value_positions = ["2日", "28:00", "07:00", "14日", "10/4 03:00", "運動"]
         .map(|value| table_body.find(value).unwrap());
     assert!(
         value_positions.windows(2).all(|pair| pair[0] < pair[1]),
         "{table_body}"
     );
     for cell in [
-        "<td class=\"routine-load-interval\">2日ごと</td>",
+        "<td class=\"routine-load-interval\">2日</td>",
         "<td class=\"routine-load-total routine-load-number\">28:00</td>",
         "<td class=\"routine-load-weekly routine-load-number\">07:00</td>",
         "<td class=\"routine-load-occurrences routine-load-number\">14日</td>",
         "<td class=\"routine-load-peak\">10/4 03:00</td>",
-        "<th class=\"routine-load-subject\" scope=\"row\"><strong class=\"routine-load-name\">運動</strong><span class=\"routine-load-project\">健康</span></th>",
+        "<th class=\"routine-load-subject\" scope=\"row\"><div class=\"routine-load-subject-scroll\" tabindex=0><strong class=\"routine-load-name\">運動</strong><span class=\"routine-load-project\">健康</span></div></th>",
     ] {
         assert!(table_body.contains(cell), "missing {cell}: {table_body}");
     }
-    for value in ["運動", "健康", "2日ごと", "28:00", "07:00", "14日", "10/4 03:00"] {
+    for value in ["運動", "健康", "2日", "28:00", "07:00", "14日", "10/4 03:00"] {
         assert!(routine_html.contains(value), "missing {value}: {routine_html}");
     }
+    assert!(!table_body.contains("日ごと"), "{table_body}");
     assert!(
         routine_html.contains("aria-pressed=true>繰返負荷"),
         "{routine_html}"

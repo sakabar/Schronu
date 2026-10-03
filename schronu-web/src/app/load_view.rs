@@ -160,7 +160,7 @@ fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element
 fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
     rsx! {
         tr {
-            td { class: "routine-load-interval", "{row.repetition_interval_days}日ごと" }
+            td { class: "routine-load-interval", "{row.repetition_interval_days}日" }
             td { class: "routine-load-total routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
             td { class: "routine-load-weekly routine-load-number", "{format_unsigned(row.weekly_average_seconds)}" }
             td { class: "routine-load-occurrences routine-load-number", "{row.occurrence_day_count}日" }
@@ -168,8 +168,10 @@ fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
                 "{format_short_date(&row.peak_date)} {format_unsigned(row.peak_work_seconds)}"
             }
             th { class: "routine-load-subject", scope: "row",
-                strong { class: "routine-load-name", "{row.routine_name}" }
-                span { class: "routine-load-project", "{row.project_name}" }
+                div { class: "routine-load-subject-scroll", tabindex: 0,
+                    strong { class: "routine-load-name", "{row.routine_name}" }
+                    span { class: "routine-load-project", "{row.project_name}" }
+                }
             }
         }
     }
