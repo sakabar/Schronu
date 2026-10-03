@@ -196,6 +196,73 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 }
 
 #[test]
+fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する() {
+    fn root() -> Element {
+        rsx! {
+            LoadView {
+                rows: vec![band_day("2026-10-03", 0)],
+                routine_load_report: Some(RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-30".to_owned(),
+                    rows: vec![RoutineLoadRow {
+                        project_task_id: "project-1".to_owned(),
+                        project_name: "健康".to_owned(),
+                        routine_task_id: "routine-1".to_owned(),
+                        routine_name: "運動".to_owned(),
+                        repetition_interval_days: 2,
+                        total_work_seconds: 28 * 60 * 60,
+                        weekly_average_seconds: 7 * 60 * 60,
+                        occurrence_day_count: 14,
+                        peak_date: "2026-10-04".to_owned(),
+                        peak_work_seconds: 3 * 60 * 60,
+                    }],
+                }),
+                observed_at_epoch_ms: None,
+                loading: false,
+                error: None,
+                on_refresh: move |_| {},
+                on_select_date: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    let click_ids = rebuild_with_click_listeners(&mut dom);
+    let initial_html = dioxus::ssr::render(&dom);
+
+    assert!(initial_html.contains("今後28日の繰返負荷"), "{initial_html}");
+    assert!(initial_html.contains("10/3〜10/30"), "{initial_html}");
+    for heading in [
+        "プロジェクト / 繰返",
+        "間隔",
+        "28日合計",
+        "週平均",
+        "発生日数",
+        "最大日",
+    ] {
+        assert!(
+            initial_html.contains(&format!("scope=\"col\">{heading}")),
+            "missing {heading}: {initial_html}"
+        );
+    }
+    for value in ["運動", "健康", "2日ごと", "28:00", "07:00", "14日", "10/4 03:00"] {
+        assert!(initial_html.contains(value), "missing {value}: {initial_html}");
+    }
+    assert!(
+        initial_html.contains("aria-pressed=true>繰返負荷"),
+        "{initial_html}"
+    );
+
+    assert_eq!(click_ids.len(), 4, "2表示tab、更新、負荷日rowの順を保つ");
+    dispatch_click(&dom, click_ids[1]);
+    dom.render_immediate_to_vec();
+    let band_html = dioxus::ssr::render(&dom);
+    assert!(band_html.contains("直近7日の負荷"), "{band_html}");
+    assert!(band_html.contains("帯の凡例"), "{band_html}");
+    assert!(!band_html.contains("routine-load-table"), "{band_html}");
+}
+
+#[test]
 fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
     fn root() -> Element {
         let today = BandDay {

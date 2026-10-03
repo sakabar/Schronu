@@ -131,6 +131,17 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
+fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
+    let wrapper = block_body(MAIN_CSS, ".routine-load-table-wrap");
+    assert!(wrapper.contains("overflow-x: auto;"));
+    assert!(wrapper.contains("max-width: 100%;"));
+
+    let table = block_body(MAIN_CSS, ".routine-load-table");
+    assert!(table.contains("min-width:"));
+    assert!(table.contains("width: 100%;"));
+}
+
+#[test]
 fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
     assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
