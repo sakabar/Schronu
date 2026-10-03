@@ -201,7 +201,13 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
 
 #[test]
 fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替する() {
-    fn root() -> Element {
+    #[derive(Clone)]
+    struct Props {
+        refresh_count: Arc<Mutex<usize>>,
+    }
+
+    fn root(props: Props) -> Element {
+        let refresh_count = Arc::clone(&props.refresh_count);
         rsx! {
             LoadView {
                 rows: vec![band_day("2026-10-03", 0)],
@@ -224,13 +230,19 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                 observed_at_epoch_ms: None,
                 loading: false,
                 error: None,
-                on_refresh: move |_| {},
+                on_refresh: move |_| *refresh_count.lock().unwrap() += 1,
                 on_select_date: move |_| {},
             }
         }
     }
 
-    let mut dom = VirtualDom::new(root);
+    let refresh_count = Arc::new(Mutex::new(0));
+    let mut dom = VirtualDom::new_with_props(
+        root,
+        Props {
+            refresh_count: Arc::clone(&refresh_count),
+        },
+    );
     let click_ids = rebuild_with_click_listeners(&mut dom);
     let initial_html = dioxus::ssr::render(&dom);
 
@@ -313,6 +325,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     );
     assert!(!routine_html.contains("role=\"tablist\""), "{routine_html}");
     assert!(!routine_html.contains("帯の凡例"), "{routine_html}");
+    assert_eq!(*refresh_count.lock().unwrap(), 0, "表示切替で通信を要求しない");
 }
 
 #[test]
@@ -332,6 +345,15 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
     }
     let mut loading_dom = VirtualDom::new(loading);
     let loading_click_ids = rebuild_with_click_listeners(&mut loading_dom);
+    let daily_loading_html = dioxus::ssr::render(&loading_dom);
+    assert!(
+        daily_loading_html.contains("負荷を取得しています…"),
+        "{daily_loading_html}"
+    );
+    assert!(
+        !daily_loading_html.contains("繰返負荷を取得しています…"),
+        "{daily_loading_html}"
+    );
     dispatch_click(&loading_dom, loading_click_ids[2]);
     loading_dom.render_immediate_to_vec();
     let loading_html = dioxus::ssr::render(&loading_dom);
@@ -360,6 +382,15 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
     }
     let mut empty_dom = VirtualDom::new(empty);
     let empty_click_ids = rebuild_with_click_listeners(&mut empty_dom);
+    let daily_empty_html = dioxus::ssr::render(&empty_dom);
+    assert!(
+        daily_empty_html.contains("負荷は未取得です。"),
+        "{daily_empty_html}"
+    );
+    assert!(
+        !daily_empty_html.contains("今後28日に発生する繰返負荷はありません。"),
+        "{daily_empty_html}"
+    );
     dispatch_click(&empty_dom, empty_click_ids[2]);
     empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
