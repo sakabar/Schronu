@@ -306,7 +306,6 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                     "routine_name": "週次家事",
                     "repetition_interval_days": 7,
                     "total_work_seconds": 15_600,
-                    "weekly_average_seconds": 3_900,
                     "occurrence_day_count": 4,
                     "peak_date": "2026-10-04",
                     "peak_work_seconds": 4_800

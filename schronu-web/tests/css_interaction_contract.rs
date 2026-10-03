@@ -145,7 +145,6 @@ fn routine_load_table_scrolls_only_the_subject_column() {
     for (selector, width) in [
         (".routine-load-interval", "6rem"),
         (".routine-load-total", "6.5rem"),
-        (".routine-load-weekly", "6rem"),
         (".routine-load-occurrences", "6.5rem"),
         (".routine-load-peak", "8.5rem"),
     ] {
@@ -192,10 +191,9 @@ fn routine_load_table_scrolls_only_the_subject_column() {
     for (selector, width) in [
         (".routine-load-interval", "11%"),
         (".routine-load-total", "15%"),
-        (".routine-load-weekly", "13.5%"),
         (".routine-load-occurrences", "14%"),
         (".routine-load-peak", "18%"),
-        (".routine-load-subject", "28.5%"),
+        (".routine-load-subject", "42%"),
     ] {
         let column = block_body(narrow, selector);
         assert!(
@@ -214,6 +212,7 @@ fn routine_load_table_scrolls_only_the_subject_column() {
     );
     assert!(narrow_cells.contains("white-space: normal;"));
     assert!(narrow_cells.contains("overflow-wrap: anywhere;"));
+    assert!(!MAIN_CSS.contains(".routine-load-weekly"));
 
     let peak_column = block_body(MAIN_CSS, ".routine-load-table .routine-load-peak {");
     assert!(!peak_column.contains("color:"));
