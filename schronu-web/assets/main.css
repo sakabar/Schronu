@@ -1209,8 +1209,11 @@ button:disabled {
     width: 8.5rem;
     min-width: 8.5rem;
     text-align: right;
-    color: var(--red);
     font-variant-numeric: tabular-nums;
+}
+
+.routine-load-table tbody .routine-load-peak {
+    color: var(--red);
 }
 
 .routine-load-table .routine-load-subject {

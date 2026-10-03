@@ -165,6 +165,11 @@ fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
     let subject = block_body(MAIN_CSS, ".routine-load-subject");
     assert!(subject.contains("min-width: 14rem;"));
     assert!(subject.contains("text-align: left;"));
+
+    let peak_column = block_body(MAIN_CSS, ".routine-load-table .routine-load-peak {");
+    assert!(!peak_column.contains("color:"));
+    let peak_value = block_body(MAIN_CSS, ".routine-load-table tbody .routine-load-peak {");
+    assert!(peak_value.contains("color: var(--red);"));
 }
 
 #[test]
