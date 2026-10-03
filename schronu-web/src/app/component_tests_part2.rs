@@ -196,6 +196,73 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
 }
 
 #[test]
+#[cfg(feature = "web")]
+fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを渡さない() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.apply_bootstrap_result(1, Ok(snapshot(1_001)));
+
+    let (completed_id, completed_date) = match state
+        .switch_list_mode(crate::client::state::ListMode::Completed)
+    {
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("完了一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_completed_list_result(
+        completed_id,
+        &completed_date,
+        Ok(WebSuccess {
+            snapshot: snapshot(1_002),
+            data: vec![CompletedTaskRow {
+                task_id: RECORD_ID.to_owned(),
+                task_name: "A日の完了".to_owned(),
+                project_name: "Schronu".to_owned(),
+                completed_at_epoch_ms: 1_789_000_000_000,
+                actual_work_seconds: 120,
+                estimated_work_seconds: 60,
+            }],
+        }),
+    );
+    let _ = state.switch_list_mode(crate::client::state::ListMode::Scheduled);
+    let (scheduled_id, scheduled_date) = match state.select_logical_date("2026-09-06") {
+        ClientEffect::ListTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("予定一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_list_result(
+        scheduled_id,
+        &scheduled_date,
+        Ok(WebSuccess {
+            snapshot: snapshot(1_003),
+            data: Vec::new(),
+        }),
+    );
+    let (failed_id, failed_date) = match state
+        .switch_list_mode(crate::client::state::ListMode::Completed)
+    {
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("完了一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_completed_list_result(
+        failed_id,
+        &failed_date,
+        Err(ServerFailure::Transport("secret".to_owned())),
+    );
+
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
+    assert!(project_active_completed_rows(&state).is_empty());
+    assert!(state.display_error().is_some());
+}
+
+#[test]
 fn local画面変更はview_stateへ保存して次のmountで復元する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = mounted_orchestrator(&storage);

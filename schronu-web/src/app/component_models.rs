@@ -64,15 +64,17 @@ impl BrowserPageModel {
                     (projection.rows, projection.has_more)
                 })
                 .unwrap_or_default()
-        } else {
+        } else if state.has_scheduled_list() {
             (project_list_rows_for_browser(state), false)
+        } else {
+            (Vec::new(), false)
         };
         Self {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows,
-            completed_rows: state.completed_rows().to_vec(),
+            completed_rows: project_active_completed_rows(state),
             list_mode: state.list_mode(),
             selected_logical_date: state.selected_logical_date().map(str::to_owned),
             band_rows: state.band_rows().to_vec(),
@@ -101,6 +103,14 @@ impl BrowserPageModel {
             auto_session_empty: state.auto_session_empty(),
             carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
         }
+    }
+}
+
+pub(super) fn project_active_completed_rows(state: &ClientState) -> Vec<CompletedTaskRow> {
+    if state.has_completed_list() {
+        state.completed_rows().to_vec()
+    } else {
+        Vec::new()
     }
 }
 

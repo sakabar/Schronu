@@ -128,6 +128,7 @@ fn 完了一覧errorは既存rowを保持して履歴へ記録する() {
     );
 
     assert_eq!(state.completed_rows()[0].task_name, "保持");
+    assert!(state.has_completed_list());
     assert!(state.display_error().unwrap().retryable());
     assert!(state
         .history()
@@ -136,6 +137,47 @@ fn 完了一覧errorは既存rowを保持して履歴へ記録する() {
         .invocation
         .to_string()
         .contains("list_completed_tasks(logical_date: \"2026-09-16\")"));
+}
+
+#[test]
+fn mode切替先の完了一覧errorは保持rowをactive一覧にしない() {
+    let storage = FakeStorage::default();
+    let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-16", 1)));
+
+    let (completed_id, completed_request) =
+        completed_effect(state.switch_list_mode(ListMode::Completed));
+    state.apply_completed_list_result(
+        completed_id,
+        &completed_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-16", 2),
+            data: vec![completed_row(TASK_ID, "A日の完了")],
+        }),
+    );
+    let _ = state.switch_list_mode(ListMode::Scheduled);
+    let (scheduled_id, scheduled_request) = list_effect(state.select_logical_date("2026-09-17"));
+    state.apply_list_result(
+        scheduled_id,
+        &scheduled_request.logical_date,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-16", 3),
+            data: vec![row(OTHER_TASK_ID, 0)],
+        }),
+    );
+
+    let (failed_id, failed_request) = completed_effect(state.switch_list_mode(ListMode::Completed));
+    state.apply_completed_list_result(
+        failed_id,
+        &failed_request.logical_date,
+        Err(ServerFailure::Transport("secret".to_owned())),
+    );
+
+    assert_eq!(state.selected_logical_date(), Some("2026-09-17"));
+    assert_eq!(state.completed_rows()[0].task_name, "A日の完了");
+    assert!(!state.has_completed_list());
+    assert!(state.display_error().is_some());
 }
 
 #[test]
