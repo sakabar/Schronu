@@ -63,14 +63,20 @@ pub(super) fn resolve_completed_logical_date(
             return Err(invalid());
         }
         let mut year = current.year();
-        loop {
+        // Gregorian leap-year rules repeat every 400 years. A valid month/day must therefore
+        // resolve within this bound unless Chrono's representable range ends first.
+        for _ in 0..=400 {
             if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
                 if date <= current {
                     return Ok(date);
                 }
             }
-            year = year.checked_sub(1).ok_or_else(invalid)?;
+            if year <= NaiveDate::MIN.year() {
+                return Err(invalid());
+            }
+            year -= 1;
         }
+        return Err(invalid());
     }
     let dated_pattern = Regex::new(r"^(\d{4})/(\d{1,2})/(\d{1,2})$").unwrap();
     if let Some(captures) = dated_pattern.captures(value) {

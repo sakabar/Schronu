@@ -5,7 +5,7 @@ use super::renderer::{
     render_display_model, CompletedTaskReportDisplay, DisplayModel, SchronuWriter,
 };
 use crate::application::completed_task_report::CompletedTaskReportRow;
-use chrono::{Local, NaiveDate, TimeZone};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, TimeZone};
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -71,6 +71,18 @@ fn completed_date_rejects_empty_invalid_calendar_and_overflow_values() {
             "value={value}: {error}"
         );
     }
+}
+
+#[test]
+fn completed_date_rejects_future_month_day_at_chrono_lower_bound() {
+    let now = DateTime::<Local>::from_naive_utc_and_offset(
+        NaiveDate::MIN.and_hms_opt(12, 0, 0).unwrap(),
+        FixedOffset::east_opt(0).unwrap(),
+    );
+
+    let error = resolve_completed_logical_date(Some("1/2"), now).unwrap_err();
+
+    assert!(error.to_string().starts_with("入力エラー: date:"));
 }
 
 struct TestWriter(Vec<u8>);
