@@ -22,8 +22,7 @@ use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
 use chrono::{DateTime, Local, NaiveDate};
-use std::cmp::max;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -106,44 +105,39 @@ where
     let mut totals = HashMap::<NaiveDate, i64>::new();
     let mut repetitive = HashMap::<NaiveDate, i64>::new();
     let mut adjustable = HashMap::<NaiveDate, i64>::new();
+    let mut adjustable_occurrences = HashSet::new();
 
     for (date, segment) in logical_dates.into_iter().zip(schedule) {
         if date < today || date >= today + chrono::Duration::days(HORIZON_DAYS) {
             continue;
         }
         *totals.entry(date).or_default() += segment.scheduled_work_seconds;
-        let Some(task_id) = segment.actual_task_id() else {
+        if segment.is_projected() {
             *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
-            continue;
-        };
-        let task = repository
-            .get_by_id(task_id)
-            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .ok_or(WebReadCoreError::Application(
-                ApplicationError::TaskNotFound(task_id),
-            ))?;
-        if task
-            .get_inherited_repetition_interval_days_opt()
-            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .is_some()
-        {
-            *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
+        } else if let Some(task_id) = segment.actual_task_id() {
+            let task = repository
+                .get_by_id(task_id)
+                .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+                .ok_or(WebReadCoreError::Application(
+                    ApplicationError::TaskNotFound(task_id),
+                ))?;
+            if task
+                .get_inherited_repetition_interval_days_opt()
+                .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
+                .is_some()
+            {
+                *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
+            }
         }
-        let available_date = try_logical_date(max(
-            task.get_start_time().map_err(|error| {
-                WebReadCoreError::Application(ApplicationError::TaskTree(error))
-            })?,
-            last_synced_time,
-        ))
-        .map_err(WebReadCoreError::Application)?;
-        let is_on_other_side = task
-            .get_is_on_other_side()
-            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?;
-        if segment.is_leaf() && !is_on_other_side && date > available_date {
-            let estimated_work_seconds = task.get_estimated_work_seconds().map_err(|error| {
-                WebReadCoreError::Application(ApplicationError::TaskTree(error))
-            })?;
-            *adjustable.entry(date).or_default() += estimated_work_seconds;
+
+        let available_date = try_logical_date(segment.first_available_time)
+            .map_err(WebReadCoreError::Application)?;
+        if segment.is_leaf()
+            && !segment.task.is_on_other_side
+            && date > available_date
+            && adjustable_occurrences.insert((date, segment.occurrence))
+        {
+            *adjustable.entry(date).or_default() += segment.task.estimated_work_seconds;
         }
     }
 

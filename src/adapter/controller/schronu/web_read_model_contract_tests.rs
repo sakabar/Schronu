@@ -470,6 +470,72 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
 }
 
 #[test]
+fn 負荷は遅延したprojected回の見積をoccurrence単位で前倒し可能量へ数える() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(403);
+    let source_task_id = Uuid::from_u128(404);
+    let first = TaskHandle::with_identity("first load", first_id, operation_now).unwrap();
+    first.set_estimated_work_seconds(600).unwrap();
+    let source =
+        TaskHandle::with_identity("projected load", source_task_id, operation_now).unwrap();
+    source.set_estimated_work_seconds(3_600).unwrap();
+    let repository = TestTaskRepository::new(vec![first, source], operation_now);
+    let first_view = get_task(&repository, first_id).unwrap().unwrap();
+    let projected_view = get_task(&repository, source_task_id).unwrap().unwrap();
+    let occurrence = ScheduleOccurrenceKey::Projected {
+        source_task_id,
+        deadline: operation_now + Duration::days(3),
+    };
+    let delayed_start = operation_now + Duration::days(2);
+    let schedule = vec![
+        ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first_view.into(),
+            first_available_time: operation_now,
+            scheduled_start: operation_now,
+            scheduled_end: operation_now + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 600,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            occurrence,
+            task: projected_view.clone().into(),
+            first_available_time: operation_now,
+            scheduled_start: delayed_start,
+            scheduled_end: delayed_start + Duration::minutes(30),
+            scheduled_work_seconds: 1_800,
+            total_work_seconds: 3_600,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            occurrence,
+            task: projected_view.into(),
+            first_available_time: operation_now,
+            scheduled_start: delayed_start + Duration::minutes(30),
+            scheduled_end: delayed_start + Duration::hours(1),
+            scheduled_work_seconds: 1_800,
+            total_work_seconds: 3_600,
+            rank: 0,
+        },
+    ];
+
+    let rows = build_band_days(
+        &repository,
+        &mut TestFreeTimeManager::new(120),
+        &schedule,
+        operation_now,
+        120,
+    )
+    .unwrap();
+
+    assert_eq!(rows[0].accumulated_free_diff_seconds, -6_600);
+    assert_eq!(rows[1].accumulated_free_diff_seconds, -6_600);
+    assert_eq!(rows[2].accumulated_free_diff_seconds, -7_200);
+    assert_eq!(rows[2].durations.repetitive_seconds, 3_600);
+}
+
+#[test]
 fn 負荷は06時境界とend_of_day_offsetで当日経過を計算する() {
     let before_boundary = Local.with_ymd_and_hms(2026, 9, 5, 5, 59, 0).unwrap();
     let at_boundary = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
