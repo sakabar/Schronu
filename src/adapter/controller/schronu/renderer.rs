@@ -453,7 +453,6 @@ fn render_routine_load_report(
     let headers = [
         "間隔",
         "28日合計",
-        "週平均",
         "発生日数",
         "最大日",
         "プロジェクト / 繰返",
@@ -465,7 +464,6 @@ fn render_routine_load_report(
             [
                 format!("{}日", row.repetition_interval_days),
                 format_hours_minutes(row.total_work_seconds),
-                format_hours_minutes(row.weekly_average_seconds),
                 format!("{}日", row.occurrence_day_count),
                 format!(
                     "{} {}",
@@ -493,8 +491,8 @@ fn render_routine_load_report(
     Ok(())
 }
 
-fn format_routine_load_columns(cells: [&str; 6], widths: [usize; 5]) -> String {
-    let fixed_columns = std::array::from_fn::<_, 5, _>(|index| {
+fn format_routine_load_columns(cells: [&str; 5], widths: [usize; 4]) -> String {
+    let fixed_columns = std::array::from_fn::<_, 4, _>(|index| {
         let value = cells[index];
         format!(
             "{}{}",
@@ -502,7 +500,7 @@ fn format_routine_load_columns(cells: [&str; 6], widths: [usize; 5]) -> String {
             value
         )
     });
-    format!("{}  {}", fixed_columns.join("  "), cells[5])
+    format!("{}  {}", fixed_columns.join("  "), cells[4])
 }
 
 fn format_hours_minutes(seconds: i64) -> String {

@@ -67,7 +67,6 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
     assert_eq!(weekly_row.routine_name, "週次家事");
     assert_eq!(weekly_row.repetition_interval_days, 7);
     assert_eq!(weekly_row.total_work_seconds, 75 * 60);
-    assert_eq!(weekly_row.weekly_average_seconds, 1_125);
     assert_eq!(weekly_row.occurrence_day_count, 2);
     assert_eq!(weekly_row.peak_date, today);
     assert_eq!(weekly_row.peak_work_seconds, 45 * 60);

@@ -1194,12 +1194,6 @@ button:disabled {
     text-align: right;
 }
 
-.routine-load-table .routine-load-weekly {
-    width: 6rem;
-    min-width: 6rem;
-    text-align: right;
-}
-
 .routine-load-table .routine-load-occurrences {
     width: 6.5rem;
     min-width: 6.5rem;
@@ -1473,11 +1467,6 @@ button:disabled {
         min-width: 0;
     }
 
-    .routine-load-table .routine-load-weekly {
-        width: 13.5%;
-        min-width: 0;
-    }
-
     .routine-load-table .routine-load-occurrences {
         width: 14%;
         min-width: 0;
@@ -1489,7 +1478,7 @@ button:disabled {
     }
 
     .routine-load-table .routine-load-subject {
-        width: 28.5%;
+        width: 42%;
         min-width: 0;
     }
 

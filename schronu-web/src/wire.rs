@@ -32,7 +32,6 @@ pub struct RoutineLoadRow {
     pub routine_name: String,
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
-    pub weekly_average_seconds: i64,
     pub occurrence_day_count: usize,
     pub peak_date: String,
     pub peak_work_seconds: i64,

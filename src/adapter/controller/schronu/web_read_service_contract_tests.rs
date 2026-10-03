@@ -314,7 +314,6 @@ fn 負荷serviceは繰返負荷を共通集計結果から返す() {
     assert_eq!(row.routine_name, "routine");
     assert_eq!(row.repetition_interval_days, 7);
     assert_eq!(row.total_work_seconds, 300);
-    assert_eq!(row.weekly_average_seconds, 75);
     assert_eq!(row.occurrence_day_count, 1);
 }
 

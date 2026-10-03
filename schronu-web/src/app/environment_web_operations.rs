@@ -269,7 +269,6 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             routine_name: row.routine_name,
             repetition_interval_days: row.repetition_interval_days,
             total_work_seconds: row.total_work_seconds,
-            weekly_average_seconds: row.weekly_average_seconds,
             occurrence_day_count: row.occurrence_day_count,
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
