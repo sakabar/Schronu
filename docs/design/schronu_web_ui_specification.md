@@ -136,7 +136,7 @@ ScheduledTaskRow {
 
 `is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。操作可否は`is_leaf`と`occurrence == Actual`の両方で判定し、予測行では常に操作を描画・dispatchしない。
 
-同じtaskが複数segmentに分かれる場合、同じ`task_id`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
+同じoccurrenceが複数segmentに分かれる場合、actualは同じ`task_id`、projectedは同じ`occurrence_key`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
 
 全件一覧の1行とpageは次を持つ。
 
@@ -621,7 +621,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
 - 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
 - task名検索文字列は日付別と「全て」で共有してview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ共有検索文字列を空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
-- 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
+- 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一occurrenceの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
@@ -634,8 +634,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
-- 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
-- 全件一覧はtask名検索に一致したserver順の行から表示上限内のtaskを先頭から投影する。その隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致taskの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
+- 全件一覧では`segment_index`をrow keyとして同一occurrence(actualは`task_id`、projectedは`occurrence_key`)の複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
+- 全件一覧はtask名検索に一致したserver順の表示対象task/occurrence行から表示上限内の行を先頭から投影する。その隣接行に付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後続行の直前へ表示する。差が1日なら後続行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致のtask/occurrenceの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線は500件の行表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
 - 日付別一覧はtrim後のtask名検索文字列が空でない間、分単位の空き行を描画しない。全件一覧は検索文字列の有無にかかわらず、projection済みの日単位の空き行とlogical date境界線を描画する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
 - 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
@@ -791,7 +791,7 @@ OperationHistoryEntry {
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 - 共有segment metadata: `get_schedule`の対応順を保つlogical date、06:00境界、`rank == 0`だけを葉とする判定を固定し、CLI「全」、日付別Web、全件Webが共通helperを使用することを検証する。
-- 全件read model: 全実task segmentとの1対1対応、順序、連続index、同一taskの複数segment、親子、Pending葉、締切label・超過、500/501境界を実repository経路で検証する。
+- 全件read model: 全表示対象task/occurrence segmentとの1対1対応、順序、連続index、同一occurrenceの複数segment、親子、Pending葉、締切label・超過、500/501境界を実repository経路で検証する。
 - 全件snapshot: 継続pageでrepositoryを再読込せず同じsnapshotを返すこと、欠落・重複のない全page、最終解放、8個上限のFIFO eviction、cursorの形式・境界・skip・replay・範囲・失効を検証する。
 - 性能測定は契約testと分離し、501 segmentと2万segment相当のfixtureでschedule生成、先頭page、全page、serialized byte数、検索、500行projection、500行Dioxus描画を個別に記録する。
 
