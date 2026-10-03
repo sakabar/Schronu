@@ -1,8 +1,8 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
-    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebOperations, WebSuccess, WebWorkerHandle,
+    CompletedTaskRow, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -13,7 +13,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは8操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは9操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -50,6 +50,17 @@ fn workerは8操作を送信順に専用threadで実行してpayloadを保持す
                 .await,
             Ok(WebSuccess {
                 snapshot: snapshot(2),
+                data: Vec::new(),
+            })
+        );
+        assert_eq!(
+            worker
+                .list_completed_tasks(ListCompletedTasksRequest {
+                    logical_date: "2026-09-04".to_owned(),
+                })
+                .await,
+            Ok(WebSuccess {
+                snapshot: snapshot(9),
                 data: Vec::new(),
             })
         );
@@ -118,6 +129,7 @@ fn workerは8操作を送信順に専用threadで実行してpayloadを保持す
         &[
             Event::Bootstrap,
             Event::List("2026-09-05".to_owned()),
+            Event::ListCompleted("2026-09-04".to_owned()),
             Event::LoadBand,
             Event::ListAll(Some("cursor".to_owned())),
             Event::Auto,
@@ -174,6 +186,7 @@ enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
     List(String),
+    ListCompleted(String),
     ListAll(Option<String>),
     LoadBand,
     Auto,
@@ -201,6 +214,13 @@ impl WebOperations for StackWorkloadOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_completed_tasks(
+        &mut self,
+        _request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
         unreachable!()
     }
 
@@ -246,6 +266,13 @@ impl WebOperations for PanickingOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_completed_tasks(
+        &mut self,
+        _request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
         unreachable!()
     }
 
@@ -298,6 +325,20 @@ impl WebOperations for RecordingOperations {
             .push(Event::List(request.logical_date));
         Ok(WebSuccess {
             snapshot: snapshot(2),
+            data: Vec::new(),
+        })
+    }
+
+    fn list_completed_tasks(
+        &mut self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::ListCompleted(request.logical_date));
+        Ok(WebSuccess {
+            snapshot: snapshot(9),
             data: Vec::new(),
         })
     }

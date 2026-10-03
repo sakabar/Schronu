@@ -18,10 +18,8 @@ pub trait WebOperations: 'static {
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>;
     fn list_completed_tasks(
         &mut self,
-        _request: ListCompletedTasksRequest,
-    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError> {
-        unreachable!("list_completed_tasks is not implemented by this test operation")
-    }
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<Vec<CompletedTaskRow>>, WebError>;
     fn list_all_tasks(
         &mut self,
         request: ListAllTasksRequest,
