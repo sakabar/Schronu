@@ -7,9 +7,7 @@ use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
 fn at(day: u32) -> DateTime<Local> {
-    Local
-        .with_ymd_and_hms(2026, 10, day, 12, 0, 0)
-        .unwrap()
+    Local.with_ymd_and_hms(2026, 10, day, 12, 0, 0).unwrap()
 }
 
 fn child(parent: &TaskHandle, name: &str, id: u128, now: DateTime<Local>) -> TaskHandle {
@@ -46,7 +44,7 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
         segment(&cleaning, at(3), 30 * 60),
         segment(&cleaning, at(3) + Duration::hours(1), 15 * 60),
         segment(&cleaning, at(4), 30 * 60),
-        segment(&cleaning, at(30), 45 * 60),
+        segment(&cleaning, at(31), 45 * 60),
         segment(&dishes, at(3), 20 * 60),
         segment(&dishes, at(4), 20 * 60),
         segment(&one_off, at(3), 10 * 60),
@@ -56,7 +54,10 @@ fn routine_loadは28日を最寄りの繰返親ごとに集計する() {
 
     assert_eq!(ROUTINE_LOAD_HORIZON_DAYS, 28);
     assert_eq!(actual.start_date, today);
-    assert_eq!(actual.end_date, NaiveDate::from_ymd_opt(2026, 10, 30).unwrap());
+    assert_eq!(
+        actual.end_date,
+        NaiveDate::from_ymd_opt(2026, 10, 30).unwrap()
+    );
     assert_eq!(actual.rows.len(), 2);
 
     let weekly_row = &actual.rows[0];
