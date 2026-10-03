@@ -2371,6 +2371,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
             json!({
                 "task_id": task_id.to_string(),
                 "estimated_work_minutes": 45,
+                "actual_work_seconds": 900,
                 "deadline_time": deadline.to_rfc3339(),
                 "category": "recovery"
             }),
@@ -2396,6 +2397,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
         .unwrap();
     let updated = &task_response["result"]["structuredContent"]["task"];
     assert_eq!(updated["estimated_work_seconds"], 45 * 60);
+    assert_eq!(updated["actual_work_seconds"], 900);
     assert_eq!(updated["deadline_time"], deadline.to_rfc3339());
     assert_eq!(updated["project_category"], "recovery");
     assert_eq!(save_count.get(), 1);
@@ -2404,6 +2406,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
 #[test]
 fn update_task_同じ値ならsaveしない() {
     let task = new_task_handle("unchanged task").unwrap();
+    task.set_actual_work_seconds(900).unwrap();
     let task_id = task.get_id().unwrap();
     let repository = RecordingRepository::new(vec![task]);
     let save_count = Rc::clone(&repository.save_count);
@@ -2415,13 +2418,47 @@ fn update_task_同じ値ならsaveしない() {
             "update_task",
             json!({
                 "task_id": task_id.to_string(),
-                "estimated_work_minutes": 15
+                "estimated_work_minutes": 15,
+                "actual_work_seconds": 900
             }),
         ))
         .unwrap();
 
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(save_count.get(), 0);
+}
+
+#[test]
+fn update_task_完了済みtaskの実績を0に上書きする() {
+    let task = new_task_handle("完了済み実績訂正").unwrap();
+    task.set_actual_work_seconds(900).unwrap();
+    task.set_orig_status(Status::Done).unwrap();
+    let task_id = task.get_id().unwrap();
+    let repository = RecordingRepository::new(vec![task]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "reset-completed-actual-work",
+            "update_task",
+            json!({"task_id": task_id.to_string(), "actual_work_seconds": 0}),
+        ))
+        .unwrap();
+
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(save_count.get(), 1);
+    let task_response = server
+        .handle_request(tool_call_request(
+            "completed-with-reset-actual-work",
+            "get_task",
+            json!({"task_id": task_id.to_string()}),
+        ))
+        .unwrap();
+    assert_eq!(
+        task_response["result"]["structuredContent"]["task"]["actual_work_seconds"],
+        0
+    );
 }
 
 #[test]
@@ -2503,6 +2540,7 @@ fn update_task_入力不正では変更もsaveもしない() {
     let deadline = fixed_now() + Duration::days(10);
     let task = new_task_handle("unchanged update task").unwrap();
     task.set_estimated_work_seconds(30 * 60).unwrap();
+    task.set_actual_work_seconds(900).unwrap();
     task.set_deadline_time_opt(Some(deadline)).unwrap();
     task.set_project_category_opt(Some(ProjectCategory::Consumption))
         .unwrap();
@@ -2525,6 +2563,12 @@ fn update_task_入力不正では変更もsaveもしない() {
             json!({"task_id": task_id.to_string(), "estimated_work_minutes": -1}),
             Some(-32602),
             "estimated_work_minutes",
+        ),
+        (
+            "negative-actual-work",
+            json!({"task_id": task_id.to_string(), "actual_work_seconds": -1}),
+            Some(-32602),
+            "actual_work_seconds",
         ),
         (
             "invalid-category",
@@ -2555,6 +2599,12 @@ fn update_task_入力不正では変更もsaveもしない() {
             json!({"task_id": task_id.to_string(), "estimated_work_minutes": u64::MAX}),
             None,
             "estimated_work_minutes",
+        ),
+        (
+            "actual-work-out-of-range",
+            json!({"task_id": task_id.to_string(), "actual_work_seconds": u64::MAX}),
+            None,
+            "actual_work_seconds",
         ),
     ];
 
@@ -2599,6 +2649,7 @@ fn update_task_入力不正では変更もsaveもしない() {
             .unwrap();
         let unchanged = &task_response["result"]["structuredContent"]["task"];
         assert_eq!(unchanged["estimated_work_seconds"], 30 * 60);
+        assert_eq!(unchanged["actual_work_seconds"], 900);
         assert_eq!(unchanged["deadline_time"], deadline.to_rfc3339());
         assert_eq!(unchanged["project_category"], "consumption");
     }
@@ -2684,7 +2735,7 @@ fn update_task_save失敗を成功扱いしない() {
         .handle_request(tool_call_request(
             "update-save-failure",
             "update_task",
-            json!({"task_id": task_id.to_string(), "estimated_work_minutes": 20}),
+            json!({"task_id": task_id.to_string(), "actual_work_seconds": 1200}),
         ))
         .unwrap();
 
@@ -2701,7 +2752,7 @@ fn update_task_save失敗を成功扱いしない() {
         .unwrap()
         .is_empty());
     assert_eq!(save_count.get(), 1);
-    assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 20 * 60);
+    assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 1200);
     let task_response = server
         .handle_request(tool_call_request(
             "updated-after-save-failure",
