@@ -780,7 +780,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
         first_id,
         Ok(WebSuccess {
             snapshot: load_snapshot(1_100),
-            data: vec![band_day("2026-09-27", 1)],
+            data: load_data(vec![band_day("2026-09-27", 1)]),
         }),
     );
     assert!(state.band_rows().is_empty());
@@ -789,7 +789,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
         second_id,
         Ok(WebSuccess {
             snapshot: load_snapshot(1_200),
-            data: vec![band_day("2026-09-27", 2)],
+            data: load_data(vec![band_day("2026-09-27", 2)]),
         }),
     );
     assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
@@ -920,6 +920,17 @@ fn band_day(logical_date: &str, unavailable_seconds: i64) -> BandDay {
             repetitive_seconds: 0,
             non_repetitive_seconds: 0,
             rho_leeway_seconds: 0,
+        },
+    }
+}
+
+fn load_data(band_days: Vec<BandDay>) -> LoadData {
+    LoadData {
+        band_days,
+        routine_load: RoutineLoadReport {
+            start_date: "2026-09-27".to_owned(),
+            end_date: "2026-10-24".to_owned(),
+            rows: Vec::new(),
         },
     }
 }

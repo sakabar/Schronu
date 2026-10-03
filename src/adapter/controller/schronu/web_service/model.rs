@@ -112,3 +112,30 @@ pub struct BandDayDto {
     pub accumulated_free_diff_seconds: i64,
     pub durations: BandDurationsDto,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadRowDto {
+    pub project_task_id: String,
+    pub project_name: String,
+    pub routine_task_id: String,
+    pub routine_name: String,
+    pub repetition_interval_days: i64,
+    pub total_work_seconds: i64,
+    pub weekly_average_seconds: i64,
+    pub occurrence_day_count: usize,
+    pub peak_date: NaiveDate,
+    pub peak_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadReportDto {
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub rows: Vec<RoutineLoadRowDto>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LoadDataDto {
+    pub band_days: Vec<BandDayDto>,
+    pub routine_load: RoutineLoadReportDto,
+}

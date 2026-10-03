@@ -2,8 +2,8 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
+    ListAllTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult,
     ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
@@ -21,7 +21,7 @@ pub(crate) trait WebGateway {
         request: ListAllTasksRequest,
     ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError>;
 
-    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+    async fn load_band(&self) -> Result<Result<WebSuccess<LoadData>, WebError>, ServerFnError> {
         unreachable!("load_band is not implemented by this test gateway")
     }
 
@@ -68,7 +68,7 @@ impl WebGateway for ServerFunctionGateway {
         super::list_all_tasks(request).await
     }
 
-    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+    async fn load_band(&self) -> Result<Result<WebSuccess<LoadData>, WebError>, ServerFnError> {
         super::load_band().await
     }
 
@@ -118,7 +118,7 @@ pub(crate) enum ClientResponse {
     },
     LoadBand {
         request_id: u64,
-        result: Result<WebSuccess<Vec<BandDay>>, ServerFailure>,
+        result: Result<WebSuccess<LoadData>, ServerFailure>,
     },
     AutoSession {
         request_id: u64,

@@ -24,6 +24,33 @@ pub struct BandDay {
     pub durations: BandDurations,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadRow {
+    pub project_task_id: String,
+    pub project_name: String,
+    pub routine_task_id: String,
+    pub routine_name: String,
+    pub repetition_interval_days: i64,
+    pub total_work_seconds: i64,
+    pub weekly_average_seconds: i64,
+    pub occurrence_day_count: usize,
+    pub peak_date: String,
+    pub peak_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadReport {
+    pub start_date: String,
+    pub end_date: String,
+    pub rows: Vec<RoutineLoadRow>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LoadData {
+    pub band_days: Vec<BandDay>,
+    pub routine_load: RoutineLoadReport,
+}
+
 pub type CompleteSessionResponse = ServerSnapshot;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 use crate::{
-    web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
-    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
+    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest,
     RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
     WebSuccess,
 };
@@ -20,7 +20,7 @@ pub trait WebOperations: 'static {
         &mut self,
         request: ListAllTasksRequest,
     ) -> Result<WebSuccess<AllTaskPage>, WebError>;
-    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+    fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
         unreachable!("load_band is not implemented by this test operation")
     }
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
@@ -53,7 +53,7 @@ enum WebWorkerCommand {
         response: oneshot::Sender<Result<WebSuccess<AllTaskPage>, WebError>>,
     },
     LoadBand {
-        response: oneshot::Sender<Result<WebSuccess<Vec<BandDay>>, WebError>>,
+        response: oneshot::Sender<Result<WebSuccess<LoadData>, WebError>>,
     },
     AutoSession {
         response: oneshot::Sender<Result<WebSuccess<Option<SessionTask>>, WebError>>,
@@ -117,7 +117,7 @@ impl WebWorkerHandle {
         receiver.await.map_err(|_| unavailable_error())?
     }
 
-    pub async fn load_band(&self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+    pub async fn load_band(&self) -> Result<WebSuccess<LoadData>, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands
             .send(WebWorkerCommand::LoadBand { response })
