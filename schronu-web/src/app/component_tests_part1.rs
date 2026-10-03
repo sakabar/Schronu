@@ -19,8 +19,9 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, BandDay, BandDurations, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebSuccess,
+    web_error_codes, BandDay, BandDurations, LoadData, RecordSessionResult, RetryAdvice,
+    RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
+    WebSuccess,
 };
 use dioxus::dioxus_core::{AttributeValue, Mutation};
 use dioxus::prelude::VirtualDom;
@@ -803,6 +804,44 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
     );
     assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
     assert!(state.band_error().is_some());
+}
+
+#[test]
+fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    let request_id = match state.request_load_band() {
+        ClientEffect::LoadBand { request_id } => request_id,
+        effect => panic!("unexpected effect: {effect:?}"),
+    };
+    state.apply_load_band_result(
+        request_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_100),
+            data: LoadData {
+                band_days: vec![band_day("2026-10-03", 1)],
+                routine_load: RoutineLoadReport {
+                    start_date: "2026-10-03".to_owned(),
+                    end_date: "2026-10-30".to_owned(),
+                    rows: vec![RoutineLoadRow {
+                        project_task_id: "project".to_owned(),
+                        project_name: "生活".to_owned(),
+                        routine_task_id: "routine".to_owned(),
+                        routine_name: "日次".to_owned(),
+                        repetition_interval_days: 1,
+                        total_work_seconds: 3_600,
+                        weekly_average_seconds: 900,
+                        occurrence_day_count: 4,
+                        peak_date: "2026-10-03".to_owned(),
+                        peak_work_seconds: 1_800,
+                    }],
+                },
+            },
+        }),
+    );
+
+    assert_eq!(state.band_rows().len(), 1);
+    assert_eq!(state.routine_load_report().unwrap().rows[0].routine_name, "日次");
 }
 
 #[test]
