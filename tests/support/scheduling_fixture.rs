@@ -115,13 +115,18 @@ impl SchedulingFixture {
     #[allow(dead_code)]
     pub fn recurring_projection(size: FixtureSize) -> Result<Self, TaskTreeError> {
         let now = fixed_now();
-        build_recurring_projection(size, 3, now + Duration::hours(14))
+        build_recurring_projection(size, 3, now, now + Duration::hours(14))
     }
 
     #[allow(dead_code)]
     pub fn old_recurring_projection(size: FixtureSize) -> Result<Self, TaskTreeError> {
         let now = fixed_now();
-        build_recurring_projection(size, 1, now + Duration::hours(14) - Duration::days(3_650))
+        build_recurring_projection(
+            size,
+            1,
+            now + Duration::hours(9) - Duration::days(3_650),
+            now + Duration::hours(14) - Duration::days(3_650),
+        )
     }
 
     #[allow(dead_code)]
@@ -266,6 +271,7 @@ impl SchedulingFixture {
 fn build_recurring_projection(
     size: FixtureSize,
     interval_days: i64,
+    frontier_start: DateTime<Local>,
     frontier_deadline: DateTime<Local>,
 ) -> Result<SchedulingFixture, TaskTreeError> {
     let source_count = match size {
@@ -297,7 +303,7 @@ fn build_recurring_projection(
             now,
             Status::Todo,
         );
-        current.set_start_time(frontier_deadline - Duration::hours(5));
+        current.set_start_time(frontier_start);
         current
             .set_deadline_time_opt(Some(frontier_deadline))
             .expect("the occurrence is not itself a repeating task");

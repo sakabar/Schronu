@@ -22,6 +22,8 @@ const SAMPLE_COUNT: usize = 3;
 const TYPICAL_LIMIT: Duration = Duration::from_millis(500);
 const STRESS_LIMIT: Duration = Duration::from_secs(5);
 const STRESS_FLATTEN_LIMIT: Duration = Duration::from_secs(8);
+const TYPICAL_PROJECTION_LIMIT: Duration = Duration::from_millis(100);
+const STRESS_PROJECTION_LIMIT: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy)]
 enum UseCase {
@@ -323,6 +325,8 @@ fn check_limit(configuration: Configuration, elapsed: Duration) -> Result<(), St
     }
     let limit = match (configuration.size, configuration.use_case) {
         (FixtureSize::Small, _) => return Ok(()),
+        (FixtureSize::Typical, UseCase::Projection) => TYPICAL_PROJECTION_LIMIT,
+        (FixtureSize::Stress, UseCase::Projection) => STRESS_PROJECTION_LIMIT,
         (FixtureSize::Typical, _) => TYPICAL_LIMIT,
         (FixtureSize::Stress, UseCase::Flatten) => STRESS_FLATTEN_LIMIT,
         (FixtureSize::Stress, _) => STRESS_LIMIT,
