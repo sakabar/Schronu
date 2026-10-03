@@ -4,6 +4,8 @@ mod all_tasks_performance_tests;
 mod carry_lock_view;
 #[cfg(test)]
 mod carry_lock_view_tests;
+#[cfg(test)]
+mod completed_report_view_tests;
 mod component;
 #[cfg(test)]
 mod component_all_tasks_tests;

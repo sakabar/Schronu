@@ -1,10 +1,10 @@
-use schronu_web::client::state::ActiveTab;
+use schronu_web::client::state::{ActiveTab, ListMode};
 use schronu_web::client::view_state::{
-    load_view_state, store_view_state, StoredListView, ViewState, ViewStateStoreError,
-    VIEW_STATE_STORAGE_KEY,
+    load_view_state, store_view_state, StoredActiveList, StoredListView, ViewState,
+    ViewStateStoreError, VIEW_STATE_STORAGE_KEY,
 };
 use schronu_web::client::work_sessions::{KeyValueStorage, StorageError};
-use schronu_web::{ScheduledTaskRow, ServerSnapshot, SessionTask};
+use schronu_web::{CompletedTaskRow, ScheduledTaskRow, ServerSnapshot, SessionTask};
 use std::cell::{Cell, RefCell};
 
 #[derive(Default)]
@@ -48,7 +48,102 @@ fn view_stateは最後の一覧と画面入力をversion付きで復元する() 
     assert!(loaded.warning().is_none());
     let raw: serde_json::Value =
         serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
-    assert_eq!(raw["version"], 2);
+    assert_eq!(raw["version"], 3);
+}
+
+#[test]
+fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
+    let storage = MemoryStorage::default();
+    let state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-08".to_owned(),
+            rows: Vec::new(),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: "".to_owned(),
+        date_input_text: "2026/9/8".to_owned(),
+    };
+
+    store_view_state(&storage, &state).unwrap();
+    assert_eq!(load_view_state(&storage).state(), Some(&state));
+}
+
+#[test]
+fn view_state_v2は予定modeとscheduled_listへ移行する() {
+    let storage = MemoryStorage::default();
+    *storage.value.borrow_mut() = Some(
+        serde_json::json!({
+            "version": 2,
+            "snapshot": {
+                "observed_at_epoch_ms": 1_789_000_000_000_i64,
+                "logical_date": "2026-09-09",
+                "buffer_seconds": 60
+            },
+            "list": {
+                "logical_date": "2026-09-09",
+                "rows": [row("00000000-0000-4000-8000-000000000001", "旧予定")]
+            },
+            "active_tab": "list",
+            "task_name_filter": "旧",
+            "date_input_text": "2026/9/9"
+        })
+        .to_string(),
+    );
+
+    let loaded = load_view_state(&storage);
+    let state = loaded.state().unwrap();
+    assert_eq!(state.list_mode, ListMode::Scheduled);
+    assert!(matches!(
+        state.list,
+        Some(StoredActiveList::Scheduled { .. })
+    ));
+    assert!(loaded.warning().is_none());
+}
+
+#[test]
+fn view_state_v3は不正な完了rowを全体不正として扱う() {
+    let storage = MemoryStorage::default();
+    let mut state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-09".to_owned(),
+            rows: vec![CompletedTaskRow {
+                task_id: "bad".to_owned(),
+                task_name: "完了".to_owned(),
+                project_name: "project".to_owned(),
+                completed_at_epoch_ms: 1_789_000_000_000,
+                actual_work_seconds: 1,
+                estimated_work_seconds: 1,
+            }],
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: String::new(),
+    };
+
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+    if let Some(StoredActiveList::Completed { rows, .. }) = &mut state.list {
+        rows[0].task_id = "00000000-0000-4000-8000-000000000001".to_owned();
+        rows[0].actual_work_seconds = -1;
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
 }
 
 #[test]
@@ -142,7 +237,8 @@ fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {
             logical_date: "2026-09-09".to_owned(),
             buffer_seconds: 60,
         },
-        list: Some(StoredListView {
+        list_mode: ListMode::Scheduled,
+        list: Some(StoredActiveList::Scheduled {
             logical_date: logical_date.to_owned(),
             rows,
         }),
