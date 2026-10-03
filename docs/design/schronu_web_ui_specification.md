@@ -634,7 +634,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
-- 全件一覧では`segment_index`をrow keyとして同一occurrence(actualは`task_id`、projectedは`occurrence_key`)の複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
+- 全件一覧ではoccurrence identity(actualは`task_id`、projectedは`occurrence_key`)と`schedule_date`、`segment_index`を組み合わせてrow keyとし、同一occurrenceの複数segmentを個別に描画する。予定列は`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
 - 全件一覧はtask名検索に一致したserver順の表示対象task/occurrence行から表示上限内の行を先頭から投影する。その隣接行に付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後続行の直前へ表示する。差が1日なら後続行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致のtask/occurrenceの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線は500件の行表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
 - 日付別一覧はtrim後のtask名検索文字列が空でない間、分単位の空き行を描画しない。全件一覧は検索文字列の有無にかかわらず、projection済みの日単位の空き行とlogical date境界線を描画する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
