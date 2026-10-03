@@ -641,40 +641,74 @@ pub(super) fn execute_defer_expression(
     }
 }
 
-// 指定の日付から、step_days間隔でdeferしていく
+fn advance_extrude_time(
+    datetime: DateTime<Local>,
+    step_days: u16,
+    config: &SchronuConfig,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let mut next = datetime
+        .checked_add_signed(Duration::days(i64::from(step_days)))
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
+            operation: "extrude_pending_until",
+            datetime,
+        })?;
+    while config.extrude_skip_weekdays.contains(&next.weekday()) {
+        next = next.checked_add_signed(Duration::days(1)).ok_or(
+            ApplicationError::LogicalDateOutOfRange {
+                operation: "extrude_pending_until",
+                datetime: next,
+            },
+        )?;
+    }
+    Ok(next)
+}
+
+// Todoは自身を維持して操作時刻から、Pendingは自身の着手可能時刻から、親へ順にdeferしていく
 fn execute_extrude_with_config(
-    _focused_task_id_opt: &mut Option<Uuid>,
-    focused_task_opt: &Option<TaskHandle>,
-    first_datetime: &DateTime<Local>,
+    focused_task: &TaskHandle,
+    operation_now: DateTime<Local>,
     step_days: u16,
     config: &SchronuConfig,
 ) -> Result<(), ApplicationError> {
-    if let Some(focused_task) = focused_task_opt {
-        let mut pending_until_datetime = *first_datetime;
+    let status = focused_task
+        .get_status()
+        .map_err(ApplicationError::TaskTree)?;
+    if status == Status::Done {
+        return Ok(());
+    }
 
-        for (_, task) in focused_task
-            .list_all_parent_tasks_with_first_available_time()
-            .map_err(ApplicationError::TaskTree)?
-        {
-            if focused_task
-                .get_status()
-                .map_err(ApplicationError::TaskTree)?
-                != Status::Done
-            {
-                task.set_orig_status(Status::Pending)
-                    .map_err(ApplicationError::TaskTree)?;
-                task.set_pending_until(pending_until_datetime)
-                    .map_err(ApplicationError::TaskTree)?;
-
-                pending_until_datetime += Duration::days(step_days as i64);
-                while config
-                    .extrude_skip_weekdays
-                    .contains(&pending_until_datetime.weekday())
-                {
-                    pending_until_datetime += Duration::days(1);
-                }
-            }
+    let ancestors = focused_task
+        .list_all_parent_tasks_with_first_available_time()
+        .map_err(ApplicationError::TaskTree)?;
+    let Some(first_datetime) = ancestors.first().map(|(datetime, _)| *datetime) else {
+        return Ok(());
+    };
+    let mut ancestors = ancestors.into_iter();
+    let mut pending_until_datetime = match status {
+        Status::Todo => {
+            let _focused_task = ancestors.next();
+            operation_now
         }
+        Status::Pending => first_datetime,
+        Status::Done => unreachable!("Done status returned above"),
+    };
+    let mut advance_before_setting = status == Status::Todo;
+    let mut updates = Vec::new();
+
+    for (_, task) in ancestors {
+        if advance_before_setting {
+            pending_until_datetime =
+                advance_extrude_time(pending_until_datetime, step_days, config)?;
+        }
+        updates.push((task, pending_until_datetime));
+        advance_before_setting = true;
+    }
+
+    for (task, pending_until_datetime) in updates {
+        task.set_orig_status(Status::Pending)
+            .map_err(ApplicationError::TaskTree)?;
+        task.set_pending_until(pending_until_datetime)
+            .map_err(ApplicationError::TaskTree)?;
     }
     Ok(())
 }
@@ -1162,16 +1196,9 @@ impl DeferCommandContext for RuntimeDeferCommandContext<'_> {
         let Some(task) = focused_task.as_ref() else {
             return Ok(());
         };
-        let ancestors = task
-            .list_all_parent_tasks_with_first_available_time()
-            .map_err(ApplicationError::TaskTree)?;
-        let Some((first_datetime, _)) = ancestors.first() else {
-            return Ok(());
-        };
         execute_extrude_with_config(
-            self.focused_task_id_opt,
-            &focused_task,
-            first_datetime,
+            task,
+            self.task_repository.get_last_synced_time(),
             step_days,
             self.config,
         )
