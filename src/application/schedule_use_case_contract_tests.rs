@@ -1,9 +1,9 @@
 use super::interface::TaskRepositoryTrait;
 use super::schedule_use_case::{get_schedule, scheduled_logical_dates, ScheduledTaskView};
 use super::task_use_case::{get_task, ApplicationError};
-use crate::entity::task::{Status, TaskHandle};
+use crate::entity::task::{RepetitionAnchor, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
-use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use uuid::Uuid;
 
@@ -83,6 +83,87 @@ fn task_with_schedule(
     task.set_estimated_work_seconds(work_seconds).unwrap();
     task.set_priority(priority).unwrap();
     task
+}
+
+fn repeating_task_with_current_occurrence(
+    now: DateTime<Local>,
+    interval_days: i64,
+    anchor: RepetitionAnchor,
+) -> (TaskHandle, TaskHandle) {
+    let parent = task_with_schedule("筋トレ", now, 15 * 60, 7);
+    parent
+        .set_repetition_interval_days_opt(Some(interval_days))
+        .unwrap();
+    parent.set_repetition_anchor(anchor).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap()))
+        .unwrap();
+
+    let mut current_attr = TaskAttr::with_identity("筋トレ(8/11)", Uuid::new_v4(), now);
+    current_attr.set_start_time(now);
+    current_attr
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 11, 23, 0, 0).unwrap()))
+        .unwrap();
+    current_attr.set_estimated_work_seconds(15 * 60);
+    current_attr.set_atomic(true);
+    let current = parent.create_as_last_child(current_attr);
+    (parent, current)
+}
+
+#[test]
+fn get_scheduleは3日周期を28日窓へ現在回を含む10回展開する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert_eq!(schedule.len(), 10);
+    assert_eq!(
+        schedule
+            .iter()
+            .filter(|segment| segment.task.id == current.get_id().unwrap())
+            .count(),
+        1
+    );
+    let deadlines = schedule
+        .iter()
+        .map(|segment| segment.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deadlines.first().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 8, 11).unwrap())
+    );
+    assert_eq!(
+        deadlines.last().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 9, 7).unwrap())
+    );
+    assert!(!deadlines.contains(&NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()));
+}
+
+#[test]
+fn get_scheduleの仮想回はcompletion基準でも現在期限から一定周期で展開する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Completion);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let deadlines = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .map(|segment| segment.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        deadlines,
+        (0..10)
+            .map(|index| NaiveDate::from_ymd_opt(2026, 8, 11).unwrap() + Duration::days(index * 3))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
