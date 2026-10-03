@@ -137,12 +137,12 @@ fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element
                 table { class: "routine-load-table",
                     thead {
                         tr {
-                            th { scope: "col", "プロジェクト / 繰返" }
-                            th { scope: "col", "間隔" }
-                            th { scope: "col", "28日合計" }
-                            th { scope: "col", "週平均" }
-                            th { scope: "col", "発生日数" }
-                            th { scope: "col", "最大日" }
+                            th { class: "routine-load-interval", scope: "col", "間隔" }
+                            th { class: "routine-load-total", scope: "col", "28日合計" }
+                            th { class: "routine-load-weekly", scope: "col", "週平均" }
+                            th { class: "routine-load-occurrences", scope: "col", "発生日数" }
+                            th { class: "routine-load-peak", scope: "col", "最大日" }
+                            th { class: "routine-load-subject", scope: "col", "プロジェクト / 繰返" }
                         }
                     }
                     tbody {
@@ -160,16 +160,16 @@ fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element
 fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
     rsx! {
         tr {
-            th { scope: "row",
-                strong { class: "routine-load-name", "{row.routine_name}" }
-                span { class: "routine-load-project", "{row.project_name}" }
-            }
-            td { "{row.repetition_interval_days}日ごと" }
-            td { class: "routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
-            td { class: "routine-load-number", "{format_unsigned(row.weekly_average_seconds)}" }
-            td { class: "routine-load-number", "{row.occurrence_day_count}日" }
+            td { class: "routine-load-interval", "{row.repetition_interval_days}日ごと" }
+            td { class: "routine-load-total routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
+            td { class: "routine-load-weekly routine-load-number", "{format_unsigned(row.weekly_average_seconds)}" }
+            td { class: "routine-load-occurrences routine-load-number", "{row.occurrence_day_count}日" }
             td { class: "routine-load-peak",
                 "{format_short_date(&row.peak_date)} {format_unsigned(row.peak_work_seconds)}"
+            }
+            th { class: "routine-load-subject", scope: "row",
+                strong { class: "routine-load-name", "{row.routine_name}" }
+                span { class: "routine-load-project", "{row.project_name}" }
             }
         }
     }

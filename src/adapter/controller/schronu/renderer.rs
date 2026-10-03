@@ -450,21 +450,59 @@ fn render_routine_load_report(
         report.start_date.format("%Y-%m-%d"),
         report.end_date.format("%Y-%m-%d")
     ))?;
-    writer.writeln_newline("プロジェクト / 繰返\t間隔\t28日合計\t週平均\t発生日数\t最大日")?;
-    for row in &report.rows {
-        writer.writeln_newline(&format!(
-            "{} / {}\t{}日\t{}\t{}\t{}日\t{} {}",
-            row.project_name,
-            row.routine_name,
-            row.repetition_interval_days,
-            format_hours_minutes(row.total_work_seconds),
-            format_hours_minutes(row.weekly_average_seconds),
-            row.occurrence_day_count,
-            row.peak_date.format("%m/%d"),
-            format_hours_minutes(row.peak_work_seconds),
+    let headers = [
+        "間隔",
+        "28日合計",
+        "週平均",
+        "発生日数",
+        "最大日",
+        "プロジェクト / 繰返",
+    ];
+    let rows = report
+        .rows
+        .iter()
+        .map(|row| {
+            [
+                format!("{}日", row.repetition_interval_days),
+                format_hours_minutes(row.total_work_seconds),
+                format_hours_minutes(row.weekly_average_seconds),
+                format!("{}日", row.occurrence_day_count),
+                format!(
+                    "{} {}",
+                    row.peak_date.format("%m/%d"),
+                    format_hours_minutes(row.peak_work_seconds)
+                ),
+                format!("{} / {}", row.project_name, row.routine_name),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let widths = std::array::from_fn(|index| {
+        rows.iter()
+            .map(|row| UnicodeWidthStr::width(row[index].as_str()))
+            .chain(std::iter::once(UnicodeWidthStr::width(headers[index])))
+            .max()
+            .expect("header width is always present")
+    });
+    writer.writeln_newline(&format_routine_load_columns(headers, widths))?;
+    for row in rows {
+        writer.writeln_newline(&format_routine_load_columns(
+            row.each_ref().map(String::as_str),
+            widths,
         ))?;
     }
     Ok(())
+}
+
+fn format_routine_load_columns(cells: [&str; 6], widths: [usize; 5]) -> String {
+    let fixed_columns = std::array::from_fn::<_, 5, _>(|index| {
+        let value = cells[index];
+        format!(
+            "{}{}",
+            " ".repeat(widths[index].saturating_sub(UnicodeWidthStr::width(value))),
+            value
+        )
+    });
+    format!("{}  {}", fixed_columns.join("  "), cells[5])
 }
 
 fn format_hours_minutes(seconds: i64) -> String {

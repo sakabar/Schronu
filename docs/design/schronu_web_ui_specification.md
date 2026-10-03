@@ -196,7 +196,7 @@ RoutineLoadRow {
 
 `load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、各segmentから最寄りの繰返間隔を持つ祖先へ帰属させる。同じ繰返祖先の日別segment秒数を合算し、28日合計、その4分の1の週平均、異なるlogical date数である発生日数、日別合計が最大となる最大日を求める。最大日が同値なら早いlogical dateを採用し、rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
 
-負荷画面内は「繰返負荷」を初期選択し、「7日負荷」とlocal stateだけで切り替える。繰返負荷はsemantic tableで表示し、列は「プロジェクト / 繰返」「間隔」「28日合計」「週平均」「発生日数」「最大日」とする。tableは専用wrapperだけを横scroll可能にし、page全体の横overflowを増やさない。
+負荷画面内は「繰返負荷」を初期選択し、「7日負荷」とlocal stateだけで切り替える。繰返負荷はsemantic tableで表示し、列は「間隔」「28日合計」「週平均」「発生日数」「最大日」「プロジェクト / 繰返」の順とする。先頭5列は`6rem`、`6.5rem`、`6rem`、`6.5rem`、`8.5rem`の固定幅で右揃えし、末尾の名前列は最小`14rem`の左揃えとする。tableの最小幅は`47.5rem`とし、専用wrapperだけを横scroll可能にしてpage全体の横overflowを増やさない。
 
 7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 

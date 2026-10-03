@@ -239,18 +239,51 @@ fn 負荷viewは繰返集計表を初期表示して7日帯へlocal切替する(
     assert!(initial_html.contains("今後28日の繰返負荷"), "{initial_html}");
     assert!(initial_html.contains("10/3〜10/30"), "{initial_html}");
     for heading in [
-        "プロジェクト / 繰返",
         "間隔",
         "28日合計",
         "週平均",
         "発生日数",
         "最大日",
+        "プロジェクト / 繰返",
     ] {
         assert!(
             initial_html.contains(&format!("scope=\"col\">{heading}")),
             "missing {heading}: {initial_html}"
         );
     }
+    let table_header = &initial_html[initial_html.find("<thead>").unwrap()
+        ..initial_html.find("</thead>").unwrap()];
+    let heading_positions = [
+        "間隔",
+        "28日合計",
+        "週平均",
+        "発生日数",
+        "最大日",
+        "プロジェクト / 繰返",
+    ]
+    .map(|heading| table_header.find(heading).unwrap());
+    assert!(
+        heading_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{table_header}"
+    );
+    for class in [
+        "routine-load-interval",
+        "routine-load-total",
+        "routine-load-weekly",
+        "routine-load-occurrences",
+        "routine-load-peak",
+        "routine-load-subject",
+    ] {
+        assert!(initial_html.contains(&format!("class=\"{class}")), "missing {class}: {initial_html}");
+    }
+    let table_body = &initial_html[initial_html.find("<tbody>").unwrap()
+        ..initial_html.find("</tbody>").unwrap()];
+    let value_positions = ["2日ごと", "28:00", "07:00", "14日", "10/4 03:00", "運動"]
+        .map(|value| table_body.find(value).unwrap());
+    assert!(
+        value_positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "{table_body}"
+    );
     for value in ["運動", "健康", "2日ごと", "28:00", "07:00", "14日", "10/4 03:00"] {
         assert!(initial_html.contains(value), "missing {value}: {initial_html}");
     }

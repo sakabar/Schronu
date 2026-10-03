@@ -137,8 +137,34 @@ fn routine_load_table_confines_horizontal_overflow_to_its_wrapper() {
     assert!(wrapper.contains("max-width: 100%;"));
 
     let table = block_body(MAIN_CSS, ".routine-load-table {");
-    assert!(table.contains("min-width:"));
+    assert!(table.contains("min-width: 47.5rem;"));
     assert!(table.contains("width: 100%;"));
+
+    for (selector, width) in [
+        (".routine-load-interval", "6rem"),
+        (".routine-load-total", "6.5rem"),
+        (".routine-load-weekly", "6rem"),
+        (".routine-load-occurrences", "6.5rem"),
+        (".routine-load-peak", "8.5rem"),
+    ] {
+        let column = block_body(MAIN_CSS, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(
+            column.contains(&format!("min-width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(
+            column.contains("text-align: right;"),
+            "{selector}: {column}"
+        );
+    }
+
+    let subject = block_body(MAIN_CSS, ".routine-load-subject");
+    assert!(subject.contains("min-width: 14rem;"));
+    assert!(subject.contains("text-align: left;"));
 }
 
 #[test]
