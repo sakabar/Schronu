@@ -3,8 +3,8 @@ use super::command::{
     CommandValidationError, InteractiveShortcut,
 };
 use super::renderer::{
-    DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary, FlattenRow,
-    FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
+    CompletedTaskReportDisplay, DisplayModel, FlattenDisplay, FlattenReason, FlattenReasonSummary,
+    FlattenRow, FlattenUnresolvedDay, MessageLevel, PackDisplay, PackRow, TreeDisplay,
 };
 use crate::application::daily_capacity::{
     try_local_date_and_time, try_logical_date, try_next_logical_date_start,
@@ -90,6 +90,10 @@ pub(super) trait ProjectCommandContext {
     fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError>;
     fn focused_task_id(&self) -> Option<Uuid>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
+    fn completed_task_report(
+        &mut self,
+        logical_date: NaiveDate,
+    ) -> Result<CompletedTaskReportDisplay, ApplicationError>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -334,6 +338,21 @@ pub(super) fn handle_command<C: CommandContext + ?Sized>(
     }
     if let Some(outcome) = handle(command) {
         return Ok(Some(outcome));
+    }
+    if let Command::Completed { date } = command {
+        let logical_date = super::command_context::resolve_completed_logical_date(
+            date.as_deref(),
+            ProjectCommandContext::last_synced_time(context),
+        )?;
+        return Ok(Some(CommandOutcome {
+            kind: CommandKind::Completed,
+            display: DisplayModel::CompletedTaskReport(
+                context.completed_task_report(logical_date)?,
+            ),
+            external_request: None,
+            focus_change: FocusChange::Keep,
+            focus_session_effect: FocusSessionEffect::Keep,
+        }));
     }
     if let Some(outcome) = handle_project_command(command, context)? {
         return Ok(Some(outcome));
@@ -1420,6 +1439,13 @@ mod task_generation_context_tests {
         fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
             self.focused_task_id_opt = task_id_opt;
             self.focused_task_updates.push(task_id_opt);
+        }
+
+        fn completed_task_report(
+            &mut self,
+            _logical_date: NaiveDate,
+        ) -> Result<CompletedTaskReportDisplay, ApplicationError> {
+            Ok(CompletedTaskReportDisplay { rows: Vec::new() })
         }
     }
 

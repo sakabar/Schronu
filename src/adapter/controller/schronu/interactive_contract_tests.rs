@@ -69,7 +69,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
     );
     assert_eq!(
         all_command_kinds.len(),
-        55,
+        56,
         "shared representative command fixture must cover every CommandKind"
     );
     for (index, kind) in all_command_kinds.iter().enumerate() {
@@ -86,6 +86,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::Tree
             | CommandKind::Leaves
             | CommandKind::ShowAll
+            | CommandKind::Completed
             | CommandKind::Tail
             | CommandKind::Today
             | CommandKind::Calendar

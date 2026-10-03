@@ -292,6 +292,13 @@ impl ProjectCommandContext for TraceProjectContext {
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
         self.focused_task_id = task_id_opt;
     }
+
+    fn completed_task_report(
+        &mut self,
+        _logical_date: NaiveDate,
+    ) -> Result<super::renderer::CompletedTaskReportDisplay, ApplicationError> {
+        Ok(super::renderer::CompletedTaskReportDisplay { rows: Vec::new() })
+    }
 }
 
 fn semantic_project_display(
@@ -2141,6 +2148,13 @@ impl ProjectCommandContext for CompositeTraceContext {
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
         self.project.set_focused_task_id(task_id_opt);
+    }
+
+    fn completed_task_report(
+        &mut self,
+        logical_date: NaiveDate,
+    ) -> Result<super::renderer::CompletedTaskReportDisplay, ApplicationError> {
+        self.project.completed_task_report(logical_date)
     }
 }
 

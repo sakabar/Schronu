@@ -30,7 +30,10 @@ fn completed_command_aliases_and_arity_are_typed_in_both_modes() {
             assert_eq!(error.usage(), "済 [日付]");
         }
     }
-    assert_eq!(parse_command("済", ParseMode::Interactive).unwrap().kind(), CommandKind::Completed);
+    assert_eq!(
+        parse_command("済", ParseMode::Interactive).unwrap().kind(),
+        CommandKind::Completed
+    );
 }
 
 #[test]
@@ -63,7 +66,10 @@ fn completed_date_rejects_empty_invalid_calendar_and_overflow_values() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     for value in ["", "2026-8-11", "13/1", "2025/2/29", "999999999999/1/1"] {
         let error = resolve_completed_logical_date(Some(value), now).unwrap_err();
-        assert!(error.to_string().starts_with("入力エラー: date:"), "value={value}: {error}");
+        assert!(
+            error.to_string().starts_with("入力エラー: date:"),
+            "value={value}: {error}"
+        );
     }
 }
 
@@ -130,24 +136,26 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
     assert!(!output.contains("tail"));
     assert!(output.contains("末尾まで省略しない長いタスク名"));
 
+    fn suffix_at_width(line: &str, target: usize) -> &str {
+        let mut width = 0;
+        for (byte, character) in line.char_indices() {
+            if width == target {
+                return &line[byte..];
+            }
+            width += unicode_width::UnicodeWidthChar::width(character).unwrap_or(0);
+        }
+        assert_eq!(width, target);
+        ""
+    }
+
     let lines = output.lines().collect::<Vec<_>>();
-    let starts = lines
-        .iter()
-        .take(4)
-        .map(|line| {
-            ["実績", "見積", "差", "Project", "タスク"].map(|needle| {
-                let byte = line.find(needle).unwrap_or_else(|| {
-                    // Data rows use column starts rather than header labels.
-                    0
-                });
-                UnicodeWidthStr::width(&line[..byte])
-            })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(starts[0][0], UnicodeWidthStr::width("完了時刻  "));
-    // Every rendered line is separated by exactly two spaces at known column boundaries.
-    for line in lines.iter().take(4) {
-        assert!(!line.contains("   Project"), "unexpected separator width: {line}");
+    for (line, task) in
+        lines
+            .iter()
+            .zip(["タスク", "末尾まで省略しない長いタスク名", "second", "zero"])
+    {
+        assert_eq!(suffix_at_width(line, 64), task);
+        assert_eq!(UnicodeWidthStr::width(&line[..line.len() - task.len()]), 64);
     }
 }
 
