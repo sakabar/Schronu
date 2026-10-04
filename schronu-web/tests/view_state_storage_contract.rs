@@ -64,10 +64,10 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         list: Some(StoredActiveList::Completed {
             logical_date: "2026-09-08".to_owned(),
             rows: Vec::new(),
-            in_progress_actual_work_seconds: None,
-            total_actual_work_seconds: 0,
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
             available_seconds: 43_200,
-            recorded_percentage: Some(0),
+            recorded_percentage: Some(2),
         }),
         active_tab: ActiveTab::List,
         task_name_filter: "".to_owned(),

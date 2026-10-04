@@ -279,8 +279,8 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     estimated_work_seconds: 900,
                     task_display_kind: Default::default(),
                 }],
-                in_progress_actual_work_seconds: None,
-                total_actual_work_seconds: 901,
+                in_progress_actual_work_seconds: Some(60),
+                total_actual_work_seconds: 961,
                 available_seconds: 43_200,
                 recorded_percentage: Some(2),
             },
@@ -301,7 +301,8 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     "estimated_work_seconds": 900,
                     "task_display_kind": "non_repetitive"
                 }],
-                "total_actual_work_seconds": 901,
+                "in_progress_actual_work_seconds": 60,
+                "total_actual_work_seconds": 961,
                 "available_seconds": 43_200,
                 "recorded_percentage": 2
             }

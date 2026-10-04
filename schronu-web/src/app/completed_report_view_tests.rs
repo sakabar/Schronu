@@ -304,8 +304,8 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
                         estimated_work_seconds: 360_001,
                         task_display_kind: Default::default(),
                     }],
-                    in_progress_actual_work_seconds: None,
-                    total_actual_work_seconds: 360_001,
+                    in_progress_actual_work_seconds: Some(900),
+                    total_actual_work_seconds: 360_901,
                     available_seconds: 288_000,
                     recorded_percentage: Some(125),
                 }),
@@ -329,6 +329,8 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
     assert!(html.contains("<dl"), "{html}");
     for text in [
         "完了日の集計",
+        "進行中",
+        "00:15:00",
         "実績合計",
         "100:00:01",
         "利用可能",
@@ -497,7 +499,7 @@ fn 完了reportの日次集計契約をdocumentationへ明記する() {
     let specification = include_str!("../../../docs/design/schronu_web_ui_specification.md");
 
     for document in [readme, requirements, specification] {
-        for text in ["実績合計", "利用可能", "記録率"] {
+        for text in ["進行中", "実績合計", "利用可能", "記録率"] {
             assert!(document.contains(text), "missing {text}");
         }
         assert!(!document.contains("日次合計は表示しない"));

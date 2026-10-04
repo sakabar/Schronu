@@ -216,3 +216,21 @@ fn completed_report_renderer_reports_unavailable_percentage_when_capacity_is_zer
         Some("実績合計: 00:00:00  利用可能: 00:00:00  記録率: --")
     );
 }
+
+#[test]
+fn completed_report_renderer_shows_in_progress_actual_work_when_present() {
+    assert_eq!(
+        render(CompletedTaskReport {
+            rows: Vec::new(),
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
+            available_seconds: 3_600,
+            recorded_percentage: Some(25),
+        })
+        .lines()
+        .last(),
+        Some(
+            "進行中: 00:15:00  実績合計: 00:15:00  利用可能: 01:00:00  記録率: 25%"
+        )
+    );
+}
