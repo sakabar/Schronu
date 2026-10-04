@@ -412,9 +412,9 @@ fn 完了表は狭幅へ収まりtaskとprojectのcellだけが横scrollする()
     assert!(subject_focus.contains("outline:"));
 
     for (selector, width) in [
-        (".completed-task-table .completed-time", "5rem"),
-        (".completed-task-table .completed-actual", "6.5rem"),
-        (".completed-task-table .completed-difference", "7rem"),
+        (".completed-task-table .completed-time", "4.25rem"),
+        (".completed-task-table .completed-actual", "5.5rem"),
+        (".completed-task-table .completed-difference", "6rem"),
     ] {
         let column = block_body(MAIN_CSS, selector);
         assert!(
@@ -429,10 +429,10 @@ fn 完了表は狭幅へ収まりtaskとprojectのcellだけが横scrollする()
 
     let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
     for (selector, width) in [
-        (".completed-time", "16%"),
-        (".completed-actual", "23%"),
-        (".completed-difference", "25%"),
-        (".completed-subject", "36%"),
+        (".completed-time", "13%"),
+        (".completed-actual", "21%"),
+        (".completed-difference", "23%"),
+        (".completed-subject", "43%"),
     ] {
         let column = block_body(narrow, selector);
         assert!(
