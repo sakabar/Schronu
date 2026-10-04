@@ -106,6 +106,10 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
             task_name: "task".to_owned(),
             estimated_work_seconds: 900,
             actual_work_seconds,
+        }
+        .into(),
+        occurrence: schronu_web::ScheduleOccurrence::Actual {
+            task_id: task_id.to_owned(),
         },
         schedule_start_epoch_ms: 0,
         schedule_end_epoch_ms: 1,
@@ -115,12 +119,12 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
         task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: schronu_web::DeferPlan {
+        defer_plan: Some(schronu_web::DeferPlan {
             mode: schronu_web::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_788_652_800_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     }
 }
 

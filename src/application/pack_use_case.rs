@@ -127,7 +127,7 @@ fn pack_tasks_with_end_of_day_offset_minutes_internal(
         }
         let current_planned_start_opt = current_schedule
             .iter()
-            .find(|scheduled| scheduled.task.id == candidate.task_id)
+            .find(|scheduled| scheduled.actual_task_id() == Some(candidate.task_id))
             .map(|scheduled| scheduled.scheduled_start);
         let Some(current_planned_start) = current_planned_start_opt else {
             continue;
@@ -242,7 +242,7 @@ fn find_placement_start(
             get_schedule_with_task_first_available_time(repository, request.task_id, trial_time)?;
         let task_segments = schedule
             .iter()
-            .filter(|scheduled| scheduled.task.id == request.task_id)
+            .filter(|scheduled| scheduled.actual_task_id() == Some(request.task_id))
             .collect::<Vec<_>>();
 
         if placement_fits_target_day(
@@ -305,7 +305,10 @@ fn collect_candidates(
     let mut seen_ids = HashSet::new();
     let mut candidates = Vec::new();
     for scheduled in schedule {
-        if !seen_ids.insert(scheduled.task.id) {
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        if !seen_ids.insert(task_id) {
             continue;
         }
         if !scheduled.is_leaf()
@@ -322,7 +325,7 @@ fn collect_candidates(
             .any(|target_date| *target_date < scheduled_date && task_start_date <= *target_date)
         {
             candidates.push(PackCandidate {
-                task_id: scheduled.task.id,
+                task_id,
                 name: scheduled.task.name.clone(),
                 priority: scheduled.task.priority,
                 planned_start: scheduled.scheduled_start,
@@ -359,16 +362,20 @@ fn calculate_daily_leeway(
         {
             continue;
         }
-        let is_repetitive = repository
-            .get_by_id(scheduled.task.id)
-            .map_err(ApplicationError::TaskTree)?
-            .map(|task| {
-                task.get_inherited_repetition_interval_days_opt()
-                    .map(|interval| interval.is_some())
-            })
-            .transpose()
-            .map_err(ApplicationError::TaskTree)?
-            .unwrap_or(false);
+        let is_repetitive = if scheduled.is_projected() {
+            true
+        } else {
+            repository
+                .get_by_id(scheduled.source_task_id())
+                .map_err(ApplicationError::TaskTree)?
+                .map(|task| {
+                    task.get_inherited_repetition_interval_days_opt()
+                        .map(|interval| interval.is_some())
+                })
+                .transpose()
+                .map_err(ApplicationError::TaskTree)?
+                .unwrap_or(false)
+        };
         for (date, capacity_seconds) in capacity_by_date {
             if !target_dates.contains(&date) {
                 continue;

@@ -26,8 +26,11 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
+mod identity;
 mod load;
 
+use identity::task_identity_entries;
+pub use identity::NilTaskIdError;
 use load::{parse_storage_revision, RepositoryLoadBuilder};
 
 const PROJECT_DIRECTORY_COMPONENT_MAX_BYTES: usize = 255;
@@ -272,12 +275,10 @@ impl TaskRepository {
     }
 
     fn cache_task_and_descendants(&self, task: &TaskHandle) -> Result<(), TaskTreeError> {
-        self.id_to_task_map
-            .borrow_mut()
-            .insert(task.get_id()?, task.clone());
-
-        for child_task in task.get_children()? {
-            self.cache_task_and_descendants(&child_task)?;
+        let entries = task_identity_entries(task)?;
+        let mut cache = self.id_to_task_map.borrow_mut();
+        for entry in entries {
+            cache.insert(entry.task_id, entry.task);
         }
         Ok(())
     }
@@ -394,6 +395,16 @@ impl TaskRepository {
     }
 
     fn serialize_project(project: &Project) -> Result<Vec<u8>, TaskRepositoryError> {
+        let entries = task_identity_entries(&project.root_task)
+            .map_err(TaskRepositoryError::retryable_save)?;
+        for entry in entries {
+            if entry.task_id.is_nil() {
+                return Err(TaskRepositoryError::retryable_save(NilTaskIdError::new(
+                    project.project_yaml_file_path.clone(),
+                    entry.task_path,
+                )));
+            }
+        }
         let snapshot = project
             .root_task
             .snapshot()
@@ -697,6 +708,29 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn start_new_project(&mut self, root_task: TaskHandle) -> Result<(), ProjectRegistrationError> {
+        let entries =
+            task_identity_entries(&root_task).map_err(ProjectRegistrationError::TaskTree)?;
+        let mut candidate_ids = std::collections::HashSet::new();
+        for entry in &entries {
+            if entry.task_id.is_nil() {
+                return Err(ProjectRegistrationError::NilTaskId {
+                    task_path: entry.task_path.clone(),
+                });
+            }
+            if !candidate_ids.insert(entry.task_id) {
+                return Err(ProjectRegistrationError::DuplicateTaskId(entry.task_id));
+            }
+            for project in &self.projects {
+                if project
+                    .root_task
+                    .get_by_id(entry.task_id)
+                    .map_err(ProjectRegistrationError::TaskTree)?
+                    .is_some()
+                {
+                    return Err(ProjectRegistrationError::DuplicateTaskId(entry.task_id));
+                }
+            }
+        }
         let project_name = root_task
             .get_name()
             .map_err(ProjectRegistrationError::TaskTree)?;
@@ -713,14 +747,6 @@ impl TaskRepositoryTrait for TaskRepository {
         let project_yaml_file_path = project_dir_path.join("project.yaml");
 
         for project in &self.projects {
-            if project
-                .root_task
-                .get_by_id(project_id)
-                .map_err(ProjectRegistrationError::TaskTree)?
-                .is_some()
-            {
-                return Err(ProjectRegistrationError::DuplicateTaskId(project_id));
-            }
             if project.project_dir_path == project_dir_path {
                 return Err(ProjectRegistrationError::DuplicateStoragePath(
                     project_dir_path,

@@ -4,7 +4,7 @@ use super::daily_capacity::{
 };
 use super::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use super::schedule_use_case::{
-    build_schedule_context, get_schedule_from_context_with_overrides, scheduled_end_by_task,
+    build_schedule_context, get_schedule_from_context_with_overrides, scheduled_end_by_occurrence,
     ScheduledTaskView,
 };
 use super::scheduled_capacity::scheduled_capacity_seconds_by_logical_date;
@@ -209,7 +209,7 @@ fn flatten_tasks_with_end_of_day_offset_minutes_internal(
             let trial_schedule = trial_schedule_result?;
             let trial_scheduled_start = trial_schedule
                 .iter()
-                .filter(|scheduled| scheduled.task.id == candidate.task_id)
+                .filter(|scheduled| scheduled.actual_task_id() == Some(candidate.task_id))
                 .map(|scheduled| scheduled.scheduled_start)
                 .min();
             let made_progress = trial_scheduled_start.is_some_and(|scheduled_start| {
@@ -306,7 +306,10 @@ fn collect_original_task_details(
     let mut details = HashMap::new();
     for scheduled in schedule {
         record_flatten(FlattenEvent::FullScheduleScan(1));
-        if let std::collections::hash_map::Entry::Vacant(entry) = details.entry(scheduled.task.id) {
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        if let std::collections::hash_map::Entry::Vacant(entry) = details.entry(task_id) {
             entry.insert((
                 scheduled.task.name.clone(),
                 scheduled.task.priority,
@@ -325,10 +328,10 @@ fn collect_candidates(
     let mut segments_by_task = HashMap::<Uuid, Vec<&ScheduledTaskView>>::new();
     for scheduled in schedule {
         record_flatten(FlattenEvent::FullScheduleScan(1));
-        segments_by_task
-            .entry(scheduled.task.id)
-            .or_default()
-            .push(scheduled);
+        let Some(task_id) = scheduled.actual_task_id() else {
+            continue;
+        };
+        segments_by_task.entry(task_id).or_default().push(scheduled);
     }
 
     let mut candidates = Vec::new();
@@ -376,7 +379,7 @@ fn collect_candidates(
             .iter()
             .all(|dates| dates.as_slice() == [overload_date]);
         candidates.push(FlattenCandidate {
-            task_id: first.task.id,
+            task_id: first.actual_task_id().expect("actual candidates only"),
             name: first.task.name.clone(),
             priority: first.task.priority,
             deadline_time: first.task.deadline_time,
@@ -447,20 +450,20 @@ fn introduces_deadline_violation(
     trial_schedule: &[ScheduledTaskView],
 ) -> bool {
     record_flatten(FlattenEvent::FullScheduleScan(current_schedule.len()));
-    let current_ends = scheduled_end_by_task(current_schedule);
+    let current_ends = scheduled_end_by_occurrence(current_schedule);
     record_flatten(FlattenEvent::FullScheduleScan(trial_schedule.len()));
-    let trial_ends = scheduled_end_by_task(trial_schedule);
+    let trial_ends = scheduled_end_by_occurrence(trial_schedule);
     trial_schedule.iter().any(|scheduled| {
         record_flatten(FlattenEvent::FullScheduleScan(1));
         let Some(deadline) = scheduled.task.deadline_time else {
             return false;
         };
-        let Some(trial_end) = trial_ends.get(&scheduled.task.id).copied() else {
+        let Some(trial_end) = trial_ends.get(&scheduled.occurrence).copied() else {
             return false;
         };
         trial_end > deadline
             && current_ends
-                .get(&scheduled.task.id)
+                .get(&scheduled.occurrence)
                 .is_none_or(|current_end| trial_end > *current_end)
     })
 }

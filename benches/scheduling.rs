@@ -22,11 +22,14 @@ const SAMPLE_COUNT: usize = 3;
 const TYPICAL_LIMIT: Duration = Duration::from_millis(500);
 const STRESS_LIMIT: Duration = Duration::from_secs(5);
 const STRESS_FLATTEN_LIMIT: Duration = Duration::from_secs(8);
+const TYPICAL_PROJECTION_LIMIT: Duration = Duration::from_millis(100);
+const STRESS_PROJECTION_LIMIT: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy)]
 enum UseCase {
     All,
     Schedule,
+    Projection,
     Pack,
     Flatten,
 }
@@ -73,17 +76,18 @@ fn parse_configuration(arguments: &[String]) -> Result<Configuration, String> {
         None if size == FixtureSize::Small => UseCase::All,
         None => {
             return Err(
-                "typical and stress require an explicit use case: schedule, pack, or flatten"
+                "typical and stress require an explicit use case: schedule, projection, pack, or flatten"
                     .to_string(),
             )
         }
         Some("all") if size == FixtureSize::Small => UseCase::All,
         Some("schedule") => UseCase::Schedule,
+        Some("projection") => UseCase::Projection,
         Some("pack") => UseCase::Pack,
         Some("flatten") => UseCase::Flatten,
         Some(other) => {
             return Err(format!(
-                "unknown use case {other:?}; expected schedule, pack, or flatten"
+                "unknown use case {other:?}; expected schedule, projection, pack, or flatten"
             ))
         }
     };
@@ -112,9 +116,45 @@ fn run(configuration: Configuration) -> Result<(), String> {
             run_flatten(configuration)
         }
         UseCase::Schedule => run_schedule(configuration),
+        UseCase::Projection => run_projection(configuration),
         UseCase::Pack => run_pack(configuration),
         UseCase::Flatten => run_flatten(configuration),
     }
+}
+
+fn run_projection(configuration: Configuration) -> Result<(), String> {
+    let mut samples = Vec::with_capacity(SAMPLE_COUNT);
+    let mut last_output = None;
+    for sample_index in 0..SAMPLE_COUNT {
+        let fixture = SchedulingFixture::recurring_projection(configuration.size)
+            .map_err(|error| error.to_string())?;
+        if sample_index == 0 {
+            let summary = fixture.summary().map_err(|error| error.to_string())?;
+            println!(
+                "fixture_seed={} fixture_digest={} projects={} tasks={} active_leaves={}",
+                fixture.seed,
+                fixture.digest().map_err(|error| error.to_string())?,
+                summary.projects,
+                summary.tasks,
+                summary.active_leaves
+            );
+        }
+        let repository = SchedulingRepository::new(fixture.projects, fixture.now);
+        let started = Instant::now();
+        let output = get_schedule_diagnostics(&repository).map_err(|error| error.to_string())?;
+        samples.push(started.elapsed());
+        last_output = Some(output);
+    }
+    let elapsed = median(&mut samples);
+    check_limit(configuration, elapsed)?;
+    let (schedule, metrics) = last_output.expect("sample count is positive");
+    println!(
+        "projection median_ms={:.3} samples={} output_segments={} metrics={metrics:?}",
+        elapsed.as_secs_f64() * 1_000.0,
+        SAMPLE_COUNT,
+        schedule.len()
+    );
+    Ok(())
 }
 
 fn run_schedule(configuration: Configuration) -> Result<(), String> {
@@ -228,6 +268,7 @@ fn merge_schedule_metrics(target: &mut ScheduleMetrics, source: ScheduleMetrics)
     target.atomic_release_cache_peak_entry_count = target
         .atomic_release_cache_peak_entry_count
         .max(source.atomic_release_cache_peak_entry_count);
+    target.projection_step_count += source.projection_step_count;
     target.slack_probe_count += source.slack_probe_count;
     target.sort_count += source.sort_count;
     target.schedule_rebuild_count += source.schedule_rebuild_count;
@@ -284,6 +325,8 @@ fn check_limit(configuration: Configuration, elapsed: Duration) -> Result<(), St
     }
     let limit = match (configuration.size, configuration.use_case) {
         (FixtureSize::Small, _) => return Ok(()),
+        (FixtureSize::Typical, UseCase::Projection) => TYPICAL_PROJECTION_LIMIT,
+        (FixtureSize::Stress, UseCase::Projection) => STRESS_PROJECTION_LIMIT,
         (FixtureSize::Typical, _) => TYPICAL_LIMIT,
         (FixtureSize::Stress, UseCase::Flatten) => STRESS_FLATTEN_LIMIT,
         (FixtureSize::Stress, _) => STRESS_LIMIT,
@@ -305,6 +348,7 @@ fn use_case_label(use_case: UseCase) -> &'static str {
     match use_case {
         UseCase::All => "all",
         UseCase::Schedule => "schedule",
+        UseCase::Projection => "projection",
         UseCase::Pack => "pack",
         UseCase::Flatten => "flatten",
     }

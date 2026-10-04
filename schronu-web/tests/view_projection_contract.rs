@@ -4,8 +4,8 @@ use schronu_web::client::view_projection::{
     ScheduleDisplayViewModel,
 };
 use schronu_web::{
-    DeadlineDisplayKind, DeferMode, DeferPlan, RecordSessionResult, ScheduledTaskRow, SessionTask,
-    TaskDisplayKind, WebSuccess,
+    DeadlineDisplayKind, DeferMode, DeferPlan, RecordSessionResult, ScheduleOccurrence,
+    ScheduledTaskRow, SessionTask, TaskDisplayKind, WebSuccess,
 };
 
 mod client_state_support;
@@ -111,6 +111,9 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     let (request_id, request) = list_effect(state.request_list("2026-09-04"));
     let row = ScheduledTaskRow {
         task: session_row().task,
+        occurrence: ScheduleOccurrence::Actual {
+            task_id: TASK_ID.to_owned(),
+        },
         schedule_start_epoch_ms: START_EPOCH_MS,
         schedule_end_epoch_ms: START_EPOCH_MS + 30 * 60_000,
         deadline_epoch_ms: Some(1_788_553_800_000), // 2026-09-05 05:30 JST
@@ -119,12 +122,12 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
         task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: schronu_web::DeadlineDisplayKind::Overrun,
         is_leaf: true,
-        defer_plan: DeferPlan {
+        defer_plan: Some(DeferPlan {
             mode: DeferMode::Normal,
             requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     };
     state.apply_list_result(
         request_id,
@@ -169,7 +172,7 @@ fn 日付別listの予定時間は分を切り上げて右寄3桁で表示する
     .enumerate()
     .map(|(index, duration_ms)| {
         let mut row = session_row();
-        row.task.task_id = format!("00000000-0000-0000-0000-{index:012}");
+        row.task.task_id = Some(format!("00000000-0000-0000-0000-{index:012}"));
         row.schedule_end_epoch_ms = row.schedule_start_epoch_ms + duration_ms;
         row
     })
@@ -259,11 +262,11 @@ fn 日付別listは今日の現在時刻とtask間の1分以上の空きを表�
     first.schedule_start_epoch_ms = START_EPOCH_MS + 90_000;
     first.schedule_end_epoch_ms = START_EPOCH_MS + 10 * 60_000;
     let mut overlapping = session_row();
-    overlapping.task.task_id = OTHER_TASK_ID.to_owned();
+    overlapping.task.task_id = Some(OTHER_TASK_ID.to_owned());
     overlapping.schedule_start_epoch_ms = START_EPOCH_MS + 9 * 60_000;
     overlapping.schedule_end_epoch_ms = START_EPOCH_MS + 20 * 60_000;
     let mut next = session_row();
-    next.task.task_id = "33333333-3333-3333-3333-333333333333".to_owned();
+    next.task.task_id = Some("33333333-3333-3333-3333-333333333333".to_owned());
     next.schedule_start_epoch_ms = START_EPOCH_MS + 21 * 60_000 + 59_000;
     next.schedule_end_epoch_ms = START_EPOCH_MS + 30 * 60_000;
     state.apply_list_result(
@@ -293,7 +296,7 @@ fn 日付別listは今日以外の先頭と1分未満の空きを表示しない
     first.schedule_start_epoch_ms = START_EPOCH_MS + 24 * 60 * 60_000;
     first.schedule_end_epoch_ms = first.schedule_start_epoch_ms + 10 * 60_000;
     let mut next = session_row();
-    next.task.task_id = OTHER_TASK_ID.to_owned();
+    next.task.task_id = Some(OTHER_TASK_ID.to_owned());
     next.schedule_start_epoch_ms = first.schedule_end_epoch_ms + 59_999;
     next.schedule_end_epoch_ms = next.schedule_start_epoch_ms + 10 * 60_000;
     state.apply_list_result(
@@ -324,20 +327,20 @@ fn listの先送り確認はserverのplanだけから生成する() {
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", START_EPOCH_MS - 1)));
     let (request_id, request) = list_effect(state.request_list("2026-09-05"));
     let mut limited = session_row();
-    limited.defer_plan = DeferPlan {
+    limited.defer_plan = Some(DeferPlan {
         mode: DeferMode::DeadlineLimited,
         requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
         effective_pending_until_epoch_ms: Some(START_EPOCH_MS + 3_600_000),
         repetition_interval_days: None,
-    };
+    });
     let mut routine = session_row();
-    routine.task.task_id = OTHER_TASK_ID.to_owned();
-    routine.defer_plan = DeferPlan {
+    routine.task.task_id = Some(OTHER_TASK_ID.to_owned());
+    routine.defer_plan = Some(DeferPlan {
         mode: DeferMode::RoutinePeriod,
         requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
         effective_pending_until_epoch_ms: None,
         repetition_interval_days: Some(7),
-    };
+    });
     state.apply_list_result(
         request_id,
         &request.logical_date,
@@ -373,6 +376,10 @@ fn session_row() -> ScheduledTaskRow {
             task_name: "task".to_owned(),
             estimated_work_seconds: 900,
             actual_work_seconds: 300,
+        }
+        .into(),
+        occurrence: ScheduleOccurrence::Actual {
+            task_id: TASK_ID.to_owned(),
         },
         schedule_start_epoch_ms: START_EPOCH_MS,
         schedule_end_epoch_ms: START_EPOCH_MS + 30 * 60_000,
@@ -382,11 +389,11 @@ fn session_row() -> ScheduledTaskRow {
         task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: DeferPlan {
+        defer_plan: Some(DeferPlan {
             mode: DeferMode::Normal,
             requested_pending_until_epoch_ms: START_EPOCH_MS + 86_400_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     }
 }

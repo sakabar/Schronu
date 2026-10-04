@@ -185,7 +185,7 @@ impl ClientState {
                 self.record_server(invocation, Outcome::Success, "タスクを先送りしました。");
                 self.read
                     .scheduled_rows
-                    .retain(|row| row.task.task_id != task_id);
+                    .retain(|row| row.task.task_id.as_deref() != Some(task_id.as_str()));
                 if !self.finish_mutation_safety(storage, false) {
                     self.sessions.mutation_globally_blocked = true;
                 }

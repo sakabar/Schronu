@@ -64,7 +64,7 @@ rm -rf target/dx/schronu-web
 
 予定・全件・完了の検索は、前後空白を除いたUnicode小文字化によるtask名の部分一致です。共有検索文字列は各一覧との往復、全件無効化後、reload後も維持します。全件一覧は検索後の先頭500行を表示し、日付区切りをtask件数に含めません。「さらに表示」で500行ずつ上限を増やすと、表示対象の先頭から日付区切りを再投影します。検索条件を変更またはclearすると表示上限を500行へ戻します。「全て」の表示中も日付入力を使用でき、妥当な日付を送信すると日付別一覧へ切り替わります。
 
-負荷tabは「日別負荷」を初期表示し、「繰返負荷」とclient内で切り替えます。日別負荷はCLIの`帯`と同じ区分・累積差分を、今日から6日後までの連続7日について表示します。各rowは24時間固定の帯、余差累、空差累、24時間を超えた場合の超過時間を持ち、余差累・空差累が正なら赤、0以下なら緑で表示します。Webの帯は隣接区分を識別しやすいよう、繰返を明るい青、余差を深緑、空きを明るい緑で表示します。各帯の直下には超過量を右寄せの赤いレールで示し、1日全体は24時間、当日の残り枠は残り容量をそれぞれ幅の基準とします。当日だけは利用不可と経過済みを除外し、残る4区分を残り容量に対して再正規化した「残り枠」を1日全体の帯より上へ表示します。高さ35rem以上の画面では取得成功時の7日分を縦scrollなしで表示し、35rem以上60rem以下ではtoolbar、凡例、rowをcompact化します。35rem未満の画面やerror表示中は、rowを重ねず縦scrollへ戻します。rowを押すと対象日の一覧へ移ります。繰返負荷は今日から7日後までの連続8 logical datesのscheduleを最寄りの繰返祖先ごとに集計し、間隔を`N日`で表示して、8日合計、発生日数、最大日とともに右揃えします。表全体は横scrollさせず、狭幅では5列を圧縮し、可変長のプロジェクト名と繰返名だけを末尾cell内で横scrollできます。発生日数は同じ日に複数segmentがあっても1日として数えます。負荷はtabへ入った時と「更新」を押した時だけ取得し、2表示の切替では通信せず、定期pollingも行いません。
+負荷tabは「日別負荷」を初期表示し、「繰返負荷」とclient内で切り替えます。日別負荷はCLIの`帯`と同じ区分・累積差分を、今日から6日後までの連続7日について表示します。各rowは24時間固定の帯、余差累、空差累、24時間を超えた場合の超過時間を持ち、余差累・空差累が正なら赤、0以下なら緑で表示します。Webの帯は隣接区分を識別しやすいよう、繰返を明るい青、余差を深緑、空きを明るい緑で表示します。各帯の直下には超過量を右寄せの赤いレールで示し、1日全体は24時間、当日の残り枠は残り容量をそれぞれ幅の基準とします。当日だけは利用不可と経過済みを除外し、残る4区分を残り容量に対して再正規化した「残り枠」を1日全体の帯より上へ表示します。高さ35rem以上の画面では取得成功時の7日分を縦scrollなしで表示し、35rem以上60rem以下ではtoolbar、凡例、rowをcompact化します。35rem未満の画面やerror表示中は、rowを重ねず縦scrollへ戻します。rowを押すと対象日の一覧へ移ります。繰返負荷は今日から7日後までの連続8 logical datesのscheduleを、実taskは最寄りの繰返祖先、予測回は繰返元taskごとに集計し、間隔を`N日`で表示して、8日合計、発生日数、最大日とともに右揃えします。表全体は横scrollさせず、狭幅では5列を圧縮し、可変長のプロジェクト名と繰返名だけを末尾cell内で横scrollできます。発生日数は同じ日に複数segmentがあっても1日として数えます。負荷はtabへ入った時と「更新」を押した時だけ取得し、2表示の切替では通信せず、定期pollingも行いません。
 
 以後server通信が起きるのは、一覧modeまたは日付を選んでactive一覧を取得するとき、完了modeから別tabを経て一覧へ戻り予定一覧を取得するとき、「全て」のpageを取得するとき、負荷tabの表示・更新時、自動セッションを選定するとき、一覧からtaskを先送りするとき、セッションを解除するとき、taskを完了するときだけです。先送りまたは4種類のセッション終了操作が成功すると、選択中の日付をactive modeのendpointで続けて取得します。完了modeから一覧へ戻る場合と負荷tabへ入る場合を除くtab切替、timer更新、一覧検索、「さらに表示」、一覧からのセッション追加と追加成功後のセッションtabへの切替、先送りの確認とキャンセル、「計測を破棄して再開」、破棄完了の確認とキャンセルでは通信しません。logical dateが日付境界の06:00を越えて変わっても保存一覧を先に消しません。
 
@@ -81,6 +81,8 @@ rm -rf target/dx/schronu-web
 - `記録して完了`: click時刻で計測を停止し、それまでの完了済み整数秒を加算して、click時刻でtaskを完了してからセッションを削除する。
 
 日付別一覧のleaf taskには「セッション」と「先送り」を表示します。46rem以下では「＋/✓」と「→」で表示します。全件一覧のleaf taskには「セッション」だけを表示し、先送りは表示しません。どちらも親taskの操作欄は空にし、同一taskのセッションが存在する場合は、そのUUIDを持つ全segmentを追加済みとして表示します。どちらの一覧からセッションを追加した場合も、予定・完了modeで共有するtask名検索全体を消去します。
+
+日付別一覧と全件一覧には、今後28日間へ展開した繰り返し予測も表示します。28日窓内に複数の実体回がある場合はその全件を起点とし、同じ正確なdeadlineの実体回と予測回が重なる場合は実体回を優先します。予測行は「予定」と繰り返し元task UUIDを示し、検索、予定時間、締切警告、繰返色の対象になります。予測行はread-onlyであり、セッション追加と先送りは表示せず、実task UUIDを持ちません。実際の完了で次回taskが生成されると、その実taskを起点に予測が更新されます。
 
 日付別一覧の先送り先は、表示日と現在のlogical dateの遅い方から数えた翌日06:00です。serverがdeadline余裕を判定し、余裕があれば1tapでCLIの`d`相当を実行します。余裕がない通常taskは実際の期限上限を確認してからそこまでPendingにし、余裕がないルーチンtaskは反復日数を確認してからCLIの`W`相当で次周期へ移動します。期限上限は既存方針の`deadline - 見積時間 - 5分`であり、実施済み時間を考慮する修正はTD-043として分離しています。実行直前にmode、希望日時、実効日時、反復日数のいずれかが変わっていた場合は保存せず、選択中の一覧を再取得します。実行中セッションと同じtaskは先送りできません。成功後は同じtaskの全segmentを除去して一覧を再取得し、検索と日付入力は維持します。
 
@@ -148,7 +150,7 @@ SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage-copy \
 
 ### scheduling性能契約
 
-`schedule`、`pack`、`flatten`は、匿名化した固定seed fixtureで性能退行を検出します。元storageは集計時だけread-onlyで開き、名前、UUID、本文、実日付、絶対pathはfixtureへ保存しません。`SCHRONU_BENCHMARK_STORAGE`はアプリケーションの恒久設定ではなく、次の手動集計だけにinline指定します。
+`schedule`、`projection`、`pack`、`flatten`は、匿名化した固定seed fixtureで性能退行を検出します。元storageは集計時だけread-onlyで開き、名前、UUID、本文、実日付、絶対pathはfixtureへ保存しません。`SCHRONU_BENCHMARK_STORAGE`はアプリケーションの恒久設定ではなく、次の手動集計だけにinline指定します。
 
 ```shell
 SCHRONU_BENCHMARK_STORAGE=/absolute/path/to/task-storage \
@@ -164,14 +166,23 @@ fixture規模は次のとおりです。stressはtypicalのproject、task、acti
 | typical | 2,213 | 26,378 | 691 |
 | stress | 8,852 | 105,512 | 2,764 |
 
-通常CIはwall-clockではなく、candidate、segment、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。ただし、全scheduleを333回再構築するstress flattenは8,000msを上限とします。
+`projection`は3日間隔の繰り返し元と当日の実体回を決定的に構成し、28日窓内で各1系列を実体1件+投影9件の10候補へ展開します。既存profileの基準値を変えないため、専用fixtureとして分離しています。
+
+| projection fixture | source | persisted task | candidate | projected occurrence |
+| --- | ---: | ---: | ---: | ---: |
+| typical | 64 | 128 | 640 | 576 |
+| stress | 256 | 512 | 2,560 | 2,304 |
+
+通常CIはwall-clockではなく、candidate、segment、projection step、occupied slot探索、依存候補走査、sort、schedule再構築、配置試行、cursor前進、overload反復、override clone、全schedule走査の上限を検査します。projection stepは古いfrontierから窓内へ飛ぶ計算も数え、frontierの古さで増えないことを固定します。週次・手動CIはRust 1.97.1、release build、`Asia/Tokyo`、GitHub Actions Ubuntu runnerで3回のmedianを測り、typical 500ms、stress 5,000msを上限とします。ただし、projectionはtypical 100msとstress 500ms、全scheduleを333回再構築するstress flattenは8,000msを上限とします。
 
 ```shell
 cargo test --locked --features benchmarking --test scheduling_benchmark_contract
 cargo bench --locked --features benchmarking --bench scheduling -- typical schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- typical projection check
 cargo bench --locked --features benchmarking --bench scheduling -- typical pack check
 cargo bench --locked --features benchmarking --bench scheduling -- typical flatten check
 cargo bench --locked --features benchmarking --bench scheduling -- stress schedule check
+cargo bench --locked --features benchmarking --bench scheduling -- stress projection check
 cargo bench --locked --features benchmarking --bench scheduling -- stress pack check
 cargo bench --locked --features benchmarking --bench scheduling -- stress flatten check
 ```
@@ -181,6 +192,7 @@ cargo bench --locked --features benchmarking --bench scheduling -- stress flatte
 | use case | typical | stress |
 | --- | ---: | ---: |
 | schedule | 6.930ms | 29.172ms |
+| projection | 3.846ms | 7.797ms |
 | pack | 8.046ms | 35.296ms |
 | flatten | 72.900ms | 403.322ms |
 
@@ -303,6 +315,8 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 `list_tasks`はproject treeのpre-orderを維持し、既定で最大100件、`limit`指定時は1件から500件までを返します。応答は既存の`tasks`に加えて、続きがある場合はopaqueな`next_cursor`、終端では`next_cursor: null`を含みます。次pageでは同じfilterと`cursor`を渡し、`limit`だけは変更できます。全件取得は明示的な`unbounded: true`だけで有効になり、`unbounded`と`limit`または`cursor`の併用は`invalid_input`です。cursorの形式・version・filter・再開位置が一致しない場合や、前page取得後にrepository revisionが変わった場合も`field: cursor`の`invalid_input`になります。その場合はcursorを省略して先頭pageから取得し直してください。
 
 `get_schedule.from`と`get_schedule.until`は、ローカル時刻06:00を境界とする論理日の日付です。両方指定すると`from`の06:00以上`until`の06:00未満、`from`だけならその1論理日、`until`だけなら現在以上`until`の06:00未満、両方省略なら現在以上次の06:00未満を対象にします。schedule segmentは開始時刻だけでなく、その区間が対象範囲と重なるかどうかで選ばれます。
+
+`get_schedule`の保存済みoccurrenceは変更操作に使える`task_id`を持ちます。繰り返しの将来回を示すread-onlyのprojected occurrenceは、一意な`occurrence_key`と繰り返し元の`source_task_id`を持ち、操作可能な`task_id`を持ちません。CLIの`全`と日付・名前filterでは既存の固定幅10列で表示し、B列へ表示専用のnil UUID(`00000000-0000-0000-0000-000000000000`)を置きます。この行はSpreadsheetのA〜J列へcopyしません。
 
 `create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
 
@@ -627,9 +641,9 @@ schronu> 全 2026/09/26
 `全 9/26` のように年を省略した日付を指定すると、`後 9/26` と同じく、現在から未来方向で直近の9月26日を年付きの日付へ補完して、その日の予定を表示します。例えば現在が2026年8月なら `全 2026/09/26`、現在が2026年10月なら `全 2027/09/26` として扱います。英語形では `all 9/26` を使用します。
 年を固定したい場合は `全 2026/09/26` のように指定してください。
 
-`全`は06:00を境界とするlogical dateごとに予定開始時刻の降順で表示します。`全 <pattern>`のどの絞り込みも、まずtaskを選別し、選別済みの`TaskListDisplayRow`を予定順へ並べた後、隣接する表示taskだけから日付区切りを計算します。隣り合うtaskのlogical dateが翌日に変わる場合はtask名欄の直前までの88マスの横線、2日以上離れる場合は88本の横線に続けて間に予定のない日数を「N日間の空き時間」と表示し、後ろを横線で埋めて全体を157マスに揃えます。いずれも後続taskの直前へ表示し、検索不一致taskの日付は日数計算に含めません。
+`全`は06:00を境界とするlogical dateごとに予定開始時刻の降順で表示します。1つのtaskまたは繰り返し予測が複数segmentへ分割された場合、task名の先頭へ`<segmentの分数/全体見積もり分数>`を表示します。`全 <pattern>`のどの絞り込みも、まずtaskを選別し、選別済みの`TaskListDisplayRow`を予定順へ並べた後、隣接する表示taskだけから日付区切りを計算します。隣り合うtaskのlogical dateが翌日に変わる場合はtask名欄の直前までの88マスの横線、2日以上離れる場合は88本の横線に続けて間に予定のない日数を「N日間の空き時間」と表示し、後ろを横線で埋めて全体を157マスに揃えます。いずれも後続taskの直前へ表示し、検索不一致taskの日付は日数計算に含めません。
 
-task一覧は、標準出力が端末の場合にtask名をANSI 256色で表示します。固定taskは濃いマゼンタ(127)、繰返taskは青(33)、単発taskは橙(208)です。予定上の締切超過`v`のiconと締切列は赤(196)、超過せず着手予定logical date内に締切が来る`!`のiconと締切列は黄(214)、犠牲候補`A`のiconは濃紫(129)、それより先の締切列は明緑(34)で表示します。通常の`-`と今日着手予定の`/`は無色です。この配色は`全`、`今`、`尾`とそれらのfilter表示に共通です。色は付加情報であり、既存の`【繰】`、`!`、`v`、`A`、`/`、`-`は維持します。パイプ・リダイレクト時はANSI escape sequenceを含まず、A〜J列のtask行と日付境界の非task行をプレーンテキストで出力します。`shell/copy_for_spreadsheet.sh`は非task行を無視するため、SpreadsheetのA〜J列定義は変わりません。
+task一覧は、標準出力が端末の場合にtask名をANSI 256色で表示します。固定taskは濃いマゼンタ(127)、繰返taskは青(33)、単発taskは橙(208)です。予定上の締切超過`v`のiconと締切列は赤(196)、超過せず着手予定logical date内に締切が来る`!`のiconと締切列は黄(214)、犠牲候補`A`のiconは濃紫(129)、それより先の締切列は明緑(34)で表示します。通常の`-`と今日着手予定の`/`は無色です。この配色は`全`、`今`、`尾`とそれらのfilter表示に共通です。色は付加情報であり、既存の`【繰】`、`!`、`v`、`A`、`/`、`-`は維持します。パイプ・リダイレクト時はANSI escape sequenceを含まず、A〜J列のtask行と日付境界の非task行をプレーンテキストで出力します。read-onlyの繰り返し予測も同じ固定幅10列で表示し、task ID列には表示専用のnil UUIDを置きます。内部のoccurrence keyと元taskのUUIDは通常のCLI表示へ露出しません。`shell/copy_for_spreadsheet.sh`はnil UUID行をparse後に除外するため、SpreadsheetのA〜J列定義は変わりません。
 
 末尾側から犠牲候補を確認したい場合は、以下のように表示します。
 
@@ -672,7 +686,7 @@ schronu> 荷
 schronu> routine-load
 ```
 
-`荷`は現在logical dateから7日後までの連続8 logical datesのscheduleを、最寄りの繰返祖先ごとに集計します。繰返間隔、8日合計、発生日数、最大日を出力内の最大表示幅で右揃えし、可変長のプロジェクト名と繰返名を末尾列へ表示します。発生日数は予定が発生するlogical dateの異なり数で、同じ日の複数segmentは1日として数えます。最大日は日別合計が最大のlogical dateで、同値なら早い日を採用します。CLIとWebは同じapplication層の集計を使います。
+`荷`は現在logical dateから7日後までの連続8 logical datesのscheduleを、実taskは最寄りの繰返祖先、予測回は繰返元taskごとに集計します。繰返間隔、8日合計、発生日数、最大日を出力内の最大表示幅で右揃えし、可変長のプロジェクト名と繰返名を末尾列へ表示します。発生日数は予定が発生するlogical dateの異なり数で、同じ日の複数segmentは1日として数えます。最大日は日別合計が最大のlogical dateで、同値なら早い日を採用します。CLIとWebは同じapplication層の集計を使います。
 
 対話モードを起動せずに、1つのコマンドだけを実行して標準出力へ出すこともできます。
 

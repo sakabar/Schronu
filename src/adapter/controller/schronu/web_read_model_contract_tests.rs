@@ -1,13 +1,60 @@
 use super::web_service::{
-    build_auto_session_dto, build_band_days, build_scheduled_task_rows, DeadlineDisplayKind,
-    DeferModeDto, TaskDisplayKind,
+    build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
+    DeadlineDisplayKind, DeferModeDto, TaskDisplayKind,
 };
-use crate::application::schedule_use_case::ScheduledTaskView;
+use crate::application::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use crate::application::task_use_case::get_task;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use crate::test_support::{TestFreeTimeManager, TestTaskRepository};
 use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
+
+#[test]
+fn projected_occurrenceはread_onlyの一覧rowを構築する() {
+    let start = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
+    let source_task_id = Uuid::from_u128(901);
+    let task = TaskHandle::with_identity("projected", source_task_id, start).unwrap();
+    task.set_fixed_start(true).unwrap();
+    let repository = TestTaskRepository::new(vec![task.clone()], start);
+    let schedule = [ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline: start + Duration::days(3),
+        },
+        task: get_task(&repository, source_task_id)
+            .unwrap()
+            .unwrap()
+            .into(),
+        first_available_time: start,
+        scheduled_start: start,
+        scheduled_end: start + Duration::minutes(10),
+        scheduled_work_seconds: 600,
+        total_work_seconds: 600,
+        rank: 0,
+    }];
+
+    let scheduled_rows =
+        build_scheduled_task_rows(&repository, &schedule, start.date_naive(), start).unwrap();
+    let all_rows = build_all_task_rows(&repository, &schedule, start).unwrap();
+
+    assert_eq!(scheduled_rows.len(), 1);
+    assert_eq!(all_rows.len(), 1);
+    assert!(scheduled_rows[0].task.task_id.is_none());
+    assert!(scheduled_rows[0].defer_plan.is_none());
+    assert_eq!(scheduled_rows[0].task.actual_work_seconds, 0);
+    let expected_source_task_id = source_task_id.hyphenated().to_string();
+    assert!(matches!(
+        scheduled_rows[0].occurrence,
+        super::web_service::ScheduleOccurrenceDto::Projected { ref source_task_id, .. }
+            if source_task_id == &expected_source_task_id
+    ));
+    assert!(all_rows[0].task.task_id.is_none());
+    assert_eq!(
+        scheduled_rows[0].task_display_kind,
+        TaskDisplayKind::Repetitive
+    );
+    assert_eq!(all_rows[0].task_display_kind, TaskDisplayKind::Repetitive);
+}
 
 #[test]
 fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位に返す() {
@@ -23,7 +70,8 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let second = get_task(&repository, second_id).unwrap().unwrap();
     let schedule = vec![
         ScheduledTaskView {
-            task: first.clone(),
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first.clone().into(),
             first_available_time: day_start - Duration::minutes(1),
             scheduled_start: day_start - Duration::minutes(1),
             scheduled_end: day_start,
@@ -32,7 +80,8 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
             rank: 0,
         },
         ScheduledTaskView {
-            task: first.clone(),
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first.clone().into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(3),
             scheduled_end: day_start + Duration::hours(3) + Duration::seconds(600),
@@ -41,7 +90,8 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
             rank: 0,
         },
         ScheduledTaskView {
-            task: second,
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: second_id },
+            task: second.into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(1),
             scheduled_end: day_start + Duration::hours(1) + Duration::seconds(900),
@@ -50,7 +100,8 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
             rank: 0,
         },
         ScheduledTaskView {
-            task: first.clone(),
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first.clone().into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::hours(1),
             scheduled_end: day_start + Duration::hours(1) + Duration::seconds(300),
@@ -59,7 +110,8 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
             rank: 0,
         },
         ScheduledTaskView {
-            task: first,
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first.into(),
             first_available_time: day_start,
             scheduled_start: day_start + Duration::days(1),
             scheduled_end: day_start + Duration::days(1) + Duration::seconds(300),
@@ -72,9 +124,18 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let rows = build_scheduled_task_rows(&repository, &schedule, date, day_start).unwrap();
 
     assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0].task.task_id, second_id.hyphenated().to_string());
-    assert_eq!(rows[1].task.task_id, first_id.hyphenated().to_string());
-    assert_eq!(rows[2].task.task_id, first_id.hyphenated().to_string());
+    assert_eq!(
+        rows[0].task.task_id,
+        Some(second_id.hyphenated().to_string())
+    );
+    assert_eq!(
+        rows[1].task.task_id,
+        Some(first_id.hyphenated().to_string())
+    );
+    assert_eq!(
+        rows[2].task.task_id,
+        Some(first_id.hyphenated().to_string())
+    );
     assert_eq!(
         rows[0].schedule_start_epoch_ms,
         rows[1].schedule_start_epoch_ms
@@ -99,7 +160,8 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     let rows = build_scheduled_task_rows(
         &repository,
         &[ScheduledTaskView {
-            task,
+            occurrence: ScheduleOccurrenceKey::Actual { task_id },
+            task: task.into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end: start + Duration::seconds(1_200),
@@ -113,7 +175,7 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     .unwrap();
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].task.task_id, task_id.hyphenated().to_string());
+    assert_eq!(rows[0].task.task_id, Some(task_id.hyphenated().to_string()));
     assert_eq!(rows[0].task.task_name, "DTO task");
     assert_eq!(rows[0].task.estimated_work_seconds, 1_800);
     assert_eq!(rows[0].task.actual_work_seconds, 300);
@@ -126,16 +188,17 @@ fn listのdtoはtask値とdeadlineとleaf判定を情報を落とさず返す() 
     assert_eq!(rows[0].deadline_label, "____-07:40");
     assert!(!rows[0].misses_deadline);
     assert!(rows[0].is_leaf);
-    assert_eq!(rows[0].defer_plan.mode, DeferModeDto::DeadlineLimited);
+    let defer_plan = rows[0].defer_plan.as_ref().unwrap();
+    assert_eq!(defer_plan.mode, DeferModeDto::DeadlineLimited);
     assert_eq!(
-        rows[0].defer_plan.requested_pending_until_epoch_ms,
+        defer_plan.requested_pending_until_epoch_ms,
         Local
             .with_ymd_and_hms(2026, 9, 6, 6, 0, 0)
             .unwrap()
             .timestamp_millis()
     );
     assert_eq!(
-        rows[0].defer_plan.effective_pending_until_epoch_ms,
+        defer_plan.effective_pending_until_epoch_ms,
         Some(
             Local
                 .with_ymd_and_hms(2026, 9, 5, 15, 25, 0)
@@ -186,9 +249,13 @@ fn listのdtoは予定終了が締切を過ぎる場合だけmisses_deadlineに�
     let schedule = handles
         .iter()
         .map(|handle| ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual {
+                task_id: handle.get_id().unwrap(),
+            },
             task: get_task(&repository, handle.get_id().unwrap())
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,
@@ -229,7 +296,8 @@ fn listは固定・祖先から継承した繰返・単発を分類する() {
         .into_iter()
         .enumerate()
         .map(|(index, id)| ScheduledTaskView {
-            task: get_task(&repository, id).unwrap().unwrap(),
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: id },
+            task: get_task(&repository, id).unwrap().unwrap().into(),
             first_available_time: start,
             scheduled_start: start + Duration::minutes(index as i64 * 10),
             scheduled_end: start + Duration::minutes(index as i64 * 10 + 5),
@@ -276,9 +344,13 @@ fn listは締切なし・超過・当日・将来をlogical_date境界で分類�
     let schedule = handles
         .iter()
         .map(|handle| ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual {
+                task_id: handle.get_id().unwrap(),
+            },
             task: get_task(&repository, handle.get_id().unwrap())
                 .unwrap()
-                .unwrap(),
+                .unwrap()
+                .into(),
             first_available_time: start,
             scheduled_start: start,
             scheduled_end,
@@ -322,7 +394,10 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
         &repository,
         &[
             ScheduledTaskView {
-                task: rank_zero_task,
+                occurrence: ScheduleOccurrenceKey::Actual {
+                    task_id: rank_zero_id,
+                },
+                task: rank_zero_task.into(),
                 first_available_time: start,
                 scheduled_start: start,
                 scheduled_end: start + Duration::minutes(10),
@@ -331,7 +406,10 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
                 rank: 0,
             },
             ScheduledTaskView {
-                task: rank_one_task,
+                occurrence: ScheduleOccurrenceKey::Actual {
+                    task_id: rank_one_id,
+                },
+                task: rank_one_task.into(),
                 first_available_time: start,
                 scheduled_start: start + Duration::minutes(10),
                 scheduled_end: start + Duration::minutes(20),
@@ -364,7 +442,8 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
     let adjustable_view = get_task(&repository, adjustable_id).unwrap().unwrap();
     let schedule = vec![
         ScheduledTaskView {
-            task: first_view,
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now,
             scheduled_end: operation_now + Duration::minutes(10),
@@ -373,7 +452,10 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
             rank: 0,
         },
         ScheduledTaskView {
-            task: adjustable_view,
+            occurrence: ScheduleOccurrenceKey::Actual {
+                task_id: adjustable_id,
+            },
+            task: adjustable_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now + Duration::days(2),
             scheduled_end: operation_now + Duration::days(2) + Duration::minutes(30),
@@ -391,6 +473,72 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
     assert_eq!(rows[1].accumulated_free_diff_seconds, -50 * 60);
     assert_eq!(rows[2].accumulated_free_diff_seconds, -80 * 60);
     assert_eq!(rows[2].durations.non_repetitive_seconds, 30 * 60);
+}
+
+#[test]
+fn 負荷は遅延したprojected回の見積をoccurrence単位で前倒し可能量へ数える() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let first_id = Uuid::from_u128(403);
+    let source_task_id = Uuid::from_u128(404);
+    let first = TaskHandle::with_identity("first load", first_id, operation_now).unwrap();
+    first.set_estimated_work_seconds(600).unwrap();
+    let source =
+        TaskHandle::with_identity("projected load", source_task_id, operation_now).unwrap();
+    source.set_estimated_work_seconds(3_600).unwrap();
+    let repository = TestTaskRepository::new(vec![first, source], operation_now);
+    let first_view = get_task(&repository, first_id).unwrap().unwrap();
+    let projected_view = get_task(&repository, source_task_id).unwrap().unwrap();
+    let occurrence = ScheduleOccurrenceKey::Projected {
+        source_task_id,
+        deadline: operation_now + Duration::days(3),
+    };
+    let delayed_start = operation_now + Duration::days(2);
+    let schedule = vec![
+        ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
+            task: first_view.into(),
+            first_available_time: operation_now,
+            scheduled_start: operation_now,
+            scheduled_end: operation_now + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 600,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            occurrence,
+            task: projected_view.clone().into(),
+            first_available_time: operation_now,
+            scheduled_start: delayed_start,
+            scheduled_end: delayed_start + Duration::minutes(30),
+            scheduled_work_seconds: 1_800,
+            total_work_seconds: 3_600,
+            rank: 0,
+        },
+        ScheduledTaskView {
+            occurrence,
+            task: projected_view.into(),
+            first_available_time: operation_now,
+            scheduled_start: delayed_start + Duration::minutes(30),
+            scheduled_end: delayed_start + Duration::hours(1),
+            scheduled_work_seconds: 1_800,
+            total_work_seconds: 3_600,
+            rank: 0,
+        },
+    ];
+
+    let rows = build_band_days(
+        &repository,
+        &mut TestFreeTimeManager::new(120),
+        &schedule,
+        operation_now,
+        120,
+    )
+    .unwrap();
+
+    assert_eq!(rows[0].accumulated_free_diff_seconds, -6_600);
+    assert_eq!(rows[1].accumulated_free_diff_seconds, -6_600);
+    assert_eq!(rows[2].accumulated_free_diff_seconds, -7_200);
+    assert_eq!(rows[2].durations.repetitive_seconds, 3_600);
 }
 
 #[test]
@@ -450,7 +598,8 @@ fn 負荷は祖先から継承した繰返を単発から分離する() {
     let repository = TestTaskRepository::new(vec![parent], operation_now);
     let child_view = get_task(&repository, child_id).unwrap().unwrap();
     let schedule = [ScheduledTaskView {
-        task: child_view,
+        occurrence: ScheduleOccurrenceKey::Actual { task_id: child_id },
+        task: child_view.into(),
         first_available_time: operation_now,
         scheduled_start: operation_now,
         scheduled_end: operation_now + Duration::minutes(10),

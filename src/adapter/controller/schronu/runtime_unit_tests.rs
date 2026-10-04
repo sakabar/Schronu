@@ -1,4 +1,29 @@
 use super::*;
+use crate::adapter::controller::deadline_display::DeadlineDisplayStatus;
+
+#[test]
+fn projected行は実体行と同じ締切icon規則を使う() {
+    let scheduled_today = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let end_of_day = Local.with_ymd_and_hms(2026, 8, 12, 0, 0, 0).unwrap();
+    let scheduled_future = end_of_day;
+
+    for (status, is_leaf, scheduled_start, expected) in [
+        (DeadlineDisplayStatus::Overrun, true, scheduled_today, "v"),
+        (
+            DeadlineDisplayStatus::DueWithinLogicalDate,
+            true,
+            scheduled_today,
+            "!",
+        ),
+        (DeadlineDisplayStatus::Future, true, scheduled_today, "/"),
+        (DeadlineDisplayStatus::Future, true, scheduled_future, "-"),
+    ] {
+        assert_eq!(
+            task_list_icon(status, is_leaf, scheduled_start, end_of_day),
+            expected
+        );
+    }
+}
 
 fn parse_focus_selection_mode_command(line: &str) -> Option<FocusSelectionMode> {
     parse_interactive_command(line)

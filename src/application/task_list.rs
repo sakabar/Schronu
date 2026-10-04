@@ -250,7 +250,7 @@ pub fn list_tasks(
                 .filter(|entry| {
                     period.from <= entry.scheduled_start && entry.scheduled_start < period.until
                 })
-                .map(|entry| entry.task.id)
+                .filter_map(|entry| entry.actual_task_id())
                 .collect::<HashSet<_>>())
         })
         .transpose()?;
@@ -546,7 +546,7 @@ fn scheduled_task_ids(
                 .filter(|entry| {
                     period.from <= entry.scheduled_start && entry.scheduled_start < period.until
                 })
-                .map(|entry| entry.task.id)
+                .filter_map(|entry| entry.actual_task_id())
                 .collect())
         })
         .transpose()

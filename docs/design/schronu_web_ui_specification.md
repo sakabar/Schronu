@@ -107,8 +107,20 @@ SessionTask {
 一覧の1行はschedule segmentを表し、次を持つ。
 
 ```text
+ScheduledTask {
+    task_id: Option<UUID>,
+    task_name: String,
+    estimated_work_seconds: i64,
+    actual_work_seconds: i64,
+}
+
+ScheduleOccurrence =
+    Actual { task_id: UUID }
+    | Projected { occurrence_key: String, source_task_id: UUID }
+
 ScheduledTaskRow {
-    task: SessionTask,
+    task: ScheduledTask,
+    occurrence: ScheduleOccurrence,
     schedule_start_epoch_ms: i64,
     schedule_end_epoch_ms: i64,
     deadline_epoch_ms: Option<i64>,
@@ -117,9 +129,13 @@ ScheduledTaskRow {
     task_display_kind: Fixed | Repetitive | NonRepetitive,
     deadline_display_kind: None | Overrun | Today | Future,
     is_leaf: bool,
-    defer_plan: DeferPlan,
+    defer_plan: Option<DeferPlan>,
 }
 ```
+
+実task行は`Actual`、`task_id: Some`、`defer_plan: Some`を持つ。繰り返し予測行は`Projected`、`task_id: None`、`defer_plan: None`とし、`occurrence_key`は繰り返し元UUIDと基準deadline epoch millisecondsから安定生成する。
+
+繰り返し予測は28日窓内にある同じ繰り返し元の全実体回を起点に展開する。正確なdeadlineが実体回または別起点の予測回と一致する場合は重複生成せず、実体回を優先する。
 
 完了一覧の1行はtaskの完了時点の全情報を次の型で返す。
 
@@ -144,15 +160,16 @@ CompletedTaskReport {
 
 `DeferPlan`は`mode: Normal | DeadlineLimited | RoutinePeriod`と希望延期epoch millisecondsを必ず持つ。`DeadlineLimited`だけが実効延期epoch millisecondsを、`RoutinePeriod`だけが反復日数を持つ。planはserverが一覧生成時に算出し、clientは再計算しない。
 
-`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。
+`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。操作可否は`is_leaf`と`occurrence == Actual`の両方で判定し、予測行では常に操作を描画・dispatchしない。
 
-同じtaskが複数segmentに分かれる場合、同じ`task_id`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
+同じoccurrenceが複数segmentに分かれる場合、actualは同じ`task_id`、projectedは同じ`occurrence_key`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
 
 全件一覧の1行とpageは次を持つ。
 
 ```text
 AllTaskRow {
-    task: SessionTask,
+    task: ScheduledTask,
+    occurrence: ScheduleOccurrence,
     segment_index: usize,
     schedule_date: YYYY-MM-DD,
     deadline_epoch_ms: Option<i64>,
@@ -215,15 +232,15 @@ RoutineLoadRow {
 }
 ```
 
-`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と今日から7日後までの8日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、各segmentから最寄りの繰返間隔を持つ祖先へ帰属させる。開始日と7日後を含み、8日後以降を除外する。同じ繰返祖先の日別segment秒数を合算し、8日合計、異なるlogical date数である発生日数、日別合計が最大となる最大日を求める。最大日が同値なら早いlogical dateを採用し、rowは8日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
+`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と今日から7日後までの8日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使う。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と7日後を含み、8日後以降を除外する。同じ繰返元の日別segment秒数を合算し、8日合計、異なるlogical date数である発生日数、日別合計が最大となる最大日を求める。最大日が同値なら早いlogical dateを採用し、rowは8日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
 
 負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷の見出しは「今日から7日後までの繰返負荷」とし、semantic tableの列は「間隔」「8日合計」「発生日数」「最大日」「プロジェクト / 繰返」の順とする。間隔値は`N日`とし、「ごと」は付けない。通常幅では先頭4列を`6rem`、`6.5rem`、`6.5rem`、`8.5rem`で右揃えし、末尾の名前列へ残り幅を割り当てる。`46rem`以下では5列を`11%`、`15%`、`14%`、`18%`、`42%`へ圧縮し、見出しと数値の折返しを許可する。tableと外側wrapperは横scrollさせず、末尾row header内の繰返名とプロジェクト名をまとめたfocus可能な領域だけを横scroll可能にする。
 
 7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 
-`segment_index`は`get_schedule`の全実task segmentに対する0始まりの連続indexとし、同一taskの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。
+`segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
 
-日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverはtask IDから固定、継承した繰返、単発の優先順で共通分類し、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。`is_leaf`は予定・全件の太字と操作可否だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
+日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`予定`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskの操作可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 
@@ -257,6 +274,8 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
 画面復元状態は別key `schronu_web.view_state.v1`へversion 3として保存する。最後に成功した`ServerSnapshot`、`ListMode`、logical dateと全rowを`Scheduled`または`Completed`でtaggedにしたactive一覧、選択tab、予定・全件・完了共通の検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 2は`Scheduled`として読み、次回保存でversion 3へ移行する。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。「全て」の選択、`AllTaskRow`、取得状態、cursor、描画上限は保存せず、reload時に未取得、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
+
+version 2の旧`ScheduledTaskRow`に`occurrence`がない場合は`LegacyActual`として復元し、既存`task.task_id`と`defer_plan`をactual行の契約として検証する。新しい予測行は`Projected`、`task_id: None`、`defer_plan: None`の組だけをvalidとする。`occurrence_key`は`<source UUID>:<deadline epoch milliseconds>`のcanonical形式とし、source UUID、keyのUUID、行の`source_task_id`を一致させ、deadlineが有効なepoch millisecondsかつ行の`deadline_epoch_ms`と一致しなければview state全体を復元しない。
 
 ```json
 {
@@ -668,7 +687,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
 - 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
 - task名検索文字列は日付別と「全て」で共有してview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ共有検索文字列を空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
-- 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一taskの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
+- 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一occurrenceの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
@@ -677,14 +696,14 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
-- schedule rankが0のとき`is_leaf`をtrueとし、そのtask名を緑にする。
-- `is_leaf == true`のrowだけに「セッション」buttonを表示する。`is_leaf == false`のrowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。
+- schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
+- `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信と発火履歴追加は行わない。
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
 - `work_sessions`に同一UUIDがあれば、そのUUIDの全rowでbuttonをdisabledにする。全幅で追加済みを「✓」で示し、ARIA labelも追加済みであることを表す。
-- 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
-- 全件一覧はtask名検索に一致したserver順の行から表示上限内のtaskを先頭から投影する。その隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致taskの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
+- 全件一覧ではoccurrence identity(actualは`task_id`、projectedは`occurrence_key`)と`schedule_date`、`segment_index`を組み合わせてrow keyとし、同一occurrenceの複数segmentを個別に描画する。予定列は`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
+- 全件一覧はtask名検索に一致したserver順の表示対象task/occurrence行から表示上限内の行を先頭から投影する。その隣接行に付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後続行の直前へ表示する。差が1日なら後続行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致のtask/occurrenceの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線は500件の行表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
 - 日付別一覧はtrim後のtask名検索文字列が空でない間、分単位の空き行を描画しない。全件一覧は検索文字列の有無にかかわらず、projection済みの日単位の空き行とlogical date境界線を描画する。
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateをactive modeで再取得し、表示中の一覧をresponse全体で置換する。完了modeでは完了直後のtaskが新しい完了rowとして現れる。
 - 完了成功response受理時点でin-flightのactive一覧requestを無効化する。その後に到着した無効化済みrequest、および異なるmodeのresponseは適用しない。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
@@ -843,7 +862,7 @@ OperationHistoryEntry {
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 - 共有segment metadata: `get_schedule`の対応順を保つlogical date、06:00境界、`rank == 0`だけを葉とする判定を固定し、CLI「全」、日付別Web、全件Webが共通helperを使用することを検証する。
-- 全件read model: 全実task segmentとの1対1対応、順序、連続index、同一taskの複数segment、親子、Pending葉、締切label・超過、500/501境界を実repository経路で検証する。
+- 全件read model: 全表示対象task/occurrence segmentとの1対1対応、順序、連続index、同一occurrenceの複数segment、親子、Pending葉、締切label・超過、500/501境界を実repository経路で検証する。
 - 全件snapshot: 継続pageでrepositoryを再読込せず同じsnapshotを返すこと、欠落・重複のない全page、最終解放、8個上限のFIFO eviction、cursorの形式・境界・skip・replay・範囲・失効を検証する。
 - 性能測定は契約testと分離し、501 segmentと2万segment相当のfixtureでschedule生成、先頭page、全page、serialized byte数、検索、500行projection、500行Dioxus描画を個別に記録する。
 

@@ -991,6 +991,55 @@ fn shift_local_date_and_time(
     try_local_date_and_time(target_date, time)
 }
 
+pub(crate) struct RepetitionOccurrenceTimes {
+    pub(crate) start_time: DateTime<Local>,
+    pub(crate) deadline_time: DateTime<Local>,
+}
+
+pub(crate) fn next_repetition_occurrence_times(
+    occurrence_anchor: DateTime<Local>,
+    repetition_interval_days: i64,
+    repetition_start_time: NaiveTime,
+    repetition_deadline_time: NaiveTime,
+    days_in_advance: i64,
+) -> Result<RepetitionOccurrenceTimes, ApplicationError> {
+    let next_logical_date_start = try_next_logical_date_start(occurrence_anchor)?;
+    let repetition_offset_days =
+        repetition_interval_days
+            .checked_sub(1)
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "next_logical_date_start",
+                datetime: occurrence_anchor,
+            })?;
+    let next_occurrence_day = shift_local_date_and_time(
+        next_logical_date_start,
+        repetition_offset_days,
+        next_logical_date_start.time(),
+        "next_logical_date_start",
+        occurrence_anchor,
+    )?;
+    let occurrence_start_time = resolve_date_and_time(next_occurrence_day, repetition_start_time)?;
+    let start_offset_days =
+        days_in_advance
+            .checked_neg()
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "repetition_start_time",
+                datetime: occurrence_start_time,
+            })?;
+    let task_start_time = shift_local_date_and_time(
+        occurrence_start_time,
+        start_offset_days,
+        occurrence_start_time.time(),
+        "repetition_start_time",
+        occurrence_start_time,
+    )?;
+    let deadline_time = resolve_date_and_time(next_occurrence_day, repetition_deadline_time)?;
+    Ok(RepetitionOccurrenceTimes {
+        start_time: task_start_time,
+        deadline_time,
+    })
+}
+
 fn build_next_repetition_task_attr(
     task: &TaskHandle,
     parent_task: &TaskHandle,
@@ -1034,47 +1083,23 @@ fn build_next_repetition_task_attr(
         .get_fixed_start()
         .map_err(ApplicationError::TaskTree)?;
 
-    let next_logical_date_start = try_next_logical_date_start(occurrence_anchor)?;
-    let repetition_offset_days =
-        repetition_interval_days
-            .checked_sub(1)
-            .ok_or(ApplicationError::LogicalDateOutOfRange {
-                operation: "next_logical_date_start",
-                datetime: occurrence_anchor,
-            })?;
-    let next_occurrence_day = shift_local_date_and_time(
-        next_logical_date_start,
-        repetition_offset_days,
-        next_logical_date_start.time(),
-        "next_logical_date_start",
+    let occurrence_times = next_repetition_occurrence_times(
         occurrence_anchor,
+        repetition_interval_days,
+        repetition_start_time,
+        repetition_deadline_time,
+        days_in_advance,
     )?;
-    let occurrence_start_time = resolve_date_and_time(next_occurrence_day, repetition_start_time)?;
-    let start_offset_days =
-        days_in_advance
-            .checked_neg()
-            .ok_or(ApplicationError::LogicalDateOutOfRange {
-                operation: "repetition_start_time",
-                datetime: occurrence_start_time,
-            })?;
-    let task_start_time = shift_local_date_and_time(
-        occurrence_start_time,
-        start_offset_days,
-        occurrence_start_time.time(),
-        "repetition_start_time",
-        occurrence_start_time,
-    )?;
-    let new_deadline_time = resolve_date_and_time(next_occurrence_day, repetition_deadline_time)?;
 
     let mut new_task_attr = factory.create_task_attr(&format!(
         "{}({}/{})",
         parent_name,
-        occurrence_start_time.month(),
-        occurrence_start_time.day()
+        occurrence_times.deadline_time.month(),
+        occurrence_times.deadline_time.day()
     ));
-    new_task_attr.set_start_time(task_start_time);
+    new_task_attr.set_start_time(occurrence_times.start_time);
     new_task_attr
-        .set_deadline_time_opt(Some(new_deadline_time))
+        .set_deadline_time_opt(Some(occurrence_times.deadline_time))
         .map_err(ApplicationError::TaskTree)?;
     new_task_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
     new_task_attr.set_atomic(parent_atomic);

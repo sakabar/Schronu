@@ -185,6 +185,69 @@ fn view_state_v2は予定modeとscheduled_listへ移行する() {
 }
 
 #[test]
+fn view_state_v2はprojected行を予定modeへidentityを保って移行する() {
+    let storage = MemoryStorage::default();
+    let source_task_id = "00000000-0000-4000-8000-000000000010";
+    let deadline_epoch_ms = 1_789_228_800_000_i64;
+    *storage.value.borrow_mut() = Some(projected_v2_raw(
+        source_task_id,
+        &format!("{source_task_id}:{deadline_epoch_ms}"),
+        deadline_epoch_ms,
+    ));
+
+    let loaded = load_view_state(&storage);
+    let state = loaded.state().unwrap();
+
+    assert_eq!(state.list_mode, ListMode::Scheduled);
+    let Some(StoredActiveList::Scheduled { logical_date, rows }) = &state.list else {
+        panic!("scheduled list expected");
+    };
+    assert_eq!(logical_date, "2026-09-12");
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].task.task_id.is_none());
+    assert!(rows[0].defer_plan.is_none());
+    assert!(matches!(
+        &rows[0].occurrence,
+        schronu_web::ScheduleOccurrence::Projected {
+            occurrence_key,
+            source_task_id: restored_source_task_id,
+        } if occurrence_key == &format!("{source_task_id}:{deadline_epoch_ms}")
+            && restored_source_task_id == source_task_id
+    ));
+    assert!(loaded.warning().is_none());
+}
+
+#[test]
+fn view_state_v2は不正なprojected_identityを復元しない() {
+    let storage = MemoryStorage::default();
+    let source_task_id = "00000000-0000-4000-8000-000000000010";
+    let deadline_epoch_ms = 1_789_228_800_000_i64;
+    for raw in [
+        projected_v2_raw(
+            source_task_id,
+            &format!("00000000-0000-4000-8000-000000000011:{deadline_epoch_ms}"),
+            deadline_epoch_ms,
+        ),
+        projected_v2_raw(
+            source_task_id,
+            &format!("{source_task_id}:{deadline_epoch_ms}"),
+            deadline_epoch_ms + 1,
+        ),
+    ] {
+        *storage.value.borrow_mut() = Some(raw.clone());
+
+        let loaded = load_view_state(&storage);
+
+        assert!(loaded.state().is_none(), "{raw}");
+        assert_eq!(
+            loaded.warning(),
+            Some("前回の画面状態が不正なため復元しませんでした。")
+        );
+        assert_eq!(storage.value.borrow().as_deref(), Some(raw.as_str()));
+    }
+}
+
+#[test]
 fn view_state_v3はactive_modeの日付buttonを構築できない境界を保存と読込で拒否する() {
     let storage = MemoryStorage::default();
     for (mode, logical_date) in [
@@ -405,7 +468,7 @@ fn view_stateは希望日時以上の期限制限日時を拒否する() {
     let Some(StoredActiveList::Scheduled { rows, .. }) = state.list.as_mut() else {
         panic!("scheduled list expected");
     };
-    let plan = &mut rows[0].defer_plan;
+    let plan = rows[0].defer_plan.as_mut().unwrap();
     plan.mode = schronu_web::DeferMode::DeadlineLimited;
     plan.effective_pending_until_epoch_ms = Some(plan.requested_pending_until_epoch_ms);
 
@@ -413,6 +476,86 @@ fn view_stateは希望日時以上の期限制限日時を拒否する() {
         store_view_state(&storage, &state),
         Err(ViewStateStoreError::InvalidState)
     );
+}
+
+#[test]
+fn view_stateはprojected行をactionable_idなしで保存復元する() {
+    let storage = MemoryStorage::default();
+    let mut projected = row("00000000-0000-4000-8000-000000000001", "筋トレ(9/12)");
+    projected.task.task_id = None;
+    projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
+        occurrence_key: "00000000-0000-4000-8000-000000000010:1789228800000".to_owned(),
+        source_task_id: "00000000-0000-4000-8000-000000000010".to_owned(),
+    };
+    projected.deadline_epoch_ms = Some(1_789_228_800_000);
+    projected.defer_plan = None;
+    let state = view_state("2026-09-12", vec![projected]);
+
+    store_view_state(&storage, &state).unwrap();
+    let loaded = load_view_state(&storage).into_state().unwrap();
+
+    let Some(StoredActiveList::Scheduled { rows, .. }) = loaded.list else {
+        panic!("scheduled list expected");
+    };
+    let restored = &rows[0];
+    assert!(restored.task.task_id.is_none());
+    assert_eq!(
+        restored.occurrence.occurrence_key(),
+        Some("00000000-0000-4000-8000-000000000010:1789228800000")
+    );
+}
+
+#[test]
+fn view_stateは非canonicalなprojected_occurrence_keyを全体ごと復元しない() {
+    let storage = MemoryStorage::default();
+    let source_task_id = "00000000-0000-4000-8000-000000000010";
+    let deadline_epoch_ms = 1_789_228_800_000_i64;
+    let mut projected = row("00000000-0000-4000-8000-000000000001", "筋トレ(9/12)");
+    projected.task.task_id = None;
+    projected.occurrence = schronu_web::ScheduleOccurrence::Projected {
+        occurrence_key: format!("{source_task_id}:{deadline_epoch_ms}"),
+        source_task_id: source_task_id.to_owned(),
+    };
+    projected.deadline_epoch_ms = Some(deadline_epoch_ms);
+    projected.defer_plan = None;
+    let state = view_state("2026-09-12", vec![projected]);
+    store_view_state(&storage, &state).unwrap();
+    let valid_raw = storage.value.borrow().clone().unwrap();
+
+    for (occurrence_key, row_deadline_epoch_ms) in [
+        ("garbage".to_owned(), deadline_epoch_ms),
+        (
+            format!("00000000-0000-4000-8000-000000000011:{deadline_epoch_ms}"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:not-an-epoch"), deadline_epoch_ms),
+        (
+            format!("{source_task_id}:9223372036854775807"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:1789228800001"), deadline_epoch_ms),
+        (
+            format!("{source_task_id}:+1789228800000"),
+            deadline_epoch_ms,
+        ),
+        (
+            format!("{source_task_id}:01789228800000"),
+            deadline_epoch_ms,
+        ),
+        (format!("{source_task_id}:-0"), 0),
+    ] {
+        let mut value: serde_json::Value = serde_json::from_str(&valid_raw).unwrap();
+        value["list"]["rows"][0]["occurrence"]["occurrence_key"] =
+            serde_json::Value::String(occurrence_key);
+        value["list"]["rows"][0]["deadline_epoch_ms"] = row_deadline_epoch_ms.into();
+        let raw = serde_json::to_string(&value).unwrap();
+        *storage.value.borrow_mut() = Some(raw.clone());
+
+        let loaded = load_view_state(&storage);
+
+        assert!(loaded.state().is_none(), "{raw}");
+        assert!(loaded.warning().is_some(), "{raw}");
+    }
 }
 
 fn view_state(logical_date: &str, rows: Vec<ScheduledTaskRow>) -> ViewState {
@@ -455,6 +598,10 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
             task_name: task_name.to_owned(),
             estimated_work_seconds: 900,
             actual_work_seconds: 60,
+        }
+        .into(),
+        occurrence: schronu_web::ScheduleOccurrence::Actual {
+            task_id: task_id.to_owned(),
         },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_900_000,
@@ -464,11 +611,55 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
         task_display_kind: schronu_web::TaskDisplayKind::NonRepetitive,
         deadline_display_kind: schronu_web::DeadlineDisplayKind::None,
         is_leaf: true,
-        defer_plan: schronu_web::DeferPlan {
+        defer_plan: Some(schronu_web::DeferPlan {
             mode: schronu_web::DeferMode::Normal,
             requested_pending_until_epoch_ms: 1_789_086_400_000,
             effective_pending_until_epoch_ms: None,
             repetition_interval_days: None,
-        },
+        }),
     }
+}
+
+fn projected_v2_raw(
+    source_task_id: &str,
+    occurrence_key: &str,
+    row_deadline_epoch_ms: i64,
+) -> String {
+    serde_json::json!({
+        "version": 2,
+        "snapshot": {
+            "observed_at_epoch_ms": 1_789_000_000_000_i64,
+            "logical_date": "2026-09-09",
+            "buffer_seconds": 60
+        },
+        "list": {
+            "logical_date": "2026-09-12",
+            "rows": [{
+                "task": {
+                    "task_id": null,
+                    "task_name": "筋トレ(9/12)",
+                    "estimated_work_seconds": 900,
+                    "actual_work_seconds": 0
+                },
+                "occurrence": {
+                    "kind": "projected",
+                    "occurrence_key": occurrence_key,
+                    "source_task_id": source_task_id
+                },
+                "schedule_start_epoch_ms": 1_789_228_000_000_i64,
+                "schedule_end_epoch_ms": 1_789_228_800_000_i64,
+                "deadline_epoch_ms": row_deadline_epoch_ms,
+                "deadline_label": "09/12",
+                "misses_deadline": false,
+                "task_display_kind": "repetitive",
+                "deadline_display_kind": "today",
+                "is_leaf": true,
+                "defer_plan": null
+            }]
+        },
+        "active_tab": "list",
+        "task_name_filter": "筋トレ",
+        "date_input_text": "2026/9/12"
+    })
+    .to_string()
 }

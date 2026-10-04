@@ -34,7 +34,7 @@ fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取
         }),
     );
 
-    let expected_plan = state.scheduled_rows()[0].defer_plan.clone();
+    let expected_plan = state.scheduled_rows()[0].defer_plan.clone().unwrap();
     let (request_id, request) = defer_effect(state.request_defer_task(
         &storage,
         TASK_ID,
@@ -291,7 +291,10 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
     assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-05");
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
-    assert_eq!(state.scheduled_rows()[0].task.task_id, OTHER_TASK_ID);
+    assert_eq!(
+        state.scheduled_rows()[0].task.task_id.as_deref(),
+        Some(OTHER_TASK_ID)
+    );
     let list_invocations: Vec<_> = state
         .history()
         .iter()
@@ -429,7 +432,10 @@ fn 未来日の一覧は今日のsnapshotと共に適用する() {
     );
 
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
-    assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
+    assert_eq!(
+        state.scheduled_rows()[0].task.task_id.as_deref(),
+        Some(TASK_ID)
+    );
 }
 
 #[test]
@@ -445,7 +451,7 @@ fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
         auto_id,
         Ok(WebSuccess {
             snapshot: snapshot("2026-09-05", 100),
-            data: Some(row(TASK_ID, 0).task),
+            data: Some(row(TASK_ID, 0).task.actionable_task().unwrap()),
         }),
     );
 
@@ -558,7 +564,10 @@ fn latest_listは古い同一logical_dateのsnapshotだけ無視してrowsを適
 
     assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
     assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
-    assert_eq!(state.scheduled_rows()[0].task.task_id, TASK_ID);
+    assert_eq!(
+        state.scheduled_rows()[0].task.task_id.as_deref(),
+        Some(TASK_ID)
+    );
 }
 
 #[test]

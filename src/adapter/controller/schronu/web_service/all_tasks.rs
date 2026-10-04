@@ -109,11 +109,14 @@ mod tests {
 
     fn row(segment_index: usize) -> AllTaskRowDto {
         AllTaskRowDto {
-            task: super::super::model::SessionTaskDto {
-                task_id: "task".to_owned(),
+            task: super::super::model::ScheduledTaskDto {
+                task_id: Some("task".to_owned()),
                 task_name: "name".to_owned(),
                 estimated_work_seconds: 1,
                 actual_work_seconds: 0,
+            },
+            occurrence: super::super::model::ScheduleOccurrenceDto::Actual {
+                task_id: "task".to_owned(),
             },
             segment_index,
             schedule_date: "2026-09-05".to_owned(),

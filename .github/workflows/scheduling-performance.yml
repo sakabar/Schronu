@@ -24,6 +24,9 @@ jobs:
       - name: Check typical schedule
         run: cargo bench --locked --features benchmarking --bench scheduling -- typical schedule check
 
+      - name: Check typical recurring projection
+        run: cargo bench --locked --features benchmarking --bench scheduling -- typical projection check
+
       - name: Check typical pack
         run: cargo bench --locked --features benchmarking --bench scheduling -- typical pack check
 
@@ -32,6 +35,9 @@ jobs:
 
       - name: Check stress schedule
         run: cargo bench --locked --features benchmarking --bench scheduling -- stress schedule check
+
+      - name: Check stress recurring projection
+        run: cargo bench --locked --features benchmarking --bench scheduling -- stress projection check
 
       - name: Check stress pack
         run: cargo bench --locked --features benchmarking --bench scheduling -- stress pack check

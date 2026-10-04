@@ -26,6 +26,7 @@ pub enum RepositoryReloadOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectRegistrationError {
     TaskTree(TaskTreeError),
+    NilTaskId { task_path: String },
     DuplicateTaskId(Uuid),
     DuplicateStoragePath(PathBuf),
 }
@@ -34,6 +35,9 @@ impl fmt::Display for ProjectRegistrationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TaskTree(error) => write!(formatter, "project registration failed: {error}"),
+            Self::NilTaskId { task_path } => {
+                write!(formatter, "project registration nil task ID at {task_path}")
+            }
             Self::DuplicateTaskId(task_id) => {
                 write!(
                     formatter,
@@ -53,7 +57,9 @@ impl Error for ProjectRegistrationError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::TaskTree(error) => Some(error),
-            Self::DuplicateTaskId(_) | Self::DuplicateStoragePath(_) => None,
+            Self::NilTaskId { .. } | Self::DuplicateTaskId(_) | Self::DuplicateStoragePath(_) => {
+                None
+            }
         }
     }
 }

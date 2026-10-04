@@ -1,5 +1,9 @@
 {
   "first_available_time": "{{scheduled_start}}",
+  "occurrence": {
+    "kind": "actual",
+    "task_id": "{{task_id}}"
+  },
   "rank": 0,
   "scheduled_end": "{{scheduled_end}}",
   "scheduled_start": "{{scheduled_start}}",
@@ -25,10 +29,11 @@
     "repetition_anchor": "deadline",
     "repetition_interval_days": null,
     "repetition_start_time": null,
-    "repetition_deadline_time": null,
     "root_id": "{{task_id}}",
+    "repetition_deadline_time": null,
     "start_time": "{{start_time}}",
     "status": "todo"
   },
+  "task_id": "{{task_id}}",
   "total_work_seconds": 900
 }

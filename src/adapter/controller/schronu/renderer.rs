@@ -139,6 +139,8 @@ pub(super) struct TaskListTaskRow {
     pub(super) give_up_candidate: bool,
 }
 
+pub(super) type ProjectedTaskListRow = TaskListTaskRow;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum TaskListTaskKind {
     Fixed,
@@ -169,6 +171,7 @@ pub(super) struct TaskListColumns {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum TaskListRow {
     Task(TaskListTaskRow),
+    Projected(ProjectedTaskListRow),
     Gap { minutes: i64 },
     DayGap { days: i64 },
     DateBoundary,
@@ -1274,6 +1277,7 @@ fn format_alert_overrun(seconds: i64) -> String {
 pub(super) fn format_task_list_row(row: &TaskListRow) -> String {
     match row {
         TaskListRow::Task(row) => format_task_list_task_row(row),
+        TaskListRow::Projected(row) => format_task_list_task_row(row),
         TaskListRow::Gap { minutes } => format!(
             "---- ------------------------------------ - ---------- --------------------- - -- -- {minutes}分間の空き時間"
         ),
@@ -1298,36 +1302,41 @@ fn format_task_list_day_gap(days: i64) -> String {
 
 fn format_task_list_row_for_display(row: &TaskListRow, supports_ansi_color: bool) -> String {
     match row {
-        TaskListRow::Task(row) => {
-            let mut columns = task_list_columns(row, TaskListIconMode::ApplyGiveUpCandidate);
-            let task_color = match row.kind {
-                TaskListTaskKind::Fixed => TASK_LIST_FIXED_COLOR,
-                TaskListTaskKind::Repetitive => REPETITIVE_COLOR,
-                TaskListTaskKind::NonRepetitive => NON_REPETITIVE_COLOR,
-            };
-            columns.task_name =
-                ansi_foreground(&columns.task_name, task_color, supports_ansi_color);
-            if let Some(icon_color) = match columns.icon.as_str() {
-                "v" => Some(DEADLINE_OVERRUN_COLOR),
-                "!" => Some(DEADLINE_TODAY_COLOR),
-                "A" => Some(GIVE_UP_CANDIDATE_COLOR),
-                _ => None,
-            } {
-                columns.icon = ansi_foreground(&columns.icon, icon_color, supports_ansi_color);
-            }
-            if let Some(deadline_color) = match row.icon.as_str() {
-                "v" => Some(DEADLINE_OVERRUN_COLOR),
-                "!" => Some(DEADLINE_TODAY_COLOR),
-                _ if row.has_deadline => Some(FUTURE_DEADLINE_COLOR),
-                _ => None,
-            } {
-                columns.deadline =
-                    ansi_foreground(&columns.deadline, deadline_color, supports_ansi_color);
-            }
-            format_task_list_columns(&columns)
+        TaskListRow::Task(row) | TaskListRow::Projected(row) => {
+            format_task_list_task_row_for_display(row, supports_ansi_color)
         }
         _ => format_task_list_row(row),
     }
+}
+
+fn format_task_list_task_row_for_display(
+    row: &TaskListTaskRow,
+    supports_ansi_color: bool,
+) -> String {
+    let mut columns = task_list_columns(row, TaskListIconMode::ApplyGiveUpCandidate);
+    let task_color = match row.kind {
+        TaskListTaskKind::Fixed => TASK_LIST_FIXED_COLOR,
+        TaskListTaskKind::Repetitive => REPETITIVE_COLOR,
+        TaskListTaskKind::NonRepetitive => NON_REPETITIVE_COLOR,
+    };
+    columns.task_name = ansi_foreground(&columns.task_name, task_color, supports_ansi_color);
+    if let Some(icon_color) = match columns.icon.as_str() {
+        "v" => Some(DEADLINE_OVERRUN_COLOR),
+        "!" => Some(DEADLINE_TODAY_COLOR),
+        "A" => Some(GIVE_UP_CANDIDATE_COLOR),
+        _ => None,
+    } {
+        columns.icon = ansi_foreground(&columns.icon, icon_color, supports_ansi_color);
+    }
+    if let Some(deadline_color) = match row.icon.as_str() {
+        "v" => Some(DEADLINE_OVERRUN_COLOR),
+        "!" => Some(DEADLINE_TODAY_COLOR),
+        _ if row.has_deadline => Some(FUTURE_DEADLINE_COLOR),
+        _ => None,
+    } {
+        columns.deadline = ansi_foreground(&columns.deadline, deadline_color, supports_ansi_color);
+    }
+    format_task_list_columns(&columns)
 }
 
 pub(super) fn format_task_list_task_row(row: &TaskListTaskRow) -> String {

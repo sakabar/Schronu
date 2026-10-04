@@ -12,6 +12,6 @@ pub use wire::{
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
     DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
-    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
-    WebSuccess,
+    RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };

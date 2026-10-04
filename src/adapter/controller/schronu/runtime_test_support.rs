@@ -1464,7 +1464,8 @@ impl TaskListDisplayRow {
             priority,
             work_seconds,
             project_category_opt,
-            is_real_task: true,
+            is_actionable_task: true,
+            contributes_to_summary: true,
             give_up_candidate: false,
             display_row: super::renderer::TaskListRow::Task(
                 super::renderer::TaskListTaskRow {

@@ -3,8 +3,8 @@ use crate::{
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
     DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
     LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
-    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
-    WebOperations, WebSuccess, WebWorkerHandle,
+    RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
@@ -13,8 +13,9 @@ use schronu::adapter::controller::{
     CompletedTaskRowDto, DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
     LoadDataDto, RecordSessionRequest as CoreRecordSessionRequest, RoutineLoadReportDto,
-    RoutineLoadRowDto, ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto,
-    TaskDisplayKind as CoreTaskDisplayKind, WebService, WebSuccess as CoreWebSuccess,
+    RoutineLoadRowDto, ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto,
+    ServerSnapshot as CoreServerSnapshot, SessionTaskDto, TaskDisplayKind as CoreTaskDisplayKind,
+    WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
@@ -202,6 +203,33 @@ impl From<SessionTaskDto> for SessionTask {
     }
 }
 
+impl From<ScheduledTaskDto> for ScheduledTask {
+    fn from(task: ScheduledTaskDto) -> Self {
+        Self {
+            task_id: task.task_id,
+            task_name: task.task_name,
+            estimated_work_seconds: task.estimated_work_seconds,
+            actual_work_seconds: task.actual_work_seconds,
+        }
+    }
+}
+
+impl From<ScheduleOccurrenceDto> for ScheduleOccurrence {
+    fn from(occurrence: ScheduleOccurrenceDto) -> Self {
+        match occurrence {
+            ScheduleOccurrenceDto::Actual { task_id } => Self::Actual { task_id },
+            ScheduleOccurrenceDto::Projected {
+                occurrence_key,
+                source_task_id,
+            } => Self::Projected {
+                occurrence_key,
+                source_task_id,
+            },
+            ScheduleOccurrenceDto::LegacyActual => Self::LegacyActual,
+        }
+    }
+}
+
 impl From<CoreTaskDisplayKind> for TaskDisplayKind {
     fn from(kind: CoreTaskDisplayKind) -> Self {
         match kind {
@@ -227,6 +255,7 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
     fn from(row: ScheduledTaskRowDto) -> Self {
         Self {
             task: row.task.into(),
+            occurrence: row.occurrence.into(),
             schedule_start_epoch_ms: row.schedule_start_epoch_ms,
             schedule_end_epoch_ms: row.schedule_end_epoch_ms,
             deadline_epoch_ms: row.deadline_epoch_ms,
@@ -235,16 +264,16 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
             task_display_kind: row.task_display_kind.into(),
             deadline_display_kind: row.deadline_display_kind.into(),
             is_leaf: row.is_leaf,
-            defer_plan: DeferPlan {
-                mode: match row.defer_plan.mode {
+            defer_plan: row.defer_plan.map(|plan| DeferPlan {
+                mode: match plan.mode {
                     DeferModeDto::Normal => DeferMode::Normal,
                     DeferModeDto::DeadlineLimited => DeferMode::DeadlineLimited,
                     DeferModeDto::RoutinePeriod => DeferMode::RoutinePeriod,
                 },
-                requested_pending_until_epoch_ms: row.defer_plan.requested_pending_until_epoch_ms,
-                effective_pending_until_epoch_ms: row.defer_plan.effective_pending_until_epoch_ms,
-                repetition_interval_days: row.defer_plan.repetition_interval_days,
-            },
+                requested_pending_until_epoch_ms: plan.requested_pending_until_epoch_ms,
+                effective_pending_until_epoch_ms: plan.effective_pending_until_epoch_ms,
+                repetition_interval_days: plan.repetition_interval_days,
+            }),
         }
     }
 }
@@ -253,6 +282,7 @@ impl From<AllTaskRowDto> for AllTaskRow {
     fn from(row: AllTaskRowDto) -> Self {
         Self {
             task: row.task.into(),
+            occurrence: row.occurrence.into(),
             segment_index: row.segment_index,
             schedule_date: row.schedule_date,
             deadline_epoch_ms: row.deadline_epoch_ms,
@@ -512,7 +542,7 @@ mod tests {
         assert_eq!(all.data.next_cursor, None);
         assert_eq!(all.data.rows.len(), 1);
         let row = &all.data.rows[0];
-        assert_eq!(row.task.task_id, task_id.hyphenated().to_string());
+        assert_eq!(row.task.task_id, Some(task_id.hyphenated().to_string()));
         assert_eq!(row.task.task_name, "environment all task");
         assert_eq!(row.task.estimated_work_seconds, 600);
         assert_eq!(row.task.actual_work_seconds, 60);

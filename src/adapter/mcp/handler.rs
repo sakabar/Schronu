@@ -12,7 +12,7 @@ use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
     defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_actual_work,
-    set_category, set_deadline, set_estimate, ApplicationError, TaskFactory,
+    set_category, set_deadline, set_estimate, ApplicationError, TaskFactory, TaskView,
 };
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -183,17 +183,33 @@ pub(super) fn call_get_schedule<R: TaskRepositoryTrait>(
     };
 
     match get_schedule(repository) {
-        Ok(schedule) => tool_result_response(
-            id,
-            json!({
-                "schedule": schedule
-                    .iter()
-                    .filter(|scheduled| scheduled.scheduled_start < until && scheduled.scheduled_end > from)
-                    .map(scheduled_task_view_json)
-                    .collect::<Vec<_>>()
-            }),
-            false,
-        ),
+        Ok(schedule) => {
+            let output = schedule
+                .iter()
+                .filter(|scheduled| {
+                    scheduled.scheduled_start < until && scheduled.scheduled_end > from
+                })
+                .map(|scheduled| {
+                    let actual_task = scheduled
+                        .actual_task_id()
+                        .map(|task_id| {
+                            repository
+                                .get_by_id(task_id)
+                                .map_err(ApplicationError::TaskTree)?
+                                .ok_or(ApplicationError::TaskNotFound(task_id))
+                                .and_then(|task| {
+                                    TaskView::try_from(&task).map_err(ApplicationError::TaskTree)
+                                })
+                        })
+                        .transpose()?;
+                    Ok(scheduled_task_view_json(scheduled, actual_task.as_ref()))
+                })
+                .collect::<Result<Vec<_>, ApplicationError>>();
+            match output {
+                Ok(schedule) => tool_result_response(id, json!({"schedule": schedule}), false),
+                Err(error) => internal_error_response(id, &error.to_string()),
+            }
+        }
         Err(error) => internal_error_response(id, &error.to_string()),
     }
 }

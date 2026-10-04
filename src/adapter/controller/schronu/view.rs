@@ -9,8 +9,9 @@ use super::renderer::{
     format_task_list_columns, task_list_columns, weekday_jp, AncestorTreeRow, BandDayRow,
     BandDisplay, CalendarAlertIssue, CalendarAlerts, CalendarDayRow, CalendarDisplay,
     CalendarSummary, DebugTreeRow, DisplayModel, FocusDisplay, LeafTreeRow, MessageLevel,
-    SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay, TaskListIconMode,
-    TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow, TreeDisplay,
+    ProjectedTaskListRow, SnapshotDisplay, TaskCategoryWorkSeconds, TaskListDisplay,
+    TaskListIconMode, TaskListMetricsDisplay, TaskListRow, TaskListTaskKind, TaskListTaskRow,
+    TreeDisplay,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_snapshot::SnapshotSummary;
@@ -25,7 +26,7 @@ use crate::application::daily_capacity::{
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
-    get_schedule, scheduled_end_by_task, scheduled_logical_dates,
+    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
@@ -34,13 +35,29 @@ use crate::entity::task::{
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use std::cmp::{max, min};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
 
 const DAILY_SUMMARY_HORIZON_DAYS: usize = 28;
 const TASK_NAME_DISPLAY_WIDTH_LIMIT: usize = 70;
+
+fn format_split_task_name(
+    task_name: String,
+    scheduled_work_seconds: i64,
+    total_work_seconds: i64,
+) -> String {
+    if total_work_seconds > scheduled_work_seconds {
+        format!(
+            "<{}/{}>{task_name}",
+            round_up_sec_as_minute(scheduled_work_seconds),
+            round_up_sec_as_minute(total_work_seconds)
+        )
+    } else {
+        task_name
+    }
+}
 
 pub(super) fn backup_display(path: &Path, summary: &SnapshotSummary) -> DisplayModel {
     DisplayModel::Snapshot(SnapshotDisplay {
@@ -103,26 +120,35 @@ pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
     format_task_list_columns(&task_list_columns(row, TaskListIconMode::Original))
 }
 
+#[cfg(test)]
 pub(super) fn get_adjustable_prefix_label(
     task: &TaskHandle,
     dt: DateTime<Local>,
     is_leaf: bool,
     last_synced_time: DateTime<Local>,
 ) -> Result<String, ApplicationError> {
-    if !is_leaf
-        || task
-            .get_is_on_other_side()
-            .map_err(ApplicationError::TaskTree)?
-    {
-        return Ok("".to_string());
-    }
-
-    let planned_date = try_logical_date(dt)?;
-    let available_datetime = max(
+    let is_on_other_side = task
+        .get_is_on_other_side()
+        .map_err(ApplicationError::TaskTree)?;
+    let first_available_time = max(
         task.get_start_time().map_err(ApplicationError::TaskTree)?,
         last_synced_time,
     );
-    let available_date = try_logical_date(available_datetime)?;
+    get_schedule_adjustable_prefix_label(is_on_other_side, is_leaf, first_available_time, dt)
+}
+
+fn get_schedule_adjustable_prefix_label(
+    is_on_other_side: bool,
+    is_leaf: bool,
+    first_available_time: DateTime<Local>,
+    scheduled_start: DateTime<Local>,
+) -> Result<String, ApplicationError> {
+    if !is_leaf || is_on_other_side {
+        return Ok("".to_string());
+    }
+
+    let planned_date = try_logical_date(scheduled_start)?;
+    let available_date = try_logical_date(first_available_time)?;
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -192,22 +218,22 @@ fn deadline_alert_issues(
     scheduled_tasks: &[crate::application::schedule_use_case::ScheduledTaskView],
     today: NaiveDate,
 ) -> Result<DeadlineAlertIssues, ApplicationError> {
-    let scheduled_ends = scheduled_end_by_task(scheduled_tasks);
-    let deadlines_by_task = scheduled_tasks
+    let scheduled_ends = scheduled_end_by_occurrence(scheduled_tasks);
+    let deadlines_by_occurrence = scheduled_tasks
         .iter()
         .filter_map(|scheduled| {
             scheduled
                 .task
                 .deadline_time
-                .map(|deadline| (scheduled.task.id, deadline))
+                .map(|deadline| (scheduled.occurrence, deadline))
         })
         .collect::<HashMap<_, _>>();
     let mut today_issue = None;
     let mut tomorrow_issue = None;
     let mut weekly_issue = None;
 
-    for (task_id, scheduled_end) in scheduled_ends {
-        let Some(deadline) = deadlines_by_task.get(&task_id) else {
+    for (occurrence, scheduled_end) in scheduled_ends {
+        let Some(deadline) = deadlines_by_occurrence.get(&occurrence) else {
             continue;
         };
         let overrun_seconds = (scheduled_end - *deadline).num_seconds();
@@ -310,7 +336,8 @@ pub(super) struct TaskListDisplayRow {
     pub(super) priority: i64,
     pub(super) work_seconds: i64,
     pub(super) project_category_opt: Option<ProjectCategory>,
-    pub(super) is_real_task: bool,
+    pub(super) is_actionable_task: bool,
+    pub(super) contributes_to_summary: bool,
     pub(super) give_up_candidate: bool,
     pub(super) display_row: TaskListRow,
 }
@@ -331,7 +358,8 @@ impl TaskListDisplayRow {
             priority,
             work_seconds: 0,
             project_category_opt: None,
-            is_real_task: false,
+            is_actionable_task: false,
+            contributes_to_summary: false,
             give_up_candidate: false,
             display_row: TaskListRow::Message { text: message },
         }
@@ -368,9 +396,32 @@ impl TaskListDisplayRow {
             priority,
             work_seconds,
             project_category_opt,
-            is_real_task: true,
+            is_actionable_task: true,
+            contributes_to_summary: true,
             give_up_candidate: false,
             display_row: TaskListRow::Task(task_row),
+        }
+    }
+
+    fn new_projected(
+        logical_naive_date: NaiveDate,
+        rank: usize,
+        work_seconds: i64,
+        source_task_id: Uuid,
+        row: ProjectedTaskListRow,
+    ) -> Self {
+        TaskListDisplayRow {
+            scheduled_start: row.scheduled_start,
+            logical_naive_date_opt: Some(logical_naive_date),
+            rank,
+            id: source_task_id,
+            priority: row.priority,
+            work_seconds,
+            project_category_opt: row.project_category,
+            is_actionable_task: false,
+            contributes_to_summary: true,
+            give_up_candidate: false,
+            display_row: TaskListRow::Projected(row),
         }
     }
 
@@ -400,7 +451,7 @@ pub(super) fn summarize_scheduled_work_seconds_by_project_category(
 ) -> [i64; PROJECT_CATEGORY_SUMMARY_LEN] {
     let mut summary = [0; PROJECT_CATEGORY_SUMMARY_LEN];
 
-    for row in rows.iter().filter(|row| row.is_real_task) {
+    for row in rows.iter().filter(|row| row.contributes_to_summary) {
         let index = project_category_summary_index(row.project_category_opt);
         summary[index] += row.work_seconds;
     }
@@ -444,7 +495,7 @@ fn calculate_project_category_denominator_seconds(
 ) -> Result<i64, ApplicationError> {
     let mut dates = rows
         .iter()
-        .filter(|row| row.is_real_task)
+        .filter(|row| row.contributes_to_summary)
         .filter_map(|row| row.logical_naive_date_opt)
         .collect::<Vec<_>>();
     dates.sort();
@@ -502,7 +553,7 @@ pub(super) fn mark_give_up_candidate_rows(
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            if row.is_real_task
+            if row.is_actionable_task
                 && row.work_seconds > 0
                 && row.logical_naive_date_opt == Some(target_date)
             {
@@ -858,6 +909,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     // 日ごとの、前倒し可能なtaskの見積もりの和
     let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
+    let mut adjustable_occurrences_by_date: HashSet<(NaiveDate, ScheduleOccurrenceKey)> =
+        HashSet::new();
     let mut adjustable_scheduled_work_seconds_for_capacity_alert: HashMap<NaiveDate, i64> =
         HashMap::new();
 
@@ -871,14 +924,13 @@ pub(super) fn build_show_all_tasks_display_with_config(
         .zip(&scheduled_logical_dates)
         .enumerate()
     {
-        let dt = &scheduled_task.first_available_time;
         let scheduled_start = &scheduled_task.scheduled_start;
         let scheduled_end = &scheduled_task.scheduled_end;
         let scheduled_work_seconds = scheduled_task.scheduled_work_seconds;
         let total_work_seconds = scheduled_task.total_work_seconds;
         let rank = &scheduled_task.rank;
         let deadline_time_opt = &scheduled_task.task.deadline_time;
-        let id = &scheduled_task.task.id;
+        let id = scheduled_task.actual_task_id();
         let logical_naive_date = *logical_naive_date;
         let needs_scheduled_boundary = pattern_opt.as_ref().is_some_and(|pattern| {
             pattern == "今"
@@ -909,9 +961,83 @@ pub(super) fn build_show_all_tasks_display_with_config(
             .and_modify(|cnt| *cnt += 1)
             .or_insert(1);
 
-        let task_opt = task_repository
-            .get_by_id(*id)
-            .map_err(ApplicationError::TaskTree)?;
+        let estimated_work_seconds = scheduled_work_seconds;
+        total_estimated_work_seconds_of_the_date_counter
+            .entry(logical_naive_date)
+            .and_modify(|total_seconds| *total_seconds += estimated_work_seconds)
+            .or_insert(estimated_work_seconds);
+        if let Some(deadline_time) = deadline_time_opt {
+            let deadline_naive_date = try_logical_date(*deadline_time)?;
+            deadline_estimated_work_seconds_map
+                .entry(deadline_naive_date)
+                .and_modify(|deadline_seconds| *deadline_seconds += estimated_work_seconds)
+                .or_insert(estimated_work_seconds);
+        }
+        if scheduled_task.is_projected() {
+            repetitive_task_estimated_work_seconds_map
+                .entry(logical_naive_date)
+                .and_modify(|repetitive_seconds| *repetitive_seconds += estimated_work_seconds)
+                .or_insert(estimated_work_seconds);
+        }
+
+        let adjustable_prefix_label = get_schedule_adjustable_prefix_label(
+            scheduled_task.task.is_on_other_side,
+            scheduled_task.is_leaf(),
+            scheduled_task.first_available_time,
+            *scheduled_start,
+        )?;
+        if !adjustable_prefix_label.is_empty() {
+            if adjustable_occurrences_by_date
+                .insert((logical_naive_date, scheduled_task.occurrence))
+            {
+                let task_estimated_work_seconds = scheduled_task.task.estimated_work_seconds;
+                adjustable_estimated_work_seconds_map
+                    .entry(logical_naive_date)
+                    .and_modify(|estimated_work_seconds_val| {
+                        *estimated_work_seconds_val += task_estimated_work_seconds
+                    })
+                    .or_insert(task_estimated_work_seconds);
+            }
+            adjustable_scheduled_work_seconds_for_capacity_alert
+                .entry(logical_naive_date)
+                .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
+                .or_insert(scheduled_work_seconds);
+        }
+
+        let current_datetime_cursor_clone = current_datetime_cursor;
+
+        // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
+        if (*scheduled_start - current_datetime_cursor_clone).num_minutes() > 0 {
+            let blank_duration = *scheduled_start - current_datetime_cursor_clone;
+            let tmp_id = Uuid::new_v4();
+
+            if let Some(pattern) = pattern_opt {
+                if (pattern == "今" && *scheduled_start < next_logical_date_start)
+                    || (pattern == "明"
+                        && current_datetime_cursor_clone >= next_logical_date_start
+                        && (*scheduled_start - next_logical_date_start) < Duration::days(1))
+                    || (pattern == "近"
+                        && (*scheduled_start - next_logical_date_start) < Duration::days(1))
+                {
+                    task_list_display_rows.push(TaskListDisplayRow::new_gap(
+                        current_datetime_cursor_clone,
+                        0,
+                        tmp_id,
+                        0,
+                        blank_duration.num_minutes(),
+                    ));
+                }
+            }
+        }
+
+        current_datetime_cursor =
+            advance_display_datetime_cursor(current_datetime_cursor, *scheduled_end);
+
+        let task_opt = id
+            .map(|task_id| task_repository.get_by_id(task_id))
+            .transpose()
+            .map_err(ApplicationError::TaskTree)?
+            .flatten();
         if let Some(task) = task_opt {
             let inherited_repetition_interval_days_opt = task
                 .get_inherited_repetition_interval_days_opt()
@@ -932,16 +1058,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 repetition_prefix_label = format!("{}【待ち】", repetition_prefix_label);
             }
 
-            // 前倒し可能なタスクの見積もり時間をカウントする
-            let adjustable_prefix_label = get_adjustable_prefix_label(
-                &task,
-                *dt,
-                scheduled_task.is_leaf(),
-                last_synced_time,
-            )?;
-            let task_estimated_work_seconds = task
-                .get_estimated_work_seconds()
-                .map_err(ApplicationError::TaskTree)?;
             let task_deadline_time_opt = task
                 .get_deadline_time_opt()
                 .map_err(ApplicationError::TaskTree)?;
@@ -959,19 +1075,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             } else {
                 TaskListTaskKind::NonRepetitive
             };
-
-            if !adjustable_prefix_label.is_empty() {
-                adjustable_estimated_work_seconds_map
-                    .entry(logical_naive_date)
-                    .and_modify(|estimated_work_seconds_val| {
-                        *estimated_work_seconds_val += task_estimated_work_seconds
-                    })
-                    .or_insert(task_estimated_work_seconds);
-                adjustable_scheduled_work_seconds_for_capacity_alert
-                    .entry(logical_naive_date)
-                    .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
-                    .or_insert(scheduled_work_seconds);
-            }
 
             let name = format!(
                 "{}{}{}",
@@ -1010,30 +1113,12 @@ pub(super) fn build_show_all_tasks_display_with_config(
             } else {
                 name.to_string()
             };
-            if total_work_seconds > scheduled_work_seconds {
-                shorten_name = format!(
-                    "<{}/{}>{}",
-                    round_up_sec_as_minute(scheduled_work_seconds),
-                    round_up_sec_as_minute(total_work_seconds),
-                    shorten_name
-                );
-            }
+            shorten_name =
+                format_split_task_name(shorten_name, scheduled_work_seconds, total_work_seconds);
 
             // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
             // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
             // 残りの見積もりを0とはせず、安全に倒して元々の見積もりの2倍として扱う
-            let estimated_work_seconds = scheduled_work_seconds;
-            if let Some(deadline_time) = deadline_time_opt {
-                let deadline_naive_date = try_logical_date(*deadline_time)?;
-
-                deadline_estimated_work_seconds_map
-                    .entry(deadline_naive_date)
-                    .and_modify(|deadline_estimated_work_seconds| {
-                        *deadline_estimated_work_seconds += estimated_work_seconds
-                    })
-                    .or_insert(estimated_work_seconds);
-            }
-
             if inherited_repetition_interval_days_opt.is_some() {
                 repetitive_task_estimated_work_seconds_map
                     .entry(logical_naive_date)
@@ -1043,67 +1128,19 @@ pub(super) fn build_show_all_tasks_display_with_config(
                     .or_insert(estimated_work_seconds);
             }
 
-            let current_datetime_cursor_clone = &current_datetime_cursor.clone();
-            let start_datetime = scheduled_start;
-
-            // 「今」か「明」か「近」の時のみ、日時カーソルが飛んだ場合には、その間の時間を表示する
-            if (*scheduled_start - *current_datetime_cursor_clone).num_minutes() > 0 {
-                let blank_duration = *scheduled_start - *current_datetime_cursor_clone;
-                let tmp_id = Uuid::new_v4();
-
-                if let Some(pattern) = pattern_opt {
-                    if (pattern == "今" && *scheduled_start < next_logical_date_start)
-                        || (pattern == "明"
-                            && *current_datetime_cursor_clone >= next_logical_date_start
-                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
-                        || (pattern == "近"
-                            && (*scheduled_start - next_logical_date_start) < Duration::days(1))
-                    {
-                        task_list_display_rows.push(TaskListDisplayRow::new_gap(
-                            *current_datetime_cursor_clone,
-                            0,
-                            tmp_id,
-                            0,
-                            blank_duration.num_minutes(),
-                        ));
-                    }
-                }
-            }
-
             let end_datetime = *scheduled_end;
-            current_datetime_cursor =
-                advance_display_datetime_cursor(current_datetime_cursor, end_datetime);
-
-            total_estimated_work_seconds_of_the_date_counter
-                .entry(logical_naive_date)
-                .and_modify(|estimated_work_seconds_val| {
-                    *estimated_work_seconds_val += estimated_work_seconds
-                })
-                .or_insert(estimated_work_seconds);
-
-            // ! : 着手予定logical date内が締切。締切注意の意
-            let deadline_icon: String = "!".to_string();
-
-            // v : もっと着手を手前(下)にせよの意
-            let breaking_deadline_icon: String = "v".to_string();
-
-            // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
-            let today_leaf_icon: String = "/".to_string();
 
             let deadline_display_status = classify_deadline_display(
                 task_deadline_time_opt.as_ref(),
                 end_datetime,
                 logical_naive_date,
             )?;
-            let icon = match deadline_display_status {
-                DeadlineDisplayStatus::Overrun => &breaking_deadline_icon,
-                DeadlineDisplayStatus::DueWithinLogicalDate => &deadline_icon,
-                _ if scheduled_task.is_leaf() && scheduled_start < &eod => &today_leaf_icon,
-                _ => {
-                    // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
-                    "-"
-                }
-            };
+            let icon = task_list_icon(
+                deadline_display_status,
+                scheduled_task.is_leaf(),
+                *scheduled_start,
+                eod,
+            );
 
             let deadline_string = format_deadline_remaining_time(
                 deadline_time_opt.as_ref(),
@@ -1113,10 +1150,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             let task_row = TaskListTaskRow {
                 ind,
-                task_id: *id,
+                task_id: id.expect("repository task branch requires actual identity"),
                 icon: icon.to_string(),
                 deadline: deadline_string,
-                scheduled_start: *start_datetime,
+                scheduled_start: *scheduled_start,
                 scheduled_end: end_datetime,
                 rank: *rank,
                 estimated_minutes: round_up_sec_as_minute(estimated_work_seconds),
@@ -1132,14 +1169,14 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 *scheduled_start,
                 logical_naive_date,
                 *rank,
-                *id,
+                id.expect("repository task branch requires actual identity"),
                 task_priority,
                 estimated_work_seconds,
                 task_project_category_opt,
                 task_row,
             );
-            let has_deadline_icon = icon == deadline_icon || icon == breaking_deadline_icon;
-            let has_task_list_icon = has_deadline_icon || icon == today_leaf_icon;
+            let has_deadline_icon = matches!(icon, "!" | "v");
+            let has_task_list_icon = has_deadline_icon || icon == "/";
 
             match pattern_opt {
                 Some(pattern) => {
@@ -1156,7 +1193,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if matches!(pattern.as_str(), "v" | "超") {
-                        if icon == breaking_deadline_icon {
+                        if icon == "v" {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "〆" {
@@ -1293,6 +1330,104 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 None => {
                     task_list_display_rows.push(task_list_display_row.clone());
                 }
+            }
+        } else if let ScheduleOccurrenceKey::Projected {
+            source_task_id,
+            deadline,
+        } = scheduled_task.occurrence
+        {
+            let deadline_display_status =
+                classify_deadline_display(Some(&deadline), *scheduled_end, logical_naive_date)?;
+            let has_deadline_icon = matches!(
+                deadline_display_status,
+                DeadlineDisplayStatus::Overrun | DeadlineDisplayStatus::DueWithinLogicalDate
+            );
+            let icon = task_list_icon(
+                deadline_display_status,
+                scheduled_task.is_leaf(),
+                *scheduled_start,
+                eod,
+            );
+            let deadline_string =
+                format_deadline_remaining_time(Some(&deadline), *scheduled_end, last_synced_time)?;
+            let task_name = format_split_task_name(
+                format!("{adjustable_prefix_label}{}", scheduled_task.task.name),
+                scheduled_work_seconds,
+                total_work_seconds,
+            );
+            let row = TaskListDisplayRow::new_projected(
+                logical_naive_date,
+                *rank,
+                scheduled_work_seconds,
+                source_task_id,
+                ProjectedTaskListRow {
+                    ind,
+                    task_id: Uuid::nil(),
+                    icon: icon.to_string(),
+                    deadline: deadline_string,
+                    scheduled_start: *scheduled_start,
+                    scheduled_end: *scheduled_end,
+                    rank: *rank,
+                    estimated_minutes: round_up_sec_as_minute(scheduled_work_seconds),
+                    priority: scheduled_task.task.priority,
+                    project_category: scheduled_task.task.project_category,
+                    task_name: task_name.clone(),
+                    kind: TaskListTaskKind::Repetitive,
+                    has_deadline: true,
+                    give_up_candidate: false,
+                },
+            );
+            let include = match pattern_opt.as_deref() {
+                None => true,
+                Some("暦" | "calendar" | "cal" | "帯" | "band" | "単") => false,
+                Some("葉") => scheduled_task.is_leaf(),
+                Some("枝") => !scheduled_task.is_leaf(),
+                Some("印" | "〆") => has_deadline_icon,
+                Some("v" | "超") => deadline_display_status == DeadlineDisplayStatus::Overrun,
+                Some("今") => scheduled_next_logical_date_start
+                    .is_some_and(|boundary| boundary == next_logical_date_start),
+                Some("明") => scheduled_next_logical_date_start.is_some_and(|boundary| {
+                    boundary - next_logical_date_start == Duration::days(1)
+                }),
+                Some("近") => scheduled_next_logical_date_start.is_some_and(|boundary| {
+                    matches!((boundary - next_logical_date_start).num_days(), 0 | 1)
+                }),
+                Some("週") => scheduled_next_logical_date_start
+                    .is_some_and(|boundary| boundary - next_logical_date_start < Duration::days(7)),
+                Some("末") => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let through_sunday = 6 - today;
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        boundary - next_logical_date_start <= Duration::days(through_sunday)
+                    })
+                }
+                Some("翌") => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let through_sunday = 6 - today;
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        let diff = boundary - next_logical_date_start;
+                        Duration::days(through_sunday) < diff
+                            && diff <= Duration::days(through_sunday + 7)
+                    })
+                }
+                Some(pattern) if days_of_week.contains(&pattern) => {
+                    let today = last_synced_logical_date.weekday().num_days_from_monday() as i64;
+                    let target = days_of_week
+                        .iter()
+                        .position(|day| *day == pattern)
+                        .expect("matched weekday") as i64;
+                    let difference = (7 + target - today) % 7;
+                    let days = if difference == 0 { 7 } else { difference };
+                    scheduled_next_logical_date_start.is_some_and(|boundary| {
+                        boundary - next_logical_date_start == Duration::days(days)
+                    })
+                }
+                Some(_) if yyyymmdd_pattern_date == Some(logical_naive_date) => true,
+                Some(pattern) if integer_reg.is_match(pattern) => false,
+                Some(pattern) => task_name.to_lowercase().contains(&pattern.to_lowercase()),
+            };
+            if include && display_order != TaskListDisplayOrder::LowPriorityTail {
+                task_list_display_rows.push(row);
             }
         }
     }
@@ -1531,7 +1666,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
     sort_task_list_display_rows(&mut task_list_display_rows, display_order);
 
     let task_list_display = if !is_daily_summary_func {
-        for row in task_list_display_rows.iter() {
+        for row in task_list_display_rows
+            .iter()
+            .filter(|row| row.is_actionable_task)
+        {
             *focused_task_id_opt = Some(row.id);
         }
         let project_category_summary =
@@ -1621,6 +1759,20 @@ pub(super) fn build_show_all_tasks_display_with_config(
         primary_display,
         trailing_display,
     ]))
+}
+
+pub(super) fn task_list_icon(
+    deadline_display_status: DeadlineDisplayStatus,
+    is_leaf: bool,
+    scheduled_start: DateTime<Local>,
+    end_of_day: DateTime<Local>,
+) -> &'static str {
+    match deadline_display_status {
+        DeadlineDisplayStatus::Overrun => "v",
+        DeadlineDisplayStatus::DueWithinLogicalDate => "!",
+        _ if is_leaf && scheduled_start < end_of_day => "/",
+        _ => "-",
+    }
 }
 
 fn into_task_list_rows(

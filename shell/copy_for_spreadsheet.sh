@@ -52,6 +52,8 @@ function fail_incomplete_task_row(line_number) {
     exit 1
 }
 
+# Task rows begin with a four-digit segment index. Read-only projected rows use
+# the nil UUID sentinel in B and are deliberately excluded from A-J sync.
 /^[0-9]/ {
     line = $0
     invalid = 0
@@ -77,6 +79,10 @@ function fail_incomplete_task_row(line_number) {
         !is_decimal(column[6]) || !is_decimal(column[7]) ||
         !is_integer(column[8]) || !is_category(column[9])) {
         fail_incomplete_task_row(NR)
+    }
+
+    if (column[2] == "00000000-0000-0000-0000-000000000000") {
+        next
     }
 
     for (i = 1; i <= 9; i++) {

@@ -56,7 +56,7 @@ pub fn build_routine_load_report(
             field: "start_date",
             reason: "routine load horizon is out of range",
         })?;
-    let mut metadata_by_task_id = HashMap::<Uuid, Option<RoutineMetadata>>::new();
+    let mut metadata_by_task_id = HashMap::<(Uuid, bool), Option<RoutineMetadata>>::new();
     let mut accumulators = HashMap::<Uuid, RoutineAccumulator>::new();
 
     for segment in schedule {
@@ -64,15 +64,21 @@ pub fn build_routine_load_report(
         if logical_date < start_date || logical_date > end_date {
             continue;
         }
-        let metadata = if let Some(cached) = metadata_by_task_id.get(&segment.task.id) {
+        let task_id = segment.source_task_id();
+        let cache_key = (task_id, segment.is_projected());
+        let metadata = if let Some(cached) = metadata_by_task_id.get(&cache_key) {
             cached.clone()
         } else {
             let task = repository
-                .get_by_id(segment.task.id)
+                .get_by_id(task_id)
                 .map_err(ApplicationError::TaskTree)?
-                .ok_or(ApplicationError::TaskNotFound(segment.task.id))?;
-            let resolved = nearest_routine_metadata(&task)?;
-            metadata_by_task_id.insert(segment.task.id, resolved.clone());
+                .ok_or(ApplicationError::TaskNotFound(task_id))?;
+            let resolved = if segment.is_projected() {
+                projected_routine_metadata(&task)?
+            } else {
+                nearest_routine_metadata(&task)?
+            };
+            metadata_by_task_id.insert(cache_key, resolved.clone());
             resolved
         };
         let Some(metadata) = metadata else {
@@ -136,6 +142,25 @@ fn nearest_routine_metadata(
         current = parent.parent().map_err(ApplicationError::TaskTree)?;
     }
     Ok(None)
+}
+
+fn projected_routine_metadata(
+    task: &TaskHandle,
+) -> Result<Option<RoutineMetadata>, ApplicationError> {
+    let Some(repetition_interval_days) = task
+        .get_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+    else {
+        return Ok(None);
+    };
+    let project = task.root().map_err(ApplicationError::TaskTree)?;
+    Ok(Some(RoutineMetadata {
+        project_task_id: project.get_id().map_err(ApplicationError::TaskTree)?,
+        project_name: project.get_name().map_err(ApplicationError::TaskTree)?,
+        routine_task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
+        routine_name: task.get_name().map_err(ApplicationError::TaskTree)?,
+        repetition_interval_days,
+    }))
 }
 
 fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, ApplicationError> {

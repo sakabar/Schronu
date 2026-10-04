@@ -1,6 +1,9 @@
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
-use crate::{AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, SessionTask, TaskDisplayKind};
+use crate::{
+    AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTask,
+    TaskDisplayKind,
+};
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 
 const INVALID_TIME: &str = "--:--";
@@ -32,7 +35,8 @@ pub struct CompletionConflictViewModel {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListRowViewModel {
     pub row_key: String,
-    pub task: SessionTask,
+    pub task: ScheduledTask,
+    pub occurrence: ScheduleOccurrence,
     pub deadline_label: String,
     pub schedule_display: ScheduleDisplayViewModel,
     pub gap_before: Option<String>,
@@ -135,8 +139,17 @@ fn project_all_task_row(
     date_boundary_before: bool,
 ) -> ListRowViewModel {
     ListRowViewModel {
-        row_key: format!("all:{}", row.segment_index),
+        row_key: format!(
+            "all:{}:{}:{}",
+            row.occurrence
+                .occurrence_key()
+                .or(row.task.task_id.as_deref())
+                .unwrap_or("legacy-actual"),
+            row.schedule_date,
+            row.segment_index
+        ),
         task: row.task.clone(),
+        occurrence: row.occurrence.clone(),
         deadline_label: row.deadline_label.clone(),
         schedule_display: ScheduleDisplayViewModel::AllTasksDate {
             label: all_task_schedule_label(&row.schedule_date),
@@ -262,24 +275,26 @@ fn project_list_rows_with(
                     .map(|cursor| cursor.max(row.schedule_end_epoch_ms))
                     .unwrap_or(row.schedule_end_epoch_ms),
             );
-            let defer_confirmation = match row.defer_plan.mode {
-                DeferMode::Normal => None,
-                DeferMode::DeadlineLimited => Some(DeferConfirmationViewModel {
+            let defer_confirmation = match row.defer_plan.as_ref().map(|plan| plan.mode) {
+                Some(DeferMode::Normal) | None => None,
+                Some(DeferMode::DeadlineLimited) => Some(DeferConfirmationViewModel {
                     kind: DeferConfirmationKind::DeadlineLimited,
                     detail_label: row
                         .defer_plan
-                        .effective_pending_until_epoch_ms
+                        .as_ref()
+                        .and_then(|plan| plan.effective_pending_until_epoch_ms)
                         .and_then(|epoch_ms| {
                             offset_at(epoch_ms)
                                 .map(|offset| format_local_month_day_hh_mm(epoch_ms, offset))
                         })
                         .unwrap_or_else(|| INVALID_TIME.to_owned()),
                 }),
-                DeferMode::RoutinePeriod => Some(DeferConfirmationViewModel {
+                Some(DeferMode::RoutinePeriod) => Some(DeferConfirmationViewModel {
                     kind: DeferConfirmationKind::RoutinePeriod,
                     detail_label: row
                         .defer_plan
-                        .repetition_interval_days
+                        .as_ref()
+                        .and_then(|plan| plan.repetition_interval_days)
                         .map(|days| format!("{days}日"))
                         .unwrap_or_else(|| INVALID_TIME.to_owned()),
                 }),
@@ -287,9 +302,15 @@ fn project_list_rows_with(
             ListRowViewModel {
                 row_key: format!(
                     "{}:{}:{}",
-                    row.task.task_id, row.schedule_start_epoch_ms, row.schedule_end_epoch_ms
+                    row.occurrence
+                        .occurrence_key()
+                        .or(row.task.task_id.as_deref())
+                        .unwrap_or("legacy-actual"),
+                    row.schedule_start_epoch_ms,
+                    row.schedule_end_epoch_ms
                 ),
                 task: row.task.clone(),
+                occurrence: row.occurrence.clone(),
                 deadline_label: row.deadline_label.clone(),
                 schedule_display: ScheduleDisplayViewModel::Daily {
                     start_hh_mm: format_with_offset_provider(
@@ -310,7 +331,7 @@ fn project_list_rows_with(
                     row.misses_deadline,
                 ),
                 is_leaf: row.is_leaf,
-                defer_plan: Some(row.defer_plan.clone()),
+                defer_plan: row.defer_plan.clone(),
                 defer_confirmation,
             }
         })

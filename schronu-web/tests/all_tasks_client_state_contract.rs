@@ -16,6 +16,10 @@ fn all_row(segment_index: usize) -> AllTaskRow {
             task_name: format!("task {segment_index}"),
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
+        }
+        .into(),
+        occurrence: schronu_web::ScheduleOccurrence::Actual {
+            task_id: TASK_ID.to_owned(),
         },
         segment_index,
         schedule_date: "2026-09-05".to_owned(),

@@ -1,5 +1,5 @@
 use super::routine_load::{build_routine_load_report, ROUTINE_LOAD_HORIZON_DAYS};
-use super::schedule_use_case::ScheduledTaskView;
+use super::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use super::task_view::TaskView;
 use crate::entity::task::{TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
@@ -18,7 +18,31 @@ fn child(parent: &TaskHandle, name: &str, id: u128, now: DateTime<Local>) -> Tas
 
 fn segment(task: &TaskHandle, start: DateTime<Local>, seconds: i64) -> ScheduledTaskView {
     ScheduledTaskView {
-        task: TaskView::try_from(task).unwrap(),
+        occurrence: ScheduleOccurrenceKey::Actual {
+            task_id: task.get_id().unwrap(),
+        },
+        task: TaskView::try_from(task).unwrap().into(),
+        first_available_time: start,
+        scheduled_start: start,
+        scheduled_end: start + Duration::seconds(seconds),
+        scheduled_work_seconds: seconds,
+        total_work_seconds: seconds,
+        rank: 0,
+    }
+}
+
+fn projected_segment(
+    source: &TaskHandle,
+    deadline: DateTime<Local>,
+    start: DateTime<Local>,
+    seconds: i64,
+) -> ScheduledTaskView {
+    ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Projected {
+            source_task_id: source.get_id().unwrap(),
+            deadline,
+        },
+        task: TaskView::try_from(source).unwrap().into(),
         first_available_time: start,
         scheduled_start: start,
         scheduled_end: start + Duration::seconds(seconds),
@@ -116,4 +140,60 @@ fn routine_loadは同値をproject名と繰返名とuuidで決定的に並べる
             ("B".to_owned(), "同名".to_owned()),
         ]
     );
+}
+
+#[test]
+fn routine_loadはactualとprojectedを同じ繰返元へ集計する() {
+    let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
+    let project = TaskHandle::with_identity("生活", Uuid::from_u128(101), at(3)).unwrap();
+    let routine = child(&project, "3日に1回筋トレする", 102, at(3));
+    routine.set_repetition_interval_days_opt(Some(3)).unwrap();
+    let actual = child(&routine, "筋トレ", 103, at(3));
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let schedule = vec![
+        segment(&actual, at(3), 30 * 60),
+        projected_segment(&routine, at(6), at(6), 30 * 60),
+        projected_segment(&routine, at(9), at(9), 30 * 60),
+    ];
+
+    let report = build_routine_load_report(&repository, &schedule, today).unwrap();
+
+    assert_eq!(report.rows.len(), 1);
+    assert_eq!(report.rows[0].routine_task_id, Uuid::from_u128(102));
+    assert_eq!(report.rows[0].total_work_seconds, 90 * 60);
+    assert_eq!(report.rows[0].occurrence_day_count, 3);
+}
+
+#[test]
+fn routine_loadは同じuuidのactualとprojectedを別の規則で解決する() {
+    let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
+    let outer_routine = TaskHandle::with_identity("週次", Uuid::from_u128(201), at(3)).unwrap();
+    outer_routine
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let source = child(&outer_routine, "3日に1回筋トレする", 202, at(3));
+    source.set_repetition_interval_days_opt(Some(3)).unwrap();
+    let repository = TestTaskRepository::new(vec![outer_routine], at(3));
+    let schedule = vec![
+        segment(&source, at(3), 10 * 60),
+        projected_segment(&source, at(6), at(6), 20 * 60),
+    ];
+
+    let report = build_routine_load_report(&repository, &schedule, today).unwrap();
+
+    assert_eq!(report.rows.len(), 2);
+    let actual_row = report
+        .rows
+        .iter()
+        .find(|row| row.routine_task_id == Uuid::from_u128(201))
+        .unwrap();
+    assert_eq!(actual_row.repetition_interval_days, 7);
+    assert_eq!(actual_row.total_work_seconds, 10 * 60);
+    let projected_row = report
+        .rows
+        .iter()
+        .find(|row| row.routine_task_id == Uuid::from_u128(202))
+        .unwrap();
+    assert_eq!(projected_row.repetition_interval_days, 3);
+    assert_eq!(projected_row.total_work_seconds, 20 * 60);
 }

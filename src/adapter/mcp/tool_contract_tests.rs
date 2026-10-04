@@ -807,11 +807,13 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
         sorted_object_keys(&schedule[0]),
         vec![
             "first_available_time",
+            "occurrence",
             "rank",
             "scheduled_end",
             "scheduled_start",
             "scheduled_work_seconds",
             "task",
+            "task_id",
             "total_work_seconds"
         ]
     );
@@ -833,6 +835,9 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
         )
     );
     assert_eq!(schedule[0]["task"]["id"], task_id.to_string());
+    assert_eq!(schedule[0]["task"]["root_id"], task_id.to_string());
+    assert_eq!(schedule[0]["task"]["parent_id"], serde_json::Value::Null);
+    assert_eq!(schedule[0]["task"]["child_ids"], json!([]));
     assert_eq!(schedule[0]["task"]["name"], "scheduled task");
     assert_eq!(schedule[0]["first_available_time"], synced_now.to_rfc3339());
     assert_eq!(schedule[0]["scheduled_start"], synced_now.to_rfc3339());
@@ -845,6 +850,103 @@ fn get_scheduleは予定をScheduledTaskViewの全field付きで返しrepository
     assert_eq!(schedule[0]["rank"], 0);
     assert_eq!(save_count.get(), 0);
     assert_eq!(mutation_count.get(), 0);
+}
+
+#[test]
+fn get_scheduleは非rootの実taskの親子identityを保持する() {
+    let now = fixed_now();
+    let root = new_task_handle("schedule root").unwrap();
+    let root_id = root.get_id().unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+    let parent = root.create_as_last_child(new_task_attr("scheduled parent"));
+    let parent_id = parent.get_id().unwrap();
+    parent.set_start_time(now).unwrap();
+    parent.set_estimated_work_seconds(15 * 60).unwrap();
+    let child = parent.create_as_last_child(new_task_attr("scheduled child"));
+    let child_id = child.get_id().unwrap();
+    child.set_start_time(now).unwrap();
+    child.set_estimated_work_seconds(5 * 60).unwrap();
+    root.sync_clock(now).unwrap();
+    let repository = RecordingRepository::new(vec![root]);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(json!({
+            "jsonrpc": "2.0",
+            "id": "get-nested-schedule",
+            "method": "tools/call",
+            "params": {"name": "get_schedule"}
+        }))
+        .unwrap();
+    let schedule = response["result"]["structuredContent"]["schedule"]
+        .as_array()
+        .unwrap();
+    let parent_row = schedule
+        .iter()
+        .find(|row| row["task_id"] == parent_id.to_string())
+        .expect("scheduled parent row");
+
+    assert_eq!(parent_row["task"]["id"], parent_id.to_string());
+    assert_eq!(parent_row["task"]["root_id"], root_id.to_string());
+    assert_eq!(parent_row["task"]["parent_id"], root_id.to_string());
+    assert_eq!(parent_row["task"]["child_ids"], json!([child_id]));
+}
+
+#[test]
+fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task_idを付けない() {
+    let now = fixed_now();
+    let parent = new_task_handle("3-day routine").unwrap();
+    let parent_id = parent.get_id().unwrap();
+    parent.set_estimated_work_seconds(60 * 60).unwrap();
+    parent.set_repetition_interval_days_opt(Some(3)).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(now.time()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some((now + Duration::hours(1)).time()))
+        .unwrap();
+    let current = parent.create_as_last_child(new_task_attr("current routine"));
+    let current_id = current.get_id().unwrap();
+    current.set_start_time(now).unwrap();
+    current
+        .set_deadline_time_opt(Some(now + Duration::hours(1)))
+        .unwrap();
+    current.set_estimated_work_seconds(60 * 60).unwrap();
+    let repository = RecordingRepository::new(vec![parent]);
+    let mut server = initialized_server(repository);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "projected-schedule",
+            "get_schedule",
+            json!({"from": "2026-10-03", "until": "2026-10-08"}),
+        ))
+        .unwrap();
+    let schedule = response["result"]["structuredContent"]["schedule"]
+        .as_array()
+        .unwrap();
+    let actual = schedule
+        .iter()
+        .find(|row| row["occurrence"]["kind"] == "actual")
+        .unwrap_or_else(|| panic!("actual row missing: {schedule:?}"));
+    let projected = schedule
+        .iter()
+        .find(|row| row["occurrence"]["kind"] == "projected")
+        .unwrap_or_else(|| panic!("projected row missing: {schedule:?}"));
+
+    assert_eq!(actual["task_id"], current_id.to_string());
+    assert!(actual.get("source_task_id").is_none());
+    assert!(actual.get("occurrence_key").is_none());
+    assert!(projected.get("task_id").is_none());
+    assert_eq!(projected["source_task_id"], parent_id.to_string());
+    assert_eq!(projected["occurrence_key"], projected["occurrence"]);
+    assert!(projected["task"]["name"]
+        .as_str()
+        .unwrap()
+        .starts_with("3-day routine("));
+    for identity in ["id", "root_id", "parent_id", "child_ids"] {
+        assert!(projected["task"].get(identity).is_none(), "{identity}");
+    }
 }
 
 #[test]

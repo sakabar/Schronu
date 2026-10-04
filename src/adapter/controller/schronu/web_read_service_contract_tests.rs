@@ -11,7 +11,7 @@ use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::DeferMode;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
-use chrono::{Duration, Local, NaiveDate, TimeZone};
+use chrono::{Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -122,14 +122,24 @@ impl WebReadServiceFixture {
         let parent = TaskHandle::with_identity("routine", parent_id, now).unwrap();
         parent.set_repetition_interval_days_opt(Some(7)).unwrap();
         parent.set_estimated_work_seconds(600).unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(19, 0, 0).unwrap()))
+            .unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(20, 0, 0).unwrap()))
+            .unwrap();
         let child = parent
             .create_child(TaskAttr::with_identity("occurrence", child_id, now))
             .unwrap();
         child.set_estimated_work_seconds(600).unwrap();
         child.set_actual_work_seconds(300).unwrap();
+        child
+            .set_deadline_time_opt(Some(now + Duration::hours(1)))
+            .unwrap();
 
         let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
         repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
         repository.start_new_project(parent).unwrap();
         repository.save().unwrap();
         (parent_id, child_id)
@@ -220,6 +230,53 @@ impl WebReadServiceFixture {
 }
 
 #[test]
+fn 日付別と全件serviceは繰り返しの将来回をread_only行として返す() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (parent_id, child_id) = fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let future = service
+        .list_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap())
+        .unwrap();
+    let all = service.list_all_tasks_at(operation_now, None).unwrap();
+
+    assert_eq!(future.data.len(), 1);
+    assert!(future.data[0].task.task_id.is_none());
+    assert_eq!(future.data[0].occurrence.source_task_id(), Some(parent_id));
+    assert_eq!(future.data[0].task.actual_work_seconds, 0);
+    assert_eq!(future.data[0].task.task_name, "routine(9/12)");
+    assert!(all.data.rows.iter().any(|row| {
+        row.task.task_id.is_none() && row.occurrence.source_task_id() == Some(parent_id)
+    }));
+    assert!(all
+        .data
+        .rows
+        .iter()
+        .any(|row| { row.task.task_id.as_deref() == Some(&child_id.hyphenated().to_string()) }));
+}
+
+#[test]
+fn 全件serviceはprojected行を含めても500行境界とsnapshot順序を保つ() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_fixed_tasks(operation_now, 501);
+    let (parent_id, _) = fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let first = service.list_all_tasks_at(operation_now, None).unwrap();
+    assert_eq!(first.data.rows.len(), 500);
+    let second = service
+        .list_all_tasks_at(operation_now, first.data.next_cursor)
+        .unwrap();
+
+    assert!(second.data.rows.iter().any(|row| {
+        row.occurrence.source_task_id() == Some(parent_id) && row.task.task_id.is_none()
+    }));
+    assert!(second.data.next_cursor.is_none());
+}
+
+#[test]
 fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放する() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
@@ -235,7 +292,7 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
             .data
             .rows
             .iter()
-            .map(|row| row.task.task_id.clone())
+            .filter_map(|row| row.task.task_id.clone())
             .collect::<Vec<_>>(),
         task_ids[..500]
             .iter()
@@ -274,11 +331,11 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
     assert_eq!(second.data.rows[0].segment_index, 500);
     assert_eq!(
         second.data.rows[0].task.task_id,
-        task_ids[500].hyphenated().to_string()
+        Some(task_ids[500].hyphenated().to_string())
     );
     assert_ne!(
         second.data.rows[0].task.task_id,
-        added_id.hyphenated().to_string()
+        Some(added_id.hyphenated().to_string())
     );
     assert_eq!(second.data.next_cursor, None);
     assert!(matches!(
@@ -321,7 +378,7 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
 }
 
 #[test]
-fn 負荷serviceは繰返負荷を共通集計結果から返す() {
+fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     fixture.seed_repetition_task(operation_now);
@@ -334,8 +391,8 @@ fn 負荷serviceは繰返負荷を共通集計結果から返す() {
     assert_eq!(row.project_name, "routine");
     assert_eq!(row.routine_name, "routine");
     assert_eq!(row.repetition_interval_days, 7);
-    assert_eq!(row.total_work_seconds, 300);
-    assert_eq!(row.occurrence_day_count, 1);
+    assert_eq!(row.total_work_seconds, 900);
+    assert_eq!(row.occurrence_day_count, 2);
 }
 
 #[test]
@@ -386,17 +443,17 @@ fn 全件serviceは実repositoryの親葉pending葉をschedule順のrowへ変換
     let parent = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == parent_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(parent_id.hyphenated().to_string()))
         .unwrap();
     let child = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == child_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(child_id.hyphenated().to_string()))
         .unwrap();
     let pending = page
         .rows
         .iter()
-        .find(|row| row.task.task_id == pending_id.hyphenated().to_string())
+        .find(|row| row.task.task_id == Some(pending_id.hyphenated().to_string()))
         .unwrap();
     assert!(!parent.is_leaf);
     assert!(child.is_leaf);
@@ -415,7 +472,7 @@ fn 全件serviceは同じtaskの複数segmentを別rowとして保持する() {
     let task_rows = page
         .rows
         .iter()
-        .filter(|row| row.task.task_id == task_id.hyphenated().to_string())
+        .filter(|row| row.task.task_id == Some(task_id.hyphenated().to_string()))
         .collect::<Vec<_>>();
     assert_eq!(task_rows.len(), 2);
     assert_ne!(task_rows[0].segment_index, task_rows[1].segment_index);
@@ -469,7 +526,7 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(all.data.rows[0].schedule_date, "2026-09-05");
     assert_eq!(
         all.data.rows[0].task.task_id,
-        task_id.hyphenated().to_string()
+        Some(task_id.hyphenated().to_string())
     );
     assert_eq!(
         all.data.rows[0].deadline_label,
@@ -482,7 +539,7 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
     assert_eq!(all.data.rows[0].is_leaf, listed.data[0].is_leaf);
     assert_eq!(
         listed.data[0].task.task_id,
-        task_id.hyphenated().to_string()
+        Some(task_id.hyphenated().to_string())
     );
     assert_eq!(listed.data[0].task.actual_work_seconds, 300);
     assert_eq!(
@@ -529,6 +586,28 @@ fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactio
 }
 
 #[test]
+fn 完了reportはprojected_occurrenceを行として返さない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let projected_date = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let scheduled = service
+        .list_tasks_at(operation_now, projected_date)
+        .unwrap()
+        .data;
+    assert!(scheduled.iter().any(|row| row.task.task_id.is_none()));
+
+    let completed = service
+        .list_completed_tasks_at(operation_now, projected_date)
+        .unwrap()
+        .data;
+    assert!(completed.rows.is_empty());
+    assert_eq!(completed.total_actual_work_seconds, 0);
+}
+
+#[test]
 fn 完了reportは予定と同じtask種別分類を保持する() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 21, 0, 0).unwrap();
@@ -549,7 +628,7 @@ fn 完了reportは予定と同じtask種別分類を保持する() {
         let scheduled_kind = scheduled
             .rows
             .iter()
-            .find(|row| row.task.task_id == task_id.hyphenated().to_string())
+            .find(|row| row.task.task_id == Some(task_id.hyphenated().to_string()))
             .unwrap()
             .task_display_kind;
         assert_eq!(scheduled_kind, expected_kind);

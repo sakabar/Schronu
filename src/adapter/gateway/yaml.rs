@@ -353,6 +353,9 @@ fn yaml_to_task_strict(
             .map_err(|_| strict_error(path, "id", "must be a UUID"))?,
         ),
     };
+    if id.is_some_and(|id| id.is_nil()) {
+        return Err(strict_error(path, "id", "must not be nil UUID"));
+    }
     let status =
         match yaml_field(yaml, "status") {
             None => Status::Todo,

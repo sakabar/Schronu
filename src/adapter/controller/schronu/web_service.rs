@@ -15,8 +15,8 @@ pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
     AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskReportDto,
     CompletedTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto, LoadDataDto,
-    RoutineLoadReportDto, RoutineLoadRowDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
-    TaskDisplayKind, WebSuccess,
+    RoutineLoadReportDto, RoutineLoadRowDto, ScheduleOccurrenceDto, ScheduledTaskDto,
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,

@@ -1,9 +1,15 @@
 use super::interface::TaskRepositoryTrait;
-use super::schedule_use_case::{get_schedule, scheduled_logical_dates, ScheduledTaskView};
-use super::task_use_case::{get_task, ApplicationError};
-use crate::entity::task::{Status, TaskHandle};
+use super::schedule_use_case::{
+    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
+    ScheduledTaskView,
+};
+use super::task_use_case::{
+    complete_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
+};
+use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
-use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone};
+use std::collections::HashSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use uuid::Uuid;
 
@@ -33,7 +39,8 @@ fn scheduled_segment_metadataは06時境界と入力順とrankに対応する() 
         .unwrap()
         .unwrap();
     let segment = |scheduled_start, rank| ScheduledTaskView {
-        task: task.clone(),
+        occurrence: ScheduleOccurrenceKey::Actual { task_id: task.id },
+        task: task.clone().into(),
         first_available_time: scheduled_start,
         scheduled_start,
         scheduled_end: scheduled_start + Duration::minutes(15),
@@ -85,6 +92,482 @@ fn task_with_schedule(
     task
 }
 
+fn repeating_task_with_current_occurrence(
+    now: DateTime<Local>,
+    interval_days: i64,
+    anchor: RepetitionAnchor,
+) -> (TaskHandle, TaskHandle) {
+    let parent = task_with_schedule("筋トレ", now, 15 * 60, 7);
+    parent
+        .set_repetition_interval_days_opt(Some(interval_days))
+        .unwrap();
+    parent.set_repetition_anchor(anchor).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap()))
+        .unwrap();
+
+    let mut current_attr = TaskAttr::with_identity("筋トレ(8/11)", Uuid::new_v4(), now);
+    current_attr.set_start_time(now);
+    current_attr
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 11, 23, 0, 0).unwrap()))
+        .unwrap();
+    current_attr.set_estimated_work_seconds(15 * 60);
+    current_attr.set_atomic(true);
+    let current = parent.create_as_last_child(current_attr);
+    (parent, current)
+}
+
+fn append_repeating_occurrence(
+    parent: &TaskHandle,
+    now: DateTime<Local>,
+    deadline: DateTime<Local>,
+) -> TaskHandle {
+    let mut attr = TaskAttr::with_identity(
+        &format!("繰返実体({}/{})", deadline.month(), deadline.day()),
+        Uuid::new_v4(),
+        now,
+    );
+    attr.set_start_time(deadline - Duration::hours(5));
+    attr.set_deadline_time_opt(Some(deadline)).unwrap();
+    attr.set_estimated_work_seconds(15 * 60);
+    attr.set_atomic(true);
+    parent.create_as_last_child(attr)
+}
+
+#[test]
+fn get_scheduleは3日周期を28日窓へ現在回を含む10回展開する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert_eq!(schedule.len(), 10);
+    assert_eq!(
+        schedule
+            .iter()
+            .filter(|segment| segment.actual_task_id() == Some(current.get_id().unwrap()))
+            .count(),
+        1
+    );
+    let deadlines = schedule
+        .iter()
+        .map(|segment| segment.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        deadlines.first().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 8, 11).unwrap())
+    );
+    assert_eq!(
+        deadlines.last().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 9, 7).unwrap())
+    );
+    assert!(!deadlines.contains(&NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()));
+}
+
+#[test]
+fn get_scheduleは窓内の7日連続実体回を全て起点に28日を毎日埋める() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 7, RepetitionAnchor::Deadline);
+    for offset in 1..7 {
+        append_repeating_occurrence(
+            &parent,
+            now,
+            Local
+                .with_ymd_and_hms(2026, 8, 11 + offset, 23, 0, 0)
+                .unwrap(),
+        );
+    }
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+    let dates = deadlines
+        .iter()
+        .map(|deadline| deadline.date_naive())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        schedule.iter().filter(|item| !item.is_projected()).count(),
+        7
+    );
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        21
+    );
+    assert_eq!(
+        dates,
+        (0..28)
+            .map(|offset| now.date_naive() + Duration::days(offset))
+            .collect::<HashSet<_>>()
+    );
+}
+
+#[test]
+fn get_scheduleは1日周期の複数実体回から同じdeadlineを重複投影しない() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 8, 12, 23, 0, 0).unwrap(),
+    );
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(schedule.len(), 28);
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        schedule.iter().filter(|item| !item.is_projected()).count(),
+        2
+    );
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        26
+    );
+}
+
+#[test]
+fn get_scheduleは同じlogical_dateでも異なるdeadline時刻の実体回と仮想回を保持する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    let actual_on_next_day = append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 8, 12, 22, 0, 0).unwrap(),
+    );
+    let current_id = current.get_id().unwrap();
+    let actual_on_next_day_id = actual_on_next_day.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let actual_ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<HashSet<_>>();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(
+        actual_ids,
+        HashSet::from([current_id, actual_on_next_day_id])
+    );
+    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 12, 22, 0, 0).unwrap()));
+    assert!(schedule.iter().any(|item| {
+        item.is_projected()
+            && item.task.deadline_time
+                == Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 0, 0).unwrap())
+    }));
+    assert_eq!(schedule.len(), 29);
+    assert_eq!(deadlines.len(), 29);
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        27
+    );
+}
+
+#[test]
+fn get_scheduleは窓より後の実体回で窓内の投影を抑止しない() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 9, 8, 23, 0, 0).unwrap(),
+    );
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let in_window = schedule
+        .iter()
+        .filter(|item| {
+            let date = item.task.deadline_time.unwrap().date_naive();
+            (now.date_naive()..now.date_naive() + Duration::days(28)).contains(&date)
+        })
+        .collect::<Vec<_>>();
+    let deadlines = in_window
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(in_window.len(), 28);
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        in_window.iter().filter(|item| item.is_projected()).count(),
+        27
+    );
+}
+
+#[test]
+fn get_scheduleの仮想回はcompletion基準でも現在期限から一定周期で展開する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Completion);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let deadlines = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .map(|segment| segment.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        deadlines,
+        (0..10)
+            .map(|index| NaiveDate::from_ymd_opt(2026, 8, 11).unwrap() + Duration::days(index * 3))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn get_scheduleの仮想回はsemantic_identityを持ちrepository_task_idを持たない() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    let current_id = current.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let ends = scheduled_end_by_occurrence(&schedule);
+
+    assert_eq!(ends.len(), 10);
+    assert_eq!(
+        schedule
+            .iter()
+            .filter_map(|item| item.actual_task_id())
+            .collect::<Vec<_>>(),
+        vec![current_id]
+    );
+    for projected in schedule.iter().filter(|item| item.is_projected()) {
+        assert_eq!(projected.actual_task_id(), None);
+        assert_eq!(projected.source_task_id(), parent_id);
+        assert!(serde_json::to_value(&projected.task)
+            .unwrap()
+            .get("id")
+            .is_none());
+        assert!(matches!(
+            projected.occurrence,
+            ScheduleOccurrenceKey::Projected { source_task_id, .. } if source_task_id == parent_id
+        ));
+    }
+}
+
+#[test]
+fn get_scheduleはfixed_atomic_days_in_advanceを仮想回へ反映する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    parent.set_fixed_start(true).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent.set_days_in_advance(2).unwrap();
+    parent.set_priority(42).unwrap();
+    parent
+        .set_project_category_opt(Some(ProjectCategory::Recovery))
+        .unwrap();
+    parent.set_estimated_work_seconds(1_234).unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let first_projected = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .find(|item| {
+            matches!(
+                item.occurrence,
+                ScheduleOccurrenceKey::Projected { source_task_id, deadline }
+                    if source_task_id == parent_id
+                        && deadline.date_naive() == NaiveDate::from_ymd_opt(2026, 8, 14).unwrap()
+            )
+        })
+        .unwrap();
+
+    assert!(first_projected.task.fixed_start);
+    assert!(first_projected.task.atomic);
+    assert_eq!(first_projected.task.priority, 42);
+    assert_eq!(
+        first_projected.task.project_category,
+        Some(ProjectCategory::Recovery)
+    );
+    assert_eq!(first_projected.task.estimated_work_seconds, 1_234);
+    assert_eq!(first_projected.task.actual_work_seconds, 0);
+    assert_eq!(first_projected.task.repetition_interval_days, Some(3));
+    assert_eq!(first_projected.task.days_in_advance, 2);
+    assert_eq!(
+        first_projected.task.repetition_start_time,
+        Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap())
+    );
+    assert_eq!(
+        first_projected.task.repetition_deadline_time,
+        Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap())
+    );
+    assert_eq!(
+        first_projected.task.start_time,
+        Local.with_ymd_and_hms(2026, 8, 12, 18, 0, 0).unwrap()
+    );
+    assert_eq!(
+        first_projected.scheduled_start,
+        first_projected.task.start_time
+    );
+}
+
+#[test]
+fn get_scheduleは期限が窓内なら混雑で窓外へ終了する仮想回も保持する() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 27, RepetitionAnchor::Deadline);
+    let parent_id = parent.get_id().unwrap();
+    parent.set_fixed_start(true).unwrap();
+    parent.set_estimated_work_seconds(2 * 24 * 60 * 60).unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let projected = get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .find(|item| item.is_projected())
+        .unwrap();
+
+    assert_eq!(projected.source_task_id(), parent_id);
+    assert_eq!(
+        projected.task.deadline_time.unwrap().date_naive(),
+        NaiveDate::from_ymd_opt(2026, 9, 7).unwrap()
+    );
+    assert!(projected.scheduled_end > Local.with_ymd_and_hms(2026, 9, 8, 6, 0, 0).unwrap());
+}
+
+#[test]
+fn get_scheduleは空の反復親から展開せず永続回と同じdeadlineを重複投影しない() {
+    let now = fixed_now();
+    let empty_parent = task_with_schedule("空", now, 15 * 60, 1);
+    empty_parent
+        .set_repetition_interval_days_opt(Some(3))
+        .unwrap();
+    let empty_repository = TestTaskRepository::new(vec![empty_parent], now);
+    assert!(get_schedule(&empty_repository).unwrap().is_empty());
+
+    let (parent, _) = repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Deadline);
+    let mut latest_attr = TaskAttr::with_identity("筋トレ(8/14)", Uuid::new_v4(), now);
+    latest_attr.set_start_time(now + Duration::days(3));
+    latest_attr
+        .set_deadline_time_opt(Some(Local.with_ymd_and_hms(2026, 8, 14, 23, 0, 0).unwrap()))
+        .unwrap();
+    latest_attr.set_estimated_work_seconds(15 * 60);
+    latest_attr.set_atomic(true);
+    let latest = parent.create_as_last_child(latest_attr);
+    let latest_id = latest.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert!(schedule
+        .iter()
+        .any(|item| item.actual_task_id() == Some(latest_id)));
+    assert!(!schedule.iter().any(|item| {
+        matches!(
+            item.occurrence,
+            ScheduleOccurrenceKey::Projected { deadline, .. }
+                if deadline.date_naive() == NaiveDate::from_ymd_opt(2026, 8, 14).unwrap()
+        )
+    }));
+}
+
+#[test]
+fn get_scheduleは古いfrontierから最初の窓内回まで一定時間で飛ばす() {
+    let now = fixed_now();
+    let parent = task_with_schedule("日課", now, 15 * 60, 1);
+    parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+    parent.set_atomic(true).unwrap();
+    parent
+        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
+        .unwrap();
+    parent
+        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap()))
+        .unwrap();
+    let old_deadline = Local.with_ymd_and_hms(2000, 1, 1, 23, 0, 0).unwrap();
+    let mut old_attr = TaskAttr::with_identity("日課(1/1)", Uuid::new_v4(), old_deadline);
+    old_attr.set_start_time(old_deadline - Duration::hours(1));
+    old_attr.set_deadline_time_opt(Some(old_deadline)).unwrap();
+    old_attr.set_estimated_work_seconds(15 * 60);
+    old_attr.set_atomic(true);
+    parent.create_as_last_child(old_attr);
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let projected_dates = schedule
+        .iter()
+        .filter(|item| item.is_projected())
+        .map(|item| item.task.deadline_time.unwrap().date_naive())
+        .collect::<Vec<_>>();
+
+    assert_eq!(projected_dates.len(), 28);
+    assert_eq!(
+        projected_dates.first().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 8, 11).unwrap())
+    );
+    assert_eq!(
+        projected_dates.last().copied(),
+        Some(NaiveDate::from_ymd_opt(2026, 9, 7).unwrap())
+    );
+}
+
+#[test]
+fn complete_task後はcompletion基準の新しい実体回から重複なく再展開する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 3, RepetitionAnchor::Completion);
+    let current_id = current.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent], now);
+    let finished_at = Local.with_ymd_and_hms(2026, 8, 12, 12, 0, 0).unwrap();
+    let mut next_id = || Uuid::new_v4();
+    let mut factory = TaskFactory::new(finished_at, &mut next_id);
+
+    let output = complete_task(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: current_id,
+            finished_at,
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+        &mut factory,
+    )
+    .unwrap();
+    let next_id = output.next_repetition_task_id.unwrap();
+    let schedule = get_schedule(&repository).unwrap();
+    let shifted_deadline = NaiveDate::from_ymd_opt(2026, 8, 15).unwrap();
+
+    assert_eq!(
+        schedule
+            .iter()
+            .filter(|item| item.task.deadline_time.unwrap().date_naive() == shifted_deadline)
+            .count(),
+        1
+    );
+    assert!(schedule
+        .iter()
+        .any(|item| item.actual_task_id() == Some(next_id)));
+    assert!(!schedule.iter().any(|item| {
+        matches!(
+            item.occurrence,
+            ScheduleOccurrenceKey::Projected { deadline, .. }
+                if deadline.date_naive() == shifted_deadline
+        )
+    }));
+}
+
 #[test]
 fn get_schedule_slackに余裕があればpriorityを優先しdoneを除外する() {
     let now = fixed_now();
@@ -116,18 +599,24 @@ fn get_schedule_slackに余裕があればpriorityを優先しdoneを除外す�
     let actual = get_schedule(&repository).unwrap();
 
     assert_eq!(actual.len(), 2);
-    assert_eq!(actual[0].task.id, high_priority_task.get_id().unwrap());
+    assert_eq!(
+        actual[0].actual_task_id(),
+        Some(high_priority_task.get_id().unwrap())
+    );
     assert_eq!(actual[0].task.name, "高優先度");
     assert_eq!(actual[0].scheduled_start, now);
     assert_eq!(actual[0].scheduled_end, now + Duration::minutes(30));
     assert_eq!(actual[0].scheduled_work_seconds, 30 * 60);
     assert_eq!(actual[0].total_work_seconds, 30 * 60);
     assert_eq!(actual[0].rank, 0);
-    assert_eq!(actual[1].task.id, deadline_task.get_id().unwrap());
+    assert_eq!(
+        actual[1].actual_task_id(),
+        Some(deadline_task.get_id().unwrap())
+    );
     assert_eq!(actual[1].scheduled_start, now + Duration::minutes(30));
     assert!(!actual
         .iter()
-        .any(|entry| entry.task.id == done_task.get_id().unwrap()));
+        .any(|entry| entry.actual_task_id() == Some(done_task.get_id().unwrap())));
     assert_eq!(repository.save_count(), 0);
     assert_eq!(
         repository
@@ -150,8 +639,8 @@ fn get_schedule_i64最小値付近でも優先度の高いtaskを先に配置す
 
     let actual = get_schedule(&repository).unwrap();
 
-    assert_eq!(actual[0].task.id, next.get_id().unwrap());
-    assert_eq!(actual[1].task.id, lowest.get_id().unwrap());
+    assert_eq!(actual[0].actual_task_id(), Some(next.get_id().unwrap()));
+    assert_eq!(actual[1].actual_task_id(), Some(lowest.get_id().unwrap()));
 }
 
 #[test]
@@ -259,11 +748,11 @@ fn get_schedule_pending解除後に子を配置し親をその後へ置く() {
     let actual = get_schedule(&repository).unwrap();
     let child_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == child.get_id().unwrap())
+        .find(|entry| entry.actual_task_id() == Some(child.get_id().unwrap()))
         .unwrap();
     let parent_schedule = actual
         .iter()
-        .find(|entry| entry.task.id == parent.get_id().unwrap())
+        .find(|entry| entry.actual_task_id() == Some(parent.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(
@@ -289,7 +778,7 @@ fn get_schedule_非atomic_taskを未来の高優先度taskの前後へ分割す�
     let actual = get_schedule(&repository).unwrap();
     let low_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == low_priority.get_id().unwrap())
+        .filter(|entry| entry.actual_task_id() == Some(low_priority.get_id().unwrap()))
         .collect::<Vec<_>>();
 
     assert_eq!(low_segments.len(), 2);
@@ -317,7 +806,7 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
     let actual = get_schedule(&repository).unwrap();
     let atomic_segments = actual
         .iter()
-        .filter(|entry| entry.task.id == atomic_task.get_id().unwrap())
+        .filter(|entry| entry.actual_task_id() == Some(atomic_task.get_id().unwrap()))
         .collect::<Vec<_>>();
 
     assert_eq!(atomic_segments.len(), 1);
@@ -337,7 +826,7 @@ fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する
     let scheduled = get_schedule(&repository).unwrap();
     let fixed_segment = scheduled
         .iter()
-        .find(|segment| segment.task.id == fixed.get_id().unwrap())
+        .find(|segment| segment.actual_task_id() == Some(fixed.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(fixed_segment.scheduled_start, fixed_start);
@@ -373,7 +862,7 @@ fn get_scheduleは反復親のfixed_startを生成用属性として予定から
     let schedule = get_schedule(&repository).unwrap();
     let child_schedule = schedule
         .iter()
-        .find(|segment| segment.task.id == child.get_id().unwrap())
+        .find(|segment| segment.actual_task_id() == Some(child.get_id().unwrap()))
         .unwrap();
 
     assert_eq!(child_schedule.first_available_time, child_start);
@@ -416,14 +905,17 @@ fn get_schedule_stops_at_repeating_task_boundary() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(!ids.contains(&root.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
             .unwrap()
             .rank,
         0
@@ -453,12 +945,12 @@ fn get_schedule_preserves_normal_ancestor_deadline_across_repeating_boundary() {
     let schedule = get_schedule(&repository).unwrap();
     let occurrence_schedule = schedule
         .iter()
-        .find(|item| item.task.id == occurrence.get_id().unwrap())
+        .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
         .unwrap();
     assert!(occurrence_schedule.scheduled_end <= ancestor_deadline);
     assert!(!schedule
         .iter()
-        .any(|item| item.task.id == root.get_id().unwrap()));
+        .any(|item| item.actual_task_id() == Some(root.get_id().unwrap())));
 }
 
 #[test]
@@ -477,7 +969,10 @@ fn get_schedule_excludes_common_ancestor_but_keeps_normal_sibling() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(ids.contains(&sibling.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
@@ -502,7 +997,10 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     let repository = TestTaskRepository::new(vec![root.clone()], now);
 
     let schedule = get_schedule(&repository).unwrap();
-    let ids = schedule.iter().map(|item| item.task.id).collect::<Vec<_>>();
+    let ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<Vec<_>>();
     assert!(ids.contains(&occurrence_child.get_id().unwrap()));
     assert!(ids.contains(&occurrence.get_id().unwrap()));
     assert!(!ids.contains(&repeating_task.get_id().unwrap()));
@@ -510,7 +1008,7 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence_child.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence_child.get_id().unwrap()))
             .unwrap()
             .rank,
         0
@@ -518,7 +1016,7 @@ fn get_schedule_keeps_normal_dependencies_below_repeating_task() {
     assert_eq!(
         schedule
             .iter()
-            .find(|item| item.task.id == occurrence.get_id().unwrap())
+            .find(|item| item.actual_task_id() == Some(occurrence.get_id().unwrap()))
             .unwrap()
             .rank,
         1
@@ -623,7 +1121,7 @@ fn get_scheduleはfixedで未使用のpending近傍時刻を加算せず指定wi
     let schedule = get_schedule(&repository).unwrap();
     let fixed = schedule
         .iter()
-        .find(|segment| segment.task.id == task_id)
+        .find(|segment| segment.actual_task_id() == Some(task_id))
         .unwrap();
 
     assert_eq!(fixed.scheduled_start, fixed_start);
@@ -648,7 +1146,7 @@ fn get_scheduleはfixedで未使用のdependency近傍時刻を加算せず指�
     let schedule = get_schedule(&repository).unwrap();
     let fixed = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(fixed.scheduled_start, fixed_start);
@@ -673,11 +1171,11 @@ fn get_scheduleはflexible祖先のdeadline補正と子から親の順序を維�
     let schedule = get_schedule(&repository).unwrap();
     let child_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == child_id)
+        .find(|segment| segment.actual_task_id() == Some(child_id))
         .unwrap();
     let parent_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(child_segment.scheduled_start, now);
@@ -705,11 +1203,11 @@ fn get_scheduleは祖先時刻の既存残秒式とcandidate残秒を区別す�
     let schedule = get_schedule(&repository).unwrap();
     let child_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == child_id)
+        .find(|segment| segment.actual_task_id() == Some(child_id))
         .unwrap();
     let parent_segment = schedule
         .iter()
-        .find(|segment| segment.task.id == parent_id)
+        .find(|segment| segment.actual_task_id() == Some(parent_id))
         .unwrap();
 
     assert_eq!(child_segment.first_available_time, now + Duration::hours(1));

@@ -125,6 +125,13 @@ fn duplicate_task_id_error(error: &TaskRepositoryError) -> &DuplicateTaskIdError
         .expect("repository error source must be DuplicateTaskIdError")
 }
 
+fn nil_task_id_error(error: &TaskRepositoryError) -> &NilTaskIdError {
+    error
+        .source()
+        .and_then(|source| source.downcast_ref::<NilTaskIdError>())
+        .expect("repository error source must be NilTaskIdError")
+}
+
 fn task_with_start_time(name: &str, start_time: DateTime<Local>) -> TaskHandle {
     let task = crate::test_support::new_task_handle(name).unwrap();
     task.set_start_time(start_time).unwrap();
@@ -214,6 +221,85 @@ fn test_start_new_project_taskをmemoryに登録する() {
             .unwrap(),
         "メモリ登録対象"
     );
+}
+
+#[test]
+fn test_start_new_project_nil_uuidのrootとchildを状態変更前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+
+    for (candidate, expected_path) in [
+        (
+            project_root_with_identity("nil root", Uuid::nil(), now),
+            "project",
+        ),
+        (
+            {
+                let root = project_root_with_identity("root", Uuid::from_u128(0x4101), now);
+                root.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
+                    "nil child",
+                    Uuid::nil(),
+                    now,
+                ));
+                root
+            },
+            "project.children[0]",
+        ),
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now).unwrap();
+
+        let error = repository.start_new_project(candidate).unwrap_err();
+
+        assert_eq!(
+            error,
+            ProjectRegistrationError::NilTaskId {
+                task_path: expected_path.to_string()
+            }
+        );
+        assert!(repository.get_all_projects().is_empty());
+        assert!(repository.get_by_id(Uuid::nil()).unwrap().is_none());
+        assert!(!storage_dir.path.exists());
+    }
+}
+
+#[test]
+fn test_save_登録後にnil_uuidへ変わったrootとchildをfilesystem変更前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+
+    for nil_child in [false, true] {
+        let storage_dir = TestStorageDir::new();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now).unwrap();
+        let mut root = project_root_with_identity("root", Uuid::new_v4(), now);
+        let mut child = root.create_as_last_child(crate::entity::task::TaskAttr::with_identity(
+            "child",
+            Uuid::new_v4(),
+            now,
+        ));
+        repository.start_new_project(root.clone()).unwrap();
+        if nil_child {
+            child.set_id(Uuid::nil()).unwrap();
+        } else {
+            root.set_id(Uuid::nil()).unwrap();
+        }
+
+        let error = repository.save().unwrap_err();
+
+        assert_eq!(
+            error.save_failure_disposition(),
+            Some(crate::application::interface::TaskRepositorySaveFailureDisposition::Retryable)
+        );
+        assert_eq!(
+            nil_task_id_error(&error).task_path(),
+            if nil_child {
+                "project.children[0]"
+            } else {
+                "project"
+            }
+        );
+        assert!(!storage_dir.path.exists());
+    }
 }
 
 #[test]
@@ -802,6 +888,49 @@ fn test_load_capturedはstrict_yaml_errorの実file_path診断をfilesystemと�
         assert_eq!(file.path, project_path);
         assert_eq!(file.source.kind(), std::io::ErrorKind::InvalidData);
         assert!(file.source.to_string().contains("project.children"));
+    }
+}
+
+#[test]
+fn test_load_nil_uuidのrootとchildをmemoryとfilesystem変更前に拒否する() {
+    let now = Local.with_ymd_and_hms(2026, 10, 4, 12, 0, 0).unwrap();
+    let existing_id = Uuid::from_u128(0x4110);
+
+    for (invalid_yaml, expected_path) in [
+        (
+            "project:\n  name: nil-root\n  id: 00000000-0000-0000-0000-000000000000\n",
+            "project.id",
+        ),
+        (
+            "project:\n  name: root\n  id: 00000000-0000-0000-0000-000000004111\n  children:\n    - name: nil-child\n      id: 00000000-0000-0000-0000-000000000000\n",
+            "project.children[0].id",
+        ),
+    ] {
+        let storage_dir = TestStorageDir::new();
+        let invalid_path = write_project_yaml(&storage_dir, "invalid", invalid_yaml);
+        let original_bytes = fs::read(&invalid_path).unwrap();
+        let mut repository = TaskRepository::new(storage_dir.path_str());
+        repository.sync_clock(now).unwrap();
+        repository
+            .start_new_project(project_root_with_identity("existing", existing_id, now))
+            .unwrap();
+
+        let error = repository.load().unwrap_err();
+
+        let file_error = file_repository_error(&error);
+        let conversion_error = file_error
+            .source
+            .get_ref()
+            .and_then(|source| source.downcast_ref::<YamlConversionError>())
+            .expect("io error source must be YamlConversionError");
+        assert_eq!(
+            conversion_error.to_string(),
+            format!("cannot convert project YAML to task: {expected_path}: must not be nil UUID")
+        );
+        assert_eq!(repository.get_all_projects().len(), 1);
+        assert!(repository.get_by_id(existing_id).unwrap().is_some());
+        assert!(repository.get_by_id(Uuid::nil()).unwrap().is_none());
+        assert_eq!(fs::read(&invalid_path).unwrap(), original_bytes);
     }
 }
 
