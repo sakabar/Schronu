@@ -845,20 +845,15 @@ button:disabled {
 .completed-task-table-scroll {
     width: 100%;
     min-width: 0;
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
+    overflow-x: visible;
     border: 1px solid var(--line);
     background: var(--surface);
 }
 
-.completed-task-table-scroll:focus-visible {
-    outline: 3px solid rgb(54 119 189 / 35%);
-    outline-offset: 2px;
-}
-
 .completed-task-table {
     width: 100%;
-    min-width: 48rem;
+    min-width: 0;
+    table-layout: fixed;
     border-collapse: collapse;
 }
 
@@ -870,13 +865,14 @@ button:disabled {
     white-space: normal;
 }
 
-.completed-task-table th {
+.completed-task-table thead th {
     background: var(--surface-muted);
     color: var(--muted);
     font-size: 0.68rem;
     letter-spacing: 0.04em;
 }
 
+.completed-task-table tbody tr:last-child th,
 .completed-task-table tbody tr:last-child td {
     border-bottom: 0;
 }
@@ -892,10 +888,56 @@ button:disabled {
     font-weight: 700;
 }
 
-.completed-project,
-.completed-task-name {
-    min-width: 10rem;
-    overflow-wrap: anywhere;
+.completed-task-table .completed-time {
+    width: 6rem;
+    min-width: 6rem;
+    text-align: right;
+}
+
+.completed-task-table .completed-actual {
+    width: 7.5rem;
+    min-width: 7.5rem;
+    text-align: right;
+}
+
+.completed-task-table .completed-difference {
+    width: 8.5rem;
+    min-width: 8.5rem;
+    text-align: right;
+}
+
+.completed-task-table .completed-subject {
+    min-width: 0;
+    overflow: hidden;
+    text-align: left;
+}
+
+.completed-subject-scroll {
+    min-width: 0;
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-inline: contain;
+    white-space: nowrap;
+    scrollbar-width: thin;
+    touch-action: pan-x pan-y pinch-zoom;
+}
+
+.completed-subject-scroll:focus-visible {
+    outline: 3px solid rgb(54 119 189 / 35%);
+    outline-offset: -3px;
+}
+
+.completed-task-name,
+.completed-project {
+    display: block;
+}
+
+.completed-project {
+    margin-top: 0.15rem;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 400;
 }
 
 .task-table-scroll {
@@ -1614,6 +1656,33 @@ button:disabled {
     .tab-button {
         min-height: 40px;
         padding: 0.4rem 0.35rem;
+    }
+
+    .completed-task-table th,
+    .completed-task-table td {
+        padding: 0.55rem 0.2rem;
+        font-size: 0.7rem;
+        line-height: 1.25;
+    }
+
+    .completed-task-table .completed-time {
+        width: 18%;
+        min-width: 0;
+    }
+
+    .completed-task-table .completed-actual {
+        width: 25%;
+        min-width: 0;
+    }
+
+    .completed-task-table .completed-difference {
+        width: 28%;
+        min-width: 0;
+    }
+
+    .completed-task-table .completed-subject {
+        width: 29%;
+        min-width: 0;
     }
 
     .routine-load-table th,

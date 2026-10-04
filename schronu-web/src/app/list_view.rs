@@ -416,15 +416,14 @@ fn CompletedTaskTable(
             if let Some(summary) = summary {
                 CompletedReportSummaryView { summary }
             }
-            div { class: "completed-task-table-scroll", tabindex: 0,
+            div { class: "completed-task-table-scroll",
                 table { class: "completed-task-table",
                     thead {
                         tr {
-                            th { scope: "col", "完了" }
-                            th { scope: "col", "実績" }
-                            th { scope: "col", "差" }
-                            th { scope: "col", "Project" }
-                            th { scope: "col", "タスク" }
+                            th { class: "completed-time", scope: "col", "完了" }
+                            th { class: "completed-actual", scope: "col", "実績" }
+                            th { class: "completed-difference", scope: "col", "差" }
+                            th { class: "completed-subject", scope: "col", "タスク / Project" }
                         }
                     }
                     tbody {
@@ -494,17 +493,21 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
     };
     rsx! {
         tr { key: "{row.task_id}",
-            td { class: "completed-number",
+            td { class: "completed-time completed-number",
                 time {
                     datetime: completed_datetime,
                     aria_label: format!("完了時刻 {completed_time}"),
                     "{completed_time}"
                 }
             }
-            td { class: "completed-number", "{actual}" }
+            td { class: "completed-actual completed-number", "{actual}" }
             td { class: difference_class, aria_label: format!("実績と見積の差 {difference_label}"), "{difference_label}" }
-            td { class: "completed-project", "{row.project_name}" }
-            td { class: "completed-task-name", "{row.task_name}" }
+            th { class: "completed-subject", scope: "row",
+                div { class: "completed-subject-scroll", tabindex: 0,
+                    strong { class: "completed-task-name", "{row.task_name}" }
+                    span { class: "completed-project", "{row.project_name}" }
+                }
+            }
         }
     }
 }

@@ -368,7 +368,7 @@ fn session_progressは見積も100_percent位置に常時表示の境界線を�
 }
 
 #[test]
-fn 完了表だけが狭幅で横scrollしmode選択は均等幅になる() {
+fn 完了表は狭幅へ収まりtaskとprojectのcellだけが横scrollする() {
     let list_screen = block_body(MAIN_CSS, ".list-screen");
     assert!(list_screen.contains("display: grid;"));
     assert!(list_screen.contains("min-width: 0;"));
@@ -379,11 +379,58 @@ fn 完了表だけが狭幅で横scrollしmode選択は均等幅になる() {
     let scroll = block_body(MAIN_CSS, ".completed-task-table-scroll");
     assert!(scroll.contains("width: 100%;"));
     assert!(scroll.contains("min-width: 0;"));
-    assert!(scroll.contains("overflow-x: auto;"));
+    assert!(scroll.contains("overflow-x: visible;"));
+    assert!(!scroll.contains("overflow-x: auto;"));
 
     let table = block_body(MAIN_CSS, ".completed-task-table {");
     assert!(table.contains("width: 100%;"));
-    assert!(table.contains("min-width: 48rem;"));
+    assert!(table.contains("min-width: 0;"));
+    assert!(table.contains("table-layout: fixed;"));
+
+    let subject = block_body(MAIN_CSS, ".completed-task-table .completed-subject");
+    assert!(subject.contains("min-width: 0;"));
+    assert!(subject.contains("overflow: hidden;"));
+    assert!(subject.contains("text-align: left;"));
+
+    let subject_scroll = block_body(MAIN_CSS, ".completed-subject-scroll");
+    for contract in [
+        "min-width: 0;",
+        "width: 100%;",
+        "overflow-x: auto;",
+        "overflow-y: hidden;",
+        "overscroll-behavior-inline: contain;",
+        "white-space: nowrap;",
+        "scrollbar-width: thin;",
+        "touch-action: pan-x pan-y pinch-zoom;",
+    ] {
+        assert!(
+            subject_scroll.contains(contract),
+            "missing {contract}: {subject_scroll}"
+        );
+    }
+    let subject_focus = block_body(MAIN_CSS, ".completed-subject-scroll:focus-visible");
+    assert!(subject_focus.contains("outline:"));
+
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    for (selector, width) in [
+        (".completed-time", "18%"),
+        (".completed-actual", "25%"),
+        (".completed-difference", "28%"),
+        (".completed-subject", "29%"),
+    ] {
+        let column = block_body(narrow, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(column.contains("min-width: 0;"), "{selector}: {column}");
+    }
+    let narrow_cells = block_body(
+        narrow,
+        ".completed-task-table th,\n    .completed-task-table td",
+    );
+    assert!(narrow_cells.contains("padding: 0.55rem 0.2rem;"));
+    assert!(narrow_cells.contains("font-size: 0.7rem;"));
 
     let summary = block_body(MAIN_CSS, ".completed-report-summary");
     assert!(summary.contains("display: grid;"));

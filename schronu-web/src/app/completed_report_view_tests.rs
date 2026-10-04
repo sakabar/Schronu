@@ -92,6 +92,22 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("task-defer"), "{html}");
     assert!(!html.contains("<th scope=\"col\">見積</th>"), "{html}");
     assert!(!html.contains(">99:59:59</td>"), "{html}");
+    assert!(
+        html.contains("<th class=\"completed-subject\" scope=\"col\">タスク / Project</th>"),
+        "{html}"
+    );
+    assert!(!html.contains("<th scope=\"col\">Project</th>"), "{html}");
+    assert!(!html.contains("<th scope=\"col\">タスク</th>"), "{html}");
+    assert!(
+        html.contains(concat!(
+            "<th class=\"completed-subject\" scope=\"row\">",
+            "<div class=\"completed-subject-scroll\" tabindex=0>",
+            "<strong class=\"completed-task-name\">設計を仕上げる</strong>",
+            "<span class=\"completed-project\">Schronu</span>",
+            "</div></th>"
+        )),
+        "{html}"
+    );
     assert!(html.contains("completed-task-table-scroll"), "{html}");
     assert!(html.contains("<time"), "{html}");
     let expected_local_time = Local
