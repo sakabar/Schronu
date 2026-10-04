@@ -170,7 +170,17 @@ fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
     );
 
     let css = include_str!("../../assets/main.css");
+    assert!(css.contains("--blue-dark: #255d99;"));
+    assert!(css.contains(".completed-difference.is-overrun {\n    color: var(--red);"));
     assert!(css.contains(".completed-difference.is-underrun {\n    color: var(--blue-dark);"));
+    let zero_rule = css
+        .split_once(".completed-task-table .completed-difference {")
+        .expect("zero variance base rule")
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert!(!zero_rule.contains("color:"), "{zero_rule}");
 }
 
 #[test]
