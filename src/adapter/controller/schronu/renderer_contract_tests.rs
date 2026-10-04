@@ -20,7 +20,8 @@ use uuid::Uuid;
 fn routine_load_displayは共通集計値を固定列で描画する() {
     let display = DisplayModel::RoutineLoad(RoutineLoadReport {
         start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        horizon_day_count: 28,
         rows: vec![
             RoutineLoadRow {
                 project_task_id: Uuid::from_u128(1),
@@ -30,8 +31,6 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 repetition_interval_days: 7,
                 total_work_seconds: 4 * 60 * 60 + 20 * 60,
                 occurrence_day_count: 4,
-                peak_date: NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(),
-                peak_work_seconds: 80 * 60,
             },
             RoutineLoadRow {
                 project_task_id: Uuid::from_u128(3),
@@ -41,8 +40,6 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 repetition_interval_days: 30,
                 total_work_seconds: 123 * 60 * 60 + 45 * 60,
                 occurrence_day_count: 28,
-                peak_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
-                peak_work_seconds: 100 * 60 * 60,
             },
         ],
     });
@@ -52,7 +49,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
 
     assert_eq!(
         writer.operations[0],
-        "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)"
+        "newline:今日から27日後までの繰返負荷 (2026-10-03〜2026-10-30)"
     );
     let lines = writer.operations[1..]
         .iter()
@@ -61,17 +58,17 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
     let cells = [
         [
             "間隔",
-            "8日合計",
+            "28日合計",
             "発生日数",
-            "最大日",
+            "1日平均",
             "プロジェクト / 繰返",
         ],
-        ["7日", "04:20", "4日", "10/04 01:20", "生活 / 週次家事"],
+        ["7日", "04:20", "4日", "01:05", "生活 / 週次家事"],
         [
             "30日",
             "123:45",
             "28日",
-            "10/30 100:00",
+            "04:25",
             "非常に長いプロジェクト名 / 月次レビュー",
         ],
     ];
@@ -102,7 +99,8 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
 fn routine_load_displayは空reportでも見出し幅と二空白区切りを使う() {
     let display = DisplayModel::RoutineLoad(RoutineLoadReport {
         start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
-        end_date: NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        horizon_day_count: 28,
         rows: vec![],
     });
     let mut writer = TraceWriter::default();
@@ -112,10 +110,62 @@ fn routine_load_displayは空reportでも見出し幅と二空白区切りを使
     assert_eq!(
         writer.operations,
         [
-            "newline:今日から7日後までの繰返負荷 (2026-10-03〜2026-10-10)",
-            "newline:間隔  8日合計  発生日数  最大日  プロジェクト / 繰返",
+            "newline:今日から27日後までの繰返負荷 (2026-10-03〜2026-10-30)",
+            "newline:間隔  28日合計  発生日数  1日平均  プロジェクト / 繰返",
         ]
     );
+}
+
+#[test]
+fn routine_load_displayは発生日数zeroの平均をplaceholderにする() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        horizon_day_count: 28,
+        rows: vec![RoutineLoadRow {
+            project_task_id: Uuid::from_u128(1),
+            project_name: "生活".to_owned(),
+            routine_task_id: Uuid::from_u128(2),
+            routine_name: "不正fixture".to_owned(),
+            repetition_interval_days: 7,
+            total_work_seconds: 60,
+            occurrence_day_count: 0,
+        }],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    assert!(writer.operations.iter().any(|line| line.contains("--:--")));
+}
+
+#[test]
+fn routine_load_displayは1日平均の1分未満を切り捨てる() {
+    let display = DisplayModel::RoutineLoad(RoutineLoadReport {
+        start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+        end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+        horizon_day_count: 28,
+        rows: vec![RoutineLoadRow {
+            project_task_id: Uuid::from_u128(1),
+            project_name: "生活".to_owned(),
+            routine_task_id: Uuid::from_u128(2),
+            routine_name: "端数のある繰返".to_owned(),
+            repetition_interval_days: 1,
+            total_work_seconds: 11 * 60,
+            occurrence_day_count: 3,
+        }],
+    });
+    let mut writer = TraceWriter::default();
+
+    render_display_model(&mut writer, &display).unwrap();
+
+    let row = writer
+        .operations
+        .iter()
+        .find(|line| line.contains("端数のある繰返"))
+        .unwrap();
+    assert!(row.contains("00:03"), "{row}");
+    assert!(!row.contains("00:04"), "{row}");
 }
 
 #[test]

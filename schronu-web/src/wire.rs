@@ -35,14 +35,20 @@ pub struct RoutineLoadRow {
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
     pub occurrence_day_count: usize,
-    pub peak_date: String,
-    pub peak_work_seconds: i64,
+}
+
+impl RoutineLoadRow {
+    pub fn average_work_seconds(&self) -> Option<i64> {
+        let occurrence_day_count = i64::try_from(self.occurrence_day_count).ok()?;
+        self.total_work_seconds.checked_div(occurrence_day_count)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadReport {
     pub start_date: String,
     pub end_date: String,
+    pub horizon_day_count: u64,
     pub rows: Vec<RoutineLoadRow>,
 }
 
@@ -315,6 +321,21 @@ mod all_task_contract_tests {
             serde_json::from_str(&serde_json::to_string(&page).unwrap()).unwrap();
         assert_eq!(decoded, page);
         assert_eq!(web_error_codes::INVALID_CURSOR, "invalid_cursor");
+    }
+
+    #[test]
+    fn routine_load_averageは発生日数zeroで値を返さない() {
+        let row = RoutineLoadRow {
+            project_task_id: "project".to_owned(),
+            project_name: "生活".to_owned(),
+            routine_task_id: "routine".to_owned(),
+            routine_name: "繰返".to_owned(),
+            repetition_interval_days: 7,
+            total_work_seconds: 60,
+            occurrence_day_count: 0,
+        };
+
+        assert_eq!(row.average_work_seconds(), None);
     }
 }
 

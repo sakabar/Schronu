@@ -215,18 +215,28 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                 rows: vec![band_day("2026-10-03", 0)],
                 routine_load_report: Some(RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-10".to_owned(),
-                    rows: vec![RoutineLoadRow {
-                        project_task_id: "project-1".to_owned(),
-                        project_name: "健康".to_owned(),
-                        routine_task_id: "routine-1".to_owned(),
-                        routine_name: "運動".to_owned(),
-                        repetition_interval_days: 2,
-                        total_work_seconds: 28 * 60 * 60,
-                        occurrence_day_count: 14,
-                        peak_date: "2026-10-04".to_owned(),
-                        peak_work_seconds: 3 * 60 * 60,
-                    }],
+                    end_date: "2026-10-30".to_owned(),
+                    horizon_day_count: 28,
+                    rows: vec![
+                        RoutineLoadRow {
+                            project_task_id: "project-1".to_owned(),
+                            project_name: "健康".to_owned(),
+                            routine_task_id: "routine-1".to_owned(),
+                            routine_name: "運動".to_owned(),
+                            repetition_interval_days: 2,
+                            total_work_seconds: 28 * 60 * 60,
+                            occurrence_day_count: 14,
+                        },
+                        RoutineLoadRow {
+                            project_task_id: "project-2".to_owned(),
+                            project_name: "生活".to_owned(),
+                            routine_task_id: "routine-2".to_owned(),
+                            routine_name: "端数のある繰返".to_owned(),
+                            repetition_interval_days: 1,
+                            total_work_seconds: 11 * 60,
+                            occurrence_day_count: 3,
+                        },
+                    ],
                 }),
                 observed_at_epoch_ms: None,
                 loading: false,
@@ -264,15 +274,15 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let routine_html = dioxus::ssr::render(&dom);
 
     assert!(
-        routine_html.contains("今日から7日後までの繰返負荷"),
+        routine_html.contains("今日から27日後までの繰返負荷"),
         "{routine_html}"
     );
-    assert!(routine_html.contains("10/3〜10/10"), "{routine_html}");
+    assert!(routine_html.contains("10/3〜10/30"), "{routine_html}");
     for (class, heading) in [
         ("routine-load-interval", "間隔"),
-        ("routine-load-total", "8日合計"),
+        ("routine-load-total", "28日合計"),
         ("routine-load-occurrences", "発生日数"),
-        ("routine-load-peak", "最大日"),
+        ("routine-load-average", "1日平均"),
         ("routine-load-subject", "プロジェクト / 繰返"),
     ] {
         assert!(
@@ -286,9 +296,9 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
         ..routine_html.find("</thead>").unwrap()];
     let heading_positions = [
         "間隔",
-        "8日合計",
+        "28日合計",
         "発生日数",
-        "最大日",
+        "1日平均",
         "プロジェクト / 繰返",
     ]
     .map(|heading| table_header.find(heading).unwrap());
@@ -298,7 +308,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     );
     let table_body = &routine_html[routine_html.find("<tbody>").unwrap()
         ..routine_html.find("</tbody>").unwrap()];
-    let value_positions = ["2日", "28:00", "14日", "10/4 03:00", "運動"]
+    let value_positions = ["2日", "28:00", "14日", "02:00", "運動"]
         .map(|value| table_body.find(value).unwrap());
     assert!(
         value_positions.windows(2).all(|pair| pair[0] < pair[1]),
@@ -308,14 +318,21 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
         "<td class=\"routine-load-interval\">2日</td>",
         "<td class=\"routine-load-total routine-load-number\">28:00</td>",
         "<td class=\"routine-load-occurrences routine-load-number\">14日</td>",
-        "<td class=\"routine-load-peak\">10/4 03:00</td>",
-        "<th class=\"routine-load-subject\" scope=\"row\"><div class=\"routine-load-subject-scroll\" tabindex=0><strong class=\"routine-load-name\">運動</strong><span class=\"routine-load-project\">健康</span></div></th>",
+        "<td class=\"routine-load-average routine-load-number\">02:00</td>",
+        "<th class=\"routine-load-subject\" scope=\"row\"><div class=\"routine-load-subject-scroll\" tabindex=0><strong class=\"routine-load-name task-kind-repetitive\">運動</strong><span class=\"routine-load-project\">健康</span></div></th>",
     ] {
         assert!(table_body.contains(cell), "missing {cell}: {table_body}");
     }
-    for value in ["運動", "健康", "2日", "28:00", "14日", "10/4 03:00"] {
+    for value in ["運動", "健康", "2日", "28:00", "14日", "02:00"] {
         assert!(routine_html.contains(value), "missing {value}: {routine_html}");
     }
+    assert!(
+        table_body.contains(
+            "<td class=\"routine-load-average routine-load-number\">00:03</td>"
+        ),
+        "{table_body}"
+    );
+    assert!(!table_body.contains("00:04"), "{table_body}");
     assert!(!routine_html.contains("週平均"), "{routine_html}");
     assert!(!routine_html.contains("routine-load-weekly"), "{routine_html}");
     assert!(!table_body.contains("日ごと"), "{table_body}");
@@ -373,7 +390,8 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
                 rows: Vec::new(),
                 routine_load_report: Some(RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-10".to_owned(),
+                    end_date: "2026-10-05".to_owned(),
+                    horizon_day_count: 3,
                     rows: Vec::new(),
                 }),
                 observed_at_epoch_ms: None,
@@ -392,15 +410,16 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         "{daily_empty_html}"
     );
     assert!(
-        !daily_empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
+        !daily_empty_html.contains("今日から2日後までに発生する繰返負荷はありません。"),
         "{daily_empty_html}"
     );
     dispatch_click(&empty_dom, empty_click_ids[2]);
     empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
-    assert!(empty_html.contains("10/3〜10/10"), "{empty_html}");
+    assert!(empty_html.contains("今日から2日後までの繰返負荷"), "{empty_html}");
+    assert!(empty_html.contains("10/3〜10/5"), "{empty_html}");
     assert!(
-        empty_html.contains("今日から7日後までに発生する繰返負荷はありません。"),
+        empty_html.contains("今日から2日後までに発生する繰返負荷はありません。"),
         "{empty_html}"
     );
 }
@@ -1016,7 +1035,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
 }
 
 #[test]
-fn 負荷取得は7日帯と8日繰返負荷を同時に置換する() {
+fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     let request_id = match state.request_load_band() {
@@ -1031,7 +1050,8 @@ fn 負荷取得は7日帯と8日繰返負荷を同時に置換する() {
                 band_days: vec![band_day("2026-10-03", 1)],
                 routine_load: RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
-                    end_date: "2026-10-10".to_owned(),
+                    end_date: "2026-10-30".to_owned(),
+                    horizon_day_count: 28,
                     rows: vec![RoutineLoadRow {
                         project_task_id: "project".to_owned(),
                         project_name: "生活".to_owned(),
@@ -1040,8 +1060,6 @@ fn 負荷取得は7日帯と8日繰返負荷を同時に置換する() {
                         repetition_interval_days: 1,
                         total_work_seconds: 3_600,
                         occurrence_day_count: 4,
-                        peak_date: "2026-10-03".to_owned(),
-                        peak_work_seconds: 1_800,
                     }],
                 },
             },
@@ -1139,7 +1157,8 @@ fn load_data(band_days: Vec<BandDay>) -> LoadData {
         band_days,
         routine_load: RoutineLoadReport {
             start_date: "2026-09-27".to_owned(),
-            end_date: "2026-10-04".to_owned(),
+            end_date: "2026-10-24".to_owned(),
+            horizon_day_count: 28,
             rows: Vec::new(),
         },
     }

@@ -38,6 +38,7 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
     Ok(RoutineLoadReportDto {
         start_date: report.start_date,
         end_date: report.end_date,
+        horizon_day_count: report.horizon_day_count,
         rows: report
             .rows
             .into_iter()
@@ -49,8 +50,6 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
                 repetition_interval_days: row.repetition_interval_days,
                 total_work_seconds: row.total_work_seconds,
                 occurrence_day_count: row.occurrence_day_count,
-                peak_date: row.peak_date,
-                peak_work_seconds: row.peak_work_seconds,
             })
             .collect(),
     })

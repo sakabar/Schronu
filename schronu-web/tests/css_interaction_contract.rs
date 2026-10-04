@@ -146,7 +146,7 @@ fn routine_load_table_scrolls_only_the_subject_column() {
         (".routine-load-interval", "6rem"),
         (".routine-load-total", "6.5rem"),
         (".routine-load-occurrences", "6.5rem"),
-        (".routine-load-peak", "8.5rem"),
+        (".routine-load-average", "6.5rem"),
     ] {
         let column = block_body(MAIN_CSS, selector);
         assert!(
@@ -192,8 +192,8 @@ fn routine_load_table_scrolls_only_the_subject_column() {
         (".routine-load-interval", "11%"),
         (".routine-load-total", "15%"),
         (".routine-load-occurrences", "14%"),
-        (".routine-load-peak", "18%"),
-        (".routine-load-subject", "42%"),
+        (".routine-load-average", "15%"),
+        (".routine-load-subject", "45%"),
     ] {
         let column = block_body(narrow, selector);
         assert!(
@@ -214,10 +214,8 @@ fn routine_load_table_scrolls_only_the_subject_column() {
     assert!(narrow_cells.contains("overflow-wrap: anywhere;"));
     assert!(!MAIN_CSS.contains(".routine-load-weekly"));
 
-    let peak_column = block_body(MAIN_CSS, ".routine-load-table .routine-load-peak {");
-    assert!(!peak_column.contains("color:"));
-    let peak_value = block_body(MAIN_CSS, ".routine-load-table tbody .routine-load-peak {");
-    assert!(peak_value.contains("color: var(--red);"));
+    assert!(!MAIN_CSS.contains("routine-load-peak"));
+    assert!(MAIN_CSS.contains(".task-kind-repetitive {\n    color: var(--task-repetitive);"));
 }
 
 #[test]

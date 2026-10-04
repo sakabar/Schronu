@@ -347,8 +347,6 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             repetition_interval_days: row.repetition_interval_days,
             total_work_seconds: row.total_work_seconds,
             occurrence_day_count: row.occurrence_day_count,
-            peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
-            peak_work_seconds: row.peak_work_seconds,
         }
     }
 }
@@ -358,6 +356,7 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
         Self {
             start_date: report.start_date.format("%Y-%m-%d").to_string(),
             end_date: report.end_date.format("%Y-%m-%d").to_string(),
+            horizon_day_count: report.horizon_day_count,
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
     }
