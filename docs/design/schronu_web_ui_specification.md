@@ -246,7 +246,7 @@ RoutineLoadRow {
 
 `segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。`display_task_name`はapplication層がCLIと同じ共通関数で生成し、`total_work_seconds > scheduled_work_seconds`の場合だけ、両秒数を個別に分へ切り上げた`<segment分/total分>`を正規task名へ直結する。日付別・全件のclientはこの表示名を再計算・再整形せず共通`ListRowViewModel`へ投影し、task名cellとそのARIA labelだけに使用する。検索、セッション保存、先送り確認、操作labelはprefixを含まない`task.task_name`を使用する。旧保存payloadで`display_task_name`が欠落する場合だけ正規task名へfallbackし、clientで分割表示を再生成しない。保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
 
-日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`予定`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskの操作可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
+日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`見込み`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskの操作可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 
@@ -334,7 +334,7 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 - 入力: `logical_date: YYYY-MM-DD`
 - 成功出力: `WebSuccess<CompletedTaskReport>`
 - 指定logical dateの06:00から翌日06:00未満に完了したtaskを完了時刻昇順で返す。
-- 実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日がserver観測時刻のlogical dateなら06:00から`min(server観測時刻, 日次終端)`まで、それ以外は06:00から日次終端までの`busy_time_slot`を除いた利用可能秒数を返す。実績合計をこの利用可能秒数で割って四捨五入した整数%を返し、利用可能時間0秒では記録率を`None`、100%超過は上限なしとする。
+- 完了taskの実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日がserver観測時刻のlogical dateなら、当日のschedule segmentを持つTodo/Pendingの実taskをUUIDで重複排除し、生の`actual_work_seconds`合計を`in_progress_actual_work_seconds: Some`で返す。過去日と明示した未来日は`None`とする。完了実績と進行中実績の合計を`total_actual_work_seconds`とする。選択日が現在logical dateなら06:00から`min(server観測時刻, 日次終端)`まで、それ以外は06:00から日次終端までの`busy_time_slot`を除いた利用可能秒数を返す。実績合計をこの利用可能秒数で割って四捨五入した整数%を返し、利用可能時間0秒では記録率を`None`、100%超過は上限なしとする。
 - task dataは変更しない。
 
 ### 4.4 `list_all_tasks(cursor)`
@@ -697,7 +697,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
-- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
+- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に現在logical dateの進行中実績、選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。`in_progress_actual_work_seconds`が`None`の過去日と未来日では「進行中」を生成しない。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
 - 完了一覧は`完了、実績、予実差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、予実差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。予実差の正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)とし、色を符号の代替にしない。見積値はrowに保持して予実差の計算へ使用するが、表へは表示しない。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の先頭3列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、狭幅のpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
@@ -926,6 +926,7 @@ OperationHistoryEntry {
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
 - 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差と赤・青・muted色、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
+- 現在logical dateの完了集計は、Todo/Pending、同一taskの複数segment、実績0秒、予定外task、overflowをapplication testで確認する。CLI/Webでは「進行中」の秒精度表示と、過去・未来日での非表示を確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 分割task表示はapplication層の共通関数で分割判定、秒から分への切り上げ、`<segment分/total分>task名`の生成を固定する。日付別・全件のserver rowが生成済み表示名を運び、clientが無加工で表示すること、旧payloadは正規task名へfallbackすること、検索・セッション・先送り操作は正規task名を維持することをcontract testで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。

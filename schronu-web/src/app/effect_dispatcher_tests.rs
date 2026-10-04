@@ -364,6 +364,7 @@ impl WebGateway for FakeGateway {
             snapshot: snapshot(),
             data: CompletedTaskReport {
                 rows: Vec::new(),
+                in_progress_actual_work_seconds: None,
                 total_actual_work_seconds: 0,
                 available_seconds: 0,
                 recorded_percentage: None,

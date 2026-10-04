@@ -224,6 +224,8 @@ pub struct CompletedTaskRow {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompletedTaskReport {
     pub rows: Vec<CompletedTaskRow>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_progress_actual_work_seconds: Option<i64>,
     pub total_actual_work_seconds: i64,
     pub available_seconds: i64,
     pub recorded_percentage: Option<i64>,

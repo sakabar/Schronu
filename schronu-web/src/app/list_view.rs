@@ -266,6 +266,7 @@ pub fn CompletedListView(
 ) -> Element {
     let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
     let summary = report.as_ref().map(|report| CompletedReportSummary {
+        in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
         total_actual_work_seconds: report.total_actual_work_seconds,
         available_seconds: report.available_seconds,
         recorded_percentage: report.recorded_percentage,
@@ -441,6 +442,7 @@ fn CompletedTaskTable(
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CompletedReportSummary {
+    in_progress_actual_work_seconds: Option<i64>,
     total_actual_work_seconds: i64,
     available_seconds: i64,
     recorded_percentage: Option<i64>,
@@ -448,6 +450,9 @@ struct CompletedReportSummary {
 
 #[component]
 fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
+    let in_progress = summary
+        .in_progress_actual_work_seconds
+        .map(|seconds| format_hh_mm_ss(i128::from(seconds)));
     let total_actual = format_hh_mm_ss(i128::from(summary.total_actual_work_seconds));
     let available = format_hh_mm_ss(i128::from(summary.available_seconds));
     let recorded_percentage = summary
@@ -455,6 +460,12 @@ fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
         .map_or_else(|| "--".to_owned(), |percentage| format!("{percentage}%"));
     rsx! {
         dl { class: "completed-report-summary", aria_label: "完了日の集計",
+            if let Some(in_progress) = in_progress {
+                div { class: "completed-report-summary-item",
+                    dt { "進行中" }
+                    dd { "{in_progress}" }
+                }
+            }
             div { class: "completed-report-summary-item",
                 dt { "実績合計" }
                 dd { "{total_actual}" }
@@ -699,7 +710,7 @@ fn TaskRow(
                     class: "task-name-scroll",
                     tabindex: 0,
                     if is_projected {
-                        span { class: "projected-task-badge", "予定" }
+                        span { class: "projected-task-badge", "見込み" }
                     }
                     "{row.display_task_name}"
                     if let Some(source_task_id) = source_task_id.as_deref() {
