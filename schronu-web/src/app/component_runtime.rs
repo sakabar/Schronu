@@ -446,6 +446,10 @@ impl ComponentOrchestrator {
                     ListMode::Completed => StoredActiveList::Completed {
                         logical_date: logical_date.to_owned(),
                         rows: state.completed_rows().to_vec(),
+                        in_progress_actual_work_seconds: state
+                            .completed_report()
+                            .expect("active completed list has a report")
+                            .in_progress_actual_work_seconds,
                         total_actual_work_seconds: state
                             .completed_report()
                             .expect("active completed list has a report")

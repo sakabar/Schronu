@@ -122,6 +122,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     ];
 
     let rows = build_scheduled_task_rows(&repository, &schedule, date, day_start).unwrap();
+    let all_rows = build_all_task_rows(&repository, &schedule, day_start).unwrap();
 
     assert_eq!(rows.len(), 3);
     assert_eq!(
@@ -139,6 +140,25 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     assert_eq!(
         rows[0].schedule_start_epoch_ms,
         rows[1].schedule_start_epoch_ms
+    );
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.display_task_name.as_str())
+            .collect::<Vec<_>>(),
+        ["second", "<5/20>first", "<10/20>first"]
+    );
+    assert_eq!(
+        all_rows
+            .iter()
+            .map(|row| row.display_task_name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "<1/20>first",
+            "<10/20>first",
+            "second",
+            "<5/20>first",
+            "<5/20>first",
+        ]
     );
 }
 

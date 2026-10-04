@@ -255,6 +255,7 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
     fn from(row: ScheduledTaskRowDto) -> Self {
         Self {
             task: row.task.into(),
+            display_task_name: Some(row.display_task_name),
             occurrence: row.occurrence.into(),
             schedule_start_epoch_ms: row.schedule_start_epoch_ms,
             schedule_end_epoch_ms: row.schedule_end_epoch_ms,
@@ -282,6 +283,7 @@ impl From<AllTaskRowDto> for AllTaskRow {
     fn from(row: AllTaskRowDto) -> Self {
         Self {
             task: row.task.into(),
+            display_task_name: Some(row.display_task_name),
             occurrence: row.occurrence.into(),
             segment_index: row.segment_index,
             schedule_date: row.schedule_date,
@@ -313,6 +315,7 @@ impl From<CompletedTaskReportDto> for CompletedTaskReport {
     fn from(report: CompletedTaskReportDto) -> Self {
         Self {
             rows: report.rows.into_iter().map(Into::into).collect(),
+            in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
             total_actual_work_seconds: report.total_actual_work_seconds,
             available_seconds: report.available_seconds,
             recorded_percentage: report.recorded_percentage,
@@ -549,6 +552,10 @@ mod tests {
         let row = &all.data.rows[0];
         assert_eq!(row.task.task_id, Some(task_id.hyphenated().to_string()));
         assert_eq!(row.task.task_name, "environment all task");
+        assert_eq!(
+            row.display_task_name.as_deref(),
+            Some("environment all task")
+        );
         assert_eq!(row.task.estimated_work_seconds, 600);
         assert_eq!(row.task.actual_work_seconds, 60);
         assert_eq!(row.segment_index, 0);
