@@ -142,7 +142,7 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
 }
 
 #[test]
-fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
+fn 予実差は正を赤_負を青_zeroをmuted色で表示する() {
     let mut dom = VirtualDom::new(completed_root);
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
@@ -163,7 +163,7 @@ fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
     );
     assert!(
         html.contains(concat!(
-            "class=\"completed-number completed-difference\"",
+            "class=\"completed-number completed-difference is-zero\"",
             " aria-label=\"実績と見積の差 +00:00:00\">+00:00:00</td>"
         )),
         "{html}"
@@ -173,14 +173,7 @@ fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
     assert!(css.contains("--blue-dark: #255d99;"));
     assert!(css.contains(".completed-difference.is-overrun {\n    color: var(--red);"));
     assert!(css.contains(".completed-difference.is-underrun {\n    color: var(--blue-dark);"));
-    let zero_rule = css
-        .split_once(".completed-task-table .completed-difference {")
-        .expect("zero variance base rule")
-        .1
-        .split_once('}')
-        .unwrap()
-        .0;
-    assert!(!zero_rule.contains("color:"), "{zero_rule}");
+    assert!(css.contains(".completed-difference.is-zero {\n    color: var(--muted);"));
 }
 
 #[test]

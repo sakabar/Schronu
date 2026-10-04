@@ -491,7 +491,7 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
     } else if difference < 0 {
         "completed-number completed-difference is-underrun"
     } else {
-        "completed-number completed-difference"
+        "completed-number completed-difference is-zero"
     };
     let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
     let task_class = format!("completed-task-name {task_kind_class}");
