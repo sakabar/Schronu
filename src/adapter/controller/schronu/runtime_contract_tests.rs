@@ -5091,6 +5091,7 @@ fn 全と名前日付filterはprojected回を固定幅10列のread_only行で表
     for (pattern, expected_recovery_hours) in [
         (None, "10.0"),
         (Some("3日ごとの筋トレ"), "9.0"),
+        (Some("【繰】"), "10.0"),
         (Some("2026/08/14"), "1.0"),
     ] {
         let mut task_repository = TestTaskRepository::new(parent.clone(), now);
@@ -5138,7 +5139,7 @@ fn 全と名前日付filterはprojected回を固定幅10列のread_only行で表
         assert_eq!(columns[6], "60");
         assert_eq!(columns[7], "07");
         assert_eq!(columns[8], "回");
-        assert!(columns[9].contains("3日ごとの筋トレ"));
+        assert!(columns[9].contains("【繰】(3)3日ごとの筋トレ"));
         assert!(!projected_line
             .split_whitespace()
             .any(|field| field == parent_id.to_string()));
@@ -5405,7 +5406,7 @@ fn 同じ日に分割されたprojected回の調整可能見積は一回だけ�
     assert_eq!(projected_rows.len(), 2, "{projected_rows:?}");
     assert!(
         projected_rows.iter().all(|row| {
-            row.task_name.starts_with("<30/60>")
+            row.task_name.starts_with("<30/60>【前1】【繰】(3)")
                 && row.task_name.contains("3日ごとの分割task")
         }),
         "{projected_rows:?}"

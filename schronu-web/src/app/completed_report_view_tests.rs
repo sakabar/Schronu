@@ -49,6 +49,7 @@ fn completed_root() -> Element {
                         task_display_kind: Default::default(),
                         },
                     ],
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 360_001,
                     available_seconds: 288_000,
                     recorded_percentage: Some(125),
@@ -262,6 +263,7 @@ fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避す�
                         estimated_work_seconds: 1,
                         task_display_kind: Default::default(),
                     }],
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 1,
                     available_seconds: 1,
                     recorded_percentage: Some(100),
@@ -302,7 +304,8 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
                         estimated_work_seconds: 360_001,
                         task_display_kind: Default::default(),
                     }],
-                    total_actual_work_seconds: 360_001,
+                    in_progress_actual_work_seconds: Some(900),
+                    total_actual_work_seconds: 360_901,
                     available_seconds: 288_000,
                     recorded_percentage: Some(125),
                 }),
@@ -326,8 +329,10 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
     assert!(html.contains("<dl"), "{html}");
     for text in [
         "完了日の集計",
+        "進行中",
+        "00:15:00",
         "実績合計",
-        "100:00:01",
+        "100:15:01",
         "利用可能",
         "80:00:00",
         "記録率",
@@ -337,6 +342,144 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
     ] {
         assert!(html.contains(text), "missing {text}: {html}");
     }
+}
+
+#[test]
+fn 完了modeの予実比は完了task全体を合算して四捨五入し検索と進行中実績に依存しない() {
+    fn ratio_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![
+                        CompletedTaskRow {
+                            task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                            task_name: "短い実績".to_owned(),
+                            project_name: "Schronu".to_owned(),
+                            completed_at_epoch_ms: 1_789_551_723_000,
+                            actual_work_seconds: 1,
+                            estimated_work_seconds: 6,
+                            task_display_kind: Default::default(),
+                        },
+                        CompletedTaskRow {
+                            task_id: "00000000-0000-4000-8000-000000000002".to_owned(),
+                            task_name: "長い実績".to_owned(),
+                            project_name: "Schronu".to_owned(),
+                            completed_at_epoch_ms: 1_789_551_724_000,
+                            actual_work_seconds: 12,
+                            estimated_work_seconds: 2,
+                            task_display_kind: Default::default(),
+                        },
+                    ],
+                    in_progress_actual_work_seconds: Some(900),
+                    total_actual_work_seconds: 913,
+                    available_seconds: 730,
+                    recorded_percentage: Some(125),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: "不一致".to_owned(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(ratio_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("<dt>予実比</dt><dd>163%</dd>"), "{html}");
+    assert!(html.contains("0件"), "{html}");
+    let recorded_index = html.find("記録率").expect("記録率を表示する");
+    let ratio_index = html.find("予実比").expect("予実比を表示する");
+    assert!(recorded_index < ratio_index, "{html}");
+}
+
+#[test]
+fn 完了modeの予実比は完了taskがあっても見積合計ゼロなら未定義として表示する() {
+    fn zero_estimate_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                        task_name: "見積なし".to_owned(),
+                        project_name: "Schronu".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_723_000,
+                        actual_work_seconds: 7,
+                        estimated_work_seconds: 0,
+                        task_display_kind: Default::default(),
+                    }],
+                    in_progress_actual_work_seconds: None,
+                    total_actual_work_seconds: 7,
+                    available_seconds: 7,
+                    recorded_percentage: Some(100),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(zero_estimate_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(html.contains("<dt>予実比</dt><dd>--</dd>"), "{html}");
+}
+
+#[test]
+fn 完了modeの予実比はi64範囲を超えても上限なしで表示する() {
+    fn large_ratio_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                        task_name: "大きな実績".to_owned(),
+                        project_name: "Schronu".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_723_000,
+                        actual_work_seconds: i64::MAX,
+                        estimated_work_seconds: 1,
+                        task_display_kind: Default::default(),
+                    }],
+                    in_progress_actual_work_seconds: None,
+                    total_actual_work_seconds: i64::MAX,
+                    available_seconds: i64::MAX,
+                    recorded_percentage: Some(100),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(large_ratio_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("<dt>予実比</dt><dd>922337203685477580700%</dd>"),
+        "{html}"
+    );
 }
 
 #[test]
@@ -355,6 +498,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
                         estimated_work_seconds: 2,
                         task_display_kind: Default::default(),
                     }],
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 1,
                     available_seconds: 2,
                     recorded_percentage: Some(50),
@@ -388,6 +532,7 @@ fn 完了modeの空結果を明示する() {
                 dates: Vec::new(),
                 report: Some(CompletedTaskReport {
                     rows: Vec::new(),
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 0,
                     available_seconds: 28_800,
                     recorded_percentage: Some(0),
@@ -408,6 +553,7 @@ fn 完了modeの空結果を明示する() {
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("0件"), "{html}");
+    assert!(!html.contains("進行中"), "{html}");
     assert!(
         html.contains("この日に完了したタスクはありません。"),
         "{html}"
@@ -419,9 +565,11 @@ fn 完了modeの空結果を明示する() {
         "08:00:00",
         "記録率",
         "0%",
+        "予実比",
     ] {
         assert!(html.contains(text), "missing {text}: {html}");
     }
+    assert!(html.contains("<dt>予実比</dt><dd>--</dd>"), "{html}");
 }
 
 #[test]
@@ -432,6 +580,7 @@ fn 完了modeは利用可能時間ゼロの記録率を未定義として表示�
                 dates: Vec::new(),
                 report: Some(CompletedTaskReport {
                     rows: Vec::new(),
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 0,
                     available_seconds: 0,
                     recorded_percentage: None,
@@ -491,7 +640,7 @@ fn 完了reportの日次集計契約をdocumentationへ明記する() {
     let specification = include_str!("../../../docs/design/schronu_web_ui_specification.md");
 
     for document in [readme, requirements, specification] {
-        for text in ["実績合計", "利用可能", "記録率"] {
+        for text in ["進行中", "実績合計", "利用可能", "記録率", "予実比"] {
             assert!(document.contains(text), "missing {text}");
         }
         assert!(!document.contains("日次合計は表示しない"));

@@ -197,14 +197,14 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
         estimated_minutes: "40",
         priority: "01",
         category: "維",
-        task_name: "夕食 の 準備",
+        task_name: "出力 の 確認",
     };
 
     let formatted = format_spreadsheet_task_row(&row);
 
     assert_eq!(
         formatted,
-        "0001 11111111-1111-1111-1111-111111111111 ! ____-01:20 06/21(土)-18:40~19:20 0 40 01 維 夕食 の 準備"
+        "0001 11111111-1111-1111-1111-111111111111 ! ____-01:20 06/21(土)-18:40~19:20 0 40 01 維 出力 の 確認"
     );
     let columns = formatted.split_whitespace().collect::<Vec<_>>();
     assert_eq!(columns[0], "0001", "A列はind");
@@ -213,7 +213,7 @@ fn spreadsheet_task_rowはaからjの10列を既存cli形式で出力する() {
     assert_eq!(columns[8], "維", "I列はcategory");
     assert_eq!(
         formatted.splitn(10, char::is_whitespace).nth(9),
-        Some("夕食 の 準備"),
+        Some("出力 の 確認"),
         "J列はtask_name"
     );
 }
@@ -591,7 +591,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
                 estimated_minutes: 40,
                 priority: 1,
                 project_category: Some(ProjectCategory::Sustaining),
-                task_name: "夕食 の 準備".to_string(),
+                task_name: "出力 の 確認".to_string(),
                 kind: TaskListTaskKind::NonRepetitive,
                 has_deadline: true,
                 give_up_candidate: true,
@@ -655,7 +655,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
     assert_eq!(
         writer.operations,
         [
-            "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 夕食 の 準備",
+            "newline:0001 11111111-1111-1111-1111-111111111111 A ____-01:20 08/23(日)-09:00~09:40 0 40 01 維 出力 の 確認",
             "newline:---- ------------------------------------ - ---------- --------------------- - -- -- 15分間の空き時間",
             format!(
                 "newline:{}2日間の空き時間{}",
@@ -680,7 +680,7 @@ fn task_list_displayはtyped_rowからa_j列とカテゴリ集計を既存順序
         .collect::<Vec<_>>();
     assert_eq!(columns.len(), 10, "Spreadsheet連携はA-Jの10列");
     assert_eq!(columns[8], "維", "I列はcategory");
-    assert_eq!(columns[9], "夕食 の 準備", "J列はtask_name");
+    assert_eq!(columns[9], "出力 の 確認", "J列はtask_name");
 }
 
 #[test]

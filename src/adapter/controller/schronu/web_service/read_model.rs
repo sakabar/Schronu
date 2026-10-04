@@ -18,7 +18,7 @@ use crate::application::daily_capacity::{
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
-    get_schedule, scheduled_logical_dates, ScheduledTaskView,
+    format_scheduled_task_display_name, get_schedule, scheduled_logical_dates, ScheduledTaskView,
 };
 use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
@@ -130,6 +130,11 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
+                ),
+                display_task_name: format_scheduled_task_display_name(
+                    &segment.task.name,
+                    segment.scheduled_work_seconds,
+                    segment.total_work_seconds,
                 ),
                 occurrence: occurrence_dto(segment),
                 segment_index,
@@ -371,6 +376,11 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
+                ),
+                display_task_name: format_scheduled_task_display_name(
+                    &segment.task.name,
+                    segment.scheduled_work_seconds,
+                    segment.total_work_seconds,
                 ),
                 occurrence: occurrence_dto(segment),
                 schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),

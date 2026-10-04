@@ -38,6 +38,7 @@ fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) 
             actual_work_seconds: 300,
         }
         .into(),
+        display_task_name: None,
         occurrence: crate::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
@@ -321,6 +322,7 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     use crate::client::view_projection::project_all_task_rows;
 
     let mut fixed = all_row(12, "same", "設計", true);
+    fixed.display_task_name = Some("<10/15>設計".to_owned());
     fixed.task_display_kind = crate::TaskDisplayKind::Fixed;
     fixed.deadline_display_kind = crate::DeadlineDisplayKind::Today;
     let mut repetitive = all_row(13, "same", "設計", true);
@@ -331,6 +333,7 @@ fn all行は日付labelとsegment_index_keyを使い先送りを持たない() {
     parent.deadline_display_kind = crate::DeadlineDisplayKind::None;
     let rows = project_all_task_rows(&[fixed, repetitive, parent]);
     assert_eq!(rows[0].row_key, "all:same:2026-09-06:12");
+    assert_eq!(rows[0].display_task_name, "<10/15>設計");
     assert_eq!(
         rows[0].schedule_display,
         crate::client::view_projection::ScheduleDisplayViewModel::AllTasksDate {

@@ -9,8 +9,8 @@ use crate::application::scheduling_policy::{
 use crate::application::task_use_case::ApplicationError;
 use crate::application::task_view::TaskView;
 use crate::entity::task::{
-    extract_leaf_tasks_from_project_with_pending, ProjectCategory, RepetitionAnchor, Status,
-    TaskHandle, TaskTreeError,
+    extract_leaf_tasks_from_project_with_pending, round_up_sec_as_minute, ProjectCategory,
+    RepetitionAnchor, Status, TaskHandle, TaskTreeError,
 };
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime};
 use serde::Serialize;
@@ -102,6 +102,22 @@ impl ScheduledTaskView {
 
     pub fn is_projected(&self) -> bool {
         matches!(self.occurrence, ScheduleOccurrenceKey::Projected { .. })
+    }
+}
+
+pub fn format_scheduled_task_display_name(
+    task_name: &str,
+    scheduled_work_seconds: i64,
+    total_work_seconds: i64,
+) -> String {
+    if total_work_seconds > scheduled_work_seconds {
+        format!(
+            "<{}/{}>{task_name}",
+            round_up_sec_as_minute(scheduled_work_seconds),
+            round_up_sec_as_minute(total_work_seconds)
+        )
+    } else {
+        task_name.to_owned()
     }
 }
 

@@ -62,19 +62,49 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         },
         list_mode: ListMode::Completed,
         list: Some(StoredActiveList::Completed {
-            logical_date: "2026-09-08".to_owned(),
+            logical_date: "2026-09-09".to_owned(),
             rows: Vec::new(),
-            total_actual_work_seconds: 0,
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
             available_seconds: 43_200,
-            recorded_percentage: Some(0),
+            recorded_percentage: Some(2),
         }),
         active_tab: ActiveTab::List,
         task_name_filter: "".to_owned(),
-        date_input_text: "2026/9/8".to_owned(),
+        date_input_text: "2026/9/9".to_owned(),
     };
 
     store_view_state(&storage, &state).unwrap();
     assert_eq!(load_view_state(&storage).state(), Some(&state));
+}
+
+#[test]
+fn view_state_v3は現在日以外の進行中実績を拒否する() {
+    let storage = MemoryStorage::default();
+    let state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-08".to_owned(),
+            rows: Vec::new(),
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
+            available_seconds: 43_200,
+            recorded_percentage: Some(2),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: "2026/9/8".to_owned(),
+    };
+
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
 }
 
 #[test]
@@ -98,6 +128,7 @@ fn 旧view_state_v3の完了rowはtask種別を単発として復元する() {
                 estimated_work_seconds: 60,
                 task_display_kind: schronu_web::TaskDisplayKind::Fixed,
             }],
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: 60,
             available_seconds: 43_200,
             recorded_percentage: Some(0),
@@ -139,6 +170,7 @@ fn view_state_v3は明示された将来の完了一覧日を保持する() {
         list: Some(StoredActiveList::Completed {
             logical_date: "9999-12-31".to_owned(),
             rows: Vec::new(),
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: 0,
             available_seconds: 0,
             recorded_percentage: None,
@@ -316,6 +348,7 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
                 estimated_work_seconds: 1,
                 task_display_kind: Default::default(),
             }],
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: 1,
             available_seconds: 10,
             recorded_percentage: Some(10),
@@ -360,6 +393,7 @@ fn view_state_v3は不整合な完了summaryを拒否する() {
         list: Some(StoredActiveList::Completed {
             logical_date: "2026-09-09".to_owned(),
             rows: Vec::new(),
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: -1,
             available_seconds: 10,
             recorded_percentage: Some(0),
@@ -381,6 +415,34 @@ fn view_state_v3は不整合な完了summaryを拒否する() {
     {
         *total_actual_work_seconds = 0;
         *recorded_percentage = Some(1);
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+
+    if let Some(StoredActiveList::Completed {
+        in_progress_actual_work_seconds,
+        total_actual_work_seconds,
+        recorded_percentage,
+        ..
+    }) = &mut state.list
+    {
+        *in_progress_actual_work_seconds = Some(-1);
+        *total_actual_work_seconds = 0;
+        *recorded_percentage = Some(0);
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+
+    if let Some(StoredActiveList::Completed {
+        in_progress_actual_work_seconds,
+        ..
+    }) = &mut state.list
+    {
+        *in_progress_actual_work_seconds = Some(1);
     }
     assert_eq!(
         store_view_state(&storage, &state),
@@ -600,6 +662,7 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
             actual_work_seconds: 60,
         }
         .into(),
+        display_task_name: None,
         occurrence: schronu_web::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },

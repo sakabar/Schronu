@@ -1,7 +1,7 @@
 use super::interface::TaskRepositoryTrait;
 use super::schedule_use_case::{
-    get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
-    ScheduledTaskView,
+    format_scheduled_task_display_name, get_schedule, scheduled_end_by_occurrence,
+    scheduled_logical_dates, ScheduleOccurrenceKey, ScheduledTaskView,
 };
 use super::task_use_case::{
     complete_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
@@ -15,6 +15,26 @@ use uuid::Uuid;
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+}
+
+#[test]
+fn scheduled_task_display_nameは分割判定と分切り上げを一意に適用する() {
+    assert_eq!(
+        format_scheduled_task_display_name("タスク", 10 * 60, 15 * 60),
+        "<10/15>タスク"
+    );
+    assert_eq!(
+        format_scheduled_task_display_name("タスク", 10 * 60 + 1, 15 * 60 + 1),
+        "<11/16>タスク"
+    );
+    assert_eq!(
+        format_scheduled_task_display_name("タスク", 15 * 60, 15 * 60),
+        "タスク"
+    );
+    assert_eq!(
+        format_scheduled_task_display_name("タスク", 20 * 60, 15 * 60),
+        "タスク"
+    );
 }
 
 #[test]

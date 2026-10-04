@@ -140,6 +140,7 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
             report_row(2, 9, 1, 2, "abcdefghijklmnopqrs界tail", "second"),
             report_row(3, 10, 1, 1, "e\u{301}", "zero"),
         ],
+        in_progress_actual_work_seconds: None,
         total_actual_work_seconds: 360_002,
         available_seconds: 288_000,
         recorded_percentage: Some(125),
@@ -187,6 +188,7 @@ fn completed_report_renderer_explicitly_reports_empty_results() {
     assert_eq!(
         render(CompletedTaskReport {
             rows: Vec::new(),
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: 0,
             available_seconds: 28_800,
             recorded_percentage: Some(0),
@@ -204,6 +206,7 @@ fn completed_report_renderer_reports_unavailable_percentage_when_capacity_is_zer
     assert_eq!(
         render(CompletedTaskReport {
             rows: Vec::new(),
+            in_progress_actual_work_seconds: None,
             total_actual_work_seconds: 0,
             available_seconds: 0,
             recorded_percentage: None,
@@ -211,5 +214,21 @@ fn completed_report_renderer_reports_unavailable_percentage_when_capacity_is_zer
         .lines()
         .last(),
         Some("実績合計: 00:00:00  利用可能: 00:00:00  記録率: --")
+    );
+}
+
+#[test]
+fn completed_report_renderer_shows_in_progress_actual_work_when_present() {
+    assert_eq!(
+        render(CompletedTaskReport {
+            rows: Vec::new(),
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
+            available_seconds: 3_600,
+            recorded_percentage: Some(25),
+        })
+        .lines()
+        .last(),
+        Some("進行中: 00:15:00  実績合計: 00:15:00  利用可能: 01:00:00  記録率: 25%")
     );
 }

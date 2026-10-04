@@ -189,6 +189,7 @@ impl WebService {
                         Ok(completed_task_row_dto(row, task_display_kind))
                     })
                     .collect::<Result<Vec<_>, WebReadCoreError>>()?,
+                in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
                 total_actual_work_seconds: report.total_actual_work_seconds,
                 available_seconds: report.available_seconds,
                 recorded_percentage: report.recorded_percentage,
