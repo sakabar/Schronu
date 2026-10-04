@@ -148,7 +148,12 @@ fn cli出力からspreadsheetを経由してコマンド生成まで列契約を
         "tests/fixtures/spreadsheet/copied-rows.tsv",
     ))
     .expect("copied rows fixture exists");
-    assert_eq!(copied_rows.join("\n") + "\n", expected_copied);
+    let expected_copied_rows: Vec<_> = expected_copied.lines().collect();
+    assert_eq!(copied_rows.len(), expected_copied_rows.len());
+    for (actual, expected) in copied_rows.iter().zip(&expected_copied_rows) {
+        assert_eq!(actual.strip_suffix('\t'), Some(*expected));
+        assert_eq!(actual.split('\t').count(), 18);
+    }
 
     let spreadsheet = fs::read_to_string(repository_path(
         "tests/fixtures/spreadsheet/sheet-values.tsv",

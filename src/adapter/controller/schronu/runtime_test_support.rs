@@ -1202,7 +1202,7 @@ fn execute_arrange_command(command: &str) -> TaskHandle {
 #[cfg(test)]
 fn assert_show_all_spreadsheet_formatter_contract() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let task = new_test_task_handle("夕食  の 準備").unwrap();
+    let task = new_test_task_handle("出力  の 確認").unwrap();
     let _ = task.set_estimated_work_seconds(40 * 60);
     let _ = task.set_start_time(now);
     let _ = task.set_priority(1);
@@ -1219,7 +1219,7 @@ fn assert_show_all_spreadsheet_formatter_contract() {
 
     assert_eq!(
         task_row,
-        format!("0000 {task_id} A ____/__/__ 08/11(火)-12:00~12:40 0 40 01 資 夕食  の 準備")
+        format!("0000 {task_id} A ____/__/__ 08/11(火)-12:00~12:40 0 40 01 資 出力  の 確認")
     );
 }
 

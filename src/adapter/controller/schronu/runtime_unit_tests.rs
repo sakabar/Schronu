@@ -480,7 +480,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             19 * 60,
             None,
-            "<19/60>レビュー".to_string(),
+            "<19/60>60分の予定".to_string(),
         ),
         TaskListDisplayRow::new_task(
             Local.with_ymd_and_hms(2026, 5, 10, 22, 36, 0).unwrap(),
@@ -490,7 +490,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             20 * 60,
             None,
-            "回収する".to_string(),
+            "20分の予定".to_string(),
         ),
         TaskListDisplayRow::new_task(
             Local.with_ymd_and_hms(2026, 5, 10, 22, 21, 0).unwrap(),
@@ -500,7 +500,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             15 * 60,
             None,
-            "心当たりがある店に電話して確認".to_string(),
+            "15分の予定".to_string(),
         ),
         TaskListDisplayRow::new_task(
             Local.with_ymd_and_hms(2026, 5, 10, 22, 16, 0).unwrap(),
@@ -510,7 +510,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             6 * 60,
             None,
-            "日から土までの実績を確認する".to_string(),
+            "6分の予定".to_string(),
         ),
         TaskListDisplayRow::new_task(
             Local.with_ymd_and_hms(2026, 5, 10, 22, 3, 0).unwrap(),
@@ -520,7 +520,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             13 * 60,
             None,
-            "<13/30>一次レビュー".to_string(),
+            "<13/30>30分の予定".to_string(),
         ),
         TaskListDisplayRow::new_task(
             Local.with_ymd_and_hms(2026, 5, 10, 21, 42, 0).unwrap(),
@@ -530,7 +530,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             5,
             18 * 60,
             None,
-            "<18/30>一次レビュー".to_string(),
+            "<18/30>30分の予定".to_string(),
         ),
     ];
 
@@ -567,7 +567,7 @@ fn test_mark_give_up_candidate_rows_低優先度側から不足時間を満た�
             .into_display_row(),
     );
     assert!(rendered.contains(" A "));
-    assert!(rendered.ends_with("<19/60>レビュー"));
+    assert!(rendered.ends_with("<19/60>60分の予定"));
     assert!(
         !rows
             .iter()
@@ -758,7 +758,7 @@ fn test_replace_task_list_icon_アイコン列だけを置き換える() {
         estimated_minutes: 19,
         priority: 5,
         project_category: Some(ProjectCategory::Investment),
-        task_name: "夕食  の 準備".to_string(),
+        task_name: "出力  の 確認".to_string(),
         kind: super::super::renderer::TaskListTaskKind::NonRepetitive,
         has_deadline: false,
         give_up_candidate: false,
@@ -770,11 +770,11 @@ fn test_replace_task_list_icon_アイコン列だけを置き換える() {
 
     assert_eq!(
         original,
-        "0028 11111111-1111-1111-1111-111111111111 / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
+        "0028 11111111-1111-1111-1111-111111111111 / ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 出力  の 確認"
     );
     assert_eq!(
         actual,
-        "0028 11111111-1111-1111-1111-111111111111 A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 夕食  の 準備"
+        "0028 11111111-1111-1111-1111-111111111111 A ____/__/__ 06/28(日)-23:11~23:30 0 19 05 資 出力  の 確認"
     );
 }
 
