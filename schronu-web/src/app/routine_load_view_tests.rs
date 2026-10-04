@@ -112,6 +112,32 @@ fn 割合は0容量を欠損とし100超を切り捨てず色だけ飽和する(
 }
 
 #[test]
+fn 作業0秒の発生日を含む繰返でも拡張表示する() {
+    let report = report(vec![row(
+        "休息",
+        "休日にダラダラする時間",
+        "routine-zero",
+        &[("2026-10-03", 0), ("2026-10-10", 0)],
+    )]);
+
+    let projection = build_routine_load_projection(&report).unwrap();
+
+    assert_eq!(projection.days[0].work_seconds, 0);
+    assert_eq!(
+        highlighted_dates(&projection, Some("routine-zero")),
+        [date("2026-10-03"), date("2026-10-10")]
+            .into_iter()
+            .collect()
+    );
+    let rows = rows_for_scope(
+        &projection,
+        RoutineLoadScope::Date(date("2026-10-03")),
+    );
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].work_seconds, 0);
+}
+
+#[test]
 fn 範囲行は作業秒数降順とproject繰返uuid順に並ぶ() {
     let report = report(vec![
         row("B", "A", "routine-2", &[("2026-10-03", 600)]),
@@ -210,9 +236,9 @@ fn 不正な日付内訳と集計overflowは拡張表示を行わない() {
     let mut out_of_range = report(vec![base_row.clone()]);
     out_of_range.rows[0].work_seconds_by_date = BTreeMap::from([("2026-10-31".to_owned(), 600)]);
 
-    let mut non_positive = report(vec![base_row]);
-    non_positive.rows[0].work_seconds_by_date = BTreeMap::from([("2026-10-03".to_owned(), 0)]);
-    non_positive.rows[0].total_work_seconds = 0;
+    let mut negative = report(vec![base_row]);
+    negative.rows[0].work_seconds_by_date = BTreeMap::from([("2026-10-03".to_owned(), -1)]);
+    negative.rows[0].total_work_seconds = -1;
 
     let daily_overflow = report(vec![
         row("A", "最大", "routine-max", &[("2026-10-03", i64::MAX)]),
@@ -231,7 +257,7 @@ fn 不正な日付内訳と集計overflowは拡張表示を行わない() {
         invalid_start,
         missing_capacity,
         out_of_range,
-        non_positive,
+        negative,
         daily_overflow,
         weekday_capacity_overflow,
     ] {

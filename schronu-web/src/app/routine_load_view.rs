@@ -417,7 +417,7 @@ fn project_routine(
         .iter()
         .map(|(date, seconds)| {
             let date = parse_date(date)?;
-            (*seconds > 0 && date >= start_date && date <= end_date).then_some((date, *seconds))
+            (*seconds >= 0 && date >= start_date && date <= end_date).then_some((date, *seconds))
         })
         .collect::<Option<BTreeMap<_, _>>>()?;
     let total = work_seconds_by_date
