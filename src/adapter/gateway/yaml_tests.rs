@@ -26,6 +26,43 @@ fn yaml_encode_test_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 19, 0, 0, 0).unwrap()
 }
 
+#[test]
+fn 明示nil_uuidはrootとchildのfield_path付きconversion_errorにする() {
+    for (yaml, expected_path) in [
+        (
+            "project:\n  name: root\n  id: 00000000-0000-0000-0000-000000000000\n",
+            "project.id",
+        ),
+        (
+            "project:\n  name: root\n  children:\n    - name: child\n      id: 00000000-0000-0000-0000-000000000000\n",
+            "project.children[0].id",
+        ),
+    ] {
+        let document = &YamlLoader::load_from_str(yaml).unwrap()[0]["project"];
+
+        let error = yaml_to_task(document, yaml_test_now()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("cannot convert project YAML to task: {expected_path}: must not be nil UUID")
+        );
+    }
+}
+
+#[test]
+fn id省略時はrootとchildへ従来どおり非nil_uuidを生成する() {
+    let document = &YamlLoader::load_from_str(
+        "project:\n  name: root\n  children:\n    - name: child\n",
+    )
+    .unwrap()[0]["project"];
+
+    let root = yaml_to_task(document, yaml_test_now()).unwrap();
+    let child = root.get_children().unwrap().into_iter().next().unwrap();
+
+    assert_ne!(root.get_id().unwrap(), Uuid::nil());
+    assert_ne!(child.get_id().unwrap(), Uuid::nil());
+}
+
 #[cfg(test)]
 fn new_test_task_attr(name: &str) -> TaskAttr {
     crate::test_support::new_task_attr_at(name, yaml_encode_test_now())

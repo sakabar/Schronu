@@ -73,42 +73,37 @@ impl TaskRepository {
     fn index_task_and_descendants(
         task: &TaskHandle,
         project_yaml_file_path: &Path,
-        task_path: String,
         task_locations: &mut HashMap<Uuid, TaskLocation>,
         id_to_task_map: &mut HashMap<Uuid, TaskHandle>,
     ) -> Result<(), TaskRepositoryError> {
-        let task_id = task.get_id().map_err(|error| {
+        let entries = task_identity_entries(task).map_err(|error| {
             TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error)
         })?;
-        let location = TaskLocation {
-            project_yaml_file_path: project_yaml_file_path.to_path_buf(),
-            task_path,
-        };
-        if let Some(first) = task_locations.insert(task_id, location.clone()) {
-            return Err(TaskRepositoryError::new(
-                ApplicationRepositoryOperation::Load,
-                DuplicateTaskIdError {
-                    task_id,
-                    first,
-                    duplicate: location,
-                },
-            ));
-        }
-        id_to_task_map.insert(task_id, task.clone());
-
-        for (index, child_task) in task
-            .get_children()
-            .map_err(|error| TaskRepositoryError::new(ApplicationRepositoryOperation::Load, error))?
-            .into_iter()
-            .enumerate()
-        {
-            Self::index_task_and_descendants(
-                &child_task,
-                project_yaml_file_path,
-                format!("{}.children[{index}]", location.task_path),
-                task_locations,
-                id_to_task_map,
-            )?;
+        for entry in entries {
+            let location = TaskLocation {
+                project_yaml_file_path: project_yaml_file_path.to_path_buf(),
+                task_path: entry.task_path,
+            };
+            if entry.task_id.is_nil() {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    NilTaskIdError {
+                        project_yaml_file_path: location.project_yaml_file_path,
+                        task_path: location.task_path,
+                    },
+                ));
+            }
+            if let Some(first) = task_locations.insert(entry.task_id, location.clone()) {
+                return Err(TaskRepositoryError::new(
+                    ApplicationRepositoryOperation::Load,
+                    DuplicateTaskIdError {
+                        task_id: entry.task_id,
+                        first,
+                        duplicate: location,
+                    },
+                ));
+            }
+            id_to_task_map.insert(entry.task_id, entry.task);
         }
         Ok(())
     }
@@ -217,7 +212,6 @@ impl TaskRepository {
             Self::index_task_and_descendants(
                 &project.root_task,
                 &project.project_yaml_file_path,
-                "project".to_string(),
                 &mut task_locations,
                 &mut id_to_task_map,
             )?;
