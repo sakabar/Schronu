@@ -440,6 +440,49 @@ fn 完了modeの予実比は完了taskがあっても見積合計ゼロなら未
 }
 
 #[test]
+fn 完了modeの予実比はi64範囲を超えても上限なしで表示する() {
+    fn large_ratio_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                        task_name: "大きな実績".to_owned(),
+                        project_name: "Schronu".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_723_000,
+                        actual_work_seconds: i64::MAX,
+                        estimated_work_seconds: 1,
+                        task_display_kind: Default::default(),
+                    }],
+                    in_progress_actual_work_seconds: None,
+                    total_actual_work_seconds: i64::MAX,
+                    available_seconds: i64::MAX,
+                    recorded_percentage: Some(100),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(large_ratio_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("<dt>予実比</dt><dd>922337203685477580700%</dd>"),
+        "{html}"
+    );
+}
+
+#[test]
 fn 完了modeの検索はtask名だけを対象にする() {
     fn filtered_root() -> Element {
         rsx! {

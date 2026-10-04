@@ -447,11 +447,11 @@ struct CompletedReportSummary {
     total_actual_work_seconds: i64,
     available_seconds: i64,
     recorded_percentage: Option<i64>,
-    actual_estimate_percentage: Option<i64>,
+    actual_estimate_percentage: Option<i128>,
 }
 
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
-fn actual_estimate_percentage(rows: &[CompletedTaskRow]) -> Option<i64> {
+fn actual_estimate_percentage(rows: &[CompletedTaskRow]) -> Option<i128> {
     let (total_actual, total_estimated) =
         rows.iter()
             .try_fold((0_i128, 0_i128), |(total_actual, total_estimated), row| {
@@ -463,11 +463,10 @@ fn actual_estimate_percentage(rows: &[CompletedTaskRow]) -> Option<i64> {
     if total_estimated == 0 {
         return None;
     }
-    let rounded = total_actual
+    total_actual
         .checked_mul(100)?
         .checked_add(total_estimated / 2)?
-        / total_estimated;
-    i64::try_from(rounded).ok()
+        .checked_div(total_estimated)
 }
 
 #[component]
