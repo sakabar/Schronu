@@ -336,3 +336,56 @@ fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強
     let cleared_html = dioxus::ssr::render(&selected_dom);
     assert!(!cleared_html.contains("routine-load-day is-emphasized"));
 }
+
+#[test]
+fn 行選択後の全体曜日日付切替は日付強調を解除する() {
+    fn root() -> Element {
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report(vec![row(
+                    "健康",
+                    "運動",
+                    "routine-1",
+                    &[("2026-10-03", 3_600), ("2026-10-06", 7_200)],
+                )])),
+                loading: false,
+            }
+        }
+    }
+
+    fn html_after_click(root: fn() -> Element, index: usize) -> String {
+        let mut dom = VirtualDom::new(root);
+        let ids = rebuild_with_click_listeners(&mut dom);
+        dispatch_click(&dom, ids[index]);
+        dom.render_immediate_to_vec();
+        dioxus::ssr::render(&dom)
+    }
+
+    let mut initial_dom = VirtualDom::new(root);
+    let ids = rebuild_with_click_listeners(&mut initial_dom);
+    let initial_html = dioxus::ssr::render(&initial_dom);
+    let row_index = (0..ids.len())
+        .find(|index| html_after_click(root, *index).contains("routine-load-day is-emphasized"))
+        .unwrap();
+    let weekday_index = (0..ids.len())
+        .find(|index| html_after_click(root, *index).contains("曜日平均"))
+        .unwrap();
+    let date_index = (0..ids.len())
+        .find(|index| html_after_click(root, *index).contains("当日時間"))
+        .unwrap();
+    let overall_index = (0..ids.len())
+        .find(|index| html_after_click(root, *index) == initial_html)
+        .unwrap();
+
+    for scope_index in [overall_index, weekday_index, date_index] {
+        let mut dom = VirtualDom::new(root);
+        let ids = rebuild_with_click_listeners(&mut dom);
+        dispatch_click(&dom, ids[row_index]);
+        dom.render_immediate_to_vec();
+        assert!(dioxus::ssr::render(&dom).contains("routine-load-day is-emphasized"));
+
+        dispatch_click(&dom, ids[scope_index]);
+        dom.render_immediate_to_vec();
+        assert!(!dioxus::ssr::render(&dom).contains("routine-load-day is-emphasized"));
+    }
+}
