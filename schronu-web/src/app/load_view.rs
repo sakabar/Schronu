@@ -26,6 +26,8 @@ pub(crate) fn LoadView(
     on_select_date: EventHandler<String>,
 ) -> Element {
     let mut mode = use_signal(|| LoadMode::Band);
+    let today_remaining_available_seconds =
+        routine_today_remaining_available_seconds(&rows, routine_load_report.as_ref());
     let view_class = match (mode(), error.is_some()) {
         (LoadMode::Routine, true) => "load-view is-routine has-error",
         (LoadMode::Routine, false) => "load-view is-routine",
@@ -98,7 +100,11 @@ pub(crate) fn LoadView(
                 p { class: "load-error", role: "alert", "{error}" }
             }
             if mode() == LoadMode::Routine {
-                RoutineLoadTable { report: routine_load_report, loading }
+                RoutineLoadTable {
+                    report: routine_load_report,
+                    loading,
+                    today_remaining_available_seconds,
+                }
             } else {
                 BandLegend {}
                 if rows.is_empty() && loading {
@@ -120,6 +126,20 @@ pub(crate) fn LoadView(
             }
         }
     }
+}
+
+pub(super) fn routine_today_remaining_available_seconds(
+    rows: &[BandDay],
+    report: Option<&RoutineLoadReport>,
+) -> Option<i64> {
+    let start_date = &report?.start_date;
+    let today = rows.iter().find(|row| row.logical_date == *start_date)?;
+    Some(
+        SECONDS_PER_DAY
+            .saturating_sub(today.durations.unavailable_seconds.max(0))
+            .saturating_sub(today.durations.elapsed_seconds.max(0))
+            .max(0),
+    )
 }
 
 #[component]

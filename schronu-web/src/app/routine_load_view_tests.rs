@@ -54,7 +54,7 @@ fn row(
 
 #[test]
 fn 投影は月曜始まりの空cellと28日を配置する() {
-    let projection = build_routine_load_projection(&report(Vec::new())).unwrap();
+    let projection = build_routine_load_projection(&report(Vec::new()), None).unwrap();
 
     assert_eq!(projection.calendar_cells.len(), 35);
     assert!(projection.calendar_cells[..5].iter().all(Option::is_none));
@@ -77,7 +77,7 @@ fn 曜日投影は4日平均と実発生日数と全日容量比を返す() {
         "routine-1",
         &[("2026-10-06", 7_200), ("2026-10-09", 3_600)],
     )]);
-    let projection = build_routine_load_projection(&report).unwrap();
+    let projection = build_routine_load_projection(&report, None).unwrap();
     let tuesday = &projection.weekdays[1];
     let rows = rows_for_scope(&projection, RoutineLoadScope::Weekday(1));
 
@@ -92,6 +92,63 @@ fn 曜日投影は4日平均と実発生日数と全日容量比を返す() {
 }
 
 #[test]
+fn 今日だけ残り容量比にし曜日は4日の全日容量比を維持する() {
+    let report = report(vec![row(
+        "健康",
+        "土曜の運動",
+        "routine-1",
+        &[
+            ("2026-10-03", 3_600),
+            ("2026-10-10", 3_600),
+            ("2026-10-17", 3_600),
+            ("2026-10-24", 3_600),
+        ],
+    )]);
+
+    let projection = build_routine_load_projection(&report, Some(30 * 60)).unwrap();
+
+    assert_eq!(projection.days[0].available_seconds, 30 * 60);
+    assert_eq!(projection.days[0].percentage, Some(200));
+    assert_eq!(projection.days[1].available_seconds, 4 * 60 * 60);
+    assert_eq!(projection.weekdays[5].available_seconds, 4 * 4 * 60 * 60);
+    assert_eq!(projection.weekdays[5].percentage, Some(25));
+    let rows = rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")));
+    assert_eq!(rows[0].percentage, Some(200));
+}
+
+#[test]
+fn 今日の残り容量0は比率欠損とし容量到達表示にしない() {
+    let report = report(vec![row(
+        "健康",
+        "運動",
+        "routine-1",
+        &[("2026-10-03", 3_600)],
+    )]);
+
+    let projection = build_routine_load_projection(&report, Some(0)).unwrap();
+
+    assert_eq!(projection.days[0].work_seconds, 3_600);
+    assert_eq!(projection.days[0].available_seconds, 0);
+    assert_eq!(projection.days[0].percentage, None);
+    assert_eq!(projection.days[0].heat_percentage, 0);
+}
+
+#[test]
+fn 今日の残り容量がなければ全日容量へfallbackする() {
+    let report = report(vec![row(
+        "健康",
+        "運動",
+        "routine-1",
+        &[("2026-10-03", 3_600)],
+    )]);
+
+    let projection = build_routine_load_projection(&report, None).unwrap();
+
+    assert_eq!(projection.days[0].available_seconds, 4 * 60 * 60);
+    assert_eq!(projection.days[0].percentage, Some(25));
+}
+
+#[test]
 fn 割合は0容量を欠損とし100超を切り捨てず色だけ飽和する() {
     let mut report = report(vec![row(
         "健康",
@@ -102,7 +159,7 @@ fn 割合は0容量を欠損とし100超を切り捨てず色だけ飽和する(
     report
         .full_day_available_seconds_by_date
         .insert("2026-10-04".to_owned(), 0);
-    let projection = build_routine_load_projection(&report).unwrap();
+    let projection = build_routine_load_projection(&report, None).unwrap();
 
     assert_eq!(projection.days[0].percentage, Some(125));
     assert_eq!(projection.days[0].heat_percentage, 100);
@@ -120,7 +177,7 @@ fn 作業0秒の発生日を含む繰返でも拡張表示する() {
         &[("2026-10-03", 0), ("2026-10-10", 0)],
     )]);
 
-    let projection = build_routine_load_projection(&report).unwrap();
+    let projection = build_routine_load_projection(&report, None).unwrap();
 
     assert_eq!(projection.days[0].work_seconds, 0);
     assert_eq!(
@@ -150,7 +207,7 @@ fn 範囲行は作業秒数降順とproject繰返uuid順に並ぶ() {
         row("A", "A", "routine-1", &[("2026-10-03", 600)]),
         row("Z", "Z", "routine-4", &[("2026-10-03", 1_200)]),
     ]);
-    let projection = build_routine_load_projection(&report).unwrap();
+    let projection = build_routine_load_projection(&report, None).unwrap();
     let rows = rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")));
 
     assert_eq!(
@@ -169,12 +226,15 @@ fn 範囲行は作業秒数降順とproject繰返uuid順に並ぶ() {
 
 #[test]
 fn 選択再押下と全体切替は強調対象を解除する() {
-    let projection = build_routine_load_projection(&report(vec![row(
-        "健康",
-        "運動",
-        "routine-1",
-        &[("2026-10-03", 600), ("2026-10-06", 600)],
-    )]))
+    let projection = build_routine_load_projection(
+        &report(vec![row(
+            "健康",
+            "運動",
+            "routine-1",
+            &[("2026-10-03", 600), ("2026-10-06", 600)],
+        )]),
+        None,
+    )
     .unwrap();
 
     assert_eq!(
@@ -203,7 +263,7 @@ fn 旧payloadはmapと範囲選択を出さず全体表へfallbackする() {
         full_day_available_seconds_by_date: BTreeMap::new(),
         rows: vec![row("健康", "運動", "routine-1", &[("2026-10-03", 600)])],
     };
-    assert!(build_routine_load_projection(&legacy).is_none());
+    assert!(build_routine_load_projection(&legacy, None).is_none());
 
     fn root() -> Element {
         rsx! { RoutineLoadTable { report: Some(legacy_report()), loading: false } }
@@ -265,7 +325,7 @@ fn 不正な日付内訳と集計overflowは拡張表示を行わない() {
         daily_overflow,
         weekday_capacity_overflow,
     ] {
-        assert!(build_routine_load_projection(&invalid).is_none());
+        assert!(build_routine_load_projection(&invalid, None).is_none());
     }
 }
 
@@ -295,6 +355,78 @@ fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する
     assert!(html.contains("2026年10月3日"), "{html}");
     assert!(html.contains("繰返時間 01:00"), "{html}");
     assert!(html.contains("可処分時間比 25%"), "{html}");
+}
+
+#[test]
+fn 今日の日付cellと日付表は残り可処分時間比と明示する() {
+    fn root() -> Element {
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report(vec![row(
+                    "健康",
+                    "運動",
+                    "routine-1",
+                    &[("2026-10-03", 3_600)],
+                )])),
+                loading: false,
+                today_remaining_available_seconds: Some(30 * 60),
+            }
+        }
+    }
+    let mut initial = VirtualDom::new(root);
+    let click_ids = rebuild_with_click_listeners(&mut initial);
+    let initial_html = dioxus::ssr::render(&initial);
+    assert!(
+        initial_html.contains("残り可処分時間比 200%"),
+        "{initial_html}"
+    );
+    assert!(
+        initial_html.contains("routine-load-day is-at-capacity"),
+        "{initial_html}"
+    );
+    assert!(
+        initial_html.contains("2026年10月4日、繰返時間 00:00、可処分時間比 0%"),
+        "{initial_html}"
+    );
+
+    let today_html = (0..click_ids.len())
+        .find_map(|index| {
+            let mut candidate = VirtualDom::new(root);
+            let ids = rebuild_with_click_listeners(&mut candidate);
+            dispatch_click(&candidate, ids[index]);
+            candidate.render_immediate_to_vec();
+            let html = dioxus::ssr::render(&candidate);
+            (html.contains("当日時間") && html.contains("残り可処分時間比")).then_some(html)
+        })
+        .expect("今日buttonが残り可処分時間比の日付表へ切り替える");
+    assert!(today_html.contains(">200%</td>"), "{today_html}");
+
+    fn zero_capacity_root() -> Element {
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report(vec![row(
+                    "健康",
+                    "運動",
+                    "routine-1",
+                    &[("2026-10-03", 3_600)],
+                )])),
+                loading: false,
+                today_remaining_available_seconds: Some(0),
+            }
+        }
+    }
+    let mut zero_capacity = VirtualDom::new(zero_capacity_root);
+    zero_capacity.rebuild_in_place();
+    let zero_capacity_html = dioxus::ssr::render(&zero_capacity);
+    assert!(
+        zero_capacity_html.contains("残り可処分時間比 --"),
+        "{zero_capacity_html}"
+    );
+    assert_eq!(
+        zero_capacity_html.matches("is-at-capacity").count(),
+        0,
+        "{zero_capacity_html}"
+    );
 }
 
 #[test]

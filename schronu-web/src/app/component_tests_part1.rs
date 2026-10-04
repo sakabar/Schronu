@@ -11,7 +11,7 @@ use super::component_runtime::{
     ComponentOrchestrator,
 };
 use super::effect_dispatcher::ClientResponse;
-use super::load_view::LoadView;
+use super::load_view::{routine_today_remaining_available_seconds, LoadView};
 use super::session_view::{SessionAction, SessionActionKind};
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::client::date_input::DateInputState;
@@ -122,6 +122,33 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
 fn render_band_load_view(dom: &mut VirtualDom) -> String {
     rebuild_with_click_listeners(dom);
     dioxus::ssr::render(dom)
+}
+
+#[test]
+fn 繰返report開始日の帯から残り可処分秒数を導く() {
+    let report = RoutineLoadReport {
+        start_date: "2026-10-03".to_owned(),
+        end_date: "2026-10-30".to_owned(),
+        horizon_day_count: 28,
+        full_day_available_seconds_by_date: Default::default(),
+        rows: Vec::new(),
+    };
+    let mut matching = band_day("2026-10-03", 8 * 60 * 60);
+    matching.durations.elapsed_seconds = 10 * 60 * 60;
+    let mismatched = band_day("2026-10-04", 0);
+
+    assert_eq!(
+        routine_today_remaining_available_seconds(&[mismatched, matching], Some(&report)),
+        Some(6 * 60 * 60)
+    );
+    assert_eq!(
+        routine_today_remaining_available_seconds(
+            &[band_day("2026-10-04", 0)],
+            Some(&report)
+        ),
+        None
+    );
+    assert_eq!(routine_today_remaining_available_seconds(&[], Some(&report)), None);
 }
 
 #[test]

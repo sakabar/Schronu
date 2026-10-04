@@ -23,6 +23,7 @@ pub(super) struct DailyLoadProjection {
     pub(super) available_seconds: i64,
     pub(super) percentage: Option<i128>,
     pub(super) heat_percentage: u8,
+    uses_remaining_capacity: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,7 +57,11 @@ pub(super) struct ScopeRoutineRow {
 }
 
 #[component]
-pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element {
+pub(super) fn RoutineLoadTable(
+    report: Option<RoutineLoadReport>,
+    loading: bool,
+    #[props(default)] today_remaining_available_seconds: Option<i64>,
+) -> Element {
     let mut scope = use_signal(|| RoutineLoadScope::Overall);
     let mut selected_routine_id = use_signal(|| None::<String>);
     let Some(report) = report else {
@@ -66,7 +71,9 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
             rsx! { p { class: "load-status", "繰返負荷は未取得です。" } }
         };
     };
-    let Some(projection) = build_routine_load_projection(&report) else {
+    let Some(projection) =
+        build_routine_load_projection(&report, today_remaining_available_seconds)
+    else {
         return rsx! { LegacyRoutineLoadTable { report } };
     };
 
@@ -132,6 +139,11 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
                         let date_label = format!("{}年{}月{}日", date.year(), date.month(), date.day());
                         let work_label = format_unsigned(day.work_seconds);
                         let percentage = format_percentage(day.percentage);
+                        let percentage_label = if day.uses_remaining_capacity {
+                            "残り可処分時間比"
+                        } else {
+                            "可処分時間比"
+                        };
                         let selected = active_scope == RoutineLoadScope::Date(date);
                         let emphasized = highlighted.contains(&date);
                         let class = load_cell_class(
@@ -141,7 +153,7 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
                             is_at_capacity(day.percentage),
                         );
                         let aria_label = format!(
-                            "{date_label}、繰返時間 {work_label}、可処分時間比 {percentage}、{}",
+                            "{date_label}、繰返時間 {work_label}、{percentage_label} {percentage}、{}",
                             if selected { "選択中" } else { "未選択" }
                         );
                         rsx! {
@@ -176,6 +188,13 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
             ScopedRoutineLoadTable {
                 rows,
                 scope: active_scope,
+                uses_remaining_capacity: matches!(
+                    active_scope,
+                    RoutineLoadScope::Date(date)
+                        if projection.days.iter().any(|day| {
+                            day.date == date && day.uses_remaining_capacity
+                        })
+                ),
                 selected_routine_id: selected_id,
                 on_select: move |routine_id: String| {
                     selected_routine_id.set(toggle_routine_selection(
@@ -192,6 +211,7 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
 fn ScopedRoutineLoadTable(
     rows: Vec<ScopeRoutineRow>,
     scope: RoutineLoadScope,
+    uses_remaining_capacity: bool,
     selected_routine_id: Option<String>,
     on_select: EventHandler<String>,
 ) -> Element {
@@ -214,7 +234,13 @@ fn ScopedRoutineLoadTable(
                             },
                             RoutineLoadScope::Date(_) => rsx! {
                                 th { class: "routine-load-average", scope: "col", "当日時間" }
-                                th { class: "routine-load-total", scope: "col", "可処分時間比" }
+                                th { class: "routine-load-total", scope: "col",
+                                    if uses_remaining_capacity {
+                                        "残り可処分時間比"
+                                    } else {
+                                        "可処分時間比"
+                                    }
+                                }
                                 th { class: "routine-load-occurrences", scope: "col", "28日合計" }
                             },
                         }
@@ -328,6 +354,7 @@ fn LegacyRoutineLoadTableRow(row: RoutineLoadRow) -> Element {
 
 pub(super) fn build_routine_load_projection(
     report: &RoutineLoadReport,
+    today_remaining_available_seconds: Option<i64>,
 ) -> Option<RoutineLoadProjection> {
     if report.horizon_day_count != HORIZON_DAY_COUNT as u64 {
         return None;
@@ -358,6 +385,8 @@ pub(super) fn build_routine_load_projection(
         .iter()
         .map(|row| project_routine(row, start_date, expected_end_date))
         .collect::<Option<Vec<_>>>()?;
+    let today_remaining_available_seconds =
+        today_remaining_available_seconds.filter(|seconds| *seconds >= 0);
     let days = expected_dates
         .iter()
         .map(|date| {
@@ -370,7 +399,13 @@ pub(super) fn build_routine_load_projection(
                         .unwrap_or_default(),
                 )
             })?;
-            let available_seconds = available_by_date[date];
+            let uses_remaining_capacity =
+                *date == start_date && today_remaining_available_seconds.is_some();
+            let available_seconds = if uses_remaining_capacity {
+                today_remaining_available_seconds?
+            } else {
+                available_by_date[date]
+            };
             let percentage = rounded_percentage(work_seconds, available_seconds);
             Some(DailyLoadProjection {
                 date: *date,
@@ -378,6 +413,7 @@ pub(super) fn build_routine_load_projection(
                 available_seconds,
                 percentage,
                 heat_percentage: heat_percentage(percentage),
+                uses_remaining_capacity,
             })
         })
         .collect::<Option<Vec<_>>>()?;
@@ -390,7 +426,7 @@ pub(super) fn build_routine_load_projection(
                 matching_days.try_fold((0_i64, 0_i64), |(work_total, available_total), day| {
                     Some((
                         work_total.checked_add(day.work_seconds)?,
-                        available_total.checked_add(day.available_seconds)?,
+                        available_total.checked_add(available_by_date[&day.date])?,
                     ))
                 })?;
             Some(WeekdayLoadProjection {
