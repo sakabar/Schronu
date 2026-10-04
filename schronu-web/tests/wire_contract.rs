@@ -311,6 +311,28 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
 }
 
 #[test]
+fn 旧completed_report_payloadは進行中実績なしとしてdeserializeできる() {
+    let report: CompletedTaskReport = serde_json::from_value(json!({
+        "rows": [],
+        "total_actual_work_seconds": 0,
+        "available_seconds": 43_200,
+        "recorded_percentage": 0
+    }))
+    .unwrap();
+
+    assert_eq!(report.in_progress_actual_work_seconds, None);
+    assert_eq!(
+        serde_json::to_value(report).unwrap(),
+        json!({
+            "rows": [],
+            "total_actual_work_seconds": 0,
+            "available_seconds": 43_200,
+            "recorded_percentage": 0
+        })
+    );
+}
+
+#[test]
 fn 旧completed_row_payloadはtask種別を単発として補完する() {
     let row: CompletedTaskRow = serde_json::from_value(json!({
         "task_id": "00000000-0000-0000-0000-000000000001",

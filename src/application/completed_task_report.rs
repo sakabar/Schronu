@@ -177,10 +177,11 @@ mod tests {
     use crate::application::interface::{
         BusyTimeSlotLoadError, BusyTimeSlotRegistrationError, FreeTimeManagerTrait,
     };
+    use crate::application::schedule_use_case::{get_schedule, ScheduleOccurrenceKey};
     use crate::application::task_use_case::ApplicationError;
-    use crate::entity::task::{Status, TaskAttr, TaskHandle};
+    use crate::entity::task::{RepetitionAnchor, Status, TaskAttr, TaskHandle};
     use crate::test_support::{new_task_attr_at, new_task_handle_at, TestTaskRepository};
-    use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+    use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, TimeZone};
     use uuid::Uuid;
 
     struct RecordingFreeTimeManager {
@@ -453,6 +454,74 @@ mod tests {
             free_time_manager.requested_intervals,
             vec![(local_time(10, 6, 0, 0), local_time(11, 2, 0, 0))]
         );
+    }
+
+    #[test]
+    fn 未来日は予定内の未完了taskを進行中実績へ数えない() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 12).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let future = new_task_handle_at("future", now).unwrap();
+        future.set_start_time(local_time(12, 7, 0, 0)).unwrap();
+        future.set_estimated_work_seconds(3_600).unwrap();
+        future.set_actual_work_seconds(900).unwrap();
+        let repository = TestTaskRepository::new(vec![future], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert_eq!(report.in_progress_actual_work_seconds, None);
+        assert_eq!(report.total_actual_work_seconds, 0);
+        assert_eq!(report.recorded_percentage, Some(0));
+    }
+
+    #[test]
+    fn 今日の予測occurrenceだけを持つ繰返元taskは進行中実績へ数えない() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let previous_start = local_time(8, 18, 0, 0);
+        let parent = new_task_handle_at("routine", previous_start).unwrap();
+        parent.set_start_time(previous_start).unwrap();
+        parent.set_estimated_work_seconds(900).unwrap();
+        parent.set_actual_work_seconds(900).unwrap();
+        parent.set_repetition_interval_days_opt(Some(3)).unwrap();
+        parent
+            .set_repetition_anchor(RepetitionAnchor::Deadline)
+            .unwrap();
+        parent.set_atomic(true).unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(18, 0, 0).unwrap()))
+            .unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(23, 0, 0).unwrap()))
+            .unwrap();
+        let mut previous_attr = TaskAttr::with_identity("routine(8/8)", Uuid::new_v4(), now);
+        previous_attr.set_start_time(previous_start);
+        previous_attr
+            .set_deadline_time_opt(Some(local_time(8, 23, 0, 0)))
+            .unwrap();
+        previous_attr.set_estimated_work_seconds(900);
+        previous_attr.set_atomic(true);
+        parent.create_as_last_child(previous_attr);
+        let repository = TestTaskRepository::new(vec![parent.clone()], now);
+        let projected_today = get_schedule(&repository).unwrap().into_iter().any(|entry| {
+            matches!(entry.occurrence, ScheduleOccurrenceKey::Projected { source_task_id, .. }
+                if source_task_id == parent.get_id().unwrap())
+                && entry.scheduled_start.date_naive() == logical_date
+        });
+        assert!(
+            projected_today,
+            "test fixture must contain today's projection"
+        );
+        let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert_eq!(report.in_progress_actual_work_seconds, Some(0));
+        assert_eq!(report.total_actual_work_seconds, 0);
     }
 
     #[test]
