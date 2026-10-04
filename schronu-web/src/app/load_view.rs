@@ -134,12 +134,8 @@ pub(super) fn routine_today_remaining_available_seconds(
 ) -> Option<i64> {
     let start_date = &report?.start_date;
     let today = rows.iter().find(|row| row.logical_date == *start_date)?;
-    Some(
-        SECONDS_PER_DAY
-            .saturating_sub(today.durations.unavailable_seconds.max(0))
-            .saturating_sub(today.durations.elapsed_seconds.max(0))
-            .max(0),
-    )
+    let segments = clipped_segments(today.durations);
+    Some(remaining_capacity_seconds(&segments))
 }
 
 #[component]
@@ -186,10 +182,7 @@ fn BandDayRow(
         })
         .unwrap_or_else(|| row.logical_date.clone());
     let segments = clipped_segments(row.durations);
-    let remaining_capacity_seconds = SECONDS_PER_DAY
-        .saturating_sub(segments.unavailable_seconds)
-        .saturating_sub(segments.elapsed_seconds)
-        .max(0);
+    let remaining_capacity_seconds = remaining_capacity_seconds(&segments);
     let used_seconds = raw_used_seconds(row.durations);
     let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
     let remaining_aria = if today {
@@ -399,6 +392,13 @@ struct BandSegments {
     non_repetitive_seconds: i64,
     rho_leeway_seconds: i64,
     free_seconds: i64,
+}
+
+fn remaining_capacity_seconds(segments: &BandSegments) -> i64 {
+    SECONDS_PER_DAY
+        .saturating_sub(segments.unavailable_seconds)
+        .saturating_sub(segments.elapsed_seconds)
+        .max(0)
 }
 
 fn format_signed(seconds: i64) -> String {
