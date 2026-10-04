@@ -43,6 +43,8 @@ mod long_press_controller_tests;
 #[cfg(test)]
 mod projection_boundary_tests;
 mod routine_load_view;
+#[cfg(test)]
+mod routine_load_view_tests;
 pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;

@@ -219,6 +219,23 @@ fn routine_load_table_scrolls_only_the_subject_column() {
 }
 
 #[test]
+fn routine_load_map_and_scope_table_fit_320px_touch_viewports() {
+    let map = block_body(MAIN_CSS, ".routine-load-map");
+    assert!(map.contains("grid-template-columns: repeat(7, minmax(0, 1fr));"));
+    assert!(map.contains("min-width: 0;"));
+    assert!(map.contains("width: 100%;"));
+
+    let day = block_body(MAIN_CSS, ".routine-load-day");
+    assert!(day.contains("min-height: 40px;"));
+    assert!(day.contains("min-width: 0;"));
+
+    let wrapper = block_body(MAIN_CSS, ".routine-load-table-wrap");
+    assert!(!wrapper.contains("overflow-x: auto;"));
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    assert!(block_body(narrow, ".routine-load-map").contains("gap:"));
+}
+
+#[test]
 fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
     assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
