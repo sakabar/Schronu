@@ -102,9 +102,15 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
             for (index, weekday) in projection.weekdays.iter().enumerate() {
                 {
                     let percentage = format_percentage(weekday.percentage);
+                    let class = load_cell_class(
+                        "routine-load-weekday",
+                        active_scope == RoutineLoadScope::Weekday(index),
+                        false,
+                        is_at_capacity(weekday.percentage),
+                    );
                     rsx! {
                         button {
-                            class: if active_scope == RoutineLoadScope::Weekday(index) { "routine-load-weekday is-selected" } else { "routine-load-weekday" },
+                            class: "{class}",
                             r#type: "button",
                             aria_pressed: active_scope == RoutineLoadScope::Weekday(index),
                             aria_label: "{WEEKDAY_LABELS[index]}曜日、可処分時間比 {percentage}",
@@ -128,7 +134,12 @@ pub(super) fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool)
                         let percentage = format_percentage(day.percentage);
                         let selected = active_scope == RoutineLoadScope::Date(date);
                         let emphasized = highlighted.contains(&date);
-                        let class = day_class(selected, emphasized);
+                        let class = load_cell_class(
+                            "routine-load-day",
+                            selected,
+                            emphasized,
+                            is_at_capacity(day.percentage),
+                        );
                         let aria_label = format!(
                             "{date_label}、繰返時間 {work_label}、可処分時間比 {percentage}、{}",
                             if selected { "選択中" } else { "未選択" }
@@ -555,13 +566,22 @@ fn format_optional_time(seconds: Option<i64>) -> String {
         .unwrap_or_else(|| "--:--".to_owned())
 }
 
-fn day_class(selected: bool, emphasized: bool) -> &'static str {
-    match (selected, emphasized) {
-        (true, true) => "routine-load-day is-selected is-emphasized",
-        (true, false) => "routine-load-day is-selected",
-        (false, true) => "routine-load-day is-emphasized",
-        (false, false) => "routine-load-day",
+fn is_at_capacity(percentage: Option<i128>) -> bool {
+    percentage.is_some_and(|percentage| percentage >= 100)
+}
+
+fn load_cell_class(base: &str, selected: bool, emphasized: bool, at_capacity: bool) -> String {
+    let mut class = base.to_owned();
+    for (enabled, modifier) in [
+        (selected, " is-selected"),
+        (emphasized, " is-emphasized"),
+        (at_capacity, " is-at-capacity"),
+    ] {
+        if enabled {
+            class.push_str(modifier);
+        }
     }
+    class
 }
 
 fn report_range(report: &RoutineLoadReport) -> String {

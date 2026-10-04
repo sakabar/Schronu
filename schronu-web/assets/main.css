@@ -15,6 +15,7 @@
     --blue: #3677bd;
     --blue-dark: #255d99;
     --red: #c33d43;
+    --red-dark: #982b31;
     --red-soft: #fff0f0;
     --task-fixed: #af00af;
     --task-repetitive: #0069c2;
@@ -1437,6 +1438,13 @@ button:disabled {
     font-size: 0.62rem;
     font-variant-numeric: tabular-nums;
     line-height: 1.15;
+}
+
+button.routine-load-weekday.is-at-capacity,
+button.routine-load-day.is-at-capacity {
+    border-color: var(--red-dark);
+    background: var(--red-dark);
+    color: white;
 }
 
 .routine-load-weekday strong,

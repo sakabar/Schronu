@@ -240,7 +240,7 @@ RoutineLoadRow {
 
 `horizon_day_count`、`average_work_seconds`、2つの日付別mapは追加fieldとする。旧payloadでmapが欠落する場合はserver DTOとclient wireの双方で空mapとして復元し、clientはmapと範囲選択を表示しない。旧8日payloadで既存の追加fieldが欠落する場合、clientは`horizon_day_count`を8として補い、平均秒数を`total_work_seconds / occurrence_day_count`で求める。`peak_date`と`peak_work_seconds`は新payloadから削除しない。
 
-負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷は月曜始まりの7列mapを全体表の上へ置き、先頭・末尾の範囲外cellを空欄にする。日付cellは日付、日別繰返時間、`日別繰返秒数 / 全日可処分秒数`の最寄り整数%を表示し、色だけを100%で飽和させる。0容量の割合は`--`とする。曜日見出しは28日内の同曜日4日分を合計して同じ比を示す。
+負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷は月曜始まりの7列mapを全体表の上へ置き、先頭・末尾の範囲外cellを空欄にする。日付cellは日付、日別繰返時間、`日別繰返秒数 / 全日可処分秒数`の最寄り整数%を表示し、濃度だけを100%で飽和させる。100%未満は赤い濃淡、100%以上は`--red-dark`の濃赤背景と白文字で区別し、曜日見出しにも同じ境界を適用する。0容量の割合は`--`とする。曜日見出しは28日内の同曜日4日分を合計して同じ比を示す。
 
 初期の全体表は「間隔 / 28日合計 / 発生日数 / 1日平均 / プロジェクト・繰返」を維持する。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示する。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、発火履歴、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返時間、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
@@ -922,7 +922,7 @@ OperationHistoryEntry {
 ### 12.5 UI and integration
 
 - 固定された「セッション」「一覧」「負荷」「発火履歴」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
-- 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、0容量、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
+- 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、0容量、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
