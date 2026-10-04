@@ -111,6 +111,7 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     let (request_id, request) = list_effect(state.request_list("2026-09-04"));
     let row = ScheduledTaskRow {
         task: session_row().task,
+        display_task_name: Some("<10/15>task".to_owned()),
         occurrence: ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },
@@ -147,6 +148,7 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
         }
     );
     assert_eq!(rows[0].deadline_label, "server deadline label");
+    assert_eq!(rows[0].display_task_name, "<10/15>task");
     assert!(rows[0].misses_deadline);
     assert_eq!(rows[0].task_display_kind, TaskDisplayKind::NonRepetitive);
     assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
@@ -246,6 +248,7 @@ fn listは旧payloadの締切超過flagを表示分類より優先する() {
     );
 
     let rows = project_list_rows(&state, JST_OFFSET_MINUTES);
+    assert_eq!(rows[0].display_task_name, "task");
     assert_eq!(rows[0].task_display_kind, TaskDisplayKind::Fixed);
     assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
 }
@@ -378,6 +381,7 @@ fn session_row() -> ScheduledTaskRow {
             actual_work_seconds: 300,
         }
         .into(),
+        display_task_name: None,
         occurrence: ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },

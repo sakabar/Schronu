@@ -18,6 +18,7 @@ fn all_row(segment_index: usize) -> AllTaskRow {
             actual_work_seconds: 0,
         }
         .into(),
+        display_task_name: None,
         occurrence: schronu_web::ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },

@@ -26,6 +26,7 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
     let storage = MemoryStorage::default();
     let cached_row = ScheduledTaskRow {
         task: task(RECORD_ID).into(),
+        display_task_name: None,
         occurrence: crate::ScheduleOccurrence::Actual { task_id: RECORD_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_600_000,
@@ -400,6 +401,7 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     let storage = MemoryStorage::default();
     let cached_row = ScheduledTaskRow {
         task: task(RECORD_ID).into(),
+        display_task_name: None,
         occurrence: crate::ScheduleOccurrence::Actual { task_id: RECORD_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_000_000_000,
         schedule_end_epoch_ms: 1_789_000_600_000,
@@ -486,6 +488,7 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
     let refreshed_row = ScheduledTaskRow {
         task: task(COMPLETE_ID).into(),
+        display_task_name: None,
         occurrence: crate::ScheduleOccurrence::Actual { task_id: COMPLETE_ID.to_owned() },
         schedule_start_epoch_ms: 1_789_300_000_000,
         schedule_end_epoch_ms: 1_789_300_600_000,

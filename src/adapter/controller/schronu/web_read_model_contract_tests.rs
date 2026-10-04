@@ -142,8 +142,7 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
         rows[1].schedule_start_epoch_ms
     );
     assert_eq!(
-        rows
-            .iter()
+        rows.iter()
             .map(|row| row.display_task_name.as_str())
             .collect::<Vec<_>>(),
         ["second", "<5/20>first", "<10/20>first"]

@@ -191,6 +191,8 @@ pub enum DeadlineDisplayKind {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskRow {
     pub task: ScheduledTask,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_task_name: Option<String>,
     #[serde(default)]
     pub occurrence: ScheduleOccurrence,
     pub schedule_start_epoch_ms: i64,
@@ -230,6 +232,8 @@ pub struct CompletedTaskReport {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRow {
     pub task: ScheduledTask,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_task_name: Option<String>,
     #[serde(default)]
     pub occurrence: ScheduleOccurrence,
     pub segment_index: usize,
@@ -313,6 +317,7 @@ mod all_task_contract_tests {
                 actual_work_seconds: 0,
             }
             .into(),
+            display_task_name: None,
             occurrence: ScheduleOccurrence::Actual {
                 task_id: "task".to_owned(),
             },

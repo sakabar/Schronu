@@ -36,6 +36,7 @@ pub struct CompletionConflictViewModel {
 pub struct ListRowViewModel {
     pub row_key: String,
     pub task: ScheduledTask,
+    pub display_task_name: String,
     pub occurrence: ScheduleOccurrence,
     pub deadline_label: String,
     pub schedule_display: ScheduleDisplayViewModel,
@@ -149,6 +150,10 @@ fn project_all_task_row(
             row.segment_index
         ),
         task: row.task.clone(),
+        display_task_name: row
+            .display_task_name
+            .clone()
+            .unwrap_or_else(|| row.task.task_name.clone()),
         occurrence: row.occurrence.clone(),
         deadline_label: row.deadline_label.clone(),
         schedule_display: ScheduleDisplayViewModel::AllTasksDate {
@@ -310,6 +315,10 @@ fn project_list_rows_with(
                     row.schedule_end_epoch_ms
                 ),
                 task: row.task.clone(),
+                display_task_name: row
+                    .display_task_name
+                    .clone()
+                    .unwrap_or_else(|| row.task.task_name.clone()),
                 occurrence: row.occurrence.clone(),
                 deadline_label: row.deadline_label.clone(),
                 schedule_display: ScheduleDisplayViewModel::Daily {

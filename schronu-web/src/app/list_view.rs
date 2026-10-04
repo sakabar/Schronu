@@ -694,14 +694,14 @@ fn TaskRow(
                 }
             }
             td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
-            td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.task.task_name),
+            td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.display_task_name),
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,
                     if is_projected {
                         span { class: "projected-task-badge", "予定" }
                     }
-                    "{row.task.task_name}"
+                    "{row.display_task_name}"
                     if let Some(source_task_id) = source_task_id.as_deref() {
                         span {
                             class: "projected-task-source",

@@ -464,6 +464,7 @@ fn 旧一覧payloadは表示分類fieldがなくてもdeserializeできる() {
     assert_eq!(scheduled.task_display_kind, TaskDisplayKind::NonRepetitive);
     assert_eq!(scheduled.deadline_display_kind, DeadlineDisplayKind::None);
     assert!(scheduled.misses_deadline);
+    assert!(scheduled.display_task_name.is_none());
     assert_eq!(scheduled.occurrence, ScheduleOccurrence::LegacyActual);
     assert_eq!(
         scheduled.task.task_id.as_deref(),

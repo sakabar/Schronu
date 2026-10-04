@@ -98,6 +98,7 @@ fn all_task_rows(count: usize) -> Vec<AllTaskRow> {
                 actual_work_seconds: 0,
             }
             .into(),
+            display_task_name: None,
             occurrence: crate::ScheduleOccurrence::Actual {
                 task_id: format!("00000000-0000-4000-8000-{index:012x}"),
             },

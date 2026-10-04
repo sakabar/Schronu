@@ -271,16 +271,19 @@ fn 分割task表示名は一覧へ無加工で描画し操作には正規名を�
     });
 
     let html = dioxus::ssr::render(&dom);
-    assert!(html.contains("aria-label=\"単発タスク: &lt;10/15&gt;タスク\""), "{html}");
-    assert!(html.contains("&lt;10/15&gt;タスク"), "{html}");
+    assert!(
+        html.contains("aria-label=\"単発タスク: &#60;10/15&#62;タスク\""),
+        "{html}"
+    );
+    assert!(html.contains("&#60;10/15&#62;タスク"), "{html}");
 
     for listener in listeners {
         dispatch_click(&dom, listener);
     }
+    let events = events.lock().unwrap();
     assert!(
-        events.lock().unwrap().iter().any(|event| event == "task:split:タスク:true"),
-        "{:?}",
-        events.lock().unwrap()
+        events.iter().any(|event| event == "task:split:タスク:true"),
+        "{events:?}"
     );
 }
 

@@ -108,6 +108,7 @@ pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
             actual_work_seconds,
         }
         .into(),
+        display_task_name: None,
         occurrence: schronu_web::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
