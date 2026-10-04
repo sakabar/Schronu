@@ -195,6 +195,8 @@ fn valid_view_state(state: &ViewState) -> bool {
             } => {
                 state.list_mode == ListMode::Completed
                     && valid_logical_date(logical_date)
+                    && (in_progress_actual_work_seconds.is_none()
+                        || logical_date == &state.snapshot.logical_date)
                     && rows.iter().all(valid_completed_row)
                     && valid_completed_summary(
                         rows,

@@ -62,7 +62,7 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         },
         list_mode: ListMode::Completed,
         list: Some(StoredActiveList::Completed {
-            logical_date: "2026-09-08".to_owned(),
+            logical_date: "2026-09-09".to_owned(),
             rows: Vec::new(),
             in_progress_actual_work_seconds: Some(900),
             total_actual_work_seconds: 900,
@@ -71,11 +71,40 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
         }),
         active_tab: ActiveTab::List,
         task_name_filter: "".to_owned(),
-        date_input_text: "2026/9/8".to_owned(),
+        date_input_text: "2026/9/9".to_owned(),
     };
 
     store_view_state(&storage, &state).unwrap();
     assert_eq!(load_view_state(&storage).state(), Some(&state));
+}
+
+#[test]
+fn view_state_v3は現在日以外の進行中実績を拒否する() {
+    let storage = MemoryStorage::default();
+    let state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-08".to_owned(),
+            rows: Vec::new(),
+            in_progress_actual_work_seconds: Some(900),
+            total_actual_work_seconds: 900,
+            available_seconds: 43_200,
+            recorded_percentage: Some(2),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: "2026/9/8".to_owned(),
+    };
+
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
 }
 
 #[test]

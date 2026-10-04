@@ -463,9 +463,45 @@ impl ClientState {
             self.read.date_buttons =
                 logical_date_buttons_for_mode(&snapshot.logical_date, self.read.list_mode)
                     .unwrap_or_default();
+            self.normalize_stale_in_progress_summary(&snapshot.logical_date);
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)
+    }
+
+    fn normalize_stale_in_progress_summary(&mut self, current_logical_date: &str) {
+        if self.read.selected_logical_date.as_deref() == Some(current_logical_date) {
+            return;
+        }
+        let Some(report) = self.read.completed_report.as_mut() else {
+            return;
+        };
+        let Some(in_progress) = report.in_progress_actual_work_seconds else {
+            return;
+        };
+        let Some(completed_total) = report.total_actual_work_seconds.checked_sub(in_progress)
+        else {
+            self.read.completed_report = None;
+            self.read.has_list = false;
+            return;
+        };
+        let recorded_percentage = if report.available_seconds == 0 {
+            Some(None)
+        } else {
+            let total = i128::from(completed_total);
+            let available = i128::from(report.available_seconds);
+            i64::try_from((total * 100 + available / 2) / available)
+                .ok()
+                .map(Some)
+        };
+        let Some(recorded_percentage) = recorded_percentage else {
+            self.read.completed_report = None;
+            self.read.has_list = false;
+            return;
+        };
+        report.in_progress_actual_work_seconds = None;
+        report.total_actual_work_seconds = completed_total;
+        report.recorded_percentage = recorded_percentage;
     }
 
     pub(super) fn allocate_read_request_id(&mut self) -> Option<u64> {

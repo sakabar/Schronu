@@ -151,15 +151,19 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
     store_view_state(
         &storage,
         &ViewState {
-            snapshot: snapshot(1_789_000_000_000),
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 1_789_000_000_000,
+                logical_date: "2026-09-08".to_owned(),
+                buffer_seconds: 60,
+            },
             list_mode: crate::client::state::ListMode::Completed,
             list: Some(StoredActiveList::Completed {
                 logical_date: "2026-09-08".to_owned(),
                 rows: vec![cached_row.clone()],
-                in_progress_actual_work_seconds: None,
-                total_actual_work_seconds: 120,
+                in_progress_actual_work_seconds: Some(60),
+                total_actual_work_seconds: 180,
                 available_seconds: 600,
-                recorded_percentage: Some(20),
+                recorded_percentage: Some(30),
             }),
             active_tab: ActiveTab::List,
             task_name_filter: String::new(),
@@ -199,6 +203,10 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
         orchestrator.state().unwrap().completed_rows(),
         std::slice::from_ref(&cached_row)
     );
+    let report = orchestrator.state().unwrap().completed_report().unwrap();
+    assert_eq!(report.in_progress_actual_work_seconds, None);
+    assert_eq!(report.total_actual_work_seconds, 120);
+    assert_eq!(report.recorded_percentage, Some(20));
 }
 
 #[test]
