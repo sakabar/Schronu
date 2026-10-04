@@ -888,6 +888,11 @@ button:disabled {
     font-weight: 700;
 }
 
+.completed-difference.is-underrun {
+    color: var(--blue-dark);
+    font-weight: 700;
+}
+
 .completed-task-table .completed-time {
     width: 4.25rem;
     min-width: 4.25rem;

@@ -137,6 +137,38 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
 }
 
 #[test]
+fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
+    let mut dom = VirtualDom::new(completed_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference is-overrun\"",
+            " aria-label=\"実績と見積の差 +00:00:02\">+00:00:02</td>"
+        )),
+        "{html}"
+    );
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference is-underrun\"",
+            " aria-label=\"実績と見積の差 -00:00:02\">-00:00:02</td>"
+        )),
+        "{html}"
+    );
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference\"",
+            " aria-label=\"実績と見積の差 +00:00:00\">+00:00:00</td>"
+        )),
+        "{html}"
+    );
+
+    let css = include_str!("../../assets/main.css");
+    assert!(css.contains(".completed-difference.is-underrun {\n    color: var(--blue-dark);"));
+}
+
+#[test]
 fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避する() {
     fn invalid_time_root() -> Element {
         rsx! {

@@ -488,6 +488,8 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
     };
     let difference_class = if difference > 0 {
         "completed-number completed-difference is-overrun"
+    } else if difference < 0 {
+        "completed-number completed-difference is-underrun"
     } else {
         "completed-number completed-difference"
     };
