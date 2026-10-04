@@ -163,3 +163,37 @@ fn routine_loadはactualとprojectedを同じ繰返元へ集計する() {
     assert_eq!(report.rows[0].total_work_seconds, 90 * 60);
     assert_eq!(report.rows[0].occurrence_day_count, 3);
 }
+
+#[test]
+fn routine_loadは同じuuidのactualとprojectedを別の規則で解決する() {
+    let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
+    let outer_routine = TaskHandle::with_identity("週次", Uuid::from_u128(201), at(3)).unwrap();
+    outer_routine
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+    let source = child(&outer_routine, "3日に1回筋トレする", 202, at(3));
+    source.set_repetition_interval_days_opt(Some(3)).unwrap();
+    let repository = TestTaskRepository::new(vec![outer_routine], at(3));
+    let schedule = vec![
+        segment(&source, at(3), 10 * 60),
+        projected_segment(&source, at(6), at(6), 20 * 60),
+    ];
+
+    let report = build_routine_load_report(&repository, &schedule, today).unwrap();
+
+    assert_eq!(report.rows.len(), 2);
+    let actual_row = report
+        .rows
+        .iter()
+        .find(|row| row.routine_task_id == Uuid::from_u128(201))
+        .unwrap();
+    assert_eq!(actual_row.repetition_interval_days, 7);
+    assert_eq!(actual_row.total_work_seconds, 10 * 60);
+    let projected_row = report
+        .rows
+        .iter()
+        .find(|row| row.routine_task_id == Uuid::from_u128(202))
+        .unwrap();
+    assert_eq!(projected_row.repetition_interval_days, 3);
+    assert_eq!(projected_row.total_work_seconds, 20 * 60);
+}
