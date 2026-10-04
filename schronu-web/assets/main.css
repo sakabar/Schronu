@@ -1193,15 +1193,15 @@ button:disabled {
     font-weight: 750;
 }
 
-.task-name.task-kind-fixed {
+.task-kind-fixed {
     color: var(--task-fixed);
 }
 
-.task-name.task-kind-repetitive {
+.task-kind-repetitive {
     color: var(--task-repetitive);
 }
 
-.task-name.task-kind-non-repetitive {
+.task-kind-non-repetitive {
     color: var(--task-non-repetitive);
 }
 

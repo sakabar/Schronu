@@ -493,6 +493,8 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
     } else {
         "completed-number completed-difference"
     };
+    let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
+    let task_class = format!("completed-task-name {task_kind_class}");
     rsx! {
         tr { key: "{row.task_id}",
             td { class: "completed-time completed-number",
@@ -506,7 +508,11 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
             td { class: difference_class, aria_label: format!("実績と見積の差 {difference_label}"), "{difference_label}" }
             th { class: "completed-subject", scope: "row",
                 div { class: "completed-subject-scroll", tabindex: 0,
-                    strong { class: "completed-task-name", "{row.task_name}" }
+                    strong {
+                        class: task_class,
+                        aria_label: format!("{task_kind_label}: {}", row.task_name),
+                        "{row.task_name}"
+                    }
                     span { class: "completed-project", "{row.project_name}" }
                 }
             }
@@ -565,16 +571,7 @@ fn TaskRow(
         DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
         DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
     };
-    let task_kind_class = match row.task_display_kind {
-        TaskDisplayKind::Fixed => "task-kind-fixed",
-        TaskDisplayKind::Repetitive => "task-kind-repetitive",
-        TaskDisplayKind::NonRepetitive => "task-kind-non-repetitive",
-    };
-    let task_kind_label = match row.task_display_kind {
-        TaskDisplayKind::Fixed => "固定タスク",
-        TaskDisplayKind::Repetitive => "繰返タスク",
-        TaskDisplayKind::NonRepetitive => "単発タスク",
-    };
+    let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
     let task_class = if row.is_leaf {
         format!("task-name {task_kind_class} is-leaf")
     } else {
@@ -735,5 +732,14 @@ fn TaskRow(
                 }
             }
         }
+    }
+}
+
+#[allow(dead_code)]
+fn task_display_metadata(kind: TaskDisplayKind) -> (&'static str, &'static str) {
+    match kind {
+        TaskDisplayKind::Fixed => ("task-kind-fixed", "固定タスク"),
+        TaskDisplayKind::Repetitive => ("task-kind-repetitive", "繰返タスク"),
+        TaskDisplayKind::NonRepetitive => ("task-kind-non-repetitive", "単発タスク"),
     }
 }

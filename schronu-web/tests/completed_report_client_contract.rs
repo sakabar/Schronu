@@ -15,6 +15,7 @@ fn completed_row(task_id: &str, task_name: &str) -> CompletedTaskRow {
         completed_at_epoch_ms: 1_789_551_723_000,
         actual_work_seconds: 120,
         estimated_work_seconds: 60,
+        task_display_kind: Default::default(),
     }
 }
 

@@ -537,7 +537,7 @@ fn 完了reportは予定と同じtask種別分類を保持する() {
                     task_id: task_id.hyphenated().to_string(),
                     started_at_epoch_ms: operation_now.timestamp_millis(),
                     ended_at_epoch_ms: None,
-                    expected_actual_work_seconds: if task_id == repetitive_id { 300 } else { 0 },
+                    expected_actual_work_seconds: if task_id == single_id { 0 } else { 300 },
                     record_elapsed_seconds: false,
                 },
             )

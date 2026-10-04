@@ -145,6 +145,7 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
         completed_at_epoch_ms: 1_789_000_000_000,
         actual_work_seconds: 120,
         estimated_work_seconds: 60,
+        task_display_kind: Default::default(),
     };
     store_view_state(
         &storage,
@@ -208,6 +209,7 @@ fn 背景更新中の完了modeから一覧への復帰は再取得を発行し�
         completed_at_epoch_ms: 1_789_000_000_000,
         actual_work_seconds: 120,
         estimated_work_seconds: 60,
+        task_display_kind: Default::default(),
     };
     store_view_state(
         &storage,
@@ -321,6 +323,7 @@ fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを�
                     completed_at_epoch_ms: 1_789_000_000_000,
                     actual_work_seconds: 120,
                     estimated_work_seconds: 60,
+                    task_display_kind: Default::default(),
                 }],
                 total_actual_work_seconds: 120,
                 available_seconds: 600,

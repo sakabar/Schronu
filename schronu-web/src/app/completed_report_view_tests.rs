@@ -28,6 +28,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 360_001,
                         estimated_work_seconds: 359_999,
+                        task_display_kind: Default::default(),
                         },
                         CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000002".to_owned(),
@@ -36,6 +37,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_724_000,
                         actual_work_seconds: 0,
                         estimated_work_seconds: 0,
+                        task_display_kind: Default::default(),
                         },
                         CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000003".to_owned(),
@@ -44,6 +46,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_725_000,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 3,
+                        task_display_kind: Default::default(),
                         },
                     ],
                     total_actual_work_seconds: 360_001,
@@ -109,7 +112,8 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         html.contains(concat!(
             "<th class=\"completed-subject\" scope=\"row\">",
             "<div class=\"completed-subject-scroll\" tabindex=0>",
-            "<strong class=\"completed-task-name\">設計を仕上げる</strong>",
+            "<strong class=\"completed-task-name task-kind-non-repetitive\" ",
+            "aria-label=\"単発タスク: 設計を仕上げる\">設計を仕上げる</strong>",
             "<span class=\"completed-project\">Schronu</span>",
             "</div></th>"
         )),
@@ -249,6 +253,7 @@ fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避す�
                         completed_at_epoch_ms: i64::MAX,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 1,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 1,
                     available_seconds: 1,
@@ -288,6 +293,7 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 360_001,
                         estimated_work_seconds: 360_001,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 360_001,
                     available_seconds: 288_000,
@@ -340,6 +346,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 2,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 1,
                     available_seconds: 2,

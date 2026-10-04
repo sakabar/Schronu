@@ -202,6 +202,7 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
                 completed_at_epoch_ms: 1_789_000_000_000,
                 actual_work_seconds: 1,
                 estimated_work_seconds: 1,
+                task_display_kind: Default::default(),
             }],
             total_actual_work_seconds: 1,
             available_seconds: 10,

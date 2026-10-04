@@ -263,6 +263,7 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     completed_at_epoch_ms: 1_788_565_499_999,
                     actual_work_seconds: 901,
                     estimated_work_seconds: 900,
+                    task_display_kind: Default::default(),
                 }],
                 total_actual_work_seconds: 901,
                 available_seconds: 43_200,
