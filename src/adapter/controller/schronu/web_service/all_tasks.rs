@@ -115,6 +115,7 @@ mod tests {
                 estimated_work_seconds: 1,
                 actual_work_seconds: 0,
             },
+            display_task_name: "name".to_owned(),
             occurrence: super::super::model::ScheduleOccurrenceDto::Actual {
                 task_id: "task".to_owned(),
             },
