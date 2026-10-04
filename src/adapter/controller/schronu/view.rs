@@ -59,6 +59,12 @@ fn format_split_task_name(
     }
 }
 
+fn format_repetition_prefix_label(repetition_interval_days_opt: Option<i64>) -> String {
+    repetition_interval_days_opt
+        .map(|repetition_interval_days| format!("【繰】({repetition_interval_days})"))
+        .unwrap_or_default()
+}
+
 pub(super) fn backup_display(path: &Path, summary: &SnapshotSummary) -> DisplayModel {
     DisplayModel::Snapshot(SnapshotDisplay {
         operation: "backup",
@@ -1042,14 +1048,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let inherited_repetition_interval_days_opt = task
                 .get_inherited_repetition_interval_days_opt()
                 .map_err(ApplicationError::TaskTree)?;
-            let mut repetition_prefix_label = "".to_string();
-
-            if let Some(repetition_interval_days) = inherited_repetition_interval_days_opt {
-                repetition_prefix_label = format!(
-                    "{}【繰】({})",
-                    repetition_prefix_label, repetition_interval_days
-                );
-            }
+            let mut repetition_prefix_label =
+                format_repetition_prefix_label(inherited_repetition_interval_days_opt);
 
             let is_on_other_side = task
                 .get_is_on_other_side()
@@ -1351,7 +1351,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
             let deadline_string =
                 format_deadline_remaining_time(Some(&deadline), *scheduled_end, last_synced_time)?;
             let task_name = format_split_task_name(
-                format!("{adjustable_prefix_label}{}", scheduled_task.task.name),
+                format!(
+                    "{adjustable_prefix_label}{}{}",
+                    format_repetition_prefix_label(scheduled_task.task.repetition_interval_days),
+                    scheduled_task.task.name
+                ),
                 scheduled_work_seconds,
                 total_work_seconds,
             );
