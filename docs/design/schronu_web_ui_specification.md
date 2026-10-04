@@ -482,7 +482,7 @@ tick_now_epoch_ms: i64
 
 `record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
 
-`list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。
+`list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。`Completed`の一覧から別の上位tabへ移動した後に一覧tabへ再進入した場合は、選択日を維持して`Scheduled`へ切り替え、`list_tasks`を1回生成する。一覧tabを表示中の再選択と、一覧tabを表示したまま復元したview stateではmodeを維持する。
 
 `task_name_filter`は日付別一覧、全件一覧、完了一覧で共有し、view stateへ保存する。各一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使い、完了modeでもProject名は検索しない。
 
@@ -628,7 +628,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
-7. 負荷以外へのtab切替ではserver操作を行わない。「負荷」への切替だけは`load_band`を1回送り、選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+7. 完了modeから別tabを経た一覧tabへの再進入は、予定modeへ戻し、選択中のlogical dateの`list_tasks`を1回送る。「負荷」への切替は`load_band`を1回送る。その他のtab切替ではserver操作を行わない。選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
@@ -637,7 +637,7 @@ reload直後の`bootstrap`と、その成功後に続く保存日付のactive mo
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
-背景更新中は負荷以外へのtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
+背景更新中は、完了modeから別tabを経た一覧tabへの再進入を除く負荷以外へのtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。完了modeから別tabを経た一覧tabへの再進入はorchestrator guardで拒否し、active tabとmodeを変更しない。背景更新が完了した後の再操作で、一覧tabへの再進入を受け付ける。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。「表示」buttonは共通buttonの上下paddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で文字を中央に配置する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -659,7 +659,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### 7.3 一覧画面
 
-- 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayと発火履歴の対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。
+- 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayと発火履歴の対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。完了modeからセッション、負荷、発火履歴を経て一覧へ戻る場合は選択日を維持して予定modeへ戻し、予定一覧を1回取得する。一覧tabの再選択と一覧tab表示中のreloadではmodeを維持する。
 - 曜日button群の先頭に「全て」を置く。日付別buttonは従来の8日分を維持し、「全て」と選択中の日付を`aria-pressed`で区別する。
 - 「全て」を初めて選択した時と無効化後の再選択時にだけ全件取得を開始する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。」と「更新」を表示する。検索とtableは`Loaded`の時だけ表示する。
 - 全件取得は全面overlayを出さない。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得とpage連結を継続する。取得完了後に戻った場合はmemory上の結果を描画する。
@@ -725,6 +725,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
 | reload背景更新 | `bootstrap`後、保存一覧があれば保存日付のactive mode endpoint、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotとtagged一覧をversion 3のview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
 | 一覧mode切替 | 予定は`list_tasks`、完了は`list_completed_tasks` | なし | modeをview stateへ保存 | response全体でactive一覧を置換 | なし |
+| 完了modeから別tabを経た一覧への再進入 | 選択日の`list_tasks` | なし | modeを予定としてview stateへ保存 | response全体で予定一覧を置換 | なし |
 | 負荷以外へのtab切替 | なし | なし | view stateを保存 | なし | なし |
 | 負荷tabへの切替 | `load_band` | なし | view stateだけを保存し、負荷dataは保存しない | 直前の負荷dataを維持し、成功時に7日帯と8日繰返負荷を同時置換 | なし |
 | 負荷内の表示切替 | なし | なし | なし | 取得済みの7日帯と8日繰返負荷をclient内で切替 | なし |

@@ -1,7 +1,7 @@
 use chrono::{Datelike, NaiveDate};
 use schronu_web::client::date_buttons::logical_date_buttons_for_mode;
 use schronu_web::client::date_input::{resolve_date_input_for_mode, DateInputError};
-use schronu_web::client::state::{ClientEffect, ListMode, ServerFailure};
+use schronu_web::client::state::{ActiveTab, ClientEffect, ListMode, ServerFailure};
 use schronu_web::{CompletedTaskReport, CompletedTaskRow, WebSuccess};
 
 mod client_state_support;
@@ -64,6 +64,46 @@ fn list_modeは予定をdefaultにして切替先endpointを1回選ぶ() {
 
     let (_, scheduled_request) = list_effect(state.switch_list_mode(ListMode::Scheduled));
     assert_eq!(scheduled_request.logical_date, "2026-09-16");
+}
+
+#[test]
+fn 別tabから一覧へ戻ると選択日を維持して予定modeを取得する() {
+    for other_tab in [ActiveTab::Session, ActiveTab::Load, ActiveTab::History] {
+        let storage = FakeStorage::default();
+        let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
+        let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+        state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-16", 1)));
+        let _ = state.switch_tab(ActiveTab::List);
+        let (list_id, request) = list_effect(state.select_logical_date("2026-09-15"));
+        state.apply_list_result(
+            list_id,
+            &request.logical_date,
+            Ok(WebSuccess {
+                snapshot: snapshot("2026-09-16", 2),
+                data: Vec::new(),
+            }),
+        );
+        let _ = state.switch_list_mode(ListMode::Completed);
+
+        let _ = state.switch_tab(other_tab);
+        let (_, request) = list_effect(state.switch_tab(ActiveTab::List));
+
+        assert_eq!(state.list_mode(), ListMode::Scheduled, "{other_tab:?}");
+        assert_eq!(request.logical_date, "2026-09-15", "{other_tab:?}");
+    }
+}
+
+#[test]
+fn 一覧tabの再選択は完了modeを維持する() {
+    let storage = FakeStorage::default();
+    let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-16", 1)));
+    let _ = state.switch_tab(ActiveTab::List);
+    let _ = state.switch_list_mode(ListMode::Completed);
+
+    assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
+    assert_eq!(state.list_mode(), ListMode::Completed);
 }
 
 #[test]

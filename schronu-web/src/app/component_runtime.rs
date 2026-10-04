@@ -305,7 +305,7 @@ impl ComponentOrchestrator {
                 background_state_for_effect(&effect).unwrap_or(RefreshState::Failed);
             return effect;
         }
-        if self.server_actions_blocked() && action_requires_server(&action) {
+        if self.server_actions_blocked() && action_requires_server(self.state(), &action) {
             return ClientEffect::None;
         }
         let should_persist = !matches!(action, ComponentAction::Tick { .. });
@@ -505,7 +505,7 @@ fn background_state_for_effect(effect: &ClientEffect) -> Option<RefreshState> {
     }
 }
 
-fn action_requires_server(action: &ComponentAction) -> bool {
+fn action_requires_server(state: Option<&ClientState>, action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::SelectDate(_)
@@ -519,7 +519,10 @@ fn action_requires_server(action: &ComponentAction) -> bool {
             | ComponentAction::CompleteSession(_)
             | ComponentAction::CompleteSessionWithoutRecording(_)
             | ComponentAction::ConfirmCompletionConflict(_)
-    )
+    ) || matches!(action, ComponentAction::SwitchTab(ActiveTab::List))
+        && state.is_some_and(|state| {
+            state.active_tab() != ActiveTab::List && state.list_mode() == ListMode::Completed
+        })
 }
 
 pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
