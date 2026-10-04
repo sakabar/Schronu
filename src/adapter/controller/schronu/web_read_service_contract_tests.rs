@@ -135,6 +135,27 @@ impl WebReadServiceFixture {
         (parent_id, child_id)
     }
 
+    fn seed_fixed_repetition_task(&self, now: chrono::DateTime<Local>) -> Uuid {
+        let parent_id = Uuid::from_u128(0x2026_0905_0011);
+        let child_id = Uuid::from_u128(0x2026_0905_0012);
+        let parent = TaskHandle::with_identity("fixed routine", parent_id, now).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
+        let child = parent
+            .create_child(TaskAttr::with_identity("fixed occurrence", child_id, now))
+            .unwrap();
+        child.set_estimated_work_seconds(600).unwrap();
+        child.set_start_time(now).unwrap();
+        child.set_fixed_start(true).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        repository.start_new_project(parent).unwrap();
+        repository.save().unwrap();
+        child_id
+    }
+
     fn seed_parent_child_and_pending_leaf(
         &self,
         now: chrono::DateTime<Local>,
@@ -515,11 +536,13 @@ fn 完了reportは予定と同じtask種別分類を保持する() {
     let fixed_id = fixture.seed_fixed_task(seeded_at);
     let single_id = fixture.seed_unconstrained_task(seeded_at);
     let (_, repetitive_id) = fixture.seed_repetition_task(seeded_at);
+    let fixed_repetitive_id = fixture.seed_fixed_repetition_task(seeded_at);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
     let scheduled = service.list_all_tasks_at(operation_now, None).unwrap().data;
 
     for (task_id, expected_kind) in [
         (fixed_id, TaskDisplayKind::Fixed),
+        (fixed_repetitive_id, TaskDisplayKind::Fixed),
         (repetitive_id, TaskDisplayKind::Repetitive),
         (single_id, TaskDisplayKind::NonRepetitive),
     ] {
@@ -537,7 +560,12 @@ fn 完了reportは予定と同じtask種別分類を保持する() {
                     task_id: task_id.hyphenated().to_string(),
                     started_at_epoch_ms: operation_now.timestamp_millis(),
                     ended_at_epoch_ms: None,
-                    expected_actual_work_seconds: if task_id == single_id { 0 } else { 300 },
+                    expected_actual_work_seconds: if task_id == fixed_id || task_id == repetitive_id
+                    {
+                        300
+                    } else {
+                        0
+                    },
                     record_elapsed_seconds: false,
                 },
             )
@@ -551,6 +579,7 @@ fn 完了reportは予定と同じtask種別分類を保持する() {
 
     for (task_id, expected_kind) in [
         (fixed_id, TaskDisplayKind::Fixed),
+        (fixed_repetitive_id, TaskDisplayKind::Fixed),
         (repetitive_id, TaskDisplayKind::Repetitive),
         (single_id, TaskDisplayKind::NonRepetitive),
     ] {
