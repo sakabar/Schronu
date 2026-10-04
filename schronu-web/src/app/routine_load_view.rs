@@ -455,7 +455,7 @@ pub(super) fn rows_for_scope(
                     .fold((0_i64, 0_usize), |(total, count), (_, seconds)| {
                         (total.saturating_add(*seconds), count + 1)
                     });
-                (work_seconds > 0).then(|| ScopeRoutineRow {
+                (occurrence_count > 0).then(|| ScopeRoutineRow {
                     routine: routine.row.clone(),
                     work_seconds,
                     average_work_seconds: work_seconds.checked_div(4),

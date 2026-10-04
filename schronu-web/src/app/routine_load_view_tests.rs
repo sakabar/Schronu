@@ -135,6 +135,13 @@ fn 作業0秒の発生日を含む繰返でも拡張表示する() {
     );
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].work_seconds, 0);
+
+    let rows = rows_for_scope(&projection, RoutineLoadScope::Weekday(5));
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].work_seconds, 0);
+    assert_eq!(rows[0].average_work_seconds, Some(0));
+    assert_eq!(rows[0].percentage, Some(0));
+    assert_eq!(rows[0].occurrence_count, 2);
 }
 
 #[test]
