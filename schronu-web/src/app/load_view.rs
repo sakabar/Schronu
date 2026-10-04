@@ -1,5 +1,6 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
+use super::load_view_format::format_unsigned;
 use super::routine_load_view::RoutineLoadTable;
 use crate::{BandDay, BandDurations, RoutineLoadReport};
 use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
@@ -384,11 +385,6 @@ fn format_signed(seconds: i64) -> String {
     let sign = if seconds >= 0 { '+' } else { '-' };
     let minutes = seconds.unsigned_abs() / 60;
     format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
-}
-
-fn format_unsigned(seconds: i64) -> String {
-    let minutes = seconds.max(0) / 60;
-    format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 fn format_duration(seconds: i64) -> String {

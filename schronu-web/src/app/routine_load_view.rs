@@ -1,5 +1,6 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
+use super::load_view_format::format_unsigned;
 use crate::{RoutineLoadReport, RoutineLoadRow};
 use chrono::Datelike;
 use dioxus::prelude::*;
@@ -78,9 +79,4 @@ fn format_short_date(value: &str) -> String {
     chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
         .map(|date| format!("{}/{}", date.month(), date.day()))
         .unwrap_or_else(|_| value.to_owned())
-}
-
-fn format_unsigned(seconds: i64) -> String {
-    let minutes = seconds.max(0) / 60;
-    format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
