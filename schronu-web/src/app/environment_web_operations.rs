@@ -642,7 +642,7 @@ mod tests {
             expected[1].hyphenated().to_string()
         );
         assert_eq!(completed.data.total_actual_work_seconds, 32);
-        assert_eq!(completed.data.available_seconds, 72_000);
+        assert_eq!(completed.data.available_seconds, 46_859);
         assert_eq!(completed.data.recorded_percentage, Some(0));
 
         let error = operations

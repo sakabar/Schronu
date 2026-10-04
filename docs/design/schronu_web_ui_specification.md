@@ -308,7 +308,7 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 - 入力: `logical_date: YYYY-MM-DD`
 - 成功出力: `WebSuccess<CompletedTaskReport>`
 - 指定logical dateの06:00から翌日06:00未満に完了したtaskを完了時刻昇順で返す。
-- 実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日の設定済み日次終端までの`busy_time_slot`を除いた利用可能秒数と、実績合計を利用可能秒数で割って四捨五入した整数%を返す。利用可能時間0秒では記録率を`None`とし、100%を上限にしない。
+- 実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日がserver観測時刻のlogical dateなら06:00から`min(server観測時刻, 日次終端)`まで、それ以外は06:00から日次終端までの`busy_time_slot`を除いた利用可能秒数を返す。実績合計をこの利用可能秒数で割って四捨五入した整数%を返し、利用可能時間0秒では記録率を`None`、100%超過は上限なしとする。
 - task dataは変更しない。
 
 ### 4.4 `list_all_tasks(cursor)`
@@ -671,7 +671,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
-- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
+- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
 - 完了一覧は`完了、実績、差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。見積値はrowに保持して差の計算へ使用するが、表へは表示しない。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。超過の赤色は符号の代替にしない。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、46rem以下では数値3列を比率指定してpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
@@ -895,7 +895,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
-- 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。
+- 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
 - storage version 3でactive modeとtaggedな予定・完了一覧、空成功、選択tab、共有検索文字列、日付入力がround-tripすることを確認する。version 2は予定modeへ移行し、version 1・未知version・破損値を復元しないこと、保存済み完了modeがbootstrap後に同じ日を`list_completed_tasks`で背景更新することを確認する。「全て」の行・cursor・選択は復元しない。

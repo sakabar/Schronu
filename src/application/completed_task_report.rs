@@ -1,5 +1,5 @@
 use crate::application::daily_capacity::{
-    try_logical_date_end, try_logical_date_start, try_next_logical_date_start,
+    try_logical_date, try_logical_date_end, try_logical_date_start, try_next_logical_date_start,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::task_list::{
@@ -50,7 +50,13 @@ pub fn build_completed_task_report(
         })?;
     let start = try_logical_date_start(logical_date)?;
     let end = try_logical_date_end(logical_date, end_of_day_offset_minutes)?;
-    let available_seconds = free_time_manager.get_free_seconds(&start, &end);
+    let observed_at = repository.get_last_synced_time();
+    let availability_end = if try_logical_date(observed_at)? == logical_date {
+        observed_at.min(end)
+    } else {
+        end
+    };
+    let available_seconds = free_time_manager.get_free_seconds(&start, &availability_end);
     let recorded_percentage = if available_seconds == 0 {
         None
     } else {
@@ -304,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn rootと親を含む実績合計とbusy控除後の利用可能時間を返す() {
+    fn 今日の利用可能時間はlogical_date開始から現在時刻までを要求する() {
         let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
         let root = completed_task("root", local_time(11, 9, 0, 0), 0, 100);
         root.create_child(completed_attr("parent", local_time(11, 10, 0, 0), 200, 300))
@@ -321,7 +327,41 @@ mod tests {
         assert_eq!(report.rows.len(), 2);
         assert_eq!(
             free_time_manager.requested_intervals,
-            vec![(local_time(11, 6, 0, 0), local_time(12, 2, 0, 0))]
+            vec![(local_time(11, 6, 0, 0), local_time(11, 12, 0, 0))]
+        );
+    }
+
+    #[test]
+    fn 過去日の利用可能時間は従来どおりlogical_date全体を要求する() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 10).unwrap();
+        let repository = TestTaskRepository::new(vec![], local_time(11, 12, 0, 0));
+        let mut free_time_manager = RecordingFreeTimeManager::new(1_234);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert_eq!(report.available_seconds, 1_234);
+        assert_eq!(
+            free_time_manager.requested_intervals,
+            vec![(local_time(10, 6, 0, 0), local_time(11, 2, 0, 0))]
+        );
+    }
+
+    #[test]
+    fn 今日の日次終端後は利用可能時間を日次終端で打ち切る() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let repository = TestTaskRepository::new(vec![], local_time(12, 4, 0, 0));
+        let mut free_time_manager = RecordingFreeTimeManager::new(1_234);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, -120)
+                .unwrap();
+
+        assert_eq!(report.available_seconds, 1_234);
+        assert_eq!(
+            free_time_manager.requested_intervals,
+            vec![(local_time(11, 6, 0, 0), local_time(11, 22, 0, 0))]
         );
     }
 
@@ -352,17 +392,19 @@ mod tests {
     #[test]
     fn 利用可能時間0なら記録率はnone() {
         let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
-        let repository = TestTaskRepository::new(
-            vec![completed_task("task", local_time(11, 9, 0, 0), 10, 10)],
-            local_time(11, 12, 0, 0),
-        );
+        let repository = TestTaskRepository::new(vec![], local_time(11, 6, 0, 0));
         let mut free_time_manager = RecordingFreeTimeManager::new(0);
 
         let report =
             build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
                 .unwrap();
 
+        assert_eq!(report.available_seconds, 0);
         assert_eq!(report.recorded_percentage, None);
+        assert_eq!(
+            free_time_manager.requested_intervals,
+            vec![(local_time(11, 6, 0, 0), local_time(11, 6, 0, 0))]
+        );
     }
 
     #[test]

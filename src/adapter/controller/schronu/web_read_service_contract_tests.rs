@@ -478,7 +478,7 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
 #[test]
 fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactionで返す() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
-    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 30, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 21, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     let task_id = fixture.seed_fixed_task_with_actual(seeded_at, 0, false);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
@@ -503,8 +503,8 @@ fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactio
     assert_eq!(report.rows.len(), 1);
     assert_eq!(report.rows[0].actual_work_seconds, 1_800);
     assert_eq!(report.total_actual_work_seconds, 1_800);
-    assert_eq!(report.available_seconds, 68_400);
-    assert_eq!(report.recorded_percentage, Some(3));
+    assert_eq!(report.available_seconds, 50_400);
+    assert_eq!(report.recorded_percentage, Some(4));
 }
 
 #[test]

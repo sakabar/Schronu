@@ -1485,12 +1485,24 @@ fn calendarとbandは製品経路で代表出力とansi_capabilityを維持す�
     assert!(calendar.contains("日          \t空"));
 
     let band =
-        execute_calendar_command_with_ansi_color_for_test("帯", now, make_task(), 10 * 60, true);
+        execute_calendar_command_with_ansi_color_for_test(
+            "帯",
+            now,
+            make_task(),
+            Some(10 * 60),
+            true,
+        );
     assert!(band.contains("凡例:"));
     assert!(band.contains("\x1b[38;5;"));
 
     let pipe_band =
-        execute_calendar_command_with_ansi_color_for_test("帯", now, make_task(), 10 * 60, false);
+        execute_calendar_command_with_ansi_color_for_test(
+            "帯",
+            now,
+            make_task(),
+            Some(10 * 60),
+            false,
+        );
     assert!(pipe_band.contains("凡例:"));
     assert!(!pipe_band.contains("\x1b["));
 }
@@ -2097,17 +2109,20 @@ fn completed_commandは製品handlerからapplication_queryを通して完了tas
     let task = new_test_task_handle("完了レポート対象").unwrap();
     task.set_orig_status(Status::Done).unwrap();
     task.set_end_time_opt(Some(completed_at)).unwrap();
-    task.set_actual_work_seconds(65).unwrap();
+    task.set_actual_work_seconds(3 * 60 * 60).unwrap();
     task.set_estimated_work_seconds(60).unwrap();
 
-    let result = execute_command_for_test(task, now, None, "済");
+    let output =
+        execute_calendar_command_with_ansi_color_for_test("済", now, task, None, false);
 
-    assert!(result.output.contains("完了"));
-    assert!(result.output.contains("08:02"));
-    assert!(!result.output.contains("08:02:03"));
-    assert!(result.output.contains("00:01:05"));
-    assert!(result.output.contains("+00:00:05"));
-    assert!(result.output.contains("完了レポート対象"));
+    assert!(output.contains("完了"));
+    assert!(output.contains("08:02"));
+    assert!(!output.contains("08:02:03"));
+    assert!(output.contains("03:00:00"));
+    assert!(output.contains("+02:59:00"));
+    assert!(output.contains("完了レポート対象"));
+    assert!(output.contains("利用可能: 06:00:00"), "{output}");
+    assert!(output.contains("記録率: 50%"), "{output}");
 }
 
 #[test]
@@ -7254,7 +7269,13 @@ fn test_execute_band_パイプ出力では_ansi前景色を含めない() {
     let _ = task.set_pending_until(now);
     let _ = task.set_orig_status(Status::Pending);
 
-    let actual = execute_calendar_command_with_ansi_color_for_test("帯", now, task, 10 * 60, false);
+    let actual = execute_calendar_command_with_ansi_color_for_test(
+        "帯",
+        now,
+        task,
+        Some(10 * 60),
+        false,
+    );
 
     assert!(!actual.contains("\x1b["));
     assert!(actual.contains("凡例: # 利用不可  x 経過済み"));
