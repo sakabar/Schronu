@@ -169,6 +169,73 @@ fn 予実差は正を赤_負を青_zeroを通常色で表示する() {
 }
 
 #[test]
+fn 完了task名は予定と同じtask種別classと意味labelを使う() {
+    fn task_kind_root() -> Element {
+        let report: CompletedTaskReport = serde_json::from_value(serde_json::json!({
+            "rows": [
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000011",
+                    "task_name": "固定完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_723_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "fixed"
+                },
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000012",
+                    "task_name": "繰返完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_724_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "repetitive"
+                },
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000013",
+                    "task_name": "単発完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_725_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "non_repetitive"
+                }
+            ],
+            "total_actual_work_seconds": 180,
+            "available_seconds": 28_800,
+            "recorded_percentage": 1
+        }))
+        .unwrap();
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(report),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(task_kind_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    for expected in [
+        "class=\"completed-task-name task-kind-fixed\" aria-label=\"固定タスク: 固定完了\"",
+        "class=\"completed-task-name task-kind-repetitive\" aria-label=\"繰返タスク: 繰返完了\"",
+        "class=\"completed-task-name task-kind-non-repetitive\" aria-label=\"単発タスク: 単発完了\"",
+    ] {
+        assert!(html.contains(expected), "missing {expected}: {html}");
+    }
+}
+
+#[test]
 fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避する() {
     fn invalid_time_root() -> Element {
         rsx! {
