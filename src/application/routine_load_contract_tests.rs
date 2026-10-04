@@ -4,6 +4,7 @@ use super::task_view::TaskView;
 use crate::entity::task::{TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 fn at(day: u32) -> DateTime<Local> {
@@ -101,11 +102,42 @@ fn routine_loadは今日から27日後までを最寄りの繰返親ごとに集
         NaiveDate::from_ymd_opt(2026, 10, 30).unwrap()
     );
     assert_eq!(weekly_row.peak_work_seconds, 60 * 60);
+    assert_eq!(
+        weekly_row.work_seconds_by_date,
+        BTreeMap::from([
+            (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 45 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(), 30 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 10).unwrap(), 45 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(), 60 * 60),
+        ])
+    );
+    assert_eq!(
+        weekly_row.work_seconds_by_date.values().sum::<i64>(),
+        weekly_row.total_work_seconds
+    );
+    assert_eq!(
+        weekly_row.work_seconds_by_date.len(),
+        weekly_row.occurrence_day_count
+    );
+    assert_eq!(
+        weekly_row
+            .work_seconds_by_date
+            .iter()
+            .max_by_key(|(_, seconds)| *seconds),
+        Some((&weekly_row.peak_date, &weekly_row.peak_work_seconds))
+    );
 
     let daily_row = &actual.rows[1];
     assert_eq!(daily_row.routine_task_id, Uuid::from_u128(4));
     assert_eq!(daily_row.total_work_seconds, 40 * 60);
     assert_eq!(daily_row.occurrence_day_count, 2);
+    assert_eq!(
+        daily_row.work_seconds_by_date,
+        BTreeMap::from([
+            (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 20 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(), 20 * 60),
+        ])
+    );
 }
 
 #[test]
@@ -208,6 +240,14 @@ fn routine_loadはactualとprojectedを同じ繰返元へ集計する() {
     assert_eq!(report.rows[0].routine_task_id, Uuid::from_u128(102));
     assert_eq!(report.rows[0].total_work_seconds, 90 * 60);
     assert_eq!(report.rows[0].occurrence_day_count, 3);
+    assert_eq!(
+        report.rows[0].work_seconds_by_date,
+        BTreeMap::from([
+            (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 30 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(), 30 * 60),
+            (NaiveDate::from_ymd_opt(2026, 10, 9).unwrap(), 30 * 60),
+        ])
+    );
 }
 
 #[test]

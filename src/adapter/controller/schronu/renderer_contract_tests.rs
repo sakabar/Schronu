@@ -12,6 +12,7 @@ use super::renderer::{
 use crate::application::routine_load::{RoutineLoadReport, RoutineLoadRow};
 use crate::entity::task::{ProjectCategory, TaskAttr};
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
+use std::collections::BTreeMap;
 use std::io::Write;
 use unicode_width::UnicodeWidthStr;
 use uuid::Uuid;
@@ -34,6 +35,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 average_work_seconds: 65 * 60,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
                 peak_work_seconds: 80 * 60,
+                work_seconds_by_date: BTreeMap::new(),
             },
             RoutineLoadRow {
                 project_task_id: Uuid::from_u128(3),
@@ -46,6 +48,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 average_work_seconds: 4 * 60 * 60 + 25 * 60,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
                 peak_work_seconds: 100 * 60 * 60,
+                work_seconds_by_date: BTreeMap::new(),
             },
         ],
     });
@@ -139,6 +142,7 @@ fn routine_load_displayは発生日数zeroの平均をplaceholderにする() {
             average_work_seconds: 0,
             peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             peak_work_seconds: 60,
+            work_seconds_by_date: BTreeMap::new(),
         }],
     });
     let mut writer = TraceWriter::default();
@@ -165,6 +169,7 @@ fn routine_load_displayは1日平均の1分未満を切り捨てる() {
             average_work_seconds: 3 * 60 + 40,
             peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             peak_work_seconds: 3 * 60 + 40,
+            work_seconds_by_date: BTreeMap::new(),
         }],
     });
     let mut writer = TraceWriter::default();

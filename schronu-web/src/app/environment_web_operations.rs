@@ -353,6 +353,11 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
+            work_seconds_by_date: row
+                .work_seconds_by_date
+                .into_iter()
+                .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
         }
     }
 }
@@ -363,6 +368,11 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
             start_date: report.start_date.format("%Y-%m-%d").to_string(),
             end_date: report.end_date.format("%Y-%m-%d").to_string(),
             horizon_day_count: report.horizon_day_count,
+            full_day_available_seconds_by_date: report
+                .full_day_available_seconds_by_date
+                .into_iter()
+                .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
     }
@@ -515,6 +525,7 @@ mod tests {
     };
     use schronu::application::interface::TaskRepositoryTrait;
     use schronu::entity::task::{Status, TaskHandle};
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -703,6 +714,10 @@ mod tests {
             start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
             horizon_day_count: 28,
+            full_day_available_seconds_by_date: BTreeMap::from([
+                (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 36_000),
+                (NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(), 40_000),
+            ]),
             rows: vec![RoutineLoadRowDto {
                 project_task_id: uuid::Uuid::from_u128(1).hyphenated().to_string(),
                 project_name: "健康".to_owned(),
@@ -714,14 +729,29 @@ mod tests {
                 average_work_seconds: 7_199,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
                 peak_work_seconds: 7_201,
+                work_seconds_by_date: BTreeMap::from([(
+                    NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                    7_201,
+                )]),
             }],
         });
 
         assert_eq!(report.horizon_day_count, 28);
+        assert_eq!(
+            report.full_day_available_seconds_by_date,
+            BTreeMap::from([
+                ("2026-10-03".to_owned(), 36_000),
+                ("2026-10-04".to_owned(), 40_000),
+            ])
+        );
         let row = &report.rows[0];
         assert_eq!(row.average_work_seconds, Some(7_199));
         assert_eq!(row.peak_date, "2026-10-05");
         assert_eq!(row.peak_work_seconds, 7_201);
+        assert_eq!(
+            row.work_seconds_by_date,
+            BTreeMap::from([("2026-10-05".to_owned(), 7_201)])
+        );
     }
 
     struct CountingClock {

@@ -12,6 +12,8 @@ pub mod routine_load;
 pub mod schedule_use_case;
 mod scheduled_capacity;
 mod scheduling_instrumentation;
+#[cfg(all(test, feature = "benchmarking"))]
+pub(crate) use scheduling_instrumentation::capture_schedule_metrics;
 mod scheduling_policy;
 pub mod session_progress;
 mod task_list;

@@ -432,6 +432,7 @@ fn load_data() -> LoadData {
             start_date: "2026-09-05".to_owned(),
             end_date: "2026-10-02".to_owned(),
             horizon_day_count: 28,
+            full_day_available_seconds_by_date: Default::default(),
             rows: Vec::new(),
         },
     }

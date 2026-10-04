@@ -31,6 +31,7 @@ pub struct RoutineLoadRow {
     pub average_work_seconds: i64,
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
+    pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
 impl RoutineLoadRow {
@@ -207,5 +208,6 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         average_work_seconds,
         peak_date,
         peak_work_seconds,
+        work_seconds_by_date: accumulator.work_seconds_by_date,
     })
 }
