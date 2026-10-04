@@ -352,6 +352,24 @@ mod all_task_contract_tests {
 
         assert_eq!(row.display_average_work_seconds(), None);
     }
+
+    #[test]
+    fn routine_load_averageは輸送済み値をlegacy再計算より優先する() {
+        let row = RoutineLoadRow {
+            project_task_id: "project".to_owned(),
+            project_name: "生活".to_owned(),
+            routine_task_id: "routine".to_owned(),
+            routine_name: "繰返".to_owned(),
+            repetition_interval_days: 7,
+            total_work_seconds: 600,
+            occurrence_day_count: 2,
+            average_work_seconds: Some(240),
+            peak_date: "2026-10-03".to_owned(),
+            peak_work_seconds: 300,
+        };
+
+        assert_eq!(row.display_average_work_seconds(), Some(240));
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

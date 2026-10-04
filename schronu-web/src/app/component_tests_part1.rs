@@ -238,7 +238,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                             repetition_interval_days: 1,
                             total_work_seconds: 11 * 60,
                             occurrence_day_count: 3,
-                            average_work_seconds: Some(3 * 60 + 40),
+                            average_work_seconds: Some(4 * 60),
                             peak_date: "2026-10-03".to_owned(),
                             peak_work_seconds: 3 * 60 + 40,
                         },
@@ -334,11 +334,11 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     }
     assert!(
         table_body.contains(
-            "<td class=\"routine-load-average routine-load-number\">00:03</td>"
+            "<td class=\"routine-load-average routine-load-number\">00:04</td>"
         ),
         "{table_body}"
     );
-    assert!(!table_body.contains("00:04"), "{table_body}");
+    assert!(!table_body.contains("00:03"), "{table_body}");
     assert!(!routine_html.contains("週平均"), "{routine_html}");
     assert!(!routine_html.contains("routine-load-weekly"), "{routine_html}");
     assert!(!table_body.contains("日ごと"), "{table_body}");
