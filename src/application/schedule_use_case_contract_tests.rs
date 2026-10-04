@@ -242,6 +242,41 @@ fn get_scheduleは1日周期の複数実体回から同じdeadlineを重複投�
 }
 
 #[test]
+fn get_scheduleは同じlogical_dateでも異なるdeadline時刻の実体回を保持する() {
+    let now = fixed_now();
+    let (parent, current) =
+        repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    let earlier = append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 8, 11, 22, 0, 0).unwrap(),
+    );
+    let current_id = current.get_id().unwrap();
+    let earlier_id = earlier.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let actual_ids = schedule
+        .iter()
+        .filter_map(|item| item.actual_task_id())
+        .collect::<HashSet<_>>();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(actual_ids, HashSet::from([current_id, earlier_id]));
+    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 11, 22, 0, 0).unwrap()));
+    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 11, 23, 0, 0).unwrap()));
+    assert_eq!(schedule.len(), 29);
+    assert_eq!(deadlines.len(), 29);
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        27
+    );
+}
+
+#[test]
 fn get_scheduleは窓より後の実体回で窓内の投影を抑止しない() {
     let now = fixed_now();
     let (parent, _) = repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
