@@ -242,17 +242,17 @@ fn get_scheduleは1日周期の複数実体回から同じdeadlineを重複投�
 }
 
 #[test]
-fn get_scheduleは同じlogical_dateでも異なるdeadline時刻の実体回を保持する() {
+fn get_scheduleは同じlogical_dateでも異なるdeadline時刻の実体回と仮想回を保持する() {
     let now = fixed_now();
     let (parent, current) =
         repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
-    let earlier = append_repeating_occurrence(
+    let actual_on_next_day = append_repeating_occurrence(
         &parent,
         now,
-        Local.with_ymd_and_hms(2026, 8, 11, 22, 0, 0).unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 22, 0, 0).unwrap(),
     );
     let current_id = current.get_id().unwrap();
-    let earlier_id = earlier.get_id().unwrap();
+    let actual_on_next_day_id = actual_on_next_day.get_id().unwrap();
     let repository = TestTaskRepository::new(vec![parent], now);
 
     let schedule = get_schedule(&repository).unwrap();
@@ -265,9 +265,16 @@ fn get_scheduleは同じlogical_dateでも異なるdeadline時刻の実体回を
         .map(|item| item.task.deadline_time.unwrap())
         .collect::<HashSet<_>>();
 
-    assert_eq!(actual_ids, HashSet::from([current_id, earlier_id]));
-    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 11, 22, 0, 0).unwrap()));
-    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 11, 23, 0, 0).unwrap()));
+    assert_eq!(
+        actual_ids,
+        HashSet::from([current_id, actual_on_next_day_id])
+    );
+    assert!(deadlines.contains(&Local.with_ymd_and_hms(2026, 8, 12, 22, 0, 0).unwrap()));
+    assert!(schedule.iter().any(|item| {
+        item.is_projected()
+            && item.task.deadline_time
+                == Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 0, 0).unwrap())
+    }));
     assert_eq!(schedule.len(), 29);
     assert_eq!(deadlines.len(), 29);
     assert_eq!(
