@@ -8,6 +8,8 @@ use crate::adapter::gateway::storage_transaction_test_support::{
     FaultRule, PathMatcher, RecordingIo, RecordingOperation,
 };
 use crate::adapter::gateway::task_repository::TaskRepository;
+#[cfg(feature = "benchmarking")]
+use crate::application::capture_schedule_metrics;
 use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::DeferMode;
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
@@ -420,6 +422,22 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
         row.work_seconds_by_date.get(&row.peak_date),
         Some(&row.peak_work_seconds)
     );
+}
+
+#[cfg(feature = "benchmarking")]
+#[test]
+fn 負荷serviceは日別負荷と繰返負荷でscheduleを再生成しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let (response, metrics) =
+        capture_schedule_metrics(|| service.load_band_at(operation_now).unwrap());
+
+    assert_eq!(response.data.band_days.len(), 7);
+    assert_eq!(response.data.routine_load.horizon_day_count, 28);
+    assert_eq!(metrics.schedule_rebuild_count, 1);
 }
 
 #[test]
