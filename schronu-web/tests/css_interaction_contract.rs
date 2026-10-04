@@ -240,6 +240,14 @@ fn routine_load_capacity_threshold_uses_dark_red_with_white_text() {
     let root = block_body(MAIN_CSS, ":root");
     assert!(root.contains("--red-dark: #982b31;"), "{root}");
 
+    let weekday = block_body(MAIN_CSS, ".routine-load-weekday");
+    assert!(
+        weekday.contains("background: var(--surface-muted);"),
+        "{weekday}"
+    );
+    let day = block_body(MAIN_CSS, ".routine-load-day");
+    assert!(day.contains("var(--routine-load-intensity)"), "{day}");
+
     let capacity = block_body(
         MAIN_CSS,
         "button.routine-load-weekday.is-at-capacity,\nbutton.routine-load-day.is-at-capacity",
