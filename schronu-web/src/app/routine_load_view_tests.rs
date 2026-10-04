@@ -129,10 +129,7 @@ fn 作業0秒の発生日を含む繰返でも拡張表示する() {
             .into_iter()
             .collect()
     );
-    let rows = rows_for_scope(
-        &projection,
-        RoutineLoadScope::Date(date("2026-10-03")),
-    );
+    let rows = rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")));
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].work_seconds, 0);
 
