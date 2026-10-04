@@ -889,20 +889,20 @@ button:disabled {
 }
 
 .completed-task-table .completed-time {
-    width: 6rem;
-    min-width: 6rem;
+    width: 5rem;
+    min-width: 5rem;
     text-align: right;
 }
 
 .completed-task-table .completed-actual {
-    width: 7.5rem;
-    min-width: 7.5rem;
+    width: 6.5rem;
+    min-width: 6.5rem;
     text-align: right;
 }
 
 .completed-task-table .completed-difference {
-    width: 8.5rem;
-    min-width: 8.5rem;
+    width: 7rem;
+    min-width: 7rem;
     text-align: right;
 }
 
@@ -1666,22 +1666,22 @@ button:disabled {
     }
 
     .completed-task-table .completed-time {
-        width: 18%;
+        width: 16%;
         min-width: 0;
     }
 
     .completed-task-table .completed-actual {
-        width: 25%;
+        width: 23%;
         min-width: 0;
     }
 
     .completed-task-table .completed-difference {
-        width: 28%;
+        width: 25%;
         min-width: 0;
     }
 
     .completed-task-table .completed-subject {
-        width: 29%;
+        width: 36%;
         min-width: 0;
     }
 
