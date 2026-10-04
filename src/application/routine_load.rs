@@ -28,12 +28,14 @@ pub struct RoutineLoadRow {
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
     pub occurrence_day_count: usize,
+    pub average_work_seconds: i64,
+    pub peak_date: NaiveDate,
+    pub peak_work_seconds: i64,
 }
 
 impl RoutineLoadRow {
-    pub fn average_work_seconds(&self) -> Option<i64> {
-        let occurrence_day_count = i64::try_from(self.occurrence_day_count).ok()?;
-        self.total_work_seconds.checked_div(occurrence_day_count)
+    pub fn display_average_work_seconds(&self) -> Option<i64> {
+        (self.occurrence_day_count > 0).then_some(self.average_work_seconds)
     }
 }
 
@@ -180,6 +182,20 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
                 sum.checked_add(*seconds)
                     .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })
             })?;
+    let occurrence_day_count = accumulator.work_seconds_by_date.len();
+    let occurrence_day_count_i64 = i64::try_from(occurrence_day_count)
+        .map_err(|_| ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
+    let average_work_seconds = total_work_seconds
+        .checked_div(occurrence_day_count_i64)
+        .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
+    let (peak_date, peak_work_seconds) = accumulator
+        .work_seconds_by_date
+        .iter()
+        .fold(None, |peak, (date, seconds)| match peak {
+            Some((_, peak_seconds)) if peak_seconds >= *seconds => peak,
+            _ => Some((*date, *seconds)),
+        })
+        .expect("routine accumulator always has at least one date");
     Ok(RoutineLoadRow {
         project_task_id: accumulator.metadata.project_task_id,
         project_name: accumulator.metadata.project_name,
@@ -187,6 +203,9 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         routine_name: accumulator.metadata.routine_name,
         repetition_interval_days: accumulator.metadata.repetition_interval_days,
         total_work_seconds,
-        occurrence_day_count: accumulator.work_seconds_by_date.len(),
+        occurrence_day_count,
+        average_work_seconds,
+        peak_date,
+        peak_work_seconds,
     })
 }

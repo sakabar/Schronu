@@ -174,7 +174,7 @@ fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
             td { class: "routine-load-total routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
             td { class: "routine-load-occurrences routine-load-number", "{row.occurrence_day_count}日" }
             td { class: "routine-load-average routine-load-number",
-                if let Some(average_work_seconds) = row.average_work_seconds() {
+                if let Some(average_work_seconds) = row.display_average_work_seconds() {
                     "{format_unsigned(average_work_seconds)}"
                 } else {
                     "--:--"

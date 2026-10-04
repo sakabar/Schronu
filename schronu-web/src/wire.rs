@@ -35,10 +35,17 @@ pub struct RoutineLoadRow {
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
     pub occurrence_day_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub average_work_seconds: Option<i64>,
+    pub peak_date: String,
+    pub peak_work_seconds: i64,
 }
 
 impl RoutineLoadRow {
-    pub fn average_work_seconds(&self) -> Option<i64> {
+    pub fn display_average_work_seconds(&self) -> Option<i64> {
+        if self.average_work_seconds.is_some() {
+            return self.average_work_seconds;
+        }
         let occurrence_day_count = i64::try_from(self.occurrence_day_count).ok()?;
         self.total_work_seconds.checked_div(occurrence_day_count)
     }
@@ -48,8 +55,13 @@ impl RoutineLoadRow {
 pub struct RoutineLoadReport {
     pub start_date: String,
     pub end_date: String,
+    #[serde(default = "legacy_routine_load_horizon_day_count")]
     pub horizon_day_count: u64,
     pub rows: Vec<RoutineLoadRow>,
+}
+
+fn legacy_routine_load_horizon_day_count() -> u64 {
+    8
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -333,9 +345,12 @@ mod all_task_contract_tests {
             repetition_interval_days: 7,
             total_work_seconds: 60,
             occurrence_day_count: 0,
+            average_work_seconds: None,
+            peak_date: "2026-10-03".to_owned(),
+            peak_work_seconds: 60,
         };
 
-        assert_eq!(row.average_work_seconds(), None);
+        assert_eq!(row.display_average_work_seconds(), None);
     }
 }
 

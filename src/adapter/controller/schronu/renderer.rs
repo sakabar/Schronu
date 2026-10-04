@@ -607,7 +607,7 @@ fn render_routine_load_report(
                 format!("{}日", row.repetition_interval_days),
                 format_hours_minutes(row.total_work_seconds),
                 format!("{}日", row.occurrence_day_count),
-                row.average_work_seconds()
+                row.display_average_work_seconds()
                     .map(format_hours_minutes)
                     .unwrap_or_else(|| "--:--".to_owned()),
                 format!("{} / {}", row.project_name, row.routine_name),

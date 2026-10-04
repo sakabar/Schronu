@@ -31,6 +31,9 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 repetition_interval_days: 7,
                 total_work_seconds: 4 * 60 * 60 + 20 * 60,
                 occurrence_day_count: 4,
+                average_work_seconds: 65 * 60,
+                peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+                peak_work_seconds: 80 * 60,
             },
             RoutineLoadRow {
                 project_task_id: Uuid::from_u128(3),
@@ -40,6 +43,9 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 repetition_interval_days: 30,
                 total_work_seconds: 123 * 60 * 60 + 45 * 60,
                 occurrence_day_count: 28,
+                average_work_seconds: 4 * 60 * 60 + 25 * 60,
+                peak_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+                peak_work_seconds: 100 * 60 * 60,
             },
         ],
     });
@@ -130,6 +136,9 @@ fn routine_load_displayは発生日数zeroの平均をplaceholderにする() {
             repetition_interval_days: 7,
             total_work_seconds: 60,
             occurrence_day_count: 0,
+            average_work_seconds: 0,
+            peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+            peak_work_seconds: 60,
         }],
     });
     let mut writer = TraceWriter::default();
@@ -153,6 +162,9 @@ fn routine_load_displayは1日平均の1分未満を切り捨てる() {
             repetition_interval_days: 1,
             total_work_seconds: 11 * 60,
             occurrence_day_count: 3,
+            average_work_seconds: 3 * 60 + 40,
+            peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+            peak_work_seconds: 3 * 60 + 40,
         }],
     });
     let mut writer = TraceWriter::default();
