@@ -24,6 +24,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
     };
     let row = ScheduledTaskRow {
         task: task.clone().into(),
+        display_task_name: Some("<10/15>wire task".to_owned()),
         occurrence: ScheduleOccurrence::Actual {
             task_id: task.task_id.clone(),
         },
@@ -90,6 +91,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
             data: AllTaskPage {
                 rows: vec![AllTaskRow {
                     task: task.clone().into(),
+                    display_task_name: Some("<10/15>wire task".to_owned()),
                     occurrence: ScheduleOccurrence::Actual {
                         task_id: task.task_id.clone(),
                     },
@@ -119,6 +121,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                         "estimated_work_seconds": 900,
                         "actual_work_seconds": 300
                     },
+                    "display_task_name": "<10/15>wire task",
                     "occurrence": {
                         "kind": "actual",
                         "task_id": "00000000-0000-0000-0000-000000000001"
@@ -154,6 +157,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                     "estimated_work_seconds": 900,
                     "actual_work_seconds": 300
                 },
+                "display_task_name": "<10/15>wire task",
                 "occurrence": {
                     "kind": "actual",
                     "task_id": "00000000-0000-0000-0000-000000000001"

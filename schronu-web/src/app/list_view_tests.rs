@@ -228,6 +228,7 @@ fn named_row(
     ListRowViewModel {
         row_key: format!("row:{task_id}"),
         task: task(task_id, task_name).into(),
+        display_task_name: task_name.to_owned(),
         occurrence: crate::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
@@ -254,6 +255,33 @@ fn named_row(
         }),
         defer_confirmation: None,
     }
+}
+
+#[test]
+fn 分割task表示名は一覧へ無加工で描画し操作には正規名を使う() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut split_row = named_row("split", "タスク", false, true);
+    split_row.display_task_name = "<10/15>タスク".to_owned();
+    let (dom, listeners) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![split_row],
+        active_task_ids: Vec::new(),
+        filter_text: "タスク".to_owned(),
+        events: Arc::clone(&events),
+    });
+
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("aria-label=\"単発タスク: &lt;10/15&gt;タスク\""), "{html}");
+    assert!(html.contains("&lt;10/15&gt;タスク"), "{html}");
+
+    for listener in listeners {
+        dispatch_click(&dom, listener);
+    }
+    assert!(
+        events.lock().unwrap().iter().any(|event| event == "task:split:タスク:true"),
+        "{:?}",
+        events.lock().unwrap()
+    );
 }
 
 #[test]
