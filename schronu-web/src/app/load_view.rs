@@ -42,13 +42,22 @@ pub(crate) fn LoadView(
             )
         })
         .unwrap_or_else(|| "未取得".to_owned());
+    let routine_heading = routine_load_report.as_ref().map_or_else(
+        || "繰返負荷".to_owned(),
+        |report| {
+            format!(
+                "今日から{}日後までの繰返負荷",
+                report.horizon_day_count.saturating_sub(1)
+            )
+        },
+    );
     rsx! {
         section { class: view_class, aria_label: "負荷",
             div { class: "load-toolbar",
                 div {
                     h2 {
                         if mode() == LoadMode::Routine {
-                            "今日から7日後までの繰返負荷"
+                            "{routine_heading}"
                         } else {
                             "今日から7日の負荷"
                         }
@@ -125,22 +134,24 @@ fn RoutineLoadTable(report: Option<RoutineLoadReport>, loading: bool) -> Element
         format_short_date(&report.start_date),
         format_short_date(&report.end_date)
     );
+    let total_heading = format!("{}日合計", report.horizon_day_count);
+    let end_offset = report.horizon_day_count.saturating_sub(1);
     rsx! {
         div { class: "routine-load-summary",
             strong { "{range}" }
             span { "{report.rows.len()}件の繰返" }
         }
         if report.rows.is_empty() {
-            p { class: "load-status", "今日から7日後までに発生する繰返負荷はありません。" }
+            p { class: "load-status", "今日から{end_offset}日後までに発生する繰返負荷はありません。" }
         } else {
             div { class: "routine-load-table-wrap",
                 table { class: "routine-load-table",
                     thead {
                         tr {
                             th { class: "routine-load-interval", scope: "col", "間隔" }
-                            th { class: "routine-load-total", scope: "col", "8日合計" }
+                            th { class: "routine-load-total", scope: "col", "{total_heading}" }
                             th { class: "routine-load-occurrences", scope: "col", "発生日数" }
-                            th { class: "routine-load-peak", scope: "col", "最大日" }
+                            th { class: "routine-load-average", scope: "col", "1日平均" }
                             th { class: "routine-load-subject", scope: "col", "プロジェクト / 繰返" }
                         }
                     }
@@ -162,12 +173,16 @@ fn RoutineLoadTableRow(row: RoutineLoadRow) -> Element {
             td { class: "routine-load-interval", "{row.repetition_interval_days}日" }
             td { class: "routine-load-total routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
             td { class: "routine-load-occurrences routine-load-number", "{row.occurrence_day_count}日" }
-            td { class: "routine-load-peak",
-                "{format_short_date(&row.peak_date)} {format_unsigned(row.peak_work_seconds)}"
+            td { class: "routine-load-average routine-load-number",
+                if let Some(average_work_seconds) = row.display_average_work_seconds() {
+                    "{format_unsigned(average_work_seconds)}"
+                } else {
+                    "--:--"
+                }
             }
             th { class: "routine-load-subject", scope: "row",
                 div { class: "routine-load-subject-scroll", tabindex: 0,
-                    strong { class: "routine-load-name", "{row.routine_name}" }
+                    strong { class: "routine-load-name task-kind-repetitive", "{row.routine_name}" }
                     span { class: "routine-load-project", "{row.project_name}" }
                 }
             }

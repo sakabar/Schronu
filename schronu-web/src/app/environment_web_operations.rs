@@ -347,6 +347,7 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             repetition_interval_days: row.repetition_interval_days,
             total_work_seconds: row.total_work_seconds,
             occurrence_day_count: row.occurrence_day_count,
+            average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
         }
@@ -358,6 +359,7 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
         Self {
             start_date: report.start_date.format("%Y-%m-%d").to_string(),
             end_date: report.end_date.format("%Y-%m-%d").to_string(),
+            horizon_day_count: report.horizon_day_count,
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
     }
@@ -501,10 +503,13 @@ mod tests {
     use crate::{
         web_error_codes, CompleteSessionRequest, DeferMode, DeferPlan, DeferTaskRequest,
         ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, RecordSessionRequest,
-        WebOperations,
+        RoutineLoadReport, WebOperations,
     };
-    use chrono::{DateTime, Local, TimeZone};
-    use schronu::adapter::gateway::task_repository::TaskRepository;
+    use chrono::{DateTime, Local, NaiveDate, TimeZone};
+    use schronu::adapter::{
+        controller::{RoutineLoadReportDto, RoutineLoadRowDto},
+        gateway::task_repository::TaskRepository,
+    };
     use schronu::application::interface::TaskRepositoryTrait;
     use schronu::entity::task::{Status, TaskHandle};
     use std::fs;
@@ -683,6 +688,33 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, web_error_codes::INVALID_INPUT);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn 繰返負荷dtoからwireへ平均最大日と期間を保持する() {
+        let report = RoutineLoadReport::from(RoutineLoadReportDto {
+            start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
+            end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
+            horizon_day_count: 28,
+            rows: vec![RoutineLoadRowDto {
+                project_task_id: uuid::Uuid::from_u128(1).hyphenated().to_string(),
+                project_name: "健康".to_owned(),
+                routine_task_id: uuid::Uuid::from_u128(2).hyphenated().to_string(),
+                routine_name: "運動".to_owned(),
+                repetition_interval_days: 2,
+                total_work_seconds: 28 * 60 * 60,
+                occurrence_day_count: 14,
+                average_work_seconds: 7_199,
+                peak_date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
+                peak_work_seconds: 7_201,
+            }],
+        });
+
+        assert_eq!(report.horizon_day_count, 28);
+        let row = &report.rows[0];
+        assert_eq!(row.average_work_seconds, Some(7_199));
+        assert_eq!(row.peak_date, "2026-10-05");
+        assert_eq!(row.peak_work_seconds, 7_201);
     }
 
     struct CountingClock {

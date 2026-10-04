@@ -1436,15 +1436,11 @@ button:disabled {
     text-align: right;
 }
 
-.routine-load-table .routine-load-peak {
-    width: 8.5rem;
-    min-width: 8.5rem;
+.routine-load-table .routine-load-average {
+    width: 6.5rem;
+    min-width: 6.5rem;
     text-align: right;
     font-variant-numeric: tabular-nums;
-}
-
-.routine-load-table tbody .routine-load-peak {
-    color: var(--red);
 }
 
 .routine-load-table .routine-load-subject {
@@ -1735,13 +1731,13 @@ button:disabled {
         min-width: 0;
     }
 
-    .routine-load-table .routine-load-peak {
-        width: 18%;
+    .routine-load-table .routine-load-average {
+        width: 15%;
         min-width: 0;
     }
 
     .routine-load-table .routine-load-subject {
-        width: 42%;
+        width: 45%;
         min-width: 0;
     }
 

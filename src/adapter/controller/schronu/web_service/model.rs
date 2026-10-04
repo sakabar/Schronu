@@ -180,6 +180,7 @@ pub struct RoutineLoadRowDto {
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
     pub occurrence_day_count: usize,
+    pub average_work_seconds: i64,
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
 }
@@ -188,7 +189,13 @@ pub struct RoutineLoadRowDto {
 pub struct RoutineLoadReportDto {
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
+    #[serde(default = "legacy_routine_load_horizon_day_count")]
+    pub horizon_day_count: u64,
     pub rows: Vec<RoutineLoadRowDto>,
+}
+
+fn legacy_routine_load_horizon_day_count() -> u64 {
+    8
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

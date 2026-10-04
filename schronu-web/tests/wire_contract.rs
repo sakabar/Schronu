@@ -359,12 +359,13 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
 }
 
 #[test]
-fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
+fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
     let data = LoadData {
         band_days: Vec::new(),
         routine_load: RoutineLoadReport {
             start_date: "2026-10-03".to_owned(),
-            end_date: "2026-10-10".to_owned(),
+            end_date: "2026-10-30".to_owned(),
+            horizon_day_count: 28,
             rows: vec![RoutineLoadRow {
                 project_task_id: "project-id".to_owned(),
                 project_name: "生活".to_owned(),
@@ -373,6 +374,7 @@ fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
                 repetition_interval_days: 7,
                 total_work_seconds: 15_600,
                 occurrence_day_count: 4,
+                average_work_seconds: Some(3_900),
                 peak_date: "2026-10-04".to_owned(),
                 peak_work_seconds: 4_800,
             }],
@@ -385,7 +387,8 @@ fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
             "band_days": [],
             "routine_load": {
                 "start_date": "2026-10-03",
-                "end_date": "2026-10-10",
+                "end_date": "2026-10-30",
+                "horizon_day_count": 28,
                 "rows": [{
                     "project_task_id": "project-id",
                     "project_name": "生活",
@@ -394,12 +397,43 @@ fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
                     "repetition_interval_days": 7,
                     "total_work_seconds": 15_600,
                     "occurrence_day_count": 4,
+                    "average_work_seconds": 3_900,
                     "peak_date": "2026-10-04",
                     "peak_work_seconds": 4_800
                 }]
             }
         }),
     );
+}
+
+#[test]
+fn 旧8日繰返負荷payloadは追加fieldを補完してdeserializeできる() {
+    let data: LoadData = serde_json::from_value(json!({
+        "band_days": [],
+        "routine_load": {
+            "start_date": "2026-10-03",
+            "end_date": "2026-10-10",
+            "rows": [{
+                "project_task_id": "project-id",
+                "project_name": "生活",
+                "routine_task_id": "routine-id",
+                "routine_name": "週次家事",
+                "repetition_interval_days": 7,
+                "total_work_seconds": 15_600,
+                "occurrence_day_count": 4,
+                "peak_date": "2026-10-04",
+                "peak_work_seconds": 4_800
+            }]
+        }
+    }))
+    .unwrap();
+
+    assert_eq!(data.routine_load.horizon_day_count, 8);
+    let row = &data.routine_load.rows[0];
+    assert_eq!(row.average_work_seconds, None);
+    assert_eq!(row.display_average_work_seconds(), Some(3_900));
+    assert_eq!(row.peak_date, "2026-10-04");
+    assert_eq!(row.peak_work_seconds, 4_800);
 }
 
 #[test]

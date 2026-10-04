@@ -1,4 +1,4 @@
-//! 今日から7日後までの繰返負荷をCLIとWebへ共通提供する。
+//! 今日から27日後までの繰返負荷をCLIとWebへ共通提供する。
 
 use super::daily_capacity::try_logical_date;
 use super::interface::TaskRepositoryTrait;
@@ -9,12 +9,13 @@ use chrono::{Days, NaiveDate};
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
-pub const ROUTINE_LOAD_HORIZON_DAYS: u64 = 8;
+pub const ROUTINE_LOAD_HORIZON_DAYS: u64 = 28;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoutineLoadReport {
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
+    pub horizon_day_count: u64,
     pub rows: Vec<RoutineLoadRow>,
 }
 
@@ -27,8 +28,15 @@ pub struct RoutineLoadRow {
     pub repetition_interval_days: i64,
     pub total_work_seconds: i64,
     pub occurrence_day_count: usize,
+    pub average_work_seconds: i64,
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
+}
+
+impl RoutineLoadRow {
+    pub fn display_average_work_seconds(&self) -> Option<i64> {
+        (self.occurrence_day_count > 0).then_some(self.average_work_seconds)
+    }
 }
 
 #[derive(Clone)]
@@ -117,6 +125,7 @@ pub fn build_routine_load_report(
     Ok(RoutineLoadReport {
         start_date,
         end_date,
+        horizon_day_count: ROUTINE_LOAD_HORIZON_DAYS,
         rows,
     })
 }
@@ -173,6 +182,12 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
                 sum.checked_add(*seconds)
                     .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })
             })?;
+    let occurrence_day_count = accumulator.work_seconds_by_date.len();
+    let occurrence_day_count_i64 = i64::try_from(occurrence_day_count)
+        .map_err(|_| ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
+    let average_work_seconds = total_work_seconds
+        .checked_div(occurrence_day_count_i64)
+        .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
     let (peak_date, peak_work_seconds) = accumulator
         .work_seconds_by_date
         .iter()
@@ -181,7 +196,6 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
             _ => Some((*date, *seconds)),
         })
         .expect("routine accumulator always has at least one date");
-
     Ok(RoutineLoadRow {
         project_task_id: accumulator.metadata.project_task_id,
         project_name: accumulator.metadata.project_name,
@@ -189,7 +203,8 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         routine_name: accumulator.metadata.routine_name,
         repetition_interval_days: accumulator.metadata.repetition_interval_days,
         total_work_seconds,
-        occurrence_day_count: accumulator.work_seconds_by_date.len(),
+        occurrence_day_count,
+        average_work_seconds,
         peak_date,
         peak_work_seconds,
     })

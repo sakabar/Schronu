@@ -586,15 +586,17 @@ fn render_routine_load_report(
     report: &RoutineLoadReport,
 ) -> Result<(), std::io::Error> {
     writer.writeln_newline(&format!(
-        "今日から7日後までの繰返負荷 ({}〜{})",
+        "今日から{}日後までの繰返負荷 ({}〜{})",
+        report.horizon_day_count.saturating_sub(1),
         report.start_date.format("%Y-%m-%d"),
         report.end_date.format("%Y-%m-%d")
     ))?;
+    let total_header = format!("{}日合計", report.horizon_day_count);
     let headers = [
         "間隔",
-        "8日合計",
+        total_header.as_str(),
         "発生日数",
-        "最大日",
+        "1日平均",
         "プロジェクト / 繰返",
     ];
     let rows = report
@@ -605,11 +607,9 @@ fn render_routine_load_report(
                 format!("{}日", row.repetition_interval_days),
                 format_hours_minutes(row.total_work_seconds),
                 format!("{}日", row.occurrence_day_count),
-                format!(
-                    "{} {}",
-                    row.peak_date.format("%m/%d"),
-                    format_hours_minutes(row.peak_work_seconds)
-                ),
+                row.display_average_work_seconds()
+                    .map(format_hours_minutes)
+                    .unwrap_or_else(|| "--:--".to_owned()),
                 format!("{} / {}", row.project_name, row.routine_name),
             ]
         })
