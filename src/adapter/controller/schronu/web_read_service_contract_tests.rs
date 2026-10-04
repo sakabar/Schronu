@@ -1,6 +1,6 @@
 use super::{
-    CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest, WebReadError,
-    WebService,
+    CompleteSessionRequest, DeferPlanRequest, DeferTaskRequest, RecordSessionRequest,
+    TaskDisplayKind, WebReadError, WebService,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockErrorKind};
@@ -133,6 +133,27 @@ impl WebReadServiceFixture {
         repository.start_new_project(parent).unwrap();
         repository.save().unwrap();
         (parent_id, child_id)
+    }
+
+    fn seed_fixed_repetition_task(&self, now: chrono::DateTime<Local>) -> Uuid {
+        let parent_id = Uuid::from_u128(0x2026_0905_0011);
+        let child_id = Uuid::from_u128(0x2026_0905_0012);
+        let parent = TaskHandle::with_identity("fixed routine", parent_id, now).unwrap();
+        parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+        parent.set_estimated_work_seconds(600).unwrap();
+        let child = parent
+            .create_child(TaskAttr::with_identity("fixed occurrence", child_id, now))
+            .unwrap();
+        child.set_estimated_work_seconds(600).unwrap();
+        child.set_start_time(now).unwrap();
+        child.set_fixed_start(true).unwrap();
+
+        let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+        repository.sync_clock(now).unwrap();
+        repository.load().unwrap();
+        repository.start_new_project(parent).unwrap();
+        repository.save().unwrap();
+        child_id
     }
 
     fn seed_parent_child_and_pending_leaf(
@@ -505,6 +526,70 @@ fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactio
     assert_eq!(report.total_actual_work_seconds, 1_800);
     assert_eq!(report.available_seconds, 50_400);
     assert_eq!(report.recorded_percentage, Some(4));
+}
+
+#[test]
+fn 完了reportは予定と同じtask種別分類を保持する() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 21, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let fixed_id = fixture.seed_fixed_task(seeded_at);
+    let single_id = fixture.seed_unconstrained_task(seeded_at);
+    let (_, repetitive_id) = fixture.seed_repetition_task(seeded_at);
+    let fixed_repetitive_id = fixture.seed_fixed_repetition_task(seeded_at);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let scheduled = service.list_all_tasks_at(operation_now, None).unwrap().data;
+
+    for (task_id, expected_kind) in [
+        (fixed_id, TaskDisplayKind::Fixed),
+        (fixed_repetitive_id, TaskDisplayKind::Fixed),
+        (repetitive_id, TaskDisplayKind::Repetitive),
+        (single_id, TaskDisplayKind::NonRepetitive),
+    ] {
+        let scheduled_kind = scheduled
+            .rows
+            .iter()
+            .find(|row| row.task.task_id == task_id.hyphenated().to_string())
+            .unwrap()
+            .task_display_kind;
+        assert_eq!(scheduled_kind, expected_kind);
+        service
+            .complete_session_at(
+                operation_now,
+                CompleteSessionRequest {
+                    task_id: task_id.hyphenated().to_string(),
+                    started_at_epoch_ms: operation_now.timestamp_millis(),
+                    ended_at_epoch_ms: None,
+                    expected_actual_work_seconds: if task_id == fixed_id || task_id == repetitive_id
+                    {
+                        300
+                    } else {
+                        0
+                    },
+                    record_elapsed_seconds: false,
+                },
+            )
+            .unwrap();
+    }
+
+    let report = service
+        .list_completed_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
+        .unwrap()
+        .data;
+
+    for (task_id, expected_kind) in [
+        (fixed_id, TaskDisplayKind::Fixed),
+        (fixed_repetitive_id, TaskDisplayKind::Fixed),
+        (repetitive_id, TaskDisplayKind::Repetitive),
+        (single_id, TaskDisplayKind::NonRepetitive),
+    ] {
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.task_id == task_id.hyphenated().to_string())
+            .unwrap();
+        assert_eq!(row.task_display_kind, expected_kind);
+    }
 }
 
 #[test]

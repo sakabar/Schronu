@@ -35,7 +35,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.1 共通画面
 
 - **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「負荷」「発火履歴」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
-- **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし「負荷」へ入る時だけ最新の負荷を取得する。tab barは通信中overlayより背面に配置すること。
+- **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし「負荷」へ入る時は最新の負荷を取得し、完了modeから別tabを経て「一覧」へ戻る時は予定modeへ戻して選択日の予定一覧を取得すること。tab barは通信中overlayより背面に配置すること。
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば睡眠時間の確定値を`schronu-buffer-ready`へ表示し、なければ睡眠時間と一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存済みのactive一覧があればそのlogical dateを予定modeでは`list_tasks`、完了modeでは`list_completed_tasks`で再取得すること。view stateが破損・未知version・不正行・読込失敗で復元されなかった場合は、`bootstrap`が返した現在logical dateを予定modeの`list_tasks`で新規取得すること。「全て」の選択、取得結果、取得状態は復元せず、active mode、選択日、予定・全件・完了で共有する検索文字列を復元すること。
@@ -138,11 +138,11 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-025**: `record_session`、`complete_session`、`defer_task`の成功時だけ全件状態を無効化し、遅延した全件responseで古い一覧を復活させないこと。localのセッション追加、破棄、再開では無効化しないこと。
 - **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。
 - **REQ-LIST-027**: 日付別一覧は、選択日が現在logical dateならsnapshot観測時刻から先頭taskまで、および先行taskの最遅終了時刻から次task開始までの1分以上を「N分間の空き時間」として次taskの直前へ表示すること。現在日以外の先頭task前と最終task後は表示せず、trim後の検索文字列が空でない間は分単位の空き時間を表示しないこと。全件一覧はtask名検索後に表示上限内となる実taskのみを予定順で投影し、隣接する表示task日間の予定のないlogical date数を「N日間の空き時間」として次taskの直前へ表示すること。空き日がなく翌logical dateへ変わる場合は次task行の上へ全幅の境界線を表示し、検索中も両方を表示すること。検索不一致taskの日付は差分に含めず、空き時間行と境界線を500task件数、cursor、`segment_index`に含めないこと。
-- **REQ-LIST-028**: 一覧画面上部に均等幅の「予定」「完了」segmented controlを表示し、active modeを`aria-selected`と`aria-pressed`で識別すること。初期modeは予定とし、切替時は選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけ最新snapshotの現在logical dateへ戻すこと。
+- **REQ-LIST-028**: 一覧画面上部に均等幅の「予定」「完了」segmented controlを表示し、active modeを`aria-selected`と`aria-pressed`で識別すること。初期modeは予定とし、切替時は選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけ最新snapshotの現在logical dateへ戻すこと。完了modeからセッション、負荷、発火履歴のいずれかを経て一覧tabへ戻る時は、選択日を維持して予定modeへ戻り`list_tasks`を1回送ること。一覧tabの再選択と一覧tabを表示したままのreloadではactive modeを維持すること。
 - **REQ-LIST-029**: 完了modeではsnapshotの現在logical dateから今日、昨日、7日前までの8buttonを降順表示すること。年省略の`M/D`は現在logical date以前の直近有効日へ解決し、閏日は直近の有効年まで安全に遡ること。Chrono下限を越える場合はvalidation errorとし、`YYYY/M/D`は将来日を含め指定年を維持すること。
-- **REQ-LIST-030**: 完了modeは`完了、実績、差、タスク / Project`のsemantic tableとし、最終列を行見出しにして1段目へtask名、2段目へProject名を表示すること。見出しを`M月D日の完了`、補助表示を検索後の件数とする。見出しとtableの間には選択日全体の実績合計、`busy_time_slot`を除いた利用可能時間、記録率をsemanticなlabel/value構造で常時表示すること。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとし、記録率もこの利用可能時間を分母にすること。検索はtableと件数だけを絞り、集計値を変更しないこと。0件は集計値と「この日に完了したタスクはありません。」を表示すること。
-- **REQ-LIST-031**: 完了時刻はepoch millisecondsの秒を切り捨て、browser local timeの`HH:MM`としてsemanticな`time`要素で表示し、実績・実績合計・利用可能時間は秒精度`HH:MM:SS`で100時間以上も省略しないこと。見積値は表へ表示せず、差の計算には保持すること。実績0秒は見積時間を有効実績として行、差、合計へ使用すること。差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とすること。超過を赤にする場合も符号を保持し、数値列はtabular digitsで右寄せすること。
-- **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、可変長の最終cell内だけを横scroll可能にすること。表全体は`width: 100%`、`min-width: 0`、固定layoutとし、46rem以下では数値3列を比率指定してpaddingを圧縮すること。集計表示は狭幅で折り返し、320px幅でもpage全体と表全体を横overflowさせないこと。
+- **REQ-LIST-030**: 完了modeは`完了、実績、予実差、タスク / Project`のsemantic tableとし、最終列を行見出しにして1段目へtask名、2段目へProject名を表示すること。task名は予定・全件と同じserver分類、意味label、`task-kind-*` classを使い、固定`#af00af`、継承した繰返`#0069c2`、単発`#a44a00`で表示すること。分類は固定、繰返、単発の優先順とし、clientで再分類しないこと。additiveな`task_display_kind`がない旧payloadは単発へfallbackすること。見出しを`M月D日の完了`、補助表示を検索後の件数とする。見出しとtableの間には選択日全体の実績合計、`busy_time_slot`を除いた利用可能時間、記録率をsemanticなlabel/value構造で常時表示すること。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとし、記録率もこの利用可能時間を分母にすること。検索はtableと件数だけを絞り、集計値を変更しないこと。0件は集計値と「この日に完了したタスクはありません。」を表示すること。
+- **REQ-LIST-031**: 完了時刻はepoch millisecondsの秒を切り捨て、browser local timeの`HH:MM`としてsemanticな`time`要素で表示し、実績・実績合計・利用可能時間は秒精度`HH:MM:SS`で100時間以上も省略しないこと。見積値は表へ表示せず、予実差の計算には保持すること。実績0秒は見積時間を有効実績として行、予実差、合計へ使用すること。予実差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)で表示し、色を符号の代替にしないこと。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とすること。数値列はtabular digitsで右寄せすること。
+- **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、可変長の最終cell内だけを横scroll可能にすること。表全体は`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の`完了、実績、予実差`列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、paddingを圧縮すること。集計表示は狭幅で折り返し、320px幅でもpage全体と表全体を横overflowさせないこと。
 - **REQ-LIST-033**: 完了modeはread-onlyとし、「全て」、セッション追加、先送りをDOMへ描画しないこと。task名検索は予定・全件・完了で共有し、完了modeでも前後trimとUnicode小文字化の部分一致をtask名だけへ適用し、Project名は検索対象にしないこと。
 - **REQ-LIST-034**: 予定行と完了行はactive mode付きで保持し、異なるmodeまたは古いrequestのresponseで表示を上書きしないこと。mutation後の一覧再取得はactive modeのendpointを使い、完了modeでtaskを完了した直後は同じ完了一覧へ新しいrowを反映できること。
 
@@ -159,14 +159,14 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.9 通信制限と発火履歴
 
-- **REQ-NET-001**: server通信を初回`bootstrap`、一覧mode切替、日付選択、「全て」のpage取得、負荷tabの表示・更新、`自動セッション`、一覧の「先送り」、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および各mutation成功後のactive mode一覧取得に限定すること。
-- **REQ-NET-002**: 負荷以外へのtab切替、毎秒tick、日付別・全件検索の入力・clear、全件一覧の「さらに表示」、一覧の「セッション」と追加成功後の検索解除・tab切替、先送りの確認表示とキャンセル、「計測を破棄して再開」、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
+- **REQ-NET-001**: server通信を初回`bootstrap`、一覧mode切替、完了modeから別tabを経た一覧tabへの再進入、日付選択、「全て」のpage取得、負荷tabの表示・更新、`自動セッション`、一覧の「先送り」、`記録して解除`、`計測を破棄して完了`の確定、`記録して完了`、完了実績競合の再完了、および各mutation成功後のactive mode一覧取得に限定すること。
+- **REQ-NET-002**: 完了modeから別tabを経た一覧tabへの再進入と負荷tabへの進入を除くtab切替、毎秒tick、日付別・全件検索の入力・clear、全件一覧の「さらに表示」、一覧の「セッション」と追加成功後の検索解除・tab切替、先送りの確認表示とキャンセル、「計測を破棄して再開」、`計測を破棄して完了`の確認表示とキャンセルではserver通信を行わないこと。
 - **REQ-NET-003**: 「発火履歴」tabを選択した場合だけ、発火履歴を独立したsectionとして表示できること。
 - **REQ-NET-004**: 発火履歴はserver通信結果の直近100件をmemory内だけに保持し、reload時に消去すること。localStorage操作は記録しないこと。
 - **REQ-NET-005**: 各履歴に操作時刻、実際に呼び出したserver action名と全送信引数、成功・失敗を表示すること。引数は関数呼出し形式で表示し、client内部の`request_id`は含めないこと。
 - **REQ-NET-006**: 実行していないCLI command名を履歴へ記録せず、実際にresponseを受信したserver操作を記録すること。
 - **REQ-NET-007**: 「記録して完了」と「計測を破棄して完了」は、実際の`complete_session`呼出しと`record_elapsed_seconds`の真偽を履歴へ記録し、失敗時もどちらを試みたか識別できること。
-- **REQ-NET-008**: 利用者起点のserver通信ではrequest開始からresponse適用まで画面全体に待機表示を出し、背面操作を無効にすること。ただし「全て」のpage取得はこの対象外とし、REQ-LIST-020の一覧内statusを用いること。SSR初期HTMLとhydration前の表示は全面overlayを出さず「画面を復元しています…」を表示すること。localStorage復元後の`bootstrap`と保存日付のactive mode一覧取得は背景更新とし、保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示すること。この背景更新statusは全tab共通でbottom navigation直上に浮遊表示し、表示・消去で本文の位置を変えないこと。背景更新中は「計測を破棄して再開」を含むlocal操作を許可し、一覧mode切替、日付選択・送信、負荷row・更新、自動セッション、先送り、記録・完了・競合再送、「計測を破棄して解除」はUIとreducerの両方で拒否すること。失敗時は保存一覧を維持して同じ浮遊表示に再試行buttonを表示すること。
+- **REQ-NET-008**: 利用者起点のserver通信ではrequest開始からresponse適用まで画面全体に待機表示を出し、背面操作を無効にすること。ただし「全て」のpage取得はこの対象外とし、REQ-LIST-020の一覧内statusを用いること。SSR初期HTMLとhydration前の表示は全面overlayを出さず「画面を復元しています…」を表示すること。localStorage復元後の`bootstrap`と保存日付のactive mode一覧取得は背景更新とし、保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示すること。この背景更新statusは全tab共通でbottom navigation直上に浮遊表示し、表示・消去で本文の位置を変えないこと。背景更新中は「計測を破棄して再開」を含むlocal操作を許可し、一覧mode切替、日付選択・送信、負荷row・更新、自動セッション、先送り、記録・完了・競合再送、「計測を破棄して解除」はUIとreducerの両方で拒否すること。完了modeから別tabを経た一覧tabへの再進入はorchestratorで拒否し、active tabとmodeを変更しないこと。失敗時は保存一覧を維持して同じ浮遊表示に再試行buttonを表示すること。
 - **REQ-NET-010**: `schronu_web.view_state.v1`へstorage version 3として最後に成功した`ServerSnapshot`、active `ListMode`、taggedな予定または完了一覧のlogical dateと全row、選択tab、予定・全件・完了で共有する検索文字列、日付入力文字列をatomicに保存すること。空一覧の成功も保存し、version 2は予定modeと予定一覧へ移行すること。version 1、破損、未知version、不正行、read/write失敗はwarningにしてwork sessionやserver mutationをwrite-blockしないこと。「全て」の選択、取得結果、取得状態、cursor、発火履歴、通信中state、error、確認dialogは保存しないこと。
 - **REQ-NET-009**: 完了実績競合とその再完了は、それぞれ実際に送信した全引数と失敗・成功を通常どおり履歴へ記録すること。「計測を再開」はlocalStorage操作なので履歴へ記録しないこと。
 
@@ -252,6 +252,6 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-034 | 負荷tabは今日から空日を含む連続7日を24時間固定barで表示し、CLIと同じcategory、余差累、空差累、超過時間を示す。当日は利用不可・経過済みを除いた4categoryを残り容量へ再正規化した「残り枠」barを「1日全体」barの上に示す。各bar直下に右寄せの赤い超過レールを置き、当日は残り容量と24時間の二尺度、未来日は24時間尺度で示す。余差累・空差累は正なら赤、0以下なら緑で表示する。viewport高が35rem以上では取得成功してinline errorがない7日分をpageの縦scrollなしで表示し、35rem以上60rem以下ではcompact表示へ切り替える。35rem未満ではrowを重ねず縦scrollを許可する。tab進入と更新だけで取得し、row押下で対象日の一覧へ移る。 |
 | AC-035 | 負荷画面は「日別負荷」を初期表示し、先頭の「日別負荷」から「繰返負荷」へ通信なしで切り替えられる。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷表は今日から7日後までの連続8 logical datesを最寄りの繰返祖先ごとに集計し、間隔を`N日`で表示して、8日合計、同日複数segmentを1日とする発生日数、日別合計の最大日とともに右揃えする。表全体は横scrollさせず、狭幅では5列を圧縮し、可変長のプロジェクト名と繰返名だけを末尾cell内で横scrollできる。 |
 | AC-036 | 一覧上部の「予定」「完了」は均等幅でactive状態をARIAへ公開し、切替・日付button・日付入力がactive modeのendpointを1回だけ呼ぶ。「全て」から完了へ切替時はsnapshotの現在logical dateを選び、異なるmodeまたは古いresponseは表示を上書きしない。 |
-| AC-037 | 完了modeは今日から7日前までを降順表示し、`M/D`を現在日以前の直近有効日へ解決する。表は完了時刻、実績、符号付き差、1段目のtask名、2段目のProject名と件数を全量表示し、見積は差の計算だけに使用する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は日次終端までとし、空日は専用文言を示す。「全て」、セッション追加、先送りはDOMに存在しない。 |
+| AC-037 | 完了modeは今日から7日前までを降順表示し、`M/D`を現在日以前の直近有効日へ解決する。表は完了時刻、実績、符号付き予実差、1段目のtask名、2段目のProject名と件数を全量表示し、見積は予実差の計算だけに使用する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は日次終端までとし、空日は専用文言を示す。「全て」、セッション追加、先送りはDOMに存在しない。 |
 | AC-038 | 完了表の時刻は秒を切り捨てたlocal `HH:MM`、作業秒は100時間以上も保持する`HH:MM:SS`、差はi128相当の安全な算術による`+`または`-`付きである。320px幅でも表全体とpage全体は横overflowせず、task名とProject名のcellだけが横scrollする。検索は共有文字列をtask名だけへ適用する。 |
 | AC-039 | view state version 3はactive modeとtaggedな空成功を含む予定・完了一覧をround-tripし、version 2を予定modeへ移行する。保存済み完了modeはbootstrap後に保存日付の`list_completed_tasks`を背景取得し、履歴へ同じ関数名とlogical dateを記録する。 |

@@ -888,21 +888,30 @@ button:disabled {
     font-weight: 700;
 }
 
+.completed-difference.is-underrun {
+    color: var(--blue-dark);
+    font-weight: 700;
+}
+
+.completed-difference.is-zero {
+    color: var(--muted);
+}
+
 .completed-task-table .completed-time {
-    width: 6rem;
-    min-width: 6rem;
+    width: 4.25rem;
+    min-width: 4.25rem;
     text-align: right;
 }
 
 .completed-task-table .completed-actual {
-    width: 7.5rem;
-    min-width: 7.5rem;
+    width: 5.5rem;
+    min-width: 5.5rem;
     text-align: right;
 }
 
 .completed-task-table .completed-difference {
-    width: 8.5rem;
-    min-width: 8.5rem;
+    width: 6rem;
+    min-width: 6rem;
     text-align: right;
 }
 
@@ -1188,15 +1197,15 @@ button:disabled {
     font-weight: 750;
 }
 
-.task-name.task-kind-fixed {
+.task-kind-fixed {
     color: var(--task-fixed);
 }
 
-.task-name.task-kind-repetitive {
+.task-kind-repetitive {
     color: var(--task-repetitive);
 }
 
-.task-name.task-kind-non-repetitive {
+.task-kind-non-repetitive {
     color: var(--task-non-repetitive);
 }
 
@@ -1666,22 +1675,22 @@ button:disabled {
     }
 
     .completed-task-table .completed-time {
-        width: 18%;
+        width: 13%;
         min-width: 0;
     }
 
     .completed-task-table .completed-actual {
-        width: 25%;
+        width: 21%;
         min-width: 0;
     }
 
     .completed-task-table .completed-difference {
-        width: 28%;
+        width: 23%;
         min-width: 0;
     }
 
     .completed-task-table .completed-subject {
-        width: 29%;
+        width: 43%;
         min-width: 0;
     }
 

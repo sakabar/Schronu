@@ -411,12 +411,28 @@ fn 完了表は狭幅へ収まりtaskとprojectのcellだけが横scrollする()
     let subject_focus = block_body(MAIN_CSS, ".completed-subject-scroll:focus-visible");
     assert!(subject_focus.contains("outline:"));
 
+    for (selector, width) in [
+        (".completed-task-table .completed-time", "4.25rem"),
+        (".completed-task-table .completed-actual", "5.5rem"),
+        (".completed-task-table .completed-difference", "6rem"),
+    ] {
+        let column = block_body(MAIN_CSS, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(
+            column.contains(&format!("min-width: {width};")),
+            "{selector}: {column}"
+        );
+    }
+
     let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
     for (selector, width) in [
-        (".completed-time", "18%"),
-        (".completed-actual", "25%"),
-        (".completed-difference", "28%"),
-        (".completed-subject", "29%"),
+        (".completed-time", "13%"),
+        (".completed-actual", "21%"),
+        (".completed-difference", "23%"),
+        (".completed-subject", "43%"),
     ] {
         let column = block_body(narrow, selector);
         assert!(

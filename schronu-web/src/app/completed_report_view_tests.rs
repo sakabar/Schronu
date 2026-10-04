@@ -28,6 +28,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 360_001,
                         estimated_work_seconds: 359_999,
+                        task_display_kind: Default::default(),
                         },
                         CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000002".to_owned(),
@@ -36,6 +37,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_724_000,
                         actual_work_seconds: 0,
                         estimated_work_seconds: 0,
+                        task_display_kind: Default::default(),
                         },
                         CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000003".to_owned(),
@@ -44,6 +46,7 @@ fn completed_root() -> Element {
                         completed_at_epoch_ms: 1_789_551_725_000,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 3,
+                        task_display_kind: Default::default(),
                         },
                     ],
                     total_actual_work_seconds: 360_001,
@@ -75,7 +78,6 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         "9月16日の完了",
         "3件",
         "実績",
-        "差",
         "Project",
         "タスク",
         "100:00:01",
@@ -91,6 +93,14 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("session-start"), "{html}");
     assert!(!html.contains("task-defer"), "{html}");
     assert!(!html.contains("<th scope=\"col\">見積</th>"), "{html}");
+    assert!(
+        html.contains("<th class=\"completed-difference\" scope=\"col\">予実差</th>"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("<th class=\"completed-difference\" scope=\"col\">差</th>"),
+        "{html}"
+    );
     assert!(!html.contains(">99:59:59</td>"), "{html}");
     assert!(
         html.contains("<th class=\"completed-subject\" scope=\"col\">タスク / Project</th>"),
@@ -100,9 +110,11 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("<th scope=\"col\">タスク</th>"), "{html}");
     assert!(
         html.contains(concat!(
-            "<th class=\"completed-subject\" scope=\"row\">",
+            "<th class=\"completed-subject\" scope=\"row\" ",
+            "aria-label=\"単発タスク: 設計を仕上げる; Project: Schronu\">",
             "<div class=\"completed-subject-scroll\" tabindex=0>",
-            "<strong class=\"completed-task-name\">設計を仕上げる</strong>",
+            "<strong class=\"completed-task-name task-kind-non-repetitive\">",
+            "設計を仕上げる</strong>",
             "<span class=\"completed-project\">Schronu</span>",
             "</div></th>"
         )),
@@ -130,6 +142,111 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
 }
 
 #[test]
+fn 予実差は正を赤_負を青_zeroをmuted色で表示する() {
+    let mut dom = VirtualDom::new(completed_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference is-overrun\"",
+            " aria-label=\"実績と見積の差 +00:00:02\">+00:00:02</td>"
+        )),
+        "{html}"
+    );
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference is-underrun\"",
+            " aria-label=\"実績と見積の差 -00:00:02\">-00:00:02</td>"
+        )),
+        "{html}"
+    );
+    assert!(
+        html.contains(concat!(
+            "class=\"completed-number completed-difference is-zero\"",
+            " aria-label=\"実績と見積の差 +00:00:00\">+00:00:00</td>"
+        )),
+        "{html}"
+    );
+
+    let css = include_str!("../../assets/main.css");
+    assert!(css.contains("--blue-dark: #255d99;"));
+    assert!(css.contains(".completed-difference.is-overrun {\n    color: var(--red);"));
+    assert!(css.contains(".completed-difference.is-underrun {\n    color: var(--blue-dark);"));
+    assert!(css.contains(".completed-difference.is-zero {\n    color: var(--muted);"));
+}
+
+#[test]
+fn 完了task名は予定と同じtask種別classと意味labelを使う() {
+    fn task_kind_root() -> Element {
+        let report: CompletedTaskReport = serde_json::from_value(serde_json::json!({
+            "rows": [
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000011",
+                    "task_name": "固定完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_723_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "fixed"
+                },
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000012",
+                    "task_name": "繰返完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_724_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "repetitive"
+                },
+                {
+                    "task_id": "00000000-0000-4000-8000-000000000013",
+                    "task_name": "単発完了",
+                    "project_name": "Schronu",
+                    "completed_at_epoch_ms": 1_789_551_725_000_i64,
+                    "actual_work_seconds": 60,
+                    "estimated_work_seconds": 60,
+                    "task_display_kind": "non_repetitive"
+                }
+            ],
+            "total_actual_work_seconds": 180,
+            "available_seconds": 28_800,
+            "recorded_percentage": 1
+        }))
+        .unwrap();
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(report),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(task_kind_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    for expected in [
+        "aria-label=\"固定タスク: 固定完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-fixed\">固定完了</strong>",
+        "aria-label=\"繰返タスク: 繰返完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-repetitive\">繰返完了</strong>",
+        "aria-label=\"単発タスク: 単発完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-non-repetitive\">単発完了</strong>",
+    ] {
+        assert!(html.contains(expected), "missing {expected}: {html}");
+    }
+}
+
+#[test]
 fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避する() {
     fn invalid_time_root() -> Element {
         rsx! {
@@ -143,6 +260,7 @@ fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避す�
                         completed_at_epoch_ms: i64::MAX,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 1,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 1,
                     available_seconds: 1,
@@ -182,6 +300,7 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 360_001,
                         estimated_work_seconds: 360_001,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 360_001,
                     available_seconds: 288_000,
@@ -234,6 +353,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 1,
                         estimated_work_seconds: 2,
+                        task_display_kind: Default::default(),
                     }],
                     total_actual_work_seconds: 1,
                     available_seconds: 2,

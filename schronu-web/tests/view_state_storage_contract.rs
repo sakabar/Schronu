@@ -78,6 +78,55 @@ fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
 }
 
 #[test]
+fn 旧view_state_v3の完了rowはtask種別を単発として復元する() {
+    let storage = MemoryStorage::default();
+    let state = ViewState {
+        snapshot: ServerSnapshot {
+            observed_at_epoch_ms: 1_789_000_000_000,
+            logical_date: "2026-09-09".to_owned(),
+            buffer_seconds: 60,
+        },
+        list_mode: ListMode::Completed,
+        list: Some(StoredActiveList::Completed {
+            logical_date: "2026-09-08".to_owned(),
+            rows: vec![CompletedTaskRow {
+                task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                task_name: "旧完了".to_owned(),
+                project_name: "Schronu".to_owned(),
+                completed_at_epoch_ms: 1_789_000_000_000,
+                actual_work_seconds: 60,
+                estimated_work_seconds: 60,
+                task_display_kind: schronu_web::TaskDisplayKind::Fixed,
+            }],
+            total_actual_work_seconds: 60,
+            available_seconds: 43_200,
+            recorded_percentage: Some(0),
+        }),
+        active_tab: ActiveTab::List,
+        task_name_filter: String::new(),
+        date_input_text: "2026/9/8".to_owned(),
+    };
+    store_view_state(&storage, &state).unwrap();
+    let mut raw: serde_json::Value =
+        serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
+    raw["list"]["rows"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("task_display_kind");
+    *storage.value.borrow_mut() = Some(raw.to_string());
+
+    let loaded = load_view_state(&storage);
+    let Some(StoredActiveList::Completed { rows, .. }) = &loaded.state().unwrap().list else {
+        panic!("completed list expected");
+    };
+    assert_eq!(
+        rows[0].task_display_kind,
+        schronu_web::TaskDisplayKind::NonRepetitive
+    );
+    assert!(loaded.warning().is_none());
+}
+
+#[test]
 fn view_state_v3は明示された将来の完了一覧日を保持する() {
     let storage = MemoryStorage::default();
     let state = ViewState {
@@ -202,6 +251,7 @@ fn view_state_v3は不正な完了rowを全体不正として扱う() {
                 completed_at_epoch_ms: 1_789_000_000_000,
                 actual_work_seconds: 1,
                 estimated_work_seconds: 1,
+                task_display_kind: Default::default(),
             }],
             total_actual_work_seconds: 1,
             available_seconds: 10,

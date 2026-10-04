@@ -437,10 +437,9 @@ fn list配色は意味別tokenを使いleafは太字だけを担う() {
         assert!(css.contains(token), "missing token: {token}");
     }
     assert!(css.contains(".deadline.deadline-kind-overrun {\n    color: var(--red);"));
-    assert!(css.contains(".task-name.task-kind-fixed {\n    color: var(--task-fixed);"));
-    assert!(css.contains(".task-name.task-kind-repetitive {\n    color: var(--task-repetitive);"));
-    assert!(css
-        .contains(".task-name.task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"));
+    assert!(css.contains(".task-kind-fixed {\n    color: var(--task-fixed);"));
+    assert!(css.contains(".task-kind-repetitive {\n    color: var(--task-repetitive);"));
+    assert!(css.contains(".task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"));
     let leaf_rule = css
         .split_once(".task-name.is-leaf {")
         .expect("leaf rule")
