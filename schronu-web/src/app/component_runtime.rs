@@ -1,8 +1,8 @@
 use crate::client::date_input::DateInputState;
 use crate::client::state::{
-    load_client_state_for_ui, ActiveTab, ClientEffect, ClientState, ListSelection,
+    load_client_state_for_ui, ActiveTab, ClientEffect, ClientState, ListMode, ListSelection,
 };
-use crate::client::view_state::{load_view_state, store_view_state, StoredListView, ViewState};
+use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
 use crate::{DeferPlan, SessionTask};
 
@@ -17,6 +17,8 @@ pub(crate) enum ComponentAction {
         wall_now_epoch_ms: i64,
     },
     SelectDate(String),
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    SwitchListMode(ListMode),
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
     SelectLoadDate(String),
     RefreshLoad,
@@ -51,9 +53,10 @@ pub(crate) enum ComponentAction {
 pub(crate) fn component_action_from_date_input(
     date_input: &mut DateInputState,
     current_logical_date: &str,
+    list_mode: ListMode,
 ) -> Option<ComponentAction> {
     date_input
-        .submit(current_logical_date)
+        .submit_for_mode(current_logical_date, list_mode)
         .map(ComponentAction::SelectDate)
 }
 
@@ -226,7 +229,12 @@ impl ComponentOrchestrator {
             .and_then(ClientState::snapshot)
             .map(|snapshot| snapshot.logical_date.as_str())
             .map(str::to_owned)?;
-        let action = component_action_from_date_input(&mut self.date_input, &current_logical_date);
+        let list_mode = self.state().map(ClientState::list_mode)?;
+        let action = component_action_from_date_input(
+            &mut self.date_input,
+            &current_logical_date,
+            list_mode,
+        );
         self.persist_view_state(storage);
         action
     }
@@ -353,6 +361,12 @@ impl ComponentOrchestrator {
                     request_id, result, ..
                 },
             ) if expected == request_id => Some(result.is_ok()),
+            (
+                RefreshState::List(expected),
+                ClientResponse::ListCompletedTasks {
+                    request_id, result, ..
+                },
+            ) if expected == request_id => Some(result.is_ok()),
             _ => None,
         };
         let background_list = matches!(
@@ -360,6 +374,12 @@ impl ComponentOrchestrator {
             (
                 RefreshState::List(expected),
                 ClientResponse::ListTasks { request_id, .. }
+            ) if expected == request_id
+        ) || matches!(
+            (&self.refresh_state, &response),
+            (
+                RefreshState::List(expected),
+                ClientResponse::ListCompletedTasks { request_id, .. }
             ) if expected == request_id
         );
         let effect = self.state.as_mut().map_or(ClientEffect::None, |state| {
@@ -371,7 +391,10 @@ impl ComponentOrchestrator {
         });
         if let Some(succeeded) = refresh_result {
             self.refresh_state = if succeeded {
-                if matches!(effect, ClientEffect::ListTasks { .. }) {
+                if matches!(
+                    effect,
+                    ClientEffect::ListTasks { .. } | ClientEffect::ListCompletedTasks { .. }
+                ) {
                     background_state_for_effect(&effect).unwrap_or(RefreshState::Failed)
                 } else {
                     RefreshState::Fresh
@@ -396,6 +419,13 @@ impl ComponentOrchestrator {
                 (RefreshState::List(expected), ClientEffect::ListTasks { request_id, .. })
                     if expected == *request_id
             )
+            || matches!(
+                (self.refresh_state, effect),
+                (
+                    RefreshState::List(expected),
+                    ClientEffect::ListCompletedTasks { request_id, .. }
+                ) if expected == *request_id
+            )
     }
 
     fn persist_view_state<S: KeyValueStorage>(&mut self, storage: &S) {
@@ -405,18 +435,37 @@ impl ComponentOrchestrator {
         let Some(snapshot) = state.snapshot().cloned() else {
             return;
         };
-        let list = if state.has_scheduled_list() {
+        let list = if state.has_active_list() {
             state
                 .selected_logical_date()
-                .map(|logical_date| StoredListView {
-                    logical_date: logical_date.to_owned(),
-                    rows: state.scheduled_rows().to_vec(),
+                .map(|logical_date| match state.list_mode() {
+                    ListMode::Scheduled => StoredActiveList::Scheduled {
+                        logical_date: logical_date.to_owned(),
+                        rows: state.scheduled_rows().to_vec(),
+                    },
+                    ListMode::Completed => StoredActiveList::Completed {
+                        logical_date: logical_date.to_owned(),
+                        rows: state.completed_rows().to_vec(),
+                        total_actual_work_seconds: state
+                            .completed_report()
+                            .expect("active completed list has a report")
+                            .total_actual_work_seconds,
+                        available_seconds: state
+                            .completed_report()
+                            .expect("active completed list has a report")
+                            .available_seconds,
+                        recorded_percentage: state
+                            .completed_report()
+                            .expect("active completed list has a report")
+                            .recorded_percentage,
+                    },
                 })
         } else {
             None
         };
         let view_state = ViewState {
             snapshot,
+            list_mode: state.list_mode(),
             list,
             active_tab: state.active_tab(),
             task_name_filter: self.task_name_filter.clone(),
@@ -449,6 +498,9 @@ fn background_state_for_effect(effect: &ClientEffect) -> Option<RefreshState> {
     match effect {
         ClientEffect::Bootstrap { request_id } => Some(RefreshState::Bootstrap(*request_id)),
         ClientEffect::ListTasks { request_id, .. } => Some(RefreshState::List(*request_id)),
+        ClientEffect::ListCompletedTasks { request_id, .. } => {
+            Some(RefreshState::List(*request_id))
+        }
         _ => None,
     }
 }
@@ -457,6 +509,7 @@ fn action_requires_server(action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::SelectDate(_)
+            | ComponentAction::SwitchListMode(_)
             | ComponentAction::SelectLoadDate(_)
             | ComponentAction::RefreshLoad
             | ComponentAction::AutoSession
@@ -492,6 +545,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::SwitchTab(tab) => state.switch_tab(tab),
         ComponentAction::Tick { wall_now_epoch_ms } => state.tick(wall_now_epoch_ms),
         ComponentAction::SelectDate(logical_date) => state.select_logical_date(&logical_date),
+        ComponentAction::SwitchListMode(mode) => state.switch_list_mode(mode),
         ComponentAction::SelectLoadDate(logical_date) => {
             state.switch_tab(ActiveTab::List);
             state.select_logical_date(&logical_date)

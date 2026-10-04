@@ -1,12 +1,18 @@
 use dioxus::prelude::*;
 use std::rc::Rc;
 
+use crate::client::state::ListMode;
+use crate::client::time_model::format_hh_mm_ss;
 use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 use crate::client::view_projection::ScheduleDisplayViewModel;
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
-use crate::{DeadlineDisplayKind, DeferPlan, SessionTask, TaskDisplayKind};
+use crate::{
+    CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferPlan, SessionTask,
+    TaskDisplayKind,
+};
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
@@ -213,6 +219,293 @@ pub fn ListView(
                 }
                 if has_more {
                     button { class: "all-tasks-more", r#type: "button", onclick: move |_| on_show_more.call(()), "さらに表示" }
+                }
+            }
+        }
+    }
+}
+
+#[component]
+pub fn ListModeControl(
+    selected_mode: ListMode,
+    on_switch_list_mode: EventHandler<ListMode>,
+) -> Element {
+    rsx! {
+        nav { class: "list-mode-control", role: "tablist", aria_label: "一覧の種類",
+            ListModeButton {
+                label: "予定",
+                mode: ListMode::Scheduled,
+                selected: selected_mode == ListMode::Scheduled,
+                on_switch_list_mode,
+            }
+            ListModeButton {
+                label: "完了",
+                mode: ListMode::Completed,
+                selected: selected_mode == ListMode::Completed,
+                on_switch_list_mode,
+            }
+        }
+    }
+}
+
+#[component]
+pub fn CompletedListView(
+    dates: Vec<DateButtonViewModel>,
+    report: Option<CompletedTaskReport>,
+    selected_logical_date: Option<String>,
+    date_input_text: String,
+    date_input_error: Option<String>,
+    filter_text: String,
+    #[props(default)] server_actions_blocked: bool,
+    on_select_date: EventHandler<String>,
+    on_date_input_change: EventHandler<String>,
+    on_submit_date_input: EventHandler<()>,
+    on_filter_change: EventHandler<String>,
+) -> Element {
+    let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
+    let summary = report.as_ref().map(|report| CompletedReportSummary {
+        total_actual_work_seconds: report.total_actual_work_seconds,
+        available_seconds: report.available_seconds,
+        recorded_percentage: report.recorded_percentage,
+    });
+    let rows = report.map_or_else(Vec::new, |report| report.rows);
+    let matching_rows = rows
+        .into_iter()
+        .filter(|row| task_name_matches(&filter_text, &row.task_name))
+        .collect::<Vec<_>>();
+    let no_matches = !filter_text.trim().is_empty() && matching_rows.is_empty();
+    rsx! {
+        section { class: "task-list-view completed-list-view",
+            nav { class: "date-pills", aria_label: "logical date",
+                for date in dates {
+                    DateButton { date, disabled: server_actions_blocked, on_select_date }
+                }
+            }
+            div { class: "list-controls",
+                form {
+                    class: "date-jump-form",
+                    aria_label: "日付へ移動",
+                    onsubmit: move |event| {
+                        event.prevent_default();
+                        if !server_actions_blocked {
+                            on_submit_date_input.call(());
+                        }
+                    },
+                    div { class: "date-jump-controls",
+                        input {
+                            class: "date-jump-input",
+                            r#type: "text",
+                            value: date_input_text.clone(),
+                            aria_label: "表示する日付",
+                            aria_invalid: date_input_error.is_some(),
+                            aria_describedby: date_input_error.as_ref().map(|_| "date-input-error"),
+                            placeholder: "例: 6/18",
+                            autocomplete: "off",
+                            oninput: move |event| on_date_input_change.call(event.value()),
+                        }
+                        button {
+                            class: "date-jump-submit",
+                            r#type: "submit",
+                            disabled: date_input_text.trim().is_empty() || server_actions_blocked,
+                            "表示"
+                        }
+                    }
+                    if let Some(ref error) = date_input_error {
+                        p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
+                    }
+                }
+                div { class: "task-name-filter", role: "search",
+                    input {
+                        class: "task-name-filter-input",
+                        r#type: "text",
+                        value: filter_text.clone(),
+                        aria_label: "タスク名を検索",
+                        placeholder: "タスク名を検索",
+                        onmounted: move |element| filter_input.set(Some(element.data())),
+                        oninput: move |event| on_filter_change.call(event.value()),
+                    }
+                    if !filter_text.is_empty() {
+                        button {
+                            class: "task-name-filter-clear",
+                            r#type: "button",
+                            aria_label: "検索文字列をクリア",
+                            onclick: move |_| async move {
+                                on_filter_change.call(String::new());
+                                if let Some(input) = filter_input.cloned() {
+                                    let _ = input.set_focus(true).await;
+                                }
+                            },
+                            "×"
+                        }
+                    }
+                }
+            }
+            CompletedTaskTable {
+                logical_date: selected_logical_date,
+                rows: matching_rows,
+                summary,
+                empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
+            }
+        }
+    }
+}
+
+#[component]
+fn ListModeButton(
+    label: &'static str,
+    mode: ListMode,
+    selected: bool,
+    on_switch_list_mode: EventHandler<ListMode>,
+) -> Element {
+    rsx! {
+        button {
+            class: if selected { "list-mode-button is-selected" } else { "list-mode-button" },
+            role: "tab",
+            r#type: "button",
+            aria_selected: selected,
+            aria_pressed: selected,
+            onclick: move |_| {
+                if !selected {
+                    on_switch_list_mode.call(mode);
+                }
+            },
+            "{label}"
+        }
+    }
+}
+
+#[component]
+fn CompletedTaskTable(
+    logical_date: Option<String>,
+    rows: Vec<CompletedTaskRow>,
+    summary: Option<CompletedReportSummary>,
+    empty_message: Option<String>,
+) -> Element {
+    let title = logical_date
+        .as_deref()
+        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        .map(|date| format!("{}月{}日の完了", date.month(), date.day()))
+        .unwrap_or_else(|| "完了タスク".to_owned());
+    let count = rows.len();
+    let empty_message =
+        empty_message.unwrap_or_else(|| "この日に完了したタスクはありません。".to_owned());
+    if rows.is_empty() {
+        return rsx! {
+            section { class: "completed-report", aria_label: title.clone(),
+                div { class: "completed-report-heading",
+                    h2 { "{title}" }
+                    span { class: "completed-report-count", "0件" }
+                }
+                if let Some(summary) = summary {
+                    CompletedReportSummaryView { summary }
+                }
+                p {
+                    class: "completed-report-empty",
+                    role: "status",
+                    "{empty_message}"
+                }
+            }
+        };
+    }
+    rsx! {
+        section { class: "completed-report", aria_label: title.clone(),
+            div { class: "completed-report-heading",
+                h2 { "{title}" }
+                span { class: "completed-report-count", "{count}件" }
+            }
+            if let Some(summary) = summary {
+                CompletedReportSummaryView { summary }
+            }
+            div { class: "completed-task-table-scroll",
+                table { class: "completed-task-table",
+                    thead {
+                        tr {
+                            th { class: "completed-time", scope: "col", "完了" }
+                            th { class: "completed-actual", scope: "col", "実績" }
+                            th { class: "completed-difference", scope: "col", "差" }
+                            th { class: "completed-subject", scope: "col", "タスク / Project" }
+                        }
+                    }
+                    tbody {
+                        for row in rows {
+                            CompletedTaskTableRow { row }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CompletedReportSummary {
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
+}
+
+#[component]
+fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
+    let total_actual = format_hh_mm_ss(i128::from(summary.total_actual_work_seconds));
+    let available = format_hh_mm_ss(i128::from(summary.available_seconds));
+    let recorded_percentage = summary
+        .recorded_percentage
+        .map_or_else(|| "--".to_owned(), |percentage| format!("{percentage}%"));
+    rsx! {
+        dl { class: "completed-report-summary", aria_label: "完了日の集計",
+            div { class: "completed-report-summary-item",
+                dt { "実績合計" }
+                dd { "{total_actual}" }
+            }
+            div { class: "completed-report-summary-item",
+                dt { "利用可能" }
+                dd { "{available}" }
+            }
+            div { class: "completed-report-summary-item",
+                dt { "記録率" }
+                dd { "{recorded_percentage}" }
+            }
+        }
+    }
+}
+
+#[component]
+fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
+    let completed_at = Local
+        .timestamp_millis_opt(row.completed_at_epoch_ms)
+        .single();
+    let completed_time = completed_at
+        .as_ref()
+        .map(|date| date.format("%H:%M").to_string())
+        .unwrap_or_else(|| "--:--".to_owned());
+    let completed_datetime = completed_at.map(|date| date.to_rfc3339());
+    let actual = format_hh_mm_ss(i128::from(row.actual_work_seconds));
+    let difference = i128::from(row.actual_work_seconds) - i128::from(row.estimated_work_seconds);
+    let difference_label = if difference >= 0 {
+        format!("+{}", format_hh_mm_ss(difference))
+    } else {
+        format_hh_mm_ss(difference)
+    };
+    let difference_class = if difference > 0 {
+        "completed-number completed-difference is-overrun"
+    } else {
+        "completed-number completed-difference"
+    };
+    rsx! {
+        tr { key: "{row.task_id}",
+            td { class: "completed-time completed-number",
+                time {
+                    datetime: completed_datetime,
+                    aria_label: format!("完了時刻 {completed_time}"),
+                    "{completed_time}"
+                }
+            }
+            td { class: "completed-actual completed-number", "{actual}" }
+            td { class: difference_class, aria_label: format!("実績と見積の差 {difference_label}"), "{difference_label}" }
+            th { class: "completed-subject", scope: "row",
+                div { class: "completed-subject-scroll", tabindex: 0,
+                    strong { class: "completed-task-name", "{row.task_name}" }
+                    span { class: "completed-project", "{row.project_name}" }
                 }
             }
         }

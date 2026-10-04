@@ -83,6 +83,10 @@ pub enum ApplicationError {
         estimated_work_seconds: i64,
         actual_work_seconds: i64,
     },
+    CompletedReportCalculationOverflow {
+        operation: &'static str,
+        value: i128,
+    },
     RoutineLoadCalculationOverflow {
         routine_task_id: Uuid,
     },
@@ -159,6 +163,10 @@ impl fmt::Display for ApplicationError {
             } => write!(
                 formatter,
                 "remaining work calculation overflow: task_id={task_id}, estimated_work_seconds={estimated_work_seconds}, actual_work_seconds={actual_work_seconds}"
+            ),
+            Self::CompletedReportCalculationOverflow { operation, value } => write!(
+                formatter,
+                "completed report calculation overflow: operation={operation}, value={value}"
             ),
             Self::RoutineLoadCalculationOverflow { routine_task_id } => write!(
                 formatter,

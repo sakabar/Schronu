@@ -4,6 +4,8 @@ mod all_tasks_performance_tests;
 mod carry_lock_view;
 #[cfg(test)]
 mod carry_lock_view_tests;
+#[cfg(test)]
+mod completed_report_view_tests;
 mod component;
 #[cfg(test)]
 mod component_all_tasks_tests;
@@ -50,8 +52,8 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_tasks, load_band,
-    record_session, WebOperationResult,
+    auto_session, bootstrap, complete_session, defer_task, list_all_tasks, list_completed_tasks,
+    list_tasks, load_band, record_session, WebOperationResult,
 };
 
 #[cfg(test)]

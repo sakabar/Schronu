@@ -15,7 +15,7 @@ use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
     WorkSessionsState,
 };
-use crate::{ScheduledTaskRow, ServerSnapshot, WebError};
+use crate::{CompletedTaskReport, CompletedTaskRow, ScheduledTaskRow, ServerSnapshot, WebError};
 pub use all_tasks::{AllTasksStatus, ListSelection};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
@@ -31,6 +31,14 @@ pub enum ActiveTab {
     List,
     Load,
     History,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListMode {
+    #[default]
+    Scheduled,
+    Completed,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -152,7 +160,30 @@ impl ClientState {
         &self.read.scheduled_rows
     }
 
+    pub fn completed_rows(&self) -> &[CompletedTaskRow] {
+        self.read
+            .completed_report
+            .as_ref()
+            .map_or(&[], |report| report.rows.as_slice())
+    }
+
+    pub fn completed_report(&self) -> Option<&CompletedTaskReport> {
+        self.read.completed_report.as_ref()
+    }
+
+    pub fn list_mode(&self) -> ListMode {
+        self.read.list_mode
+    }
+
     pub fn has_scheduled_list(&self) -> bool {
+        self.read.has_list && self.read.list_mode == ListMode::Scheduled
+    }
+
+    pub fn has_completed_list(&self) -> bool {
+        self.read.has_list && self.read.list_mode == ListMode::Completed
+    }
+
+    pub fn has_active_list(&self) -> bool {
         self.read.has_list
     }
 
@@ -160,13 +191,37 @@ impl ClientState {
     pub(crate) fn restore_view_state(&mut self, view_state: &ViewState) {
         self.active_tab = view_state.active_tab;
         self.load.after_bootstrap = view_state.active_tab == ActiveTab::Load;
-        self.read.date_buttons =
-            super::date_buttons::logical_date_buttons(&view_state.snapshot.logical_date)
-                .unwrap_or_default();
+        self.read.list_mode = view_state.list_mode;
+        self.read.date_buttons = super::date_buttons::logical_date_buttons_for_mode(
+            &view_state.snapshot.logical_date,
+            view_state.list_mode,
+        )
+        .unwrap_or_default();
         self.read.snapshot = Some(view_state.snapshot.clone());
         if let Some(list) = &view_state.list {
-            self.read.selected_logical_date = Some(list.logical_date.clone());
-            self.read.scheduled_rows = list.rows.clone();
+            match list {
+                super::view_state::StoredActiveList::Scheduled { logical_date, rows } => {
+                    self.read.list_mode = ListMode::Scheduled;
+                    self.read.selected_logical_date = Some(logical_date.clone());
+                    self.read.scheduled_rows = rows.clone();
+                }
+                super::view_state::StoredActiveList::Completed {
+                    logical_date,
+                    rows,
+                    total_actual_work_seconds,
+                    available_seconds,
+                    recorded_percentage,
+                } => {
+                    self.read.list_mode = ListMode::Completed;
+                    self.read.selected_logical_date = Some(logical_date.clone());
+                    self.read.completed_report = Some(CompletedTaskReport {
+                        rows: rows.clone(),
+                        total_actual_work_seconds: *total_actual_work_seconds,
+                        available_seconds: *available_seconds,
+                        recorded_percentage: *recorded_percentage,
+                    });
+                }
+            }
             self.read.has_list = true;
         }
     }

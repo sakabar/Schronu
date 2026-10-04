@@ -107,6 +107,7 @@ pub(super) fn is_read_operation(operation: Operation) -> bool {
         operation,
         Operation::Bootstrap
             | Operation::ListTasks
+            | Operation::ListCompletedTasks
             | Operation::ListAllTasks
             | Operation::AutoSession
     )

@@ -1,15 +1,16 @@
 use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult,
-    RetryAdvice, RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
+    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+    RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
+    WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
     resolve_project_storage_directory, AllTaskPageDto, AllTaskRowDto, BandDayDto,
-    CompleteSessionRequest as CoreCompleteSessionRequest,
-    DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
+    CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskReportDto,
+    CompletedTaskRowDto, DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
     LoadDataDto, RecordSessionRequest as CoreRecordSessionRequest, RoutineLoadReportDto,
     RoutineLoadRowDto, ScheduledTaskRowDto, ServerSnapshot as CoreServerSnapshot, SessionTaskDto,
@@ -101,6 +102,18 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn list_completed_tasks(
+        &mut self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
+        let operation_now = self.clock.now();
+        let logical_date = parse_strict_logical_date(&request.logical_date)?;
+        self.service()?
+            .list_completed_tasks_at(operation_now, logical_date)
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
     fn list_all_tasks(
         &mut self,
         request: ListAllTasksRequest,
@@ -157,6 +170,15 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map(Into::into)
             .map_err(Into::into)
     }
+}
+
+fn parse_strict_logical_date(value: &str) -> Result<NaiveDate, WebError> {
+    let logical_date =
+        NaiveDate::parse_from_str(value, "%Y-%m-%d").map_err(|_| invalid_input_error())?;
+    if logical_date.format("%Y-%m-%d").to_string() != value {
+        return Err(invalid_input_error());
+    }
+    Ok(logical_date)
 }
 
 impl From<CoreServerSnapshot> for ServerSnapshot {
@@ -239,6 +261,30 @@ impl From<AllTaskRowDto> for AllTaskRow {
             task_display_kind: row.task_display_kind.into(),
             deadline_display_kind: row.deadline_display_kind.into(),
             is_leaf: row.is_leaf,
+        }
+    }
+}
+
+impl From<CompletedTaskRowDto> for CompletedTaskRow {
+    fn from(row: CompletedTaskRowDto) -> Self {
+        Self {
+            task_id: row.task_id,
+            task_name: row.task_name,
+            project_name: row.project_name,
+            completed_at_epoch_ms: row.completed_at_epoch_ms,
+            actual_work_seconds: row.actual_work_seconds,
+            estimated_work_seconds: row.estimated_work_seconds,
+        }
+    }
+}
+
+impl From<CompletedTaskReportDto> for CompletedTaskReport {
+    fn from(report: CompletedTaskReportDto) -> Self {
+        Self {
+            rows: report.rows.into_iter().map(Into::into).collect(),
+            total_actual_work_seconds: report.total_actual_work_seconds,
+            available_seconds: report.available_seconds,
+            recorded_percentage: report.recorded_percentage,
         }
     }
 }
@@ -345,6 +391,14 @@ impl ConvertData for Vec<ScheduledTaskRowDto> {
     }
 }
 
+impl ConvertData for CompletedTaskReportDto {
+    type Output = CompletedTaskReport;
+
+    fn convert(self) -> Self::Output {
+        self.into()
+    }
+}
+
 impl ConvertData for LoadDataDto {
     type Output = LoadData;
 
@@ -415,12 +469,13 @@ mod tests {
     use super::{Clock, EnvironmentWebOperations};
     use crate::{
         web_error_codes, CompleteSessionRequest, DeferMode, DeferPlan, DeferTaskRequest,
-        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, WebOperations,
+        ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, RecordSessionRequest,
+        WebOperations,
     };
     use chrono::{DateTime, Local, TimeZone};
     use schronu::adapter::gateway::task_repository::TaskRepository;
     use schronu::application::interface::TaskRepositoryTrait;
-    use schronu::entity::task::TaskHandle;
+    use schronu::entity::task::{Status, TaskHandle};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -543,6 +598,62 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
+    #[test]
+    fn completedはstrictな日付をserviceへ渡しsnapshotと完了行を保持する() {
+        let fixture = Fixture::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+        let expected = fixture.seed_completed_tasks(now);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut operations = EnvironmentWebOperations::with_environment_and_clock(
+            Some(fixture.config.clone().into_os_string()),
+            Some(fixture.storage.clone().into_os_string()),
+            CountingClock {
+                now,
+                calls: Arc::clone(&calls),
+            },
+        );
+
+        let completed = operations
+            .list_completed_tasks(ListCompletedTasksRequest {
+                logical_date: "2026-09-05".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(
+            completed.snapshot.observed_at_epoch_ms,
+            now.timestamp_millis()
+        );
+        assert_eq!(completed.snapshot.logical_date, "2026-09-05");
+        assert_eq!(completed.data.rows.len(), 2);
+        assert_eq!(
+            completed.data.rows[0].task_id,
+            expected[0].hyphenated().to_string()
+        );
+        assert_eq!(completed.data.rows[0].task_name, "earlier project");
+        assert_eq!(completed.data.rows[0].project_name, "earlier project");
+        assert_eq!(
+            completed.data.rows[0].completed_at_epoch_ms,
+            (now - chrono::Duration::hours(2)).timestamp_millis()
+        );
+        assert_eq!(completed.data.rows[0].actual_work_seconds, 11);
+        assert_eq!(completed.data.rows[0].estimated_work_seconds, 12);
+        assert_eq!(
+            completed.data.rows[1].task_id,
+            expected[1].hyphenated().to_string()
+        );
+        assert_eq!(completed.data.total_actual_work_seconds, 32);
+        assert_eq!(completed.data.available_seconds, 46_859);
+        assert_eq!(completed.data.recorded_percentage, Some(0));
+
+        let error = operations
+            .list_completed_tasks(ListCompletedTasksRequest {
+                logical_date: "2026-9-5".to_owned(),
+            })
+            .unwrap_err();
+        assert_eq!(error.code, web_error_codes::INVALID_INPUT);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
     struct CountingClock {
         now: DateTime<Local>,
         calls: Arc<AtomicUsize>,
@@ -619,6 +730,32 @@ mod tests {
             repository.start_new_project(task).unwrap();
             repository.save().unwrap();
             task_id
+        }
+
+        fn seed_completed_tasks(&self, now: DateTime<Local>) -> [uuid::Uuid; 2] {
+            let earlier_id = uuid::Uuid::from_u128(1);
+            let later_id = uuid::Uuid::from_u128(2);
+            let earlier = TaskHandle::with_identity("earlier project", earlier_id, now).unwrap();
+            earlier.set_orig_status(Status::Done).unwrap();
+            earlier
+                .set_end_time_opt(Some(now - chrono::Duration::hours(2)))
+                .unwrap();
+            earlier.set_actual_work_seconds(11).unwrap();
+            earlier.set_estimated_work_seconds(12).unwrap();
+            let later = TaskHandle::with_identity("later project", later_id, now).unwrap();
+            later.set_orig_status(Status::Done).unwrap();
+            later
+                .set_end_time_opt(Some(now - chrono::Duration::hours(1)))
+                .unwrap();
+            later.set_actual_work_seconds(21).unwrap();
+            later.set_estimated_work_seconds(22).unwrap();
+            let mut repository = TaskRepository::new(self.storage.to_str().unwrap());
+            repository.sync_clock(now).unwrap();
+            repository.load().unwrap();
+            repository.start_new_project(later).unwrap();
+            repository.start_new_project(earlier).unwrap();
+            repository.save().unwrap();
+            [earlier_id, later_id]
         }
     }
 

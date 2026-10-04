@@ -49,7 +49,8 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
                 logical_date: "2026-09-09".to_owned(),
                 buffer_seconds: 60,
             },
-            list: Some(StoredListView {
+            list_mode: crate::client::state::ListMode::Scheduled,
+            list: Some(StoredActiveList::Scheduled {
                 logical_date: "2026-09-12".to_owned(),
                 rows: vec![cached_row.clone()],
             }),
@@ -135,6 +136,141 @@ fn reloadは前回一覧と入力を復元しbackground更新中もlocal追加�
 }
 
 #[test]
+fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景更新する() {
+    let storage = MemoryStorage::default();
+    let cached_row = CompletedTaskRow {
+        task_id: RECORD_ID.to_owned(),
+        task_name: "完了済み".to_owned(),
+        project_name: "Schronu".to_owned(),
+        completed_at_epoch_ms: 1_789_000_000_000,
+        actual_work_seconds: 120,
+        estimated_work_seconds: 60,
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: snapshot(1_789_000_000_000),
+            list_mode: crate::client::state::ListMode::Completed,
+            list: Some(StoredActiveList::Completed {
+                logical_date: "2026-09-08".to_owned(),
+                rows: vec![cached_row.clone()],
+                total_actual_work_seconds: 120,
+                available_seconds: 600,
+                recorded_percentage: Some(20),
+            }),
+            active_tab: ActiveTab::List,
+            task_name_filter: String::new(),
+            date_input_text: String::new(),
+        },
+    )
+    .unwrap();
+
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap = orchestrator.mount(&storage, 1_789_000_100_000);
+    assert!(orchestrator.effect_is_background(&bootstrap));
+    assert_eq!(
+        orchestrator.state().unwrap().completed_rows(),
+        std::slice::from_ref(&cached_row)
+    );
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(ServerSnapshot {
+                observed_at_epoch_ms: 1_789_100_000_000,
+                logical_date: "2026-09-10".to_owned(),
+                buffer_seconds: 30,
+            }),
+        },
+    );
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListCompletedTasks {
+            request_id: 2,
+            request: ref list_request,
+        } if list_request.logical_date == "2026-09-08"
+    ));
+    assert!(orchestrator.effect_is_background(&follow_up));
+    assert_eq!(
+        orchestrator.state().unwrap().completed_rows(),
+        std::slice::from_ref(&cached_row)
+    );
+}
+
+#[test]
+#[cfg(feature = "web")]
+fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを渡さない() {
+    let storage = MemoryStorage::default();
+    let (mut state, _) = initialize_client(&storage, 1_000);
+    state.apply_bootstrap_result(1, Ok(snapshot(1_001)));
+
+    let (completed_id, completed_date) = match state
+        .switch_list_mode(crate::client::state::ListMode::Completed)
+    {
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("完了一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_completed_list_result(
+        completed_id,
+        &completed_date,
+        Ok(WebSuccess {
+            snapshot: snapshot(1_002),
+            data: CompletedTaskReport {
+                rows: vec![CompletedTaskRow {
+                    task_id: RECORD_ID.to_owned(),
+                    task_name: "A日の完了".to_owned(),
+                    project_name: "Schronu".to_owned(),
+                    completed_at_epoch_ms: 1_789_000_000_000,
+                    actual_work_seconds: 120,
+                    estimated_work_seconds: 60,
+                }],
+                total_actual_work_seconds: 120,
+                available_seconds: 600,
+                recorded_percentage: Some(20),
+            },
+        }),
+    );
+    let _ = state.switch_list_mode(crate::client::state::ListMode::Scheduled);
+    let (scheduled_id, scheduled_date) = match state.select_logical_date("2026-09-06") {
+        ClientEffect::ListTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("予定一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_list_result(
+        scheduled_id,
+        &scheduled_date,
+        Ok(WebSuccess {
+            snapshot: snapshot(1_003),
+            data: Vec::new(),
+        }),
+    );
+    let (failed_id, failed_date) = match state
+        .switch_list_mode(crate::client::state::ListMode::Completed)
+    {
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => (request_id, request.logical_date),
+        effect => panic!("完了一覧effectを期待しました: {effect:?}"),
+    };
+    state.apply_completed_list_result(
+        failed_id,
+        &failed_date,
+        Err(ServerFailure::Transport("secret".to_owned())),
+    );
+
+    assert_eq!(state.selected_logical_date(), Some("2026-09-06"));
+    assert!(project_active_completed_report(&state).is_none());
+    assert!(state.display_error().is_some());
+}
+
+#[test]
 fn local画面変更はview_stateへ保存して次のmountで復元する() {
     let storage = MemoryStorage::default();
     let mut orchestrator = mounted_orchestrator(&storage);
@@ -185,7 +321,8 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
         &storage,
         &ViewState {
             snapshot: snapshot(1_789_000_000_000),
-            list: Some(StoredListView {
+            list_mode: crate::client::state::ListMode::Scheduled,
+            list: Some(StoredActiveList::Scheduled {
                 logical_date: "2026-09-12".to_owned(),
                 rows: vec![cached_row.clone()],
             }),
@@ -288,7 +425,10 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     assert!(!orchestrator.background_refreshing());
     assert!(!orchestrator.server_actions_blocked());
     let stored = load_view_state(&storage).into_state().unwrap();
-    assert_eq!(stored.list.unwrap().rows, [refreshed_row]);
+    let Some(StoredActiveList::Scheduled { rows, .. }) = stored.list else {
+        panic!("scheduled list expected");
+    };
+    assert_eq!(rows, [refreshed_row]);
 }
 
 #[test]

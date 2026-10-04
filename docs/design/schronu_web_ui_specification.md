@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-`schronu-web`を、localStorageに保持する複数の`work_sessions`と、日付別・オンデマンド全件のSchronu schedule、今日から7日間の負荷帯、今日から7日後までの繰返負荷集計を表示するDioxus single-page UIへ置換する。
+`schronu-web`を、localStorageに保持する複数の`work_sessions`と、予定・完了を切り替える一覧、オンデマンド全件のSchronu schedule、今日から7日間の負荷帯、今日から7日後までの繰返負荷集計を表示するDioxus single-page UIへ置換する。
 
 WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの`get_focus`は自動選定の内部実装としてだけ利用し、UI上の名称は「セッション」に統一する。
 
@@ -13,7 +13,7 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 | 層 | 責務 |
 | --- | --- |
 | Dioxus component | tab、button、card、一覧、error、履歴、持ち歩きロックbarの描画と利用者操作の受付。 |
-| client state | `work_sessions`、snapshot、日付別選択、全件取得状態、日付別・全件共通の検索文字列、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
+| client state | `work_sessions`、snapshot、一覧mode、active modeのtagged一覧、全件取得状態、予定・全件・完了共通の検索文字列、処理中操作、履歴、1秒tick、持ち歩きロックを管理する。 |
 | localStorage adapter | `work_sessions`、view state、mutation safety、持ち歩きロックの独立したversion付きstateを読込・検証・保存する。 |
 | server function | wire DTOを検証し、専用workerへ型付きcommandを送る。 |
 | Web operation worker | 1 thread上でWeb操作を直列実行し、environment、repository、free-time資源を所有する。 |
@@ -62,6 +62,7 @@ WebSuccess<T> {
 
 - `bootstrap`: `ServerSnapshot`
 - `list_tasks`: `WebSuccess<Vec<ScheduledTaskRow>>`
+- `list_completed_tasks`: `WebSuccess<CompletedTaskReport>`
 - `list_all_tasks`: `WebSuccess<AllTaskPage>`
 - `auto_session`: `WebSuccess<Option<SessionTask>>`
 - `record_session`: `WebSuccess<RecordSessionResult>`
@@ -117,6 +118,26 @@ ScheduledTaskRow {
     deadline_display_kind: None | Overrun | Today | Future,
     is_leaf: bool,
     defer_plan: DeferPlan,
+}
+```
+
+完了一覧の1行はtaskの完了時点の全情報を次の型で返す。
+
+```text
+CompletedTaskRow {
+    task_id: UUID,
+    task_name: String,
+    project_name: String,
+    completed_at_epoch_ms: i64,
+    actual_work_seconds: i64,
+    estimated_work_seconds: i64,
+}
+
+CompletedTaskReport {
+    rows: Vec<CompletedTaskRow>,
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
 }
 ```
 
@@ -234,7 +255,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `repository_state_uncertain`の再送防止状態は、`work_sessions` schemaを拡張せず、別keyの`schronu_web.mutation_safety.v1`へ保存する。
 
-画面復元状態は別key `schronu_web.view_state.v1`へversion 2として保存する。最後に成功した`ServerSnapshot`、最後に表示した1日分のlogical dateと`defer_plan`を含む全`ScheduledTaskRow`、選択tab、日付別・全件共通の検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。reload時は保存済みの日付別選択日と共有検索文字列を復元し、一覧tabを復元する場合も日付別を選択する。「全て」の選択、`AllTaskRow`、取得状態、cursor、描画上限は保存せず、reload時に未取得、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
+画面復元状態は別key `schronu_web.view_state.v1`へversion 3として保存する。最後に成功した`ServerSnapshot`、`ListMode`、logical dateと全rowを`Scheduled`または`Completed`でtaggedにしたactive一覧、選択tab、予定・全件・完了共通の検索文字列、日付入力文字列を1 objectとしてatomicに置換し、空一覧も有効値とする。version 2は`Scheduled`として読み、次回保存でversion 3へ移行する。version 1、JSON破損、未知version、不正snapshot・row、read/write失敗は元valueを変更せず画面状態全体を復元しない。warningを表示して通常のbootstrapと一覧取得を行い、`work_sessions`、mutation safety、持ち歩きロックの保存やserver mutationはwrite-blockしない。「全て」の選択、`AllTaskRow`、取得状態、cursor、描画上限は保存せず、reload時に未取得、500行上限へ戻す。発火履歴、通信中state、error、確認dialogも保存しない。
 
 ```json
 {
@@ -264,7 +285,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 ## 4. Server operations
 
-専用workerは`bootstrap`、`list_tasks`、`list_all_tasks`、`load_band`、`auto_session`、`defer_task`、`record_session`、`complete_session`の8 commandを順番に処理する。workerへの送信順が実行順となる。
+専用workerは`bootstrap`、`list_tasks`、`list_completed_tasks`、`list_all_tasks`、`load_band`、`auto_session`、`defer_task`、`record_session`、`complete_session`の9 commandを順番に処理する。workerへの送信順が実行順となる。
 
 cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取得し、その時刻でrepositoryを`sync_clock`してからapplication操作とsnapshot生成を行う。`list_all_tasks`の継続pageは保存済みsnapshotだけを読む。実績を変更するcommandは、sync済みrepositoryへ変更を適用した後に同じ`operation_now`を基準としてscheduleを再生成し、更新後実績をbufferへ反映する。
 
@@ -282,7 +303,15 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 - 指定日を曜日へ変換してCLIの`全 曜日`文字列を実行する実装にはしない。
 - task dataは変更しない。
 
-### 4.3 `list_all_tasks(cursor)`
+### 4.3 `list_completed_tasks(date)`
+
+- 入力: `logical_date: YYYY-MM-DD`
+- 成功出力: `WebSuccess<CompletedTaskReport>`
+- 指定logical dateの06:00から翌日06:00未満に完了したtaskを完了時刻昇順で返す。
+- 実績0秒は見積時間を有効実績としてrowと合計へ反映する。選択日がserver観測時刻のlogical dateなら06:00から`min(server観測時刻, 日次終端)`まで、それ以外は06:00から日次終端までの`busy_time_slot`を除いた利用可能秒数を返す。実績合計をこの利用可能秒数で割って四捨五入した整数%を返し、利用可能時間0秒では記録率を`None`、100%超過は上限なしとする。
+- task dataは変更しない。
+
+### 4.4 `list_all_tasks(cursor)`
 
 - 入力: `cursor: Option<String>`。初回は`None`、継続時は直前responseの`next_cursor`を加工せず送る。
 - 成功出力: `WebSuccess<AllTaskPage>`。
@@ -293,7 +322,7 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 - cursorはclientにopaqueであり、失効時の再試行は必ず`cursor: None`から新しいsnapshotを開始する。
 - task dataは変更しない。
 
-### 4.4 `auto_session`
+### 4.5 `auto_session`
 
 - 入力: なし
 - 成功出力: `WebSuccess<Option<SessionTask>>`
@@ -301,13 +330,13 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 - 候補がなければ`None`を正常結果として返す。
 - task dataは変更しない。
 
-### 4.5 `defer_task`
+### 4.6 `defer_task`
 
 clientは一覧rowの`defer_plan.mode`だけで操作を分岐する。`Normal`は最初のclickで送信し、`DeadlineLimited`は実効延期日時、`RoutinePeriod`は反復日数を行内表示して確定まで送信しない。確認表示とキャンセルでは通信しない。
 
 入力は`DeferTaskRequest { task_id: UUID, selected_logical_date: YYYY-MM-DD, expected_plan: DeferPlan }`とする。applicationは希望延期先を`max(selected logical date, current logical date) + 1日`の06:00として算出する。希望延期先が既存の`deadline - 見積時間 - 5分`以前なら`Normal`、それより後で直接の親に反復日数があれば`RoutinePeriod`、それ以外は`DeadlineLimited`とする。同時刻は`Normal`に含める。serverはtransaction内でplanを再計算し、mode、希望日時、実効日時、反復日数を含む`expected_plan`全体と異なる場合は`defer_plan_changed`を返して保存しない。clientはmutation safetyを解除して選択日の一覧を再取得する。一致時は`Normal`を希望時刻、`DeadlineLimited`を期限上限までPendingにし、`RoutinePeriod`をCLI `W`と同じ次周期へ移動して1回だけ保存する。current taskとWeb sessionは変更しない。
 
-### 4.6 `record_session`
+### 4.7 `record_session`
 
 入力:
 
@@ -331,7 +360,7 @@ RecordSessionRequest {
 
 成功出力は`WebSuccess<RecordSessionResult>`とし、`RecordSessionResult`は更新後の実績秒を持つ。current taskは参照・変更しない。
 
-### 4.7 `complete_session`
+### 4.8 `complete_session`
 
 入力:
 
@@ -425,9 +454,11 @@ clientは最低限、次を保持する。
 active_tab: Session | List | History
 work_sessions: Vec<WorkSession>
 server_snapshot: Option<ServerSnapshot>
+list_mode: Scheduled | Completed
 date_buttons: Vec<LogicalDateButton>
 selected_logical_date: Option<YYYY-MM-DD>
 scheduled_rows: Vec<ScheduledTaskRow>
+completed_report: Option<CompletedTaskReport>
 task_name_filter: String
 list_selection: Date | All
 all_tasks_load: NotLoaded
@@ -451,7 +482,9 @@ tick_now_epoch_ms: i64
 
 `record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
 
-`task_name_filter`は日付別一覧と全件一覧で共有し、view stateへ保存する。両一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使う。
+`list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。
+
+`task_name_filter`は日付別一覧、全件一覧、完了一覧で共有し、view stateへ保存する。各一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使い、完了modeでもProject名は検索しない。
 
 ### 6.2 経過時間
 
@@ -565,15 +598,15 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 ### 6.5 logical date buttons
 
-最新の`ServerSnapshot.logical_date`をindex 0として8日分を生成する。
+予定modeは最新の`ServerSnapshot.logical_date`をindex 0として未来方向へ8日分を生成する。
 
 - index 0: `曜 今日`
 - index 1: `曜 明日`
 - index 2..7: `曜`
 
-各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はbuttonを再生成する。4種類のセッション終了成功後は選択中のlogical dateを維持し、未選択なら最新snapshotのlogical dateを選んで`list_tasks`を自動実行する。
+完了modeは同じ日をindex 0として過去方向へ8日分を生成し、index 0を`曜 今日`、index 1を`曜 昨日`、index 2..7を曜日だけで表示する。各buttonは表示labelとは別に具体的な`YYYY-MM-DD`を保持する。新しいserver responseでlogical dateが変わった場合はactive modeに応じてbuttonを再生成する。4種類のセッション終了成功後は選択中のlogical dateを維持し、未選択なら最新snapshotのlogical dateを選んでactive modeの一覧を自動実行する。
 
-日付文字列入力はpage内だけの`DateInputState`に保持し、`M/D`または`YYYY/M/D`のASCII数字とslashだけを受け付ける。前後空白は除去する。年省略時は`ServerSnapshot.logical_date`の年から候補日を探し、現在logical date以上となる最初の有効なcalendar日付を採用する。同じ月日は当日として扱い、`2/29`は必要なら次の閏年まで進める。妥当な入力は表示用`YYYY/M/D`とwire用`YYYY-MM-DD`へ正規化し、不正な形式・calendar日付・範囲overflowは型付きerrorとする。
+日付文字列入力はpage内だけの`DateInputState`に保持し、`M/D`または`YYYY/M/D`のASCII数字とslashだけを受け付ける。前後空白は除去する。年省略時は予定modeで現在logical date以上、完了modeで現在logical date以下となる最初の有効なcalendar日付を採用する。同じ月日は当日として扱い、`2/29`はmodeの方向にある直近の閏年までboundedに探索する。Chrono範囲を越えた場合はvalidation errorとする。明示年は未来日を含め指定年を維持する。妥当な入力は表示用`YYYY/M/D`とwire用`YYYY-MM-DD`へ正規化し、不正な形式・calendar日付・範囲overflowは型付きerrorとする。
 
 ### 6.6 持ち歩きロックstate
 
@@ -589,9 +622,9 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 ### 7.1 初期化とtab
 
-1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、最後に表示した1日分の一覧、選択tab、日付別・全件共通の検索文字列、日付入力文字列を保持する。「全て」の選択と取得結果は復元せず、日付別選択へ戻す。
+1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、active mode、taggedな1日分の予定または完了一覧、選択tab、共有検索文字列、日付入力文字列を保持する。「全て」の選択と取得結果は復元しない。
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
-3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateを`list_tasks`で再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
+3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateをactive modeのendpointで再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
@@ -600,7 +633,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 
-reload直後の`bootstrap`と、その成功後に続く保存日付の`list_tasks`は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
+reload直後の`bootstrap`と、その成功後に続く保存日付のactive mode一覧取得は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
@@ -626,10 +659,11 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### 7.3 一覧画面
 
+- 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayと発火履歴の対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。
 - 曜日button群の先頭に「全て」を置く。日付別buttonは従来の8日分を維持し、「全て」と選択中の日付を`aria-pressed`で区別する。
 - 「全て」を初めて選択した時と無効化後の再選択時にだけ全件取得を開始する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。」と「更新」を表示する。検索とtableは`Loaded`の時だけ表示する。
 - 全件取得は全面overlayを出さない。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得とpage連結を継続する。取得完了後に戻った場合はmemory上の結果を描画する。
-- 日付button click時と4種類のセッション終了成功後に`list_tasks(date)`を送る。
+- 日付button click時と4種類のセッション終了成功後にactive modeの一覧endpointを送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
 - 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
 - task名検索文字列は日付別と「全て」で共有してview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ共有検索文字列を空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
@@ -637,6 +671,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
+- 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
+- 完了一覧は`完了、実績、差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。見積値はrowに保持して差の計算へ使用するが、表へは表示しない。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。超過の赤色は符号の代替にしない。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、46rem以下では数値3列を比率指定してpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
@@ -649,8 +685,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件一覧では`segment_index`をrow keyとして同一taskの複数segmentを個別に描画し、予定列を`YYYY/MM/DD(曜)`とする。葉行の操作cellには「＋/✓」だけを置き、先送りを描画しない。親行はclick listenerのない空の操作cellとする。
 - 全件一覧はtask名検索に一致したserver順の行から表示上限内のtaskを先頭から投影する。その隣接taskに付与された`schedule_date`差が2日以上なら、差から1を引いたlogical date数を「N日間の空き時間」として後taskの直前へ表示する。差が1日なら後task行の上へ文言と追加rowを持たない全幅2pxの境界線を表示する。検索不一致taskの日付は差分へ含めず、同日、不正日付、非昇順では不正な区切りを表示しない。空き行と境界線はtask行の500件表示上限、cursor、`segment_index`に含めず、「さらに表示」で上限が増えたときは取得済み行の先頭から再投影する。
 - 日付別一覧はtrim後のtask名検索文字列が空でない間、分単位の空き行を描画しない。全件一覧は検索文字列の有無にかかわらず、projection済みの日単位の空き行とlogical date境界線を描画する。
-- 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateを再取得し、表示中の一覧をresponse全体で置換する。
-- 完了成功response受理時点でin-flightの`list_tasks` requestを無効化する。その後に到着した無効化済みrequestのresponseは適用せず、完了taskのrowが復活することを防ぐ。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
+- 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateをactive modeで再取得し、表示中の一覧をresponse全体で置換する。完了modeでは完了直後のtaskが新しい完了rowとして現れる。
+- 完了成功response受理時点でin-flightのactive一覧requestを無効化する。その後に到着した無効化済みrequest、および異なるmodeのresponseは適用しない。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
 - 全幅でheaderとrowを操作、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。table全体の横スクロールを解除し、viewport幅にかかわらず`88px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
 - 全件一覧は`all-task-table` modifierを付け、viewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`の4列gridにする。320px、360px、46rem、1024pxの各幅でこの列幅と日付別の既存列幅を維持する。
@@ -687,14 +723,15 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 操作 | server通信 | task保存 | localStorage変更 | 表示中一覧 | current task変更 |
 | --- | --- | --- | --- | --- | --- |
 | 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
-| reload背景更新 | `bootstrap`後、保存一覧があれば保存日付、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotと一覧をview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
+| reload背景更新 | `bootstrap`後、保存一覧があれば保存日付のactive mode endpoint、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotとtagged一覧をversion 3のview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
+| 一覧mode切替 | 予定は`list_tasks`、完了は`list_completed_tasks` | なし | modeをview stateへ保存 | response全体でactive一覧を置換 | なし |
 | 負荷以外へのtab切替 | なし | なし | view stateを保存 | なし | なし |
 | 負荷tabへの切替 | `load_band` | なし | view stateだけを保存し、負荷dataは保存しない | 直前の負荷dataを維持し、成功時に7日帯と8日繰返負荷を同時置換 | なし |
 | 負荷内の表示切替 | なし | なし | なし | 取得済みの7日帯と8日繰返負荷をclient内で切替 | なし |
 | 負荷の「更新」 | `load_band` | なし | なし | 直前の負荷dataを維持し、成功時に7日帯と8日繰返負荷を同時置換 | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
 | 共有検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
-| 日付button | `list_tasks` | なし | なし | responseのrowへ置換 | なし |
+| 日付button・日付入力 | active modeに応じて`list_tasks`または`list_completed_tasks` | なし | 入力文字列をview stateへ保存 | responseのrowへ置換 | なし |
 | 「全て」button | `list_all_tasks(cursor: None)`と全継続page | なし | なし | 全page成功時だけ一時bufferから置換。途中失敗は非公開 | なし |
 | 全件取得の再試行・更新 | `list_all_tasks(cursor: None)`から再開 | なし | なし | 成功時だけ置換。全件検索は維持 | なし |
 | 全件検索・「さらに表示」 | なし | なし | 検索編集でview stateを保存 | client内の絞り込みと500行単位の描画上限だけを変更 | なし |
@@ -702,12 +739,12 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
 | 一覧の「先送り」 | `Normal`は即時、`DeadlineLimited`と`RoutinePeriod`は行内確認後に表示日・期待plan全体付きで`safety marker`を保存して`defer_task`。成功または`defer_plan_changed`後に`list_tasks` | 表示日と現在日の遅い方の翌日06:00を希望先とし、期限余裕に応じて通常延期、期限上限への短縮、次周期移動を選択 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。plan変更時は除去せず再取得。検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
-| 計測を破棄して解除 | session削除成功後に`list_tasks` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
-| 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後に`list_tasks` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して解除 | session削除成功後にactive mode一覧取得 | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
+| 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後にactive mode一覧取得 | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
-| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後に`list_tasks` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後に`list_tasks` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後に`list_tasks` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得 | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得 | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後にactive mode一覧取得 | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
 | 完了実績競合の計測再開 | なし | なし | 確認待ちを除いた開始時刻と最新実績でsessionを原子的に置換 | なし | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
 | 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
@@ -837,7 +874,7 @@ OperationHistoryEntry {
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
 - 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの打ち切りを注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 完了実績競合について、記録方針別の確認、初回click時刻でのcard・buffer停止、元requestを保った最新実績での再送、新request ID、再競合更新、成功cleanup、旧payloadのmanual block、計測再開の待ち時間除外とstorage失敗時の原子性を検証する。記録操作の競合は従来どおりmanual blockとなることを検証する。
-- 4種類のセッション終了成功後に選択中または最新snapshotのlogical dateを再取得し、response全体で一覧を置換することを検証する。終了errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持して再取得することも検証する。
+- 4種類のセッション終了成功後に選択中または最新snapshotのlogical dateをactive modeのendpointで再取得し、response全体で一覧を置換することを検証する。終了errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持して再取得することも検証する。
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功後の再取得responseと、それより後に開始した明示的な`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonを更新し、反復taskは再取得responseに従うことを検証する。
 - 各endpointの成功型がsnapshotを持ち、error型がsnapshotを持たず、clientがerror時に直前snapshotを維持することを検証する。
 - error codeごとの`retry_advice`がerror表と一致し、`manual_check`では同一requestをそのまま再送しないことを検証する。完了実績競合だけは明示確認後に期待実績を置換した新requestを送る。
@@ -857,9 +894,11 @@ OperationHistoryEntry {
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
+- 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
+- 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
-- 日付別一覧、選択tab、日付別・全件共通の検索文字列、日付入力がreloadで復元され、検索入力・clearではserver通信と発火履歴追加なしにview stateだけが更新されることを確認する。「全て」は日付別へ戻り、全件行は復元されないが共有検索は復元されることも確認する。
+- storage version 3でactive modeとtaggedな予定・完了一覧、空成功、選択tab、共有検索文字列、日付入力がround-tripすることを確認する。version 2は予定modeへ移行し、version 1・未知version・破損値を復元しないこと、保存済み完了modeがbootstrap後に同じ日を`list_completed_tasks`で背景更新することを確認する。「全て」の行・cursor・選択は復元しない。
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化と更新、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
@@ -895,7 +934,7 @@ OperationHistoryEntry {
 - today text専用worker commandおよびendpoint
 - 現行component階層とCSS
 
-専用worker threadというrepository操作の直列化方針は維持し、today text専用interfaceを6つの型付きWeb操作へ置換する。旧経路を互換目的で残さず、未使用APIとtestを整理する。
+専用worker threadというrepository操作の直列化方針は維持し、today text専用interfaceを9つの型付きWeb操作へ置換する。旧経路を互換目的で残さず、未使用APIとtestを整理する。
 
 ## 14. 要件対応表
 
@@ -907,7 +946,7 @@ OperationHistoryEntry {
 | 6.2、6.3、7.2 | REQ-CARD-001..012 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
-| 6.1、6.5、7.3、7.4、8、12.5 | REQ-LIST-001..014 |
+| 3.3、3.4、4.2..4.4、6.1、6.5、7.3、7.4、8、12.5 | REQ-LIST-001..034 |
 | 6.1、7.1、8、10、12.4、12.5 | REQ-COMMON-001..007、REQ-NET-001..006 |
 | 3.4、6.6、7.5、8、12.4、12.5 | REQ-LOCK-001..010 |
 | 11、12 | REQ-COMPAT-001..005、全受入条件 |

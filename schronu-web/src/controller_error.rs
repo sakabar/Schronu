@@ -77,6 +77,7 @@ fn map_application_error(error: ApplicationError) -> WebError {
         ),
         ApplicationError::ScheduleTimeOutOfRange { .. }
         | ApplicationError::RemainingWorkCalculationOverflow { .. }
+        | ApplicationError::CompletedReportCalculationOverflow { .. }
         | ApplicationError::RoutineLoadCalculationOverflow { .. } => manual(
             web_error_codes::ARITHMETIC_OVERFLOW,
             "タスク時間の計算結果が範囲を超えました。",

@@ -70,6 +70,24 @@ pub struct ScheduledTaskRowDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskRowDto {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_name: String,
+    pub completed_at_epoch_ms: i64,
+    pub actual_work_seconds: i64,
+    pub estimated_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskReportDto {
+    pub rows: Vec<CompletedTaskRowDto>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRowDto {
     pub task: SessionTaskDto,
     pub segment_index: usize,
