@@ -390,13 +390,14 @@ impl TaskListDisplayRow {
         logical_naive_date: NaiveDate,
         rank: usize,
         work_seconds: i64,
+        source_task_id: Uuid,
         row: ProjectedTaskListRow,
     ) -> Self {
         TaskListDisplayRow {
             scheduled_start: row.scheduled_start,
             logical_naive_date_opt: Some(logical_naive_date),
             rank,
-            id: row.source_task_id,
+            id: source_task_id,
             priority: row.priority,
             work_seconds,
             project_category_opt: row.project_category,
@@ -1107,29 +1108,17 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
             let end_datetime = *scheduled_end;
 
-            // ! : 着手予定logical date内が締切。締切注意の意
-            let deadline_icon: String = "!".to_string();
-
-            // v : もっと着手を手前(下)にせよの意
-            let breaking_deadline_icon: String = "v".to_string();
-
-            // / : 今日着手する予定の葉タスク。/という記号自体に強い意味合いはない。
-            let today_leaf_icon: String = "/".to_string();
-
             let deadline_display_status = classify_deadline_display(
                 task_deadline_time_opt.as_ref(),
                 end_datetime,
                 logical_naive_date,
             )?;
-            let icon = match deadline_display_status {
-                DeadlineDisplayStatus::Overrun => &breaking_deadline_icon,
-                DeadlineDisplayStatus::DueWithinLogicalDate => &deadline_icon,
-                _ if scheduled_task.is_leaf() && scheduled_start < &eod => &today_leaf_icon,
-                _ => {
-                    // - : 特に無しだが、空白にすると列数が乱れるので目立たない記号を入れる
-                    "-"
-                }
-            };
+            let icon = task_list_icon(
+                deadline_display_status,
+                scheduled_task.is_leaf(),
+                *scheduled_start,
+                eod,
+            );
 
             let deadline_string = format_deadline_remaining_time(
                 deadline_time_opt.as_ref(),
@@ -1164,8 +1153,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 task_project_category_opt,
                 task_row,
             );
-            let has_deadline_icon = icon == deadline_icon || icon == breaking_deadline_icon;
-            let has_task_list_icon = has_deadline_icon || icon == today_leaf_icon;
+            let has_deadline_icon = matches!(icon, "!" | "v");
+            let has_task_list_icon = has_deadline_icon || icon == "/";
 
             match pattern_opt {
                 Some(pattern) => {
@@ -1182,7 +1171,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if matches!(pattern.as_str(), "v" | "超") {
-                        if icon == breaking_deadline_icon {
+                        if icon == "v" {
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if pattern == "〆" {
@@ -1331,22 +1320,35 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 deadline_display_status,
                 DeadlineDisplayStatus::Overrun | DeadlineDisplayStatus::DueWithinLogicalDate
             );
-            let occurrence_key = format!("projected:{source_task_id}:{}", deadline.to_rfc3339());
+            let icon = task_list_icon(
+                deadline_display_status,
+                scheduled_task.is_leaf(),
+                *scheduled_start,
+                eod,
+            );
+            let deadline_string =
+                format_deadline_remaining_time(Some(&deadline), *scheduled_end, last_synced_time)?;
             let task_name = format!("{adjustable_prefix_label}{}", scheduled_task.task.name);
             let row = TaskListDisplayRow::new_projected(
                 logical_naive_date,
                 *rank,
                 scheduled_work_seconds,
+                source_task_id,
                 ProjectedTaskListRow {
-                    occurrence_key,
-                    source_task_id,
+                    ind,
+                    task_id: Uuid::nil(),
+                    icon: icon.to_string(),
+                    deadline: deadline_string,
                     scheduled_start: *scheduled_start,
                     scheduled_end: *scheduled_end,
+                    rank: *rank,
                     estimated_minutes: round_up_sec_as_minute(scheduled_work_seconds),
                     priority: scheduled_task.task.priority,
                     project_category: scheduled_task.task.project_category,
-                    deadline,
                     task_name: task_name.clone(),
+                    kind: TaskListTaskKind::Repetitive,
+                    has_deadline: true,
+                    give_up_candidate: false,
                 },
             );
             let include = match pattern_opt.as_deref() {
@@ -1731,6 +1733,20 @@ pub(super) fn build_show_all_tasks_display_with_config(
         primary_display,
         trailing_display,
     ]))
+}
+
+pub(super) fn task_list_icon(
+    deadline_display_status: DeadlineDisplayStatus,
+    is_leaf: bool,
+    scheduled_start: DateTime<Local>,
+    end_of_day: DateTime<Local>,
+) -> &'static str {
+    match deadline_display_status {
+        DeadlineDisplayStatus::Overrun => "v",
+        DeadlineDisplayStatus::DueWithinLogicalDate => "!",
+        _ if is_leaf && scheduled_start < end_of_day => "/",
+        _ => "-",
+    }
 }
 
 fn into_task_list_rows(

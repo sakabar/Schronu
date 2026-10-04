@@ -5004,7 +5004,7 @@ fn calendarとbandはprojected回を総作業量と反復負荷へ反映する()
 }
 
 #[test]
-fn 全と名前日付filterはprojected回をread_only予定行で表示しfocusを変えない() {
+fn 全と名前日付filterはprojected回を固定幅10列のread_only行で表示しfocusを変えない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let parent = new_test_task_handle("3日ごとの筋トレ").unwrap();
     let parent_id = parent.get_id().unwrap();
@@ -5058,11 +5058,8 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
         render_display_model(&mut writer, &display).unwrap();
         let output = writer.into_string();
 
-        assert!(output.contains("予定 occurrence_key=projected:"), "{pattern:?}: {output}");
-        assert!(
-            output.contains(&format!("source_task_id={parent_id}")),
-            "{pattern:?}: {output}"
-        );
+        assert!(!output.contains("occurrence_key="), "{pattern:?}: {output}");
+        assert!(!output.contains("source_task_id="), "{pattern:?}: {output}");
         assert!(output.contains("3日ごとの筋トレ"), "{pattern:?}: {output}");
         assert!(
             output.contains(&format!("回復 {expected_recovery_hours}時間")),
@@ -5070,9 +5067,23 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
         );
         let projected_line = output
             .lines()
-            .find(|line| line.starts_with("予定 "))
+            .find(|line| line.contains("00000000-0000-0000-0000-000000000000"))
             .expect("projected row");
-        assert!(!projected_line.split_whitespace().any(|field| field == parent_id.to_string()));
+        let columns = projected_line.splitn(10, char::is_whitespace).collect::<Vec<_>>();
+        assert_eq!(columns.len(), 10, "{pattern:?}: {projected_line}");
+        assert_eq!(columns[0].len(), 4, "A列は4桁の連番");
+        assert!(columns[0].chars().all(|character| character.is_ascii_digit()));
+        assert_eq!(columns[1], "00000000-0000-0000-0000-000000000000");
+        assert_eq!(columns[2], "!");
+        assert_eq!(columns[3], "____-00:00");
+        assert_eq!(columns[5], "0");
+        assert_eq!(columns[6], "60");
+        assert_eq!(columns[7], "07");
+        assert_eq!(columns[8], "回");
+        assert!(columns[9].contains("3日ごとの筋トレ"));
+        assert!(!projected_line
+            .split_whitespace()
+            .any(|field| field == parent_id.to_string()));
         assert_eq!(focused_task_id_opt, Some(current_id));
     }
 
@@ -5094,7 +5105,9 @@ fn 全と名前日付filterはprojected回をread_only予定行で表示しfocus
     let mut writer = TestWriter::new_for_pipe();
     render_display_model(&mut writer, &display).unwrap();
 
-    assert!(!writer.into_string().contains("予定 occurrence_key="));
+    assert!(!writer
+        .into_string()
+        .contains("00000000-0000-0000-0000-000000000000"));
     assert_eq!(focused_task_id_opt, Some(current_id));
 }
 
@@ -5137,7 +5150,13 @@ fn projected回の後の空き時間はprojected回の終了から数える() {
 
     let result = execute_command_for_test(root, now, None, "全 明");
 
-    assert!(result.output.contains("予定 occurrence_key=projected:"), "{}", result.output);
+    assert!(
+        result
+            .output
+            .contains("00000000-0000-0000-0000-000000000000"),
+        "{}",
+        result.output
+    );
     assert!(result.output.contains("projected後の実task"), "{}", result.output);
     assert!(result.output.contains("60分間の空き時間"), "{}", result.output);
     assert!(!result.output.contains("1560分間の空き時間"), "{}", result.output);

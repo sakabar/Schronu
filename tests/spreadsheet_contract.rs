@@ -233,7 +233,7 @@ fn copy_for_spreadsheetは日付境界と空き日行を無視する() {
 
 #[test]
 fn copy_for_spreadsheetはprojected予定行を無視する() {
-    let cli_output = "予定 occurrence_key=projected:11111111-1111-1111-1111-111111111111:2026-06-24T07:00:00+09:00 source_task_id=11111111-1111-1111-1111-111111111111 06/24(火)-06:00~07:00 60分 回 priority=7 deadline=2026-06-24T07:00:00+09:00 3日ごとの筋トレ\n\
+    let cli_output = "0001 00000000-0000-0000-0000-000000000000 ! ____-00:00 06/24(火)-06:00~07:00 0 60 07 回 3日ごとの筋トレ\n\
 0000 22222222-2222-2222-2222-222222222222 - ____-00:30 06/21(土)-10:00~10:30 0 30 01 維 実体task\n";
 
     let copied = run_script("shell/copy_for_spreadsheet.sh", &[], cli_output);
