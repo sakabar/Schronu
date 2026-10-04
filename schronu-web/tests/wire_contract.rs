@@ -8,6 +8,7 @@ use schronu_web::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
+use std::collections::BTreeMap;
 
 #[test]
 fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ() {
@@ -366,6 +367,10 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
             start_date: "2026-10-03".to_owned(),
             end_date: "2026-10-30".to_owned(),
             horizon_day_count: 28,
+            full_day_available_seconds_by_date: BTreeMap::from([
+                ("2026-10-03".to_owned(), 36_000),
+                ("2026-10-04".to_owned(), 40_000),
+            ]),
             rows: vec![RoutineLoadRow {
                 project_task_id: "project-id".to_owned(),
                 project_name: "生活".to_owned(),
@@ -377,6 +382,10 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                 average_work_seconds: Some(3_900),
                 peak_date: "2026-10-04".to_owned(),
                 peak_work_seconds: 4_800,
+                work_seconds_by_date: BTreeMap::from([
+                    ("2026-10-03".to_owned(), 3_600),
+                    ("2026-10-04".to_owned(), 4_800),
+                ]),
             }],
         },
     };
@@ -389,6 +398,10 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                 "start_date": "2026-10-03",
                 "end_date": "2026-10-30",
                 "horizon_day_count": 28,
+                "full_day_available_seconds_by_date": {
+                    "2026-10-03": 36_000,
+                    "2026-10-04": 40_000
+                },
                 "rows": [{
                     "project_task_id": "project-id",
                     "project_name": "生活",
@@ -399,7 +412,11 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                     "occurrence_day_count": 4,
                     "average_work_seconds": 3_900,
                     "peak_date": "2026-10-04",
-                    "peak_work_seconds": 4_800
+                    "peak_work_seconds": 4_800,
+                    "work_seconds_by_date": {
+                        "2026-10-03": 3_600,
+                        "2026-10-04": 4_800
+                    }
                 }]
             }
         }),
@@ -429,11 +446,16 @@ fn 旧8日繰返負荷payloadは追加fieldを補完してdeserializeできる()
     .unwrap();
 
     assert_eq!(data.routine_load.horizon_day_count, 8);
+    assert!(data
+        .routine_load
+        .full_day_available_seconds_by_date
+        .is_empty());
     let row = &data.routine_load.rows[0];
     assert_eq!(row.average_work_seconds, None);
     assert_eq!(row.display_average_work_seconds(), Some(3_900));
     assert_eq!(row.peak_date, "2026-10-04");
     assert_eq!(row.peak_work_seconds, 4_800);
+    assert!(row.work_seconds_by_date.is_empty());
 }
 
 #[test]

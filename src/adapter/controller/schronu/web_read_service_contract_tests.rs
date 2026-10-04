@@ -376,6 +376,20 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
         NaiveDate::from_ymd_opt(2026, 10, 2).unwrap()
     );
     assert_eq!(response.data.routine_load.horizon_day_count, 28);
+    assert_eq!(
+        response
+            .data
+            .routine_load
+            .full_day_available_seconds_by_date
+            .len(),
+        28
+    );
+    assert!(response
+        .data
+        .routine_load
+        .full_day_available_seconds_by_date
+        .values()
+        .all(|seconds| *seconds == 19 * 60 * 60));
 }
 
 #[test]
@@ -397,6 +411,15 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     assert_eq!(row.average_work_seconds, 525);
     assert_eq!(row.peak_date, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap());
     assert_eq!(row.peak_work_seconds, 600);
+    assert_eq!(row.work_seconds_by_date.len(), 4);
+    assert_eq!(
+        row.work_seconds_by_date.values().sum::<i64>(),
+        row.total_work_seconds
+    );
+    assert_eq!(
+        row.work_seconds_by_date.get(&row.peak_date),
+        Some(&row.peak_work_seconds)
+    );
 }
 
 #[test]
