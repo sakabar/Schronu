@@ -298,6 +298,48 @@ fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する
 }
 
 #[test]
+fn 日付と曜日は100パーセント以上だけ容量到達表示にする() {
+    fn root() -> Element {
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report(vec![row(
+                    "健康",
+                    "境界確認",
+                    "routine-1",
+                    &[
+                        ("2026-10-05", 14_256),
+                        ("2026-10-06", 14_400),
+                        ("2026-10-12", 14_256),
+                        ("2026-10-13", 14_400),
+                        ("2026-10-19", 14_256),
+                        ("2026-10-20", 14_400),
+                        ("2026-10-26", 14_256),
+                        ("2026-10-27", 14_400),
+                    ],
+                )])),
+                loading: false,
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert_eq!(html.matches("is-at-capacity").count(), 5, "{html}");
+    assert!(
+        html.contains("class=\"routine-load-weekday is-at-capacity\"")
+            && html.contains("火曜日、可処分時間比 100%"),
+        "{html}"
+    );
+    assert!(
+        html.contains("class=\"routine-load-day is-at-capacity\"")
+            && html.contains("2026年10月6日、繰返時間 04:00、可処分時間比 100%"),
+        "{html}"
+    );
+    assert!(html.contains("月曜日、可処分時間比 99%"), "{html}");
+}
+
+#[test]
 fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強調を解除する() {
     fn root() -> Element {
         rsx! {

@@ -236,6 +236,22 @@ fn routine_load_map_and_scope_table_fit_320px_touch_viewports() {
 }
 
 #[test]
+fn routine_load_capacity_threshold_uses_dark_red_with_white_text() {
+    let root = block_body(MAIN_CSS, ":root");
+    assert!(root.contains("--red-dark: #982b31;"), "{root}");
+
+    let capacity = block_body(
+        MAIN_CSS,
+        "button.routine-load-weekday.is-at-capacity,\nbutton.routine-load-day.is-at-capacity",
+    );
+    assert!(
+        capacity.contains("background: var(--red-dark);"),
+        "{capacity}"
+    );
+    assert!(capacity.contains("color: white;"), "{capacity}");
+}
+
+#[test]
 fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
     assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
