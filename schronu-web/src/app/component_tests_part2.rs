@@ -146,6 +146,7 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
         completed_at_epoch_ms: 1_789_000_000_000,
         actual_work_seconds: 120,
         estimated_work_seconds: 60,
+        task_display_kind: Default::default(),
     };
     store_view_state(
         &storage,
@@ -200,6 +201,101 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
 }
 
 #[test]
+fn 背景更新中の完了modeから一覧への復帰は再取得を発行しない() {
+    let storage = MemoryStorage::default();
+    let cached_row = CompletedTaskRow {
+        task_id: RECORD_ID.to_owned(),
+        task_name: "完了済み".to_owned(),
+        project_name: "Schronu".to_owned(),
+        completed_at_epoch_ms: 1_789_000_000_000,
+        actual_work_seconds: 120,
+        estimated_work_seconds: 60,
+        task_display_kind: Default::default(),
+    };
+    store_view_state(
+        &storage,
+        &ViewState {
+            snapshot: snapshot(1_789_000_000_000),
+            list_mode: crate::client::state::ListMode::Completed,
+            list: Some(StoredActiveList::Completed {
+                logical_date: "2026-09-08".to_owned(),
+                rows: vec![cached_row.clone()],
+                total_actual_work_seconds: 120,
+                available_seconds: 600,
+                recorded_percentage: Some(20),
+            }),
+            active_tab: ActiveTab::History,
+            task_name_filter: String::new(),
+            date_input_text: String::new(),
+        },
+    )
+    .unwrap();
+
+    let mut orchestrator = ComponentOrchestrator::new();
+    assert!(matches!(
+        orchestrator.mount(&storage, 1_789_000_100_000),
+        ClientEffect::Bootstrap { request_id: 1 }
+    ));
+
+    assert_eq!(
+        orchestrator.action(
+            &storage,
+            1_000,
+            ComponentAction::SwitchTab(ActiveTab::List),
+        ),
+        ClientEffect::None
+    );
+    assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(
+        orchestrator.state().unwrap().list_mode(),
+        crate::client::state::ListMode::Completed
+    );
+
+    let follow_up = orchestrator.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id: 1,
+            result: Ok(snapshot(1_789_100_000_000)),
+        },
+    );
+    assert!(matches!(
+        follow_up,
+        ClientEffect::ListCompletedTasks {
+            request_id: 2,
+            request: ref list_request,
+        } if list_request.logical_date == "2026-09-08"
+    ));
+    orchestrator.apply_response(
+        &storage,
+        ClientResponse::ListCompletedTasks {
+            request_id: 2,
+            requested_date: "2026-09-08".to_owned(),
+            result: Ok(WebSuccess {
+                snapshot: snapshot(1_789_100_000_001),
+                data: crate::CompletedTaskReport {
+                    rows: vec![cached_row],
+                    total_actual_work_seconds: 120,
+                    available_seconds: 600,
+                    recorded_percentage: Some(20),
+                },
+            }),
+        },
+    );
+
+    assert!(matches!(
+        orchestrator.action(
+            &storage,
+            1_001,
+            ComponentAction::SwitchTab(ActiveTab::List),
+        ),
+        ClientEffect::ListTasks {
+            request: ref list_request,
+            ..
+        } if list_request.logical_date == "2026-09-08"
+    ));
+}
+
+#[test]
 #[cfg(feature = "web")]
 fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを渡さない() {
     let storage = MemoryStorage::default();
@@ -228,6 +324,7 @@ fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを�
                     completed_at_epoch_ms: 1_789_000_000_000,
                     actual_work_seconds: 120,
                     estimated_work_seconds: 60,
+                    task_display_kind: Default::default(),
                 }],
                 total_actual_work_seconds: 120,
                 available_seconds: 600,

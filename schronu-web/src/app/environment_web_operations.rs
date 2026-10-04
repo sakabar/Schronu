@@ -304,6 +304,7 @@ impl From<CompletedTaskRowDto> for CompletedTaskRow {
             completed_at_epoch_ms: row.completed_at_epoch_ms,
             actual_work_seconds: row.actual_work_seconds,
             estimated_work_seconds: row.estimated_work_seconds,
+            task_display_kind: row.task_display_kind.into(),
         }
     }
 }

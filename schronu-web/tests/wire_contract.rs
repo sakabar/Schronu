@@ -277,6 +277,7 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     completed_at_epoch_ms: 1_788_565_499_999,
                     actual_work_seconds: 901,
                     estimated_work_seconds: 900,
+                    task_display_kind: Default::default(),
                 }],
                 total_actual_work_seconds: 901,
                 available_seconds: 43_200,
@@ -296,13 +297,32 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     "project_name": "wire project",
                     "completed_at_epoch_ms": 1_788_565_499_999_i64,
                     "actual_work_seconds": 901,
-                    "estimated_work_seconds": 900
+                    "estimated_work_seconds": 900,
+                    "task_display_kind": "non_repetitive"
                 }],
                 "total_actual_work_seconds": 901,
                 "available_seconds": 43_200,
                 "recorded_percentage": 2
             }
         }),
+    );
+}
+
+#[test]
+fn 旧completed_row_payloadはtask種別を単発として補完する() {
+    let row: CompletedTaskRow = serde_json::from_value(json!({
+        "task_id": "00000000-0000-0000-0000-000000000001",
+        "task_name": "legacy task",
+        "project_name": "legacy project",
+        "completed_at_epoch_ms": 1_788_565_499_999_i64,
+        "actual_work_seconds": 901,
+        "estimated_work_seconds": 900
+    }))
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(row).unwrap()["task_display_kind"],
+        json!("non_repetitive")
     );
 }
 

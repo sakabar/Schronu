@@ -197,6 +197,8 @@ pub struct CompletedTaskRow {
     pub completed_at_epoch_ms: i64,
     pub actual_work_seconds: i64,
     pub estimated_work_seconds: i64,
+    #[serde(default)]
+    pub task_display_kind: TaskDisplayKind,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

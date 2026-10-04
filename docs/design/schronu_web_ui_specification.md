@@ -145,6 +145,7 @@ CompletedTaskRow {
     completed_at_epoch_ms: i64,
     actual_work_seconds: i64,
     estimated_work_seconds: i64,
+    task_display_kind: Fixed | Repetitive | NonRepetitive,
 }
 
 CompletedTaskReport {
@@ -237,7 +238,7 @@ RoutineLoadRow {
 
 `segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。clientは表示分類を無変換で共通`ListRowViewModel`へ投影する。ただし保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
 
-日付別と全件は同じ一覧componentとclass契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。予測行はtask名の前に`予定`badge、後ろに`元: <source_task_id>`を表示する。`is_leaf`は太字の意味だけを担い、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
+日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`予定`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskの操作可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 
@@ -499,7 +500,7 @@ tick_now_epoch_ms: i64
 
 `record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
 
-`list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。
+`list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。`Completed`の一覧から別の上位tabへ移動した後に一覧tabへ再進入した場合は、選択日を維持して`Scheduled`へ切り替え、`list_tasks`を1回生成する。一覧tabを表示中の再選択と、一覧tabを表示したまま復元したview stateではmodeを維持する。
 
 `task_name_filter`は日付別一覧、全件一覧、完了一覧で共有し、view stateへ保存する。各一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使い、完了modeでもProject名は検索しない。
 
@@ -645,7 +646,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
-7. 負荷以外へのtab切替ではserver操作を行わない。「負荷」への切替だけは`load_band`を1回送り、選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+7. 完了modeから別tabを経た一覧tabへの再進入は、予定modeへ戻し、選択中のlogical dateの`list_tasks`を1回送る。「負荷」への切替は`load_band`を1回送る。その他のtab切替ではserver操作を行わない。選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
@@ -654,7 +655,7 @@ reload直後の`bootstrap`と、その成功後に続く保存日付のactive mo
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
-背景更新中は負荷以外へのtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
+背景更新中は、完了modeから別tabを経た一覧tabへの再進入を除く負荷以外へのtab切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。完了modeから別tabを経た一覧tabへの再進入はorchestrator guardで拒否し、active tabとmodeを変更しない。背景更新が完了した後の再操作で、一覧tabへの再進入を受け付ける。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
 34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。「表示」buttonは共通buttonの上下paddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で文字を中央に配置する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
 
@@ -676,7 +677,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### 7.3 一覧画面
 
-- 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayと発火履歴の対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。
+- 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayと発火履歴の対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。完了modeからセッション、負荷、発火履歴を経て一覧へ戻る場合は選択日を維持して予定modeへ戻し、予定一覧を1回取得する。一覧tabの再選択と一覧tab表示中のreloadではmodeを維持する。
 - 曜日button群の先頭に「全て」を置く。日付別buttonは従来の8日分を維持し、「全て」と選択中の日付を`aria-pressed`で区別する。
 - 「全て」を初めて選択した時と無効化後の再選択時にだけ全件取得を開始する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。」と「更新」を表示する。検索とtableは`Loaded`の時だけ表示する。
 - 全件取得は全面overlayを出さない。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得とpage連結を継続する。取得完了後に戻った場合はmemory上の結果を描画する。
@@ -689,7 +690,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新、発火履歴追加を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に選択日全体の実績合計、利用可能時間、記録率を`dl`相当のlabel/value構造で表示する。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
-- 完了一覧は`完了、実績、差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。見積値はrowに保持して差の計算へ使用するが、表へは表示しない。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。超過の赤色は符号の代替にしない。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、46rem以下では数値3列を比率指定してpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
+- 完了一覧は`完了、実績、予実差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、予実差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。予実差の正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)とし、色を符号の代替にしない。見積値はrowに保持して予実差の計算へ使用するが、表へは表示しない。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とする。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の先頭3列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、狭幅のpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
 - rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
@@ -742,6 +743,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
 | reload背景更新 | `bootstrap`後、保存一覧があれば保存日付のactive mode endpoint、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotとtagged一覧をversion 3のview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
 | 一覧mode切替 | 予定は`list_tasks`、完了は`list_completed_tasks` | なし | modeをview stateへ保存 | response全体でactive一覧を置換 | なし |
+| 完了modeから別tabを経た一覧への再進入 | 選択日の`list_tasks` | なし | modeを予定としてview stateへ保存 | response全体で予定一覧を置換 | なし |
 | 負荷以外へのtab切替 | なし | なし | view stateを保存 | なし | なし |
 | 負荷tabへの切替 | `load_band` | なし | view stateだけを保存し、負荷dataは保存しない | 直前の負荷dataを維持し、成功時に7日帯と8日繰返負荷を同時置換 | なし |
 | 負荷内の表示切替 | なし | なし | なし | 取得済みの7日帯と8日繰返負荷をclient内で切替 | なし |
@@ -912,7 +914,7 @@ OperationHistoryEntry {
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
-- 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
+- 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差と赤・青・muted色、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
 - 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
 - storage version 3でactive modeとtaggedな予定・完了一覧、空成功、選択tab、共有検索文字列、日付入力がround-tripすることを確認する。version 2は予定modeへ移行し、version 1・未知version・破損値を復元しないこと、保存済み完了modeがbootstrap後に同じ日を`list_completed_tasks`で背景更新することを確認する。「全て」の行・cursor・選択は復元しない。

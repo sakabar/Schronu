@@ -20,7 +20,7 @@ pub use model::{
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
-    completed_task_row_dto,
+    classify_task_display_kind, completed_task_row_dto,
 };
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
@@ -46,6 +46,7 @@ use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
 use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 pub struct WebService {
@@ -169,12 +170,20 @@ impl WebService {
             let report =
                 build_completed_task_report(repository, free_time_manager, logical_date, offset)
                     .map_err(WebReadCoreError::Application)?;
+            let mut task_kind_cache = HashMap::new();
             let data = CompletedTaskReportDto {
                 rows: report
                     .rows
                     .into_iter()
-                    .map(completed_task_row_dto)
-                    .collect(),
+                    .map(|row| {
+                        let task_display_kind = classify_task_display_kind(
+                            repository,
+                            row.task_id,
+                            &mut task_kind_cache,
+                        )?;
+                        Ok(completed_task_row_dto(row, task_display_kind))
+                    })
+                    .collect::<Result<Vec<_>, WebReadCoreError>>()?,
                 total_actual_work_seconds: report.total_actual_work_seconds,
                 available_seconds: report.available_seconds,
                 recorded_percentage: report.recorded_percentage,

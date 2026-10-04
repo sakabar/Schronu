@@ -373,12 +373,41 @@ fn classify_display_kinds(
     logical_date: NaiveDate,
     task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
 ) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
-    let Some(task_id) = segment.actual_task_id() else {
-        return Ok((
-            TaskDisplayKind::Repetitive,
-            classify_deadline_kind(segment, logical_date)?,
-        ));
+    let task_display_kind = match segment.actual_task_id() {
+        Some(task_id) => classify_task_display_kind(repository, task_id, task_kind_cache)?,
+        None => TaskDisplayKind::Repetitive,
     };
+    Ok((
+        task_display_kind,
+        classify_deadline_kind(segment, logical_date)?,
+    ))
+}
+
+fn classify_deadline_kind(
+    segment: &ScheduledTaskView,
+    logical_date: NaiveDate,
+) -> Result<DeadlineDisplayKind, WebReadCoreError> {
+    Ok(
+        match classify_deadline_display(
+            segment.task.deadline_time.as_ref(),
+            segment.scheduled_end,
+            logical_date,
+        )
+        .map_err(WebReadCoreError::Application)?
+        {
+            DeadlineDisplayStatus::None => DeadlineDisplayKind::None,
+            DeadlineDisplayStatus::Overrun => DeadlineDisplayKind::Overrun,
+            DeadlineDisplayStatus::DueWithinLogicalDate => DeadlineDisplayKind::Today,
+            DeadlineDisplayStatus::Future => DeadlineDisplayKind::Future,
+        },
+    )
+}
+
+pub(in crate::adapter::controller) fn classify_task_display_kind(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
+) -> Result<TaskDisplayKind, WebReadCoreError> {
     let task_display_kind = if let Some(kind) = task_kind_cache.get(&task_id) {
         *kind
     } else {
@@ -405,30 +434,7 @@ fn classify_display_kinds(
         task_kind_cache.insert(task_id, kind);
         kind
     };
-    Ok((
-        task_display_kind,
-        classify_deadline_kind(segment, logical_date)?,
-    ))
-}
-
-fn classify_deadline_kind(
-    segment: &ScheduledTaskView,
-    logical_date: NaiveDate,
-) -> Result<DeadlineDisplayKind, WebReadCoreError> {
-    Ok(
-        match classify_deadline_display(
-            segment.task.deadline_time.as_ref(),
-            segment.scheduled_end,
-            logical_date,
-        )
-        .map_err(WebReadCoreError::Application)?
-        {
-            DeadlineDisplayStatus::None => DeadlineDisplayKind::None,
-            DeadlineDisplayStatus::Overrun => DeadlineDisplayKind::Overrun,
-            DeadlineDisplayStatus::DueWithinLogicalDate => DeadlineDisplayKind::Today,
-            DeadlineDisplayStatus::Future => DeadlineDisplayKind::Future,
-        },
-    )
+    Ok(task_display_kind)
 }
 
 fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {
@@ -512,6 +518,7 @@ fn occurrence_dto(segment: &ScheduledTaskView) -> ScheduleOccurrenceDto {
 
 pub(in crate::adapter::controller) fn completed_task_row_dto(
     row: CompletedTaskReportRow,
+    task_display_kind: TaskDisplayKind,
 ) -> CompletedTaskRowDto {
     CompletedTaskRowDto {
         task_id: row.task_id.hyphenated().to_string(),
@@ -520,6 +527,7 @@ pub(in crate::adapter::controller) fn completed_task_row_dto(
         completed_at_epoch_ms: row.completed_at.timestamp_millis(),
         actual_work_seconds: row.actual_work_seconds,
         estimated_work_seconds: row.estimated_work_seconds,
+        task_display_kind,
     }
 }
 
@@ -549,7 +557,7 @@ pub(in crate::adapter::controller) fn calculate_buffer_seconds(
 
 #[cfg(test)]
 mod completed_task_report_tests {
-    use super::completed_task_row_dto;
+    use super::{completed_task_row_dto, TaskDisplayKind};
     use crate::application::completed_task_report::CompletedTaskReportRow;
     use chrono::{Local, TimeZone};
     use uuid::Uuid;
@@ -569,7 +577,7 @@ mod completed_task_report_tests {
             estimated_work_seconds: 3_600,
         };
 
-        let dto = completed_task_row_dto(row);
+        let dto = completed_task_row_dto(row, TaskDisplayKind::Fixed);
 
         assert_eq!(dto.task_id, Uuid::from_u128(1).hyphenated().to_string());
         assert_eq!(dto.task_name, "task");
@@ -577,5 +585,6 @@ mod completed_task_report_tests {
         assert_eq!(dto.completed_at_epoch_ms, completed_at.timestamp_millis());
         assert_eq!(dto.actual_work_seconds, 3_661);
         assert_eq!(dto.estimated_work_seconds, 3_600);
+        assert_eq!(dto.task_display_kind, TaskDisplayKind::Fixed);
     }
 }

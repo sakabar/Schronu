@@ -373,9 +373,12 @@ impl ClientState {
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
         let entering_load = self.active_tab != ActiveTab::Load && tab == ActiveTab::Load;
+        let entering_list = self.active_tab != ActiveTab::List && tab == ActiveTab::List;
         self.active_tab = tab;
         if entering_load {
             self.request_load_band()
+        } else if entering_list && self.read.list_mode == ListMode::Completed {
+            self.switch_list_mode(ListMode::Scheduled)
         } else {
             ClientEffect::None
         }
