@@ -506,11 +506,13 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
             }
             td { class: "completed-actual completed-number", "{actual}" }
             td { class: difference_class, aria_label: format!("実績と見積の差 {difference_label}"), "{difference_label}" }
-            th { class: "completed-subject", scope: "row",
+            th {
+                class: "completed-subject",
+                scope: "row",
+                aria_label: format!("{task_kind_label}: {}; Project: {}", row.task_name, row.project_name),
                 div { class: "completed-subject-scroll", tabindex: 0,
                     strong {
                         class: task_class,
-                        aria_label: format!("{task_kind_label}: {}", row.task_name),
                         "{row.task_name}"
                     }
                     span { class: "completed-project", "{row.project_name}" }

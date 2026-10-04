@@ -110,10 +110,11 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("<th scope=\"col\">タスク</th>"), "{html}");
     assert!(
         html.contains(concat!(
-            "<th class=\"completed-subject\" scope=\"row\">",
+            "<th class=\"completed-subject\" scope=\"row\" ",
+            "aria-label=\"単発タスク: 設計を仕上げる; Project: Schronu\">",
             "<div class=\"completed-subject-scroll\" tabindex=0>",
-            "<strong class=\"completed-task-name task-kind-non-repetitive\" ",
-            "aria-label=\"単発タスク: 設計を仕上げる\">設計を仕上げる</strong>",
+            "<strong class=\"completed-task-name task-kind-non-repetitive\">",
+            "設計を仕上げる</strong>",
             "<span class=\"completed-project\">Schronu</span>",
             "</div></th>"
         )),
@@ -231,9 +232,12 @@ fn 完了task名は予定と同じtask種別classと意味labelを使う() {
     let html = dioxus::ssr::render(&dom);
 
     for expected in [
-        "class=\"completed-task-name task-kind-fixed\" aria-label=\"固定タスク: 固定完了\"",
-        "class=\"completed-task-name task-kind-repetitive\" aria-label=\"繰返タスク: 繰返完了\"",
-        "class=\"completed-task-name task-kind-non-repetitive\" aria-label=\"単発タスク: 単発完了\"",
+        "aria-label=\"固定タスク: 固定完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-fixed\">固定完了</strong>",
+        "aria-label=\"繰返タスク: 繰返完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-repetitive\">繰返完了</strong>",
+        "aria-label=\"単発タスク: 単発完了; Project: Schronu\"",
+        "class=\"completed-task-name task-kind-non-repetitive\">単発完了</strong>",
     ] {
         assert!(html.contains(expected), "missing {expected}: {html}");
     }
