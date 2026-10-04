@@ -26,8 +26,11 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
+mod identity;
 mod load;
 
+use identity::task_identity_entries;
+pub use identity::NilTaskIdError;
 use load::{parse_storage_revision, RepositoryLoadBuilder};
 
 const PROJECT_DIRECTORY_COMPONENT_MAX_BYTES: usize = 255;
@@ -100,63 +103,6 @@ impl fmt::Display for DuplicateTaskIdError {
 }
 
 impl Error for DuplicateTaskIdError {}
-
-#[derive(Debug, Eq, PartialEq)]
-pub struct NilTaskIdError {
-    project_yaml_file_path: PathBuf,
-    task_path: String,
-}
-
-impl NilTaskIdError {
-    pub fn project_yaml_file_path(&self) -> &Path {
-        &self.project_yaml_file_path
-    }
-
-    pub fn task_path(&self) -> &str {
-        &self.task_path
-    }
-}
-
-impl fmt::Display for NilTaskIdError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "nil task ID at {}:{}",
-            self.project_yaml_file_path.display(),
-            self.task_path
-        )
-    }
-}
-
-impl Error for NilTaskIdError {}
-
-struct TaskIdentityEntry {
-    task_id: Uuid,
-    task_path: String,
-    task: TaskHandle,
-}
-
-fn task_identity_entries(root_task: &TaskHandle) -> Result<Vec<TaskIdentityEntry>, TaskTreeError> {
-    fn collect(
-        task: &TaskHandle,
-        task_path: String,
-        entries: &mut Vec<TaskIdentityEntry>,
-    ) -> Result<(), TaskTreeError> {
-        entries.push(TaskIdentityEntry {
-            task_id: task.get_id()?,
-            task_path: task_path.clone(),
-            task: task.clone(),
-        });
-        for (index, child) in task.get_children()?.into_iter().enumerate() {
-            collect(&child, format!("{task_path}.children[{index}]"), entries)?;
-        }
-        Ok(())
-    }
-
-    let mut entries = Vec::new();
-    collect(root_task, "project".to_string(), &mut entries)?;
-    Ok(entries)
-}
 
 struct LoadedRepositoryState {
     projects: Vec<Project>,
@@ -453,10 +399,10 @@ impl TaskRepository {
             .map_err(TaskRepositoryError::retryable_save)?;
         for entry in entries {
             if entry.task_id.is_nil() {
-                return Err(TaskRepositoryError::retryable_save(NilTaskIdError {
-                    project_yaml_file_path: project.project_yaml_file_path.clone(),
-                    task_path: entry.task_path,
-                }));
+                return Err(TaskRepositoryError::retryable_save(NilTaskIdError::new(
+                    project.project_yaml_file_path.clone(),
+                    entry.task_path,
+                )));
             }
         }
         let snapshot = project

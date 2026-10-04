@@ -87,10 +87,7 @@ impl TaskRepository {
             if entry.task_id.is_nil() {
                 return Err(TaskRepositoryError::new(
                     ApplicationRepositoryOperation::Load,
-                    NilTaskIdError {
-                        project_yaml_file_path: location.project_yaml_file_path,
-                        task_path: location.task_path,
-                    },
+                    NilTaskIdError::new(location.project_yaml_file_path, location.task_path),
                 ));
             }
             if let Some(first) = task_locations.insert(entry.task_id, location.clone()) {
