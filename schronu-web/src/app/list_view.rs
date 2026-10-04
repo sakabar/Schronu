@@ -699,7 +699,7 @@ fn TaskRow(
                     class: "task-name-scroll",
                     tabindex: 0,
                     if is_projected {
-                        span { class: "projected-task-badge", "予定" }
+                        span { class: "projected-task-badge", "見込み" }
                     }
                     "{row.task.task_name}"
                     if let Some(source_task_id) = source_task_id.as_deref() {

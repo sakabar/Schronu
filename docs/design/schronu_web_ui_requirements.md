@@ -145,7 +145,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、可変長の最終cell内だけを横scroll可能にすること。表全体は`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の`完了、実績、予実差`列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、paddingを圧縮すること。集計表示は狭幅で折り返し、320px幅でもpage全体と表全体を横overflowさせないこと。
 - **REQ-LIST-033**: 完了modeはread-onlyとし、「全て」、セッション追加、先送りをDOMへ描画しないこと。task名検索は予定・全件・完了で共有し、完了modeでも前後trimとUnicode小文字化の部分一致をtask名だけへ適用し、Project名は検索対象にしないこと。
 - **REQ-LIST-034**: 予定行と完了行はactive mode付きで保持し、異なるmodeまたは古いrequestのresponseで表示を上書きしないこと。mutation後の一覧再取得はactive modeのendpointを使い、完了modeでtaskを完了した直後は同じ完了一覧へ新しいrowを反映できること。
-- **REQ-LIST-035**: 日付別・全件一覧は28日窓へ展開された繰り返し予測もschedule順に表示すること。展開は窓内にある同じ繰り返し元の全実体回を起点とし、正確なdeadlineが一致する実体回または予測回を重複生成せず、実体回を優先すること。予測行は「予定」badgeと繰り返し元task UUIDを表示し、task名検索、予定日時・時間、締切警告、繰返色を実task行と同じ規則で適用すること。予測行はactionableなtask UUIDを持たず、rankにかかわらずセッション追加・先送りを表示またはdispatchしないこと。`is_leaf`を操作可否へ読み替えないこと。
+- **REQ-LIST-035**: 日付別・全件一覧は28日窓へ展開された繰り返し予測もschedule順に表示すること。展開は窓内にある同じ繰り返し元の全実体回を起点とし、正確なdeadlineが一致する実体回または予測回を重複生成せず、実体回を優先すること。予測行は「見込み」badgeと繰り返し元task UUIDを表示し、task名検索、予定日時・時間、締切警告、繰返色を実task行と同じ規則で適用すること。予測行はactionableなtask UUIDを持たず、rankにかかわらずセッション追加・先送りを表示またはdispatchしないこと。`is_leaf`を操作可否へ読み替えないこと。
 
 ### 4.8 負荷画面
 
