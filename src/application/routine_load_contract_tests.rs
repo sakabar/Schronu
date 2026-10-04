@@ -95,7 +95,12 @@ fn routine_loadは今日から27日後までを最寄りの繰返親ごとに集
     assert_eq!(weekly_row.repetition_interval_days, 7);
     assert_eq!(weekly_row.total_work_seconds, 180 * 60);
     assert_eq!(weekly_row.occurrence_day_count, 4);
-    assert_eq!(weekly_row.average_work_seconds(), Some(45 * 60));
+    assert_eq!(weekly_row.average_work_seconds, 45 * 60);
+    assert_eq!(
+        weekly_row.peak_date,
+        NaiveDate::from_ymd_opt(2026, 10, 30).unwrap()
+    );
+    assert_eq!(weekly_row.peak_work_seconds, 60 * 60);
 
     let daily_row = &actual.rows[1];
     assert_eq!(daily_row.routine_task_id, Uuid::from_u128(4));
@@ -121,7 +126,26 @@ fn routine_loadの1日平均は発生日数で割り秒未満を切り捨てる(
 
     assert_eq!(report.rows[0].total_work_seconds, 11 * 60);
     assert_eq!(report.rows[0].occurrence_day_count, 3);
-    assert_eq!(report.rows[0].average_work_seconds(), Some(3 * 60 + 40));
+    assert_eq!(report.rows[0].average_work_seconds, 3 * 60 + 40);
+}
+
+#[test]
+fn routine_loadの最大日は同じ負荷なら早いlogical_dateを保持する() {
+    let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
+    let project = TaskHandle::with_identity("生活", Uuid::from_u128(401), at(3)).unwrap();
+    let routine = child(&project, "週次", 402, at(3));
+    routine.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let task = child(&routine, "実施", 403, at(3));
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let schedule = vec![
+        segment(&task, at(3), 30 * 60),
+        segment(&task, at(10), 30 * 60),
+    ];
+
+    let report = build_routine_load_report(&repository, &schedule, today).unwrap();
+
+    assert_eq!(report.rows[0].peak_date, today);
+    assert_eq!(report.rows[0].peak_work_seconds, 30 * 60);
 }
 
 #[test]

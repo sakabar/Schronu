@@ -394,6 +394,9 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     assert_eq!(row.repetition_interval_days, 7);
     assert_eq!(row.total_work_seconds, 2_100);
     assert_eq!(row.occurrence_day_count, 4);
+    assert_eq!(row.average_work_seconds, 525);
+    assert_eq!(row.peak_date, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap());
+    assert_eq!(row.peak_work_seconds, 600);
 }
 
 #[test]
