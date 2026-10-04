@@ -1,9 +1,10 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot, SessionTask, TaskDisplayKind, WebError,
-    WebSuccess,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
+    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+    RoutineLoadRow, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    TaskDisplayKind, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -253,6 +254,59 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
 }
 
 #[test]
+fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
+    assert_json_round_trip(
+        &ListCompletedTasksRequest {
+            logical_date: "2026-09-05".to_owned(),
+        },
+        json!({"logical_date": "2026-09-05"}),
+    );
+
+    assert_json_round_trip(
+        &WebSuccess {
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 1_788_565_500_123,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: -61,
+            },
+            data: CompletedTaskReport {
+                rows: vec![CompletedTaskRow {
+                    task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
+                    task_name: "wire task".to_owned(),
+                    project_name: "wire project".to_owned(),
+                    completed_at_epoch_ms: 1_788_565_499_999,
+                    actual_work_seconds: 901,
+                    estimated_work_seconds: 900,
+                }],
+                total_actual_work_seconds: 901,
+                available_seconds: 43_200,
+                recorded_percentage: Some(2),
+            },
+        },
+        json!({
+            "snapshot": {
+                "observed_at_epoch_ms": 1_788_565_500_123_i64,
+                "logical_date": "2026-09-05",
+                "buffer_seconds": -61
+            },
+            "data": {
+                "rows": [{
+                    "task_id": "00000000-0000-0000-0000-000000000001",
+                    "task_name": "wire task",
+                    "project_name": "wire project",
+                    "completed_at_epoch_ms": 1_788_565_499_999_i64,
+                    "actual_work_seconds": 901,
+                    "estimated_work_seconds": 900
+                }],
+                "total_actual_work_seconds": 901,
+                "available_seconds": 43_200,
+                "recorded_percentage": 2
+            }
+        }),
+    );
+}
+
+#[test]
 fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
     let day = BandDay {
         logical_date: "2026-09-05".to_owned(),
@@ -279,6 +333,50 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
                 "repetitive_seconds": 3,
                 "non_repetitive_seconds": 4,
                 "rho_leeway_seconds": 5
+            }
+        }),
+    );
+}
+
+#[test]
+fn load_dataは7日帯と8日繰返負荷を同じpayloadで保持する() {
+    let data = LoadData {
+        band_days: Vec::new(),
+        routine_load: RoutineLoadReport {
+            start_date: "2026-10-03".to_owned(),
+            end_date: "2026-10-10".to_owned(),
+            rows: vec![RoutineLoadRow {
+                project_task_id: "project-id".to_owned(),
+                project_name: "生活".to_owned(),
+                routine_task_id: "routine-id".to_owned(),
+                routine_name: "週次家事".to_owned(),
+                repetition_interval_days: 7,
+                total_work_seconds: 15_600,
+                occurrence_day_count: 4,
+                peak_date: "2026-10-04".to_owned(),
+                peak_work_seconds: 4_800,
+            }],
+        },
+    };
+
+    assert_json_round_trip(
+        &data,
+        json!({
+            "band_days": [],
+            "routine_load": {
+                "start_date": "2026-10-03",
+                "end_date": "2026-10-10",
+                "rows": [{
+                    "project_task_id": "project-id",
+                    "project_name": "生活",
+                    "routine_task_id": "routine-id",
+                    "routine_name": "週次家事",
+                    "repetition_interval_days": 7,
+                    "total_work_seconds": 15_600,
+                    "occurrence_day_count": 4,
+                    "peak_date": "2026-10-04",
+                    "peak_work_seconds": 4_800
+                }]
             }
         }),
     );

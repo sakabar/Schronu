@@ -106,6 +106,24 @@ pub struct ScheduledTaskRowDto {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskRowDto {
+    pub task_id: String,
+    pub task_name: String,
+    pub project_name: String,
+    pub completed_at_epoch_ms: i64,
+    pub actual_work_seconds: i64,
+    pub estimated_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CompletedTaskReportDto {
+    pub rows: Vec<CompletedTaskRowDto>,
+    pub total_actual_work_seconds: i64,
+    pub available_seconds: i64,
+    pub recorded_percentage: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct AllTaskRowDto {
     pub task: ScheduledTaskDto,
     #[serde(default)]
@@ -149,4 +167,30 @@ pub struct BandDayDto {
     pub accumulated_rho_diff_seconds: i64,
     pub accumulated_free_diff_seconds: i64,
     pub durations: BandDurationsDto,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadRowDto {
+    pub project_task_id: String,
+    pub project_name: String,
+    pub routine_task_id: String,
+    pub routine_name: String,
+    pub repetition_interval_days: i64,
+    pub total_work_seconds: i64,
+    pub occurrence_day_count: usize,
+    pub peak_date: NaiveDate,
+    pub peak_work_seconds: i64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadReportDto {
+    pub start_date: NaiveDate,
+    pub end_date: NaiveDate,
+    pub rows: Vec<RoutineLoadRowDto>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LoadDataDto {
+    pub band_days: Vec<BandDayDto>,
+    pub routine_load: RoutineLoadReportDto,
 }

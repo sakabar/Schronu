@@ -332,19 +332,46 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
 
     let response = service.load_band_at(operation_now).unwrap();
 
-    assert_eq!(response.data.len(), 7);
+    assert_eq!(response.data.band_days.len(), 7);
     assert_eq!(
-        response.data[0].logical_date,
+        response.data.band_days[0].logical_date,
         NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
     );
     assert_eq!(
-        response.data[6].logical_date,
+        response.data.band_days[6].logical_date,
         NaiveDate::from_ymd_opt(2026, 9, 11).unwrap()
     );
     assert!(response
         .data
+        .band_days
         .iter()
         .all(|row| row.durations.unavailable_seconds >= 0));
+    assert_eq!(
+        response.data.routine_load.start_date,
+        NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
+    );
+    assert_eq!(
+        response.data.routine_load.end_date,
+        NaiveDate::from_ymd_opt(2026, 9, 12).unwrap()
+    );
+}
+
+#[test]
+fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let response = service.load_band_at(operation_now).unwrap();
+
+    assert_eq!(response.data.routine_load.rows.len(), 1);
+    let row = &response.data.routine_load.rows[0];
+    assert_eq!(row.project_name, "routine");
+    assert_eq!(row.routine_name, "routine");
+    assert_eq!(row.repetition_interval_days, 7);
+    assert_eq!(row.total_work_seconds, 900);
+    assert_eq!(row.occurrence_day_count, 2);
 }
 
 #[test]
@@ -503,6 +530,60 @@ fn serviceの4read操作は実storageを同期して同一snapshotとtyped_data�
         task_id.hyphenated().to_string()
     );
     assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
+fn 完了report_serviceはbusy_time_slotと補正済み実績を同一transactionで返す() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 21, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task_with_actual(seeded_at, 0, false);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service
+        .complete_session_at(
+            operation_now,
+            CompleteSessionRequest {
+                task_id: task_id.to_string(),
+                started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
+                ended_at_epoch_ms: None,
+                expected_actual_work_seconds: 0,
+                record_elapsed_seconds: false,
+            },
+        )
+        .unwrap();
+
+    let report = service
+        .list_completed_tasks_at(operation_now, NaiveDate::from_ymd_opt(2026, 9, 5).unwrap())
+        .unwrap()
+        .data;
+
+    assert_eq!(report.rows.len(), 1);
+    assert_eq!(report.rows[0].actual_work_seconds, 1_800);
+    assert_eq!(report.total_actual_work_seconds, 1_800);
+    assert_eq!(report.available_seconds, 50_400);
+    assert_eq!(report.recorded_percentage, Some(4));
+}
+
+#[test]
+fn 完了reportはprojected_occurrenceを行として返さない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let projected_date = NaiveDate::from_ymd_opt(2026, 9, 12).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    fixture.seed_repetition_task(operation_now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    let scheduled = service
+        .list_tasks_at(operation_now, projected_date)
+        .unwrap()
+        .data;
+    assert!(scheduled.iter().any(|row| row.task.task_id.is_none()));
+
+    let completed = service
+        .list_completed_tasks_at(operation_now, projected_date)
+        .unwrap()
+        .data;
+    assert!(completed.rows.is_empty());
+    assert_eq!(completed.total_actual_work_seconds, 0);
 }
 
 #[test]

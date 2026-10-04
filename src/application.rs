@@ -1,12 +1,14 @@
 #[cfg(feature = "benchmarking")]
 #[doc(hidden)]
 pub mod benchmarking;
+pub mod completed_task_report;
 pub mod daily_capacity;
 pub mod flatten_use_case;
 pub mod interface;
 pub mod pack_use_case;
 mod projected_recurrence;
 pub mod repository_transaction;
+pub mod routine_load;
 pub mod schedule_use_case;
 mod scheduled_capacity;
 mod scheduling_instrumentation;
@@ -16,6 +18,9 @@ mod task_list;
 pub(crate) mod task_name;
 pub mod task_use_case;
 mod task_view;
+
+#[cfg(test)]
+mod routine_load_contract_tests;
 
 #[cfg(test)]
 mod schedule_use_case_contract_tests;

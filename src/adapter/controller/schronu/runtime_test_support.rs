@@ -942,12 +942,23 @@ impl TaskRepositoryTrait for TestTaskRepository {
 #[derive(Default)]
 struct TestFreeTimeManager {
     free_minutes: i64,
+    use_elapsed_interval: bool,
 }
 
 #[cfg(test)]
 impl TestFreeTimeManager {
     fn with_free_minutes(free_minutes: i64) -> Self {
-        Self { free_minutes }
+        Self {
+            free_minutes,
+            use_elapsed_interval: false,
+        }
+    }
+
+    fn with_elapsed_interval() -> Self {
+        Self {
+            free_minutes: 0,
+            use_elapsed_interval: true,
+        }
     }
 }
 
@@ -988,8 +999,12 @@ impl FixtureTaskOptionExt for Option<TaskHandle> {
 
 #[cfg(test)]
 impl FreeTimeManagerTrait for TestFreeTimeManager {
-    fn get_free_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
-        self.free_minutes
+    fn get_free_minutes(&mut self, start: &DateTime<Local>, end: &DateTime<Local>) -> i64 {
+        if self.use_elapsed_interval {
+            end.signed_duration_since(*start).num_minutes()
+        } else {
+            self.free_minutes
+        }
     }
 
     fn get_busy_minutes(&mut self, _start: &DateTime<Local>, _end: &DateTime<Local>) -> i64 {
@@ -1275,7 +1290,13 @@ fn execute_calendar_command_for_test(
     task: TaskHandle,
     free_minutes: i64,
 ) -> String {
-    execute_calendar_command_with_ansi_color_for_test(command, now, task, free_minutes, true)
+    execute_calendar_command_with_ansi_color_for_test(
+        command,
+        now,
+        task,
+        Some(free_minutes),
+        true,
+    )
 }
 
 #[cfg(test)]
@@ -1325,11 +1346,14 @@ fn execute_calendar_command_with_ansi_color_for_test(
     command: &str,
     now: DateTime<Local>,
     task: TaskHandle,
-    free_minutes: i64,
+    fixed_free_minutes: Option<i64>,
     supports_ansi_color: bool,
 ) -> String {
     let mut task_repository = TestTaskRepository::new(task, now);
-    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(free_minutes);
+    let mut free_time_manager = fixed_free_minutes.map_or_else(
+        TestFreeTimeManager::with_elapsed_interval,
+        TestFreeTimeManager::with_free_minutes,
+    );
     let mut focused_task_id_opt = None;
     let mut stdout = if supports_ansi_color {
         TestWriter::new()

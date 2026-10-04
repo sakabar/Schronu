@@ -1,5 +1,7 @@
 use chrono::{Datelike, Days, NaiveDate, Weekday};
 
+use super::state::ListMode;
+
 const BUTTON_COUNT: u64 = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +30,33 @@ pub fn logical_date_buttons(
             let suffix = match index {
                 0 => " 今日",
                 1 => " 明日",
+                _ => "",
+            };
+            Ok(LogicalDateButton {
+                logical_date: date.format("%Y-%m-%d").to_string(),
+                label: format!("{}{suffix}", japanese_weekday(date.weekday())),
+            })
+        })
+        .collect()
+}
+
+pub fn logical_date_buttons_for_mode(
+    logical_date: &str,
+    mode: ListMode,
+) -> Result<Vec<LogicalDateButton>, DateButtonsError> {
+    if mode == ListMode::Scheduled {
+        return logical_date_buttons(logical_date);
+    }
+    let start = parse_logical_date(logical_date)?;
+    (0..BUTTON_COUNT)
+        .map(|index| {
+            let date = start
+                .checked_sub_days(Days::new(index))
+                .filter(|date| (0..=9_999).contains(&date.year()))
+                .ok_or(DateButtonsError::DateOverflow)?;
+            let suffix = match index {
+                0 => " 今日",
+                1 => " 昨日",
                 _ => "",
             };
             Ok(LogicalDateButton {

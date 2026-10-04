@@ -1,6 +1,8 @@
 use chrono::{Datelike, NaiveDate};
 use std::fmt;
 
+use super::state::ListMode;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DateInputError {
     InvalidFormat,
@@ -53,12 +55,20 @@ impl DateInputState {
     }
 
     pub fn submit(&mut self, current_logical_date: &str) -> Option<String> {
+        self.submit_for_mode(current_logical_date, ListMode::Scheduled)
+    }
+
+    pub fn submit_for_mode(
+        &mut self,
+        current_logical_date: &str,
+        mode: ListMode,
+    ) -> Option<String> {
         if self.text.trim().is_empty() {
             self.error = None;
             return None;
         }
 
-        match resolve_date_input(&self.text, current_logical_date) {
+        match resolve_date_input_for_mode(&self.text, current_logical_date, mode) {
             Ok(resolved) => {
                 self.text = resolved.display_value;
                 self.error = None;
@@ -76,13 +86,24 @@ pub fn resolve_date_input(
     input: &str,
     current_logical_date: &str,
 ) -> Result<ResolvedDateInput, DateInputError> {
+    resolve_date_input_for_mode(input, current_logical_date, ListMode::Scheduled)
+}
+
+pub fn resolve_date_input_for_mode(
+    input: &str,
+    current_logical_date: &str,
+    mode: ListMode,
+) -> Result<ResolvedDateInput, DateInputError> {
     let current = parse_current_logical_date(current_logical_date)?;
     let components = input.trim().split('/').collect::<Vec<_>>();
     let date = match components.as_slice() {
         [month, day] if valid_component(month, 1, 2) && valid_component(day, 1, 2) => {
             let month = parse_component(month)?;
             let day = parse_component(day)?;
-            resolve_upcoming_month_day(current, month, day)?
+            match mode {
+                ListMode::Scheduled => resolve_upcoming_month_day(current, month, day)?,
+                ListMode::Completed => resolve_recent_month_day(current, month, day)?,
+            }
         }
         [year, month, day]
             if valid_component(year, 4, 4)
@@ -103,6 +124,28 @@ pub fn resolve_date_input(
         logical_date: date.format("%Y-%m-%d").to_string(),
         display_value: format!("{}/{}/{}", date.year(), date.month(), date.day()),
     })
+}
+
+fn resolve_recent_month_day(
+    current: NaiveDate,
+    month: u32,
+    day: u32,
+) -> Result<NaiveDate, DateInputError> {
+    if NaiveDate::from_ymd_opt(2000, month, day).is_none() {
+        return Err(DateInputError::InvalidDate);
+    }
+    for year_offset in 0..=8 {
+        let year = current
+            .year()
+            .checked_sub(year_offset)
+            .ok_or(DateInputError::DateOverflow)?;
+        if let Some(candidate) = NaiveDate::from_ymd_opt(year, month, day) {
+            if candidate <= current {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(DateInputError::DateOverflow)
 }
 
 fn resolve_upcoming_month_day(

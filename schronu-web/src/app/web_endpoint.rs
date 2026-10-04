@@ -1,7 +1,8 @@
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -34,6 +35,18 @@ pub async fn list_tasks(
     unreachable!("server function body only runs on the server")
 }
 
+#[server(endpoint = "web_list_completed_tasks")]
+pub async fn list_completed_tasks(
+    request: ListCompletedTasksRequest,
+) -> Result<WebOperationResult<WebSuccess<CompletedTaskReport>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(dispatch_list_completed_tasks(extract_worker().await?, request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
 #[server(endpoint = "web_list_all_tasks")]
 pub async fn list_all_tasks(
     request: ListAllTasksRequest,
@@ -47,7 +60,7 @@ pub async fn list_all_tasks(
 }
 
 #[server(endpoint = "web_load_band")]
-pub async fn load_band() -> Result<WebOperationResult<WebSuccess<Vec<BandDay>>>, ServerFnError> {
+pub async fn load_band() -> Result<WebOperationResult<WebSuccess<LoadData>>, ServerFnError> {
     #[cfg(feature = "server")]
     {
         Ok(dispatch_load_band(extract_worker().await?).await)
@@ -126,6 +139,14 @@ async fn dispatch_list_tasks(
 }
 
 #[cfg(feature = "server")]
+async fn dispatch_list_completed_tasks(
+    worker: WebWorkerHandle,
+    request: ListCompletedTasksRequest,
+) -> WebOperationResult<WebSuccess<CompletedTaskReport>> {
+    worker.list_completed_tasks(request).await
+}
+
+#[cfg(feature = "server")]
 async fn dispatch_list_all_tasks(
     worker: WebWorkerHandle,
     request: ListAllTasksRequest,
@@ -134,9 +155,7 @@ async fn dispatch_list_all_tasks(
 }
 
 #[cfg(feature = "server")]
-async fn dispatch_load_band(
-    worker: WebWorkerHandle,
-) -> WebOperationResult<WebSuccess<Vec<BandDay>>> {
+async fn dispatch_load_band(worker: WebWorkerHandle) -> WebOperationResult<WebSuccess<LoadData>> {
     worker.load_band().await
 }
 
@@ -175,14 +194,15 @@ async fn dispatch_complete_session(
 mod tests {
     use super::{
         dispatch_auto_session, dispatch_bootstrap, dispatch_complete_session, dispatch_defer_task,
-        dispatch_list_all_tasks, dispatch_list_tasks, dispatch_load_band, dispatch_record_session,
-        WebOperationResult,
+        dispatch_list_all_tasks, dispatch_list_completed_tasks, dispatch_list_tasks,
+        dispatch_load_band, dispatch_record_session, WebOperationResult,
     };
     use crate::{
-        AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-        ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-        RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
-        WebSuccess, WebWorkerHandle,
+        AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+        DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+        LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
+        ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess,
+        WebWorkerHandle,
     };
     use dioxus::fullstack::axum::http::Request;
     use dioxus::fullstack::FullstackContext;
@@ -190,7 +210,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
-    fn 八endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
+    fn 九endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
         let all_task_cursors = Arc::new(Mutex::new(Vec::new()));
@@ -223,6 +243,14 @@ mod tests {
                 },
             )
             .await;
+            let _: WebOperationResult<WebSuccess<CompletedTaskReport>> =
+                dispatch_list_completed_tasks(
+                    worker.clone(),
+                    ListCompletedTasksRequest {
+                        logical_date: "2026-09-04".to_owned(),
+                    },
+                )
+                .await;
             let _: WebOperationResult<WebSuccess<AllTaskPage>> = dispatch_list_all_tasks(
                 worker.clone(),
                 ListAllTasksRequest {
@@ -230,7 +258,7 @@ mod tests {
                 },
             )
             .await;
-            let _: WebOperationResult<WebSuccess<Vec<BandDay>>> =
+            let _: WebOperationResult<WebSuccess<LoadData>> =
                 dispatch_load_band(worker.clone()).await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
                 dispatch_auto_session(worker.clone()).await;
@@ -255,7 +283,7 @@ mod tests {
             assert_eq!(completed, Ok(snapshot()));
         });
 
-        assert_eq!(calls.load(Ordering::SeqCst), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 9);
         assert_eq!(
             *all_task_cursors.lock().unwrap(),
             [Some("opaque-cursor".to_owned())]
@@ -321,6 +349,22 @@ mod tests {
             })
         }
 
+        fn list_completed_tasks(
+            &mut self,
+            _request: ListCompletedTasksRequest,
+        ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
+            self.count();
+            Ok(WebSuccess {
+                snapshot: snapshot(),
+                data: CompletedTaskReport {
+                    rows: Vec::new(),
+                    total_actual_work_seconds: 0,
+                    available_seconds: 0,
+                    recorded_percentage: None,
+                },
+            })
+        }
+
         fn list_all_tasks(
             &mut self,
             request: ListAllTasksRequest,
@@ -336,11 +380,18 @@ mod tests {
             })
         }
 
-        fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+        fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
             self.count();
             Ok(WebSuccess {
                 snapshot: snapshot(),
-                data: Vec::new(),
+                data: LoadData {
+                    band_days: Vec::new(),
+                    routine_load: RoutineLoadReport {
+                        start_date: "2026-09-05".to_owned(),
+                        end_date: "2026-09-12".to_owned(),
+                        rows: Vec::new(),
+                    },
+                },
             })
         }
 

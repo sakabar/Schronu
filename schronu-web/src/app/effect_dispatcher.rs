@@ -2,9 +2,10 @@ use crate::client::state::{ClientEffect, ServerFailure};
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
-    AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
@@ -16,12 +17,17 @@ pub(crate) trait WebGateway {
         request: ListTasksRequest,
     ) -> Result<Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError>, ServerFnError>;
 
+    async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError>;
+
     async fn list_all_tasks(
         &self,
         request: ListAllTasksRequest,
     ) -> Result<Result<WebSuccess<AllTaskPage>, WebError>, ServerFnError>;
 
-    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+    async fn load_band(&self) -> Result<Result<WebSuccess<LoadData>, WebError>, ServerFnError> {
         unreachable!("load_band is not implemented by this test gateway")
     }
 
@@ -61,6 +67,13 @@ impl WebGateway for ServerFunctionGateway {
         super::list_tasks(request).await
     }
 
+    async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
+        super::list_completed_tasks(request).await
+    }
+
     async fn list_all_tasks(
         &self,
         request: ListAllTasksRequest,
@@ -68,7 +81,7 @@ impl WebGateway for ServerFunctionGateway {
         super::list_all_tasks(request).await
     }
 
-    async fn load_band(&self) -> Result<Result<WebSuccess<Vec<BandDay>>, WebError>, ServerFnError> {
+    async fn load_band(&self) -> Result<Result<WebSuccess<LoadData>, WebError>, ServerFnError> {
         super::load_band().await
     }
 
@@ -111,6 +124,11 @@ pub(crate) enum ClientResponse {
         requested_date: String,
         result: Result<WebSuccess<Vec<ScheduledTaskRow>>, ServerFailure>,
     },
+    ListCompletedTasks {
+        request_id: u64,
+        requested_date: String,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
+    },
     ListAllTasks {
         request_id: u64,
         request: ListAllTasksRequest,
@@ -118,7 +136,7 @@ pub(crate) enum ClientResponse {
     },
     LoadBand {
         request_id: u64,
-        result: Result<WebSuccess<Vec<BandDay>>, ServerFailure>,
+        result: Result<WebSuccess<LoadData>, ServerFailure>,
     },
     AutoSession {
         request_id: u64,
@@ -157,6 +175,17 @@ pub(crate) async fn execute_effect<G: WebGateway>(
                 request_id,
                 requested_date,
                 result: normalize_endpoint_result(gateway.list_tasks(request).await),
+            })
+        }
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request,
+        } => {
+            let requested_date = request.logical_date.clone();
+            Some(ClientResponse::ListCompletedTasks {
+                request_id,
+                requested_date,
+                result: normalize_endpoint_result(gateway.list_completed_tasks(request).await),
             })
         }
         ClientEffect::ListAllTasks {
@@ -237,6 +266,17 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
                 state.apply_background_list_result(request_id, &requested_date, result)
             } else {
                 state.apply_list_result(request_id, &requested_date, result)
+            }
+        }
+        ClientResponse::ListCompletedTasks {
+            request_id,
+            requested_date,
+            result,
+        } => {
+            if background_list {
+                state.apply_background_completed_list_result(request_id, &requested_date, result)
+            } else {
+                state.apply_completed_list_result(request_id, &requested_date, result)
             }
         }
         ClientResponse::ListAllTasks {

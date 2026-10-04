@@ -1,14 +1,16 @@
-use super::date_buttons::logical_date_buttons;
-use super::state::ActiveTab;
+use super::date_buttons::logical_date_buttons_for_mode;
+use super::state::{ActiveTab, ListMode};
 use super::work_sessions::{KeyValueStorage, StorageError};
-use crate::{DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot};
-use chrono::DateTime;
+use crate::{
+    CompletedTaskRow, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot,
+};
+use chrono::{DateTime, NaiveDate};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
 pub const VIEW_STATE_STORAGE_KEY: &str = "schronu_web.view_state.v1";
-const STORAGE_VERSION: u64 = 2;
+const STORAGE_VERSION: u64 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -18,10 +20,27 @@ pub struct StoredListView {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum StoredActiveList {
+    Scheduled {
+        logical_date: String,
+        rows: Vec<ScheduledTaskRow>,
+    },
+    Completed {
+        logical_date: String,
+        rows: Vec<CompletedTaskRow>,
+        total_actual_work_seconds: i64,
+        available_seconds: i64,
+        recorded_percentage: Option<i64>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewState {
     pub snapshot: ServerSnapshot,
-    pub list: Option<StoredListView>,
+    pub list_mode: ListMode,
+    pub list: Option<StoredActiveList>,
     pub active_tab: ActiveTab,
     pub task_name_filter: String,
     pub date_input_text: String,
@@ -62,6 +81,17 @@ struct StoredViewState {
     state: ViewState,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredViewStateV2 {
+    version: u64,
+    snapshot: ServerSnapshot,
+    list: Option<StoredListView>,
+    active_tab: ActiveTab,
+    task_name_filter: String,
+    date_input_text: String,
+}
+
 pub fn load_view_state<S: KeyValueStorage>(storage: &S) -> LoadedViewState {
     let raw = match storage.get(VIEW_STATE_STORAGE_KEY) {
         Ok(Some(raw)) => raw,
@@ -73,17 +103,40 @@ pub fn load_view_state<S: KeyValueStorage>(storage: &S) -> LoadedViewState {
             );
         }
     };
-    let parsed = serde_json::from_str::<StoredViewState>(&raw)
+    let version = serde_json::from_str::<serde_json::Value>(&raw)
         .ok()
-        .filter(|stored| stored.version == STORAGE_VERSION)
-        .filter(|stored| valid_view_state(&stored.state));
-    match parsed {
-        Some(stored) => loaded(Some(stored.state), None),
-        None => loaded(
-            None,
-            Some("前回の画面状態が不正なため復元しませんでした。".to_owned()),
-        ),
-    }
+        .and_then(|value| value.get("version").and_then(serde_json::Value::as_u64));
+    let state = match version {
+        Some(STORAGE_VERSION) => serde_json::from_str::<StoredViewState>(&raw)
+            .ok()
+            .filter(|stored| valid_view_state(&stored.state))
+            .map(|stored| stored.state),
+        Some(2) => serde_json::from_str::<StoredViewStateV2>(&raw)
+            .ok()
+            .filter(|stored| stored.version == 2)
+            .map(|stored| ViewState {
+                snapshot: stored.snapshot,
+                list_mode: ListMode::Scheduled,
+                list: stored.list.map(|list| StoredActiveList::Scheduled {
+                    logical_date: list.logical_date,
+                    rows: list.rows,
+                }),
+                active_tab: stored.active_tab,
+                task_name_filter: stored.task_name_filter,
+                date_input_text: stored.date_input_text,
+            })
+            .filter(valid_view_state),
+        _ => None,
+    };
+    state.map_or_else(
+        || {
+            loaded(
+                None,
+                Some("前回の画面状態が不正なため復元しませんでした。".to_owned()),
+            )
+        },
+        |state| loaded(Some(state), None),
+    )
 }
 
 pub fn store_view_state<S: KeyValueStorage>(
@@ -123,8 +176,30 @@ fn loaded(state: Option<ViewState>, warning: Option<String>) -> LoadedViewState 
 
 fn valid_view_state(state: &ViewState) -> bool {
     valid_snapshot(&state.snapshot)
-        && state.list.as_ref().is_none_or(|list| {
-            valid_logical_date(&list.logical_date) && list.rows.iter().all(valid_row)
+        && logical_date_buttons_for_mode(&state.snapshot.logical_date, state.list_mode).is_ok()
+        && state.list.as_ref().is_none_or(|list| match list {
+            StoredActiveList::Scheduled { logical_date, rows } => {
+                state.list_mode == ListMode::Scheduled
+                    && valid_logical_date(logical_date)
+                    && rows.iter().all(valid_row)
+            }
+            StoredActiveList::Completed {
+                logical_date,
+                rows,
+                total_actual_work_seconds,
+                available_seconds,
+                recorded_percentage,
+            } => {
+                state.list_mode == ListMode::Completed
+                    && valid_logical_date(logical_date)
+                    && rows.iter().all(valid_completed_row)
+                    && valid_completed_summary(
+                        rows,
+                        *total_actual_work_seconds,
+                        *available_seconds,
+                        *recorded_percentage,
+                    )
+            }
         })
 }
 
@@ -134,7 +209,8 @@ fn valid_snapshot(snapshot: &ServerSnapshot) -> bool {
 }
 
 fn valid_logical_date(logical_date: &str) -> bool {
-    logical_date_buttons(logical_date).is_ok()
+    NaiveDate::parse_from_str(logical_date, "%Y-%m-%d")
+        .is_ok_and(|date| date.format("%Y-%m-%d").to_string() == logical_date)
 }
 
 fn valid_row(row: &ScheduledTaskRow) -> bool {
@@ -202,6 +278,41 @@ fn valid_defer_plan(defer_plan: &DeferPlan) -> bool {
                         .is_some_and(|days| days > 0)
             }
         }
+}
+
+fn valid_completed_row(row: &CompletedTaskRow) -> bool {
+    Uuid::parse_str(&row.task_id).is_ok()
+        && !row.task_name.trim().is_empty()
+        && !row.project_name.trim().is_empty()
+        && row.actual_work_seconds >= 0
+        && row.estimated_work_seconds >= 0
+        && valid_epoch(row.completed_at_epoch_ms)
+}
+
+fn valid_completed_summary(
+    rows: &[CompletedTaskRow],
+    total_actual_work_seconds: i64,
+    available_seconds: i64,
+    recorded_percentage: Option<i64>,
+) -> bool {
+    if total_actual_work_seconds < 0 || available_seconds < 0 {
+        return false;
+    }
+    let row_total = rows
+        .iter()
+        .map(|row| i128::from(row.actual_work_seconds))
+        .sum::<i128>();
+    if row_total != i128::from(total_actual_work_seconds) {
+        return false;
+    }
+    let expected_percentage = if available_seconds == 0 {
+        None
+    } else {
+        let total = i128::from(total_actual_work_seconds);
+        let available = i128::from(available_seconds);
+        i64::try_from((total * 100 + available / 2) / available).ok()
+    };
+    recorded_percentage == expected_percentage
 }
 
 fn valid_epoch(epoch_ms: i64) -> bool {

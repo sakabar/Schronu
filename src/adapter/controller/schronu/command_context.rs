@@ -6,12 +6,13 @@ use super::handler::{
     NextUpResult, ProjectCommandContext, TaskAttributeCommandContext, TaskListOrder,
     TaskTreeCommandContext,
 };
-use super::renderer::{DisplayModel, TreeDisplay};
+use super::renderer::{CompletedTaskReportDisplay, DisplayModel, TreeDisplay};
 use super::view::{
     build_ancestor_tree_display, build_leaf_tree_display, build_show_all_tasks_display_with_config,
     build_tree_display, get_weekday_jp, TaskListDisplayOrder,
 };
 use crate::adapter::gateway::schronu_config::SchronuConfig;
+use crate::application::completed_task_report::build_completed_task_report;
 use crate::application::daily_capacity::{
     try_local_date_and_time, try_logical_date, try_logical_date_start, try_next_logical_date_start,
 };
@@ -37,6 +38,55 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 const MAX_ARRANGE_ESTIMATED_WORK_MINUTES: i64 = 1439;
+
+pub(super) fn resolve_completed_logical_date(
+    value: Option<&str>,
+    now: DateTime<Local>,
+) -> Result<NaiveDate, HandlerError> {
+    let current = try_logical_date(now)?;
+    let Some(value) = value else {
+        return Ok(current);
+    };
+    let invalid = || {
+        HandlerError::Parse(CommandParseError::new(
+            "済",
+            "date",
+            "M/DまたはYYYY/M/Dの有効な日付で指定してください",
+            "済 [日付]",
+        ))
+    };
+    let month_day_pattern = Regex::new(r"^(\d{1,2})/(\d{1,2})$").unwrap();
+    if let Some(captures) = month_day_pattern.captures(value) {
+        let month = captures[1].parse::<u32>().map_err(|_| invalid())?;
+        let day = captures[2].parse::<u32>().map_err(|_| invalid())?;
+        if NaiveDate::from_ymd_opt(2000, month, day).is_none() {
+            return Err(invalid());
+        }
+        let mut year = current.year();
+        // Gregorian leap-year rules repeat every 400 years. A valid month/day must therefore
+        // resolve within this bound unless Chrono's representable range ends first.
+        for _ in 0..=400 {
+            if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+                if date <= current {
+                    return Ok(date);
+                }
+            }
+            if year <= NaiveDate::MIN.year() {
+                return Err(invalid());
+            }
+            year -= 1;
+        }
+        return Err(invalid());
+    }
+    let dated_pattern = Regex::new(r"^(\d{4})/(\d{1,2})/(\d{1,2})$").unwrap();
+    if let Some(captures) = dated_pattern.captures(value) {
+        let year = captures[1].parse::<i32>().map_err(|_| invalid())?;
+        let month = captures[2].parse::<u32>().map_err(|_| invalid())?;
+        let day = captures[3].parse::<u32>().map_err(|_| invalid())?;
+        return NaiveDate::from_ymd_opt(year, month, day).ok_or_else(invalid);
+    }
+    Err(invalid())
+}
 
 pub(super) fn resolve_upcoming_mmdd(
     mmdd: &str,
@@ -1453,6 +1503,20 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {
         *self.focused_task_id_opt = task_id_opt;
+    }
+
+    fn completed_task_report(
+        &mut self,
+        logical_date: NaiveDate,
+    ) -> Result<CompletedTaskReportDisplay, ApplicationError> {
+        Ok(CompletedTaskReportDisplay {
+            report: build_completed_task_report(
+                self.task_repository,
+                self.free_time_manager,
+                logical_date,
+                self.config.end_of_day_offset_minutes,
+            )?,
+        })
     }
 }
 

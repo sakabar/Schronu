@@ -1,13 +1,14 @@
 use super::error::{WebReadCoreError, WebReadOverflowError};
 use super::model::{
-    AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto,
-    ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto,
-    TaskDisplayKind,
+    AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskRowDto, DeadlineDisplayKind,
+    DeferModeDto, DeferPlanDto, RoutineLoadReportDto, RoutineLoadRowDto, ScheduleOccurrenceDto,
+    ScheduledTaskDto, ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind,
 };
 use crate::adapter::controller::deadline_display::{
     classify_deadline_display, format_deadline_remaining_time, misses_deadline,
     DeadlineDisplayStatus,
 };
+use crate::application::completed_task_report::CompletedTaskReportRow;
 use crate::application::daily_capacity::{
     calculate_daily_band_durations, calculate_daily_rho_diff_hours,
     calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes,
@@ -15,6 +16,7 @@ use crate::application::daily_capacity::{
     try_logical_date, DailyLoadAccumulator, DailyLoadDayInput,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_logical_dates, ScheduledTaskView,
 };
@@ -24,6 +26,35 @@ use crate::application::task_use_case::{
 use chrono::{DateTime, Local, NaiveDate};
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+pub(in crate::adapter::controller) fn build_routine_load_report_dto(
+    repository: &dyn TaskRepositoryTrait,
+    schedule: &[ScheduledTaskView],
+    operation_now: DateTime<Local>,
+) -> Result<RoutineLoadReportDto, WebReadCoreError> {
+    let start_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
+    let report = build_routine_load_report(repository, schedule, start_date)
+        .map_err(WebReadCoreError::Application)?;
+    Ok(RoutineLoadReportDto {
+        start_date: report.start_date,
+        end_date: report.end_date,
+        rows: report
+            .rows
+            .into_iter()
+            .map(|row| RoutineLoadRowDto {
+                project_task_id: row.project_task_id.hyphenated().to_string(),
+                project_name: row.project_name,
+                routine_task_id: row.routine_task_id.hyphenated().to_string(),
+                routine_name: row.routine_name,
+                repetition_interval_days: row.repetition_interval_days,
+                total_work_seconds: row.total_work_seconds,
+                occurrence_day_count: row.occurrence_day_count,
+                peak_date: row.peak_date,
+                peak_work_seconds: row.peak_work_seconds,
+            })
+            .collect(),
+    })
+}
 
 #[cfg(test)]
 pub(in crate::adapter::controller) fn build_server_snapshot<R, F>(
@@ -479,6 +510,19 @@ fn occurrence_dto(segment: &ScheduledTaskView) -> ScheduleOccurrenceDto {
     }
 }
 
+pub(in crate::adapter::controller) fn completed_task_row_dto(
+    row: CompletedTaskReportRow,
+) -> CompletedTaskRowDto {
+    CompletedTaskRowDto {
+        task_id: row.task_id.hyphenated().to_string(),
+        task_name: row.task_name,
+        project_name: row.project_name,
+        completed_at_epoch_ms: row.completed_at.timestamp_millis(),
+        actual_work_seconds: row.actual_work_seconds,
+        estimated_work_seconds: row.estimated_work_seconds,
+    }
+}
+
 pub(in crate::adapter::controller) fn calculate_buffer_seconds(
     current_logical_date: NaiveDate,
     remaining_capacity_seconds: i64,
@@ -501,4 +545,37 @@ pub(in crate::adapter::controller) fn calculate_buffer_seconds(
                 scheduled_seconds,
             )
         })
+}
+
+#[cfg(test)]
+mod completed_task_report_tests {
+    use super::completed_task_row_dto;
+    use crate::application::completed_task_report::CompletedTaskReportRow;
+    use chrono::{Local, TimeZone};
+    use uuid::Uuid;
+
+    #[test]
+    fn application_rowの全fieldをdtoへ保持する() {
+        let completed_at = Local
+            .with_ymd_and_hms(2026, 9, 5, 8, 7, 6)
+            .single()
+            .unwrap();
+        let row = CompletedTaskReportRow {
+            task_id: Uuid::from_u128(1),
+            task_name: "task".to_owned(),
+            project_name: "project".to_owned(),
+            completed_at,
+            actual_work_seconds: 3_661,
+            estimated_work_seconds: 3_600,
+        };
+
+        let dto = completed_task_row_dto(row);
+
+        assert_eq!(dto.task_id, Uuid::from_u128(1).hyphenated().to_string());
+        assert_eq!(dto.task_name, "task");
+        assert_eq!(dto.project_name, "project");
+        assert_eq!(dto.completed_at_epoch_ms, completed_at.timestamp_millis());
+        assert_eq!(dto.actual_work_seconds, 3_661);
+        assert_eq!(dto.estimated_work_seconds, 3_600);
+    }
 }

@@ -5,9 +5,10 @@ use super::effect_dispatcher::{
 };
 use crate::client::state::{ClientEffect, ServerFailure};
 use crate::{
-    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, DeferTaskRequest,
-    ListAllTasksRequest, ListTasksRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
+    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 use std::cell::RefCell;
@@ -29,7 +30,7 @@ fn gatewayはopaqueなall_task_cursorを保持する() {
 }
 
 #[test]
-fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
+fn 九effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
     let gateway = FakeGateway::default();
     let request = RecordSessionRequest {
         task_id: "task".to_owned(),
@@ -53,6 +54,16 @@ fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
                     request_id: 11,
                     request: ListTasksRequest {
                         logical_date: "2026-09-05".to_owned(),
+                    },
+                },
+            )
+            .await,
+            execute_effect(
+                &gateway,
+                ClientEffect::ListCompletedTasks {
+                    request_id: 17,
+                    request: ListCompletedTasksRequest {
+                        logical_date: "2026-09-04".to_owned(),
                     },
                 },
             )
@@ -115,6 +126,14 @@ fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
     ));
     assert!(matches!(
         responses[2],
+        Some(ClientResponse::ListCompletedTasks {
+            request_id: 17,
+            ref requested_date,
+            ..
+        }) if requested_date == "2026-09-04"
+    ));
+    assert!(matches!(
+        responses[3],
         Some(ClientResponse::ListAllTasks {
             request_id: 16,
             request: ListAllTasksRequest { ref cursor },
@@ -122,19 +141,19 @@ fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         }) if cursor.as_deref() == Some("opaque")
     ));
     assert!(matches!(
-        responses[3],
+        responses[4],
         Some(ClientResponse::AutoSession { request_id: 12, .. })
     ));
     assert!(matches!(
-        responses[4],
+        responses[5],
         Some(ClientResponse::DeferTask { request_id: 13, .. })
     ));
     assert!(matches!(
-        responses[5],
+        responses[6],
         Some(ClientResponse::RecordSession { request_id: 14, .. })
     ));
     assert!(matches!(
-        responses[6],
+        responses[7],
         Some(ClientResponse::CompleteSession { request_id: 15, .. })
     ));
     assert_eq!(
@@ -142,6 +161,7 @@ fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         [
             "bootstrap",
             "list:2026-09-05",
+            "list_completed:2026-09-04",
             "list_all:Some(\"opaque\")",
             "auto",
             "defer:task",
@@ -153,7 +173,7 @@ fn 七effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
         futures::executor::block_on(execute_effect(&gateway, ClientEffect::None)),
         None
     );
-    assert_eq!(gateway.calls.borrow().len(), 7);
+    assert_eq!(gateway.calls.borrow().len(), 8);
 }
 
 #[test]
@@ -267,6 +287,13 @@ impl WebGateway for BootstrapGateway {
         unreachable!("bootstrap test gateway")
     }
 
+    async fn list_completed_tasks(
+        &self,
+        _request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
+        unreachable!("bootstrap test gateway")
+    }
+
     async fn auto_session(
         &self,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError> {
@@ -323,6 +350,24 @@ impl WebGateway for FakeGateway {
         Ok(Ok(WebSuccess {
             snapshot: snapshot(),
             data: Vec::new(),
+        }))
+    }
+
+    async fn list_completed_tasks(
+        &self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<Result<WebSuccess<CompletedTaskReport>, WebError>, ServerFnError> {
+        self.calls
+            .borrow_mut()
+            .push(format!("list_completed:{}", request.logical_date));
+        Ok(Ok(WebSuccess {
+            snapshot: snapshot(),
+            data: CompletedTaskReport {
+                rows: Vec::new(),
+                total_actual_work_seconds: 0,
+                available_seconds: 0,
+                recorded_percentage: None,
+            },
         }))
     }
 

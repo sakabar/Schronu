@@ -1,7 +1,7 @@
 use super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::effect_dispatcher::ClientResponse;
-use crate::client::state::{ActiveTab, AllTasksStatus, ClientEffect, ListSelection};
-use crate::client::view_state::{store_view_state, StoredListView, ViewState};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientEffect, ListMode, ListSelection};
+use crate::client::view_state::{store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{AllTaskPage, AllTaskRow, ServerSnapshot, SessionTask, WebSuccess};
 use std::cell::RefCell;
@@ -59,7 +59,8 @@ fn reloadは日付別viewと共有検索を復元しall選択とdataは復元し
         &storage,
         &ViewState {
             snapshot: snapshot(1),
-            list: Some(StoredListView {
+            list_mode: ListMode::Scheduled,
+            list: Some(StoredActiveList::Scheduled {
                 logical_date: "2026-09-06".to_owned(),
                 rows: Vec::new(),
             }),

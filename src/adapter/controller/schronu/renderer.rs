@@ -1,4 +1,6 @@
 use crate::{
+    application::completed_task_report::CompletedTaskReport,
+    application::routine_load::RoutineLoadReport,
     application::session_progress::calculate_session_progress,
     entity::task::{ProjectCategory, TaskAttr, TaskTreeError},
 };
@@ -34,6 +36,25 @@ pub(super) struct SpreadsheetTaskRow<'a> {
     pub(super) priority: &'a str,
     pub(super) category: &'a str,
     pub(super) task_name: &'a str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct CompletedTaskReportDisplay {
+    pub(super) report: CompletedTaskReport,
+}
+
+#[cfg(test)]
+impl CompletedTaskReportDisplay {
+    pub(super) fn empty() -> Self {
+        Self {
+            report: CompletedTaskReport {
+                rows: Vec::new(),
+                total_actual_work_seconds: 0,
+                available_seconds: 0,
+                recorded_percentage: None,
+            },
+        }
+    }
 }
 
 pub(super) fn format_spreadsheet_task_row(row: &SpreadsheetTaskRow<'_>) -> String {
@@ -338,9 +359,11 @@ pub(super) enum DisplayModel {
     Snapshot(SnapshotDisplay),
     Tree(TreeDisplay),
     TaskList(TaskListDisplay),
+    CompletedTaskReport(CompletedTaskReportDisplay),
     TaskListMetrics(TaskListMetricsDisplay),
     Calendar(CalendarDisplay),
     Band(BandDisplay),
+    RoutineLoad(RoutineLoadReport),
     Pack(PackDisplay),
     Flatten(FlattenDisplay),
     Focus(FocusDisplay),
@@ -364,8 +387,10 @@ impl DisplayModel {
             Self::Snapshot(_)
             | Self::Tree(_)
             | Self::TaskList(_)
+            | Self::CompletedTaskReport(_)
             | Self::TaskListMetrics(_)
             | Self::Calendar(_)
+            | Self::RoutineLoad(_)
             | Self::Band(_)
             | Self::Pack(_)
             | Self::Flatten(_)
@@ -423,11 +448,15 @@ pub(super) fn render_display_model(
         }
         DisplayModel::Tree(tree) => render_tree_display(writer, tree)?,
         DisplayModel::TaskList(task_list) => render_task_list_display(writer, task_list)?,
+        DisplayModel::CompletedTaskReport(report) => {
+            render_completed_task_report_display(writer, report)?
+        }
         DisplayModel::TaskListMetrics(metrics) => {
             render_task_list_metrics_display(writer, metrics)?
         }
         DisplayModel::Calendar(calendar) => render_calendar_display(writer, calendar)?,
         DisplayModel::Band(band) => render_band_display(writer, band)?,
+        DisplayModel::RoutineLoad(report) => render_routine_load_report(writer, report)?,
         DisplayModel::Pack(pack) => render_pack_display(writer, pack)?,
         DisplayModel::Flatten(flatten) => render_flatten_display(writer, flatten)?,
         DisplayModel::Focus(focus) => render_focus_display(writer, focus)?,
@@ -438,6 +467,185 @@ pub(super) fn render_display_model(
         }
     }
     Ok(())
+}
+
+fn format_elapsed_seconds(seconds: i64) -> String {
+    let seconds = i128::from(seconds);
+    let hours = seconds / 3600;
+    let minutes = seconds.rem_euclid(3600) / 60;
+    let seconds = seconds.rem_euclid(60);
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+fn format_completed_difference(actual: i64, estimated: i64) -> String {
+    let difference = i128::from(actual) - i128::from(estimated);
+    let sign = if difference < 0 { '-' } else { '+' };
+    let magnitude = difference.unsigned_abs();
+    let hours = magnitude / 3600;
+    let minutes = magnitude % 3600 / 60;
+    let seconds = magnitude % 60;
+    format!("{sign}{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+fn truncate_project_name(project_name: &str) -> String {
+    const MAX_WIDTH: usize = 20;
+    const CONTENT_WIDTH: usize = MAX_WIDTH - 1;
+    if UnicodeWidthStr::width(project_name) <= MAX_WIDTH {
+        return project_name.to_string();
+    }
+
+    let mut truncated = String::new();
+    let mut width = 0;
+    for character in project_name.chars() {
+        let character_width = unicode_width::UnicodeWidthChar::width(character).unwrap_or(0);
+        if width + character_width > CONTENT_WIDTH {
+            break;
+        }
+        truncated.push(character);
+        width += character_width;
+    }
+    truncated.push('…');
+    truncated
+}
+
+fn render_completed_task_report_display(
+    writer: &mut dyn SchronuWriter,
+    display: &CompletedTaskReportDisplay,
+) -> Result<(), std::io::Error> {
+    const HEADERS: [&str; 6] = ["完了", "実績", "見積", "差", "Project", "タスク"];
+    let rows = display
+        .report
+        .rows
+        .iter()
+        .map(|row| {
+            [
+                row.completed_at.format("%H:%M").to_string(),
+                format_elapsed_seconds(row.actual_work_seconds),
+                format_elapsed_seconds(row.estimated_work_seconds),
+                format_completed_difference(row.actual_work_seconds, row.estimated_work_seconds),
+                truncate_project_name(&row.project_name),
+                row.task_name.clone(),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let mut widths = HEADERS.map(UnicodeWidthStr::width);
+    for row in &rows {
+        for index in 0..4 {
+            widths[index] = widths[index].max(UnicodeWidthStr::width(row[index].as_str()));
+        }
+        widths[4] = widths[4]
+            .max(UnicodeWidthStr::width(row[4].as_str()))
+            .min(20);
+    }
+
+    let format_row = |row: [&str; 6]| {
+        let pad_left = |value: &str, width: usize| {
+            format!(
+                "{}{value}",
+                " ".repeat(width - UnicodeWidthStr::width(value))
+            )
+        };
+        let pad_right = |value: &str, width: usize| {
+            format!(
+                "{value}{}",
+                " ".repeat(width - UnicodeWidthStr::width(value))
+            )
+        };
+        format!(
+            "{}  {}  {}  {}  {}  {}",
+            pad_left(row[0], widths[0]),
+            pad_left(row[1], widths[1]),
+            pad_left(row[2], widths[2]),
+            pad_left(row[3], widths[3]),
+            pad_right(row[4], widths[4]),
+            row[5],
+        )
+    };
+
+    writer.writeln_newline(&format_row(HEADERS))?;
+    if rows.is_empty() {
+        writer.writeln_newline("完了したタスクはありません。")?;
+    } else {
+        for row in &rows {
+            writer.writeln_newline(&format_row(row.each_ref().map(String::as_str)))?;
+        }
+    }
+    let percentage = display
+        .report
+        .recorded_percentage
+        .map_or_else(|| "--".to_string(), |value| format!("{value}%"));
+    writer.writeln_newline(&format!(
+        "実績合計: {}  利用可能: {}  記録率: {percentage}",
+        format_elapsed_seconds(display.report.total_actual_work_seconds),
+        format_elapsed_seconds(display.report.available_seconds),
+    ))
+}
+
+fn render_routine_load_report(
+    writer: &mut dyn SchronuWriter,
+    report: &RoutineLoadReport,
+) -> Result<(), std::io::Error> {
+    writer.writeln_newline(&format!(
+        "今日から7日後までの繰返負荷 ({}〜{})",
+        report.start_date.format("%Y-%m-%d"),
+        report.end_date.format("%Y-%m-%d")
+    ))?;
+    let headers = [
+        "間隔",
+        "8日合計",
+        "発生日数",
+        "最大日",
+        "プロジェクト / 繰返",
+    ];
+    let rows = report
+        .rows
+        .iter()
+        .map(|row| {
+            [
+                format!("{}日", row.repetition_interval_days),
+                format_hours_minutes(row.total_work_seconds),
+                format!("{}日", row.occurrence_day_count),
+                format!(
+                    "{} {}",
+                    row.peak_date.format("%m/%d"),
+                    format_hours_minutes(row.peak_work_seconds)
+                ),
+                format!("{} / {}", row.project_name, row.routine_name),
+            ]
+        })
+        .collect::<Vec<_>>();
+    let widths = std::array::from_fn(|index| {
+        rows.iter()
+            .map(|row| UnicodeWidthStr::width(row[index].as_str()))
+            .chain(std::iter::once(UnicodeWidthStr::width(headers[index])))
+            .max()
+            .expect("header width is always present")
+    });
+    writer.writeln_newline(&format_routine_load_columns(headers, widths))?;
+    for row in rows {
+        writer.writeln_newline(&format_routine_load_columns(
+            row.each_ref().map(String::as_str),
+            widths,
+        ))?;
+    }
+    Ok(())
+}
+
+fn format_routine_load_columns(cells: [&str; 5], widths: [usize; 4]) -> String {
+    let fixed_columns = std::array::from_fn::<_, 4, _>(|index| {
+        let value = cells[index];
+        format!(
+            "{}{}",
+            " ".repeat(widths[index].saturating_sub(UnicodeWidthStr::width(value))),
+            value
+        )
+    });
+    format!("{}  {}", fixed_columns.join("  "), cells[4])
+}
+
+fn format_hours_minutes(seconds: i64) -> String {
+    let minutes = seconds.max(0) / 60;
+    format!("{:02}:{:02}", minutes / 60, minutes % 60)
 }
 
 fn render_task_list_display(

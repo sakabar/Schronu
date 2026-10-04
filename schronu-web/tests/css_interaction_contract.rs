@@ -131,6 +131,96 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
 }
 
 #[test]
+fn routine_load_table_scrolls_only_the_subject_column() {
+    let wrapper = block_body(MAIN_CSS, ".routine-load-table-wrap");
+    assert!(wrapper.contains("overflow-x: visible;"));
+    assert!(!wrapper.contains("overflow-x: auto;"));
+    assert!(wrapper.contains("max-width: 100%;"));
+
+    let table = block_body(MAIN_CSS, ".routine-load-table {");
+    assert!(table.contains("min-width: 0;"));
+    assert!(table.contains("width: 100%;"));
+    assert!(table.contains("table-layout: fixed;"));
+
+    for (selector, width) in [
+        (".routine-load-interval", "6rem"),
+        (".routine-load-total", "6.5rem"),
+        (".routine-load-occurrences", "6.5rem"),
+        (".routine-load-peak", "8.5rem"),
+    ] {
+        let column = block_body(MAIN_CSS, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(
+            column.contains(&format!("min-width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(
+            column.contains("text-align: right;"),
+            "{selector}: {column}"
+        );
+    }
+
+    let subject = block_body(MAIN_CSS, ".routine-load-subject");
+    assert!(subject.contains("min-width: 0;"));
+    assert!(subject.contains("overflow: hidden;"));
+    assert!(subject.contains("text-align: left;"));
+
+    let subject_scroll = block_body(MAIN_CSS, ".routine-load-subject-scroll");
+    for contract in [
+        "min-width: 0;",
+        "width: 100%;",
+        "overflow-x: auto;",
+        "overflow-y: hidden;",
+        "overscroll-behavior-inline: contain;",
+        "white-space: nowrap;",
+        "scrollbar-width: thin;",
+        "touch-action: pan-x pan-y pinch-zoom;",
+    ] {
+        assert!(
+            subject_scroll.contains(contract),
+            "missing {contract}: {subject_scroll}"
+        );
+    }
+    let subject_focus = block_body(MAIN_CSS, ".routine-load-subject-scroll:focus-visible");
+    assert!(subject_focus.contains("outline:"));
+
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    for (selector, width) in [
+        (".routine-load-interval", "11%"),
+        (".routine-load-total", "15%"),
+        (".routine-load-occurrences", "14%"),
+        (".routine-load-peak", "18%"),
+        (".routine-load-subject", "42%"),
+    ] {
+        let column = block_body(narrow, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(column.contains("min-width: 0;"), "{selector}: {column}");
+        assert!(
+            !column.contains("overflow-x: auto;"),
+            "{selector}: {column}"
+        );
+    }
+    let narrow_cells = block_body(
+        narrow,
+        ".routine-load-table th,\n    .routine-load-table td",
+    );
+    assert!(narrow_cells.contains("white-space: normal;"));
+    assert!(narrow_cells.contains("overflow-wrap: anywhere;"));
+    assert!(!MAIN_CSS.contains(".routine-load-weekly"));
+
+    let peak_column = block_body(MAIN_CSS, ".routine-load-table .routine-load-peak {");
+    assert!(!peak_column.contains("color:"));
+    let peak_value = block_body(MAIN_CSS, ".routine-load-table tbody .routine-load-peak {");
+    assert!(peak_value.contains("color: var(--red);"));
+}
+
+#[test]
 fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
     assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
@@ -275,6 +365,82 @@ fn session_progressは見積も100_percent位置に常時表示の境界線を�
     assert!(marker.contains("background: var(--ink);"));
     assert!(marker.contains("box-shadow: 0 0 0 1px var(--surface);"));
     assert!(marker.contains("pointer-events: none;"));
+}
+
+#[test]
+fn 完了表は狭幅へ収まりtaskとprojectのcellだけが横scrollする() {
+    let list_screen = block_body(MAIN_CSS, ".list-screen");
+    assert!(list_screen.contains("display: grid;"));
+    assert!(list_screen.contains("min-width: 0;"));
+
+    let mode_control = block_body(MAIN_CSS, ".list-mode-control");
+    assert!(mode_control.contains("grid-template-columns: repeat(2, minmax(0, 1fr));"));
+
+    let scroll = block_body(MAIN_CSS, ".completed-task-table-scroll");
+    assert!(scroll.contains("width: 100%;"));
+    assert!(scroll.contains("min-width: 0;"));
+    assert!(scroll.contains("overflow-x: visible;"));
+    assert!(!scroll.contains("overflow-x: auto;"));
+
+    let table = block_body(MAIN_CSS, ".completed-task-table {");
+    assert!(table.contains("width: 100%;"));
+    assert!(table.contains("min-width: 0;"));
+    assert!(table.contains("table-layout: fixed;"));
+
+    let subject = block_body(MAIN_CSS, ".completed-task-table .completed-subject");
+    assert!(subject.contains("min-width: 0;"));
+    assert!(subject.contains("overflow: hidden;"));
+    assert!(subject.contains("text-align: left;"));
+
+    let subject_scroll = block_body(MAIN_CSS, ".completed-subject-scroll");
+    for contract in [
+        "min-width: 0;",
+        "width: 100%;",
+        "overflow-x: auto;",
+        "overflow-y: hidden;",
+        "overscroll-behavior-inline: contain;",
+        "white-space: nowrap;",
+        "scrollbar-width: thin;",
+        "touch-action: pan-x pan-y pinch-zoom;",
+    ] {
+        assert!(
+            subject_scroll.contains(contract),
+            "missing {contract}: {subject_scroll}"
+        );
+    }
+    let subject_focus = block_body(MAIN_CSS, ".completed-subject-scroll:focus-visible");
+    assert!(subject_focus.contains("outline:"));
+
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 46rem)");
+    for (selector, width) in [
+        (".completed-time", "18%"),
+        (".completed-actual", "25%"),
+        (".completed-difference", "28%"),
+        (".completed-subject", "29%"),
+    ] {
+        let column = block_body(narrow, selector);
+        assert!(
+            column.contains(&format!("width: {width};")),
+            "{selector}: {column}"
+        );
+        assert!(column.contains("min-width: 0;"), "{selector}: {column}");
+    }
+    let narrow_cells = block_body(
+        narrow,
+        ".completed-task-table th,\n    .completed-task-table td",
+    );
+    assert!(narrow_cells.contains("padding: 0.55rem 0.2rem;"));
+    assert!(narrow_cells.contains("font-size: 0.7rem;"));
+
+    let summary = block_body(MAIN_CSS, ".completed-report-summary");
+    assert!(summary.contains("display: grid;"));
+    assert!(summary.contains("width: 100%;"));
+    assert!(summary.contains("min-width: 0;"));
+    assert!(summary.contains("repeat(auto-fit"));
+    assert!(summary.contains("minmax(min(100%,"));
+
+    let summary_item = block_body(MAIN_CSS, ".completed-report-summary-item");
+    assert!(summary_item.contains("min-width: 0;"));
 }
 
 fn block_body<'a>(source: &'a str, header: &str) -> &'a str {

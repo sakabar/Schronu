@@ -30,11 +30,13 @@ pub(super) enum CommandKind {
     Root,
     Leaves,
     ShowAll,
+    Completed,
     Tail,
     Today,
     NonRepetitive,
     Calendar,
     Band,
+    RoutineLoad,
     Focus,
     Pick,
     Open,
@@ -138,6 +140,9 @@ pub(super) enum Command {
     },
     ShowAll {
         pattern: Option<String>,
+    },
+    Completed {
+        date: Option<String>,
     },
     Backup {
         snapshot_directory: PathBuf,
@@ -264,6 +269,7 @@ impl Command {
             Self::TuckAway => CommandKind::TuckAway,
             Self::Defer { .. } => CommandKind::Defer,
             Self::ShowAll { .. } => CommandKind::ShowAll,
+            Self::Completed { .. } => CommandKind::Completed,
             Self::Backup { .. } => CommandKind::Backup,
             Self::BackupVerify { .. } => CommandKind::BackupVerify,
             Self::Restore { .. } => CommandKind::Restore,
@@ -594,6 +600,9 @@ pub(super) fn parse_command_tokens(
         CommandKind::ShowAll => Ok(Command::ShowAll {
             pattern: arguments.first().cloned(),
         }),
+        CommandKind::Completed => Ok(Command::Completed {
+            date: arguments.first().cloned(),
+        }),
         CommandKind::Backup => Ok(Command::Backup {
             snapshot_directory: PathBuf::from(&arguments[0]),
         }),
@@ -907,6 +916,7 @@ fn parse_action(
         | CommandKind::NonRepetitive
         | CommandKind::Calendar
         | CommandKind::Band
+        | CommandKind::RoutineLoad
         | CommandKind::Open
         | CommandKind::Obsidian
         | CommandKind::Unfocus
@@ -923,6 +933,7 @@ fn parse_action(
         },
         CommandKind::Noop
         | CommandKind::ShowAll
+        | CommandKind::Completed
         | CommandKind::Focus
         | CommandKind::Estimate
         | CommandKind::Arrange
@@ -1040,6 +1051,9 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
             CommandDefinition::new(Kind::Leaves, "葉", "葉", 0, Some(0))
         }
         "全" | "all" => CommandDefinition::new(Kind::ShowAll, "全", "全 [pattern]", 0, Some(1)),
+        "済" | "completed" => {
+            CommandDefinition::new(Kind::Completed, "済", "済 [日付]", 0, Some(1))
+        }
         "尾" => CommandDefinition::new(Kind::Tail, "尾", "尾 [pattern]", 0, Some(1)),
         "今" | "today" => CommandDefinition::new(Kind::Today, "今", "今", 0, Some(0)),
         "単" | "non_repetitive" => {
@@ -1047,6 +1061,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         }
         "暦" | "cal" => CommandDefinition::new(Kind::Calendar, "暦", "暦", 0, Some(0)),
         "帯" | "band" => CommandDefinition::new(Kind::Band, "帯", "帯", 0, Some(0)),
+        "荷" | "routine-load" => CommandDefinition::new(Kind::RoutineLoad, "荷", "荷", 0, Some(0)),
         "見" | "focus" | "fc" => {
             CommandDefinition::new(Kind::Focus, "見", "見 <task_id>", 1, None)
         }
@@ -1156,10 +1171,10 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
 #[cfg(test)]
 pub(super) fn representative_valid_commands() -> Vec<Command> {
     let names = [
-        "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "尾", "今", "単",
-        "暦", "帯", "見", "選", "開", "計", "黒", "外", "親", "子", "深", "上", "下", "割", "待",
-        "〆", "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押", "空", "集",
-        "終", "高", "低", "backup", "検証",
+        "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "済", "尾", "今",
+        "単", "暦", "帯", "荷", "見", "選", "開", "計", "黒", "外", "親", "子", "深", "上", "下",
+        "割", "待", "〆", "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押",
+        "空", "集", "終", "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

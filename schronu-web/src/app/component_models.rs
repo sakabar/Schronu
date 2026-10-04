@@ -2,19 +2,25 @@ use super::carry_lock_view::CarryLockViewModel;
 use super::component_runtime::project_date_button_models;
 use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListSelection, Outcome};
+use crate::client::state::{
+    ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection, Outcome,
+};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
 };
-use crate::BandDay;
+use crate::{BandDay, CompletedTaskReport, RoutineLoadReport};
 
 pub(crate) struct BrowserPageModel {
     pub active_tab: ActiveTab,
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub completed_report: Option<CompletedTaskReport>,
+    pub list_mode: ListMode,
+    pub selected_logical_date: Option<String>,
     pub band_rows: Vec<BandDay>,
+    pub routine_load_report: Option<RoutineLoadReport>,
     pub band_observed_at_epoch_ms: Option<i64>,
     pub band_loading: bool,
     pub band_error: Option<String>,
@@ -59,15 +65,21 @@ impl BrowserPageModel {
                     (projection.rows, projection.has_more)
                 })
                 .unwrap_or_default()
-        } else {
+        } else if state.has_scheduled_list() {
             (project_list_rows_for_browser(state), false)
+        } else {
+            (Vec::new(), false)
         };
         Self {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),
             rows,
+            completed_report: project_active_completed_report(state),
+            list_mode: state.list_mode(),
+            selected_logical_date: state.selected_logical_date().map(str::to_owned),
             band_rows: state.band_rows().to_vec(),
+            routine_load_report: state.routine_load_report().cloned(),
             band_observed_at_epoch_ms: state.band_observed_at_epoch_ms(),
             band_loading: state.band_loading(),
             band_error: state.band_error().map(str::to_owned),
@@ -94,6 +106,13 @@ impl BrowserPageModel {
             carry_lock: CarryLockViewModel::new(state.carry_lock_mode(), monotonic_now_ms),
         }
     }
+}
+
+pub(super) fn project_active_completed_report(state: &ClientState) -> Option<CompletedTaskReport> {
+    state
+        .has_completed_list()
+        .then(|| state.completed_report().cloned())
+        .flatten()
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]

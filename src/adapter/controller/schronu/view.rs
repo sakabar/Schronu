@@ -24,6 +24,7 @@ use crate::application::daily_capacity::{
     DailyLoadDayInput,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
+use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
     get_schedule, scheduled_end_by_occurrence, scheduled_logical_dates, ScheduleOccurrenceKey,
 };
@@ -837,6 +838,17 @@ pub(super) fn build_show_all_tasks_display_with_config(
         })
         .transpose()?;
     let scheduled_tasks = get_schedule(task_repository)?;
+    let is_routine_load_func = pattern_opt
+        .as_ref()
+        .is_some_and(|pattern| pattern == "荷" || pattern == "routine-load");
+    if is_routine_load_func {
+        let start_date = try_logical_date(task_repository.get_last_synced_time())?;
+        return Ok(DisplayModel::RoutineLoad(build_routine_load_report(
+            task_repository,
+            &scheduled_tasks,
+            start_date,
+        )?));
+    }
     let scheduled_logical_dates = scheduled_logical_dates(&scheduled_tasks)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;

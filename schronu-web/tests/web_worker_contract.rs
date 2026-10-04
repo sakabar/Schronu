@@ -1,8 +1,9 @@
 use schronu_web::{
-    web_error_codes, AllTaskPage, BandDay, CompleteSessionRequest, CompleteSessionResponse,
-    DeferTaskRequest, ListAllTasksRequest, ListTasksRequest, RecordSessionRequest,
-    RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError,
-    WebOperations, WebSuccess, WebWorkerHandle,
+    web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
+    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
+    ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    RoutineLoadReport, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
+    WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -13,7 +14,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは8操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは9操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -54,10 +55,21 @@ fn workerは8操作を送信順に専用threadで実行してpayloadを保持す
             })
         );
         assert_eq!(
+            worker
+                .list_completed_tasks(ListCompletedTasksRequest {
+                    logical_date: "2026-09-04".to_owned(),
+                })
+                .await,
+            Ok(WebSuccess {
+                snapshot: snapshot(9),
+                data: completed_report(),
+            })
+        );
+        assert_eq!(
             worker.load_band().await,
             Ok(WebSuccess {
                 snapshot: snapshot(8),
-                data: Vec::new(),
+                data: load_data(),
             })
         );
         assert_eq!(
@@ -118,6 +130,7 @@ fn workerは8操作を送信順に専用threadで実行してpayloadを保持す
         &[
             Event::Bootstrap,
             Event::List("2026-09-05".to_owned()),
+            Event::ListCompleted("2026-09-04".to_owned()),
             Event::LoadBand,
             Event::ListAll(Some("cursor".to_owned())),
             Event::Auto,
@@ -174,6 +187,7 @@ enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
     List(String),
+    ListCompleted(String),
     ListAll(Option<String>),
     LoadBand,
     Auto,
@@ -201,6 +215,13 @@ impl WebOperations for StackWorkloadOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_completed_tasks(
+        &mut self,
+        _request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         unreachable!()
     }
 
@@ -246,6 +267,13 @@ impl WebOperations for PanickingOperations {
         &mut self,
         _request: ListTasksRequest,
     ) -> Result<WebSuccess<Vec<ScheduledTaskRow>>, WebError> {
+        unreachable!()
+    }
+
+    fn list_completed_tasks(
+        &mut self,
+        _request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
         unreachable!()
     }
 
@@ -302,6 +330,20 @@ impl WebOperations for RecordingOperations {
         })
     }
 
+    fn list_completed_tasks(
+        &mut self,
+        request: ListCompletedTasksRequest,
+    ) -> Result<WebSuccess<CompletedTaskReport>, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::ListCompleted(request.logical_date));
+        Ok(WebSuccess {
+            snapshot: snapshot(9),
+            data: completed_report(),
+        })
+    }
+
     fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         self.events.lock().unwrap().push(Event::Auto);
         Ok(WebSuccess {
@@ -327,11 +369,11 @@ impl WebOperations for RecordingOperations {
         })
     }
 
-    fn load_band(&mut self) -> Result<WebSuccess<Vec<BandDay>>, WebError> {
+    fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
         self.events.lock().unwrap().push(Event::LoadBand);
         Ok(WebSuccess {
             snapshot: snapshot(8),
-            data: Vec::new(),
+            data: load_data(),
         })
     }
 
@@ -383,12 +425,32 @@ fn snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
     }
 }
 
+fn load_data() -> LoadData {
+    LoadData {
+        band_days: Vec::new(),
+        routine_load: RoutineLoadReport {
+            start_date: "2026-09-05".to_owned(),
+            end_date: "2026-09-12".to_owned(),
+            rows: Vec::new(),
+        },
+    }
+}
+
 fn task() -> SessionTask {
     SessionTask {
         task_id: "task-1".to_owned(),
         task_name: "task".to_owned(),
         estimated_work_seconds: 900,
         actual_work_seconds: 456,
+    }
+}
+
+fn completed_report() -> CompletedTaskReport {
+    CompletedTaskReport {
+        rows: Vec::new(),
+        total_actual_work_seconds: 3_600,
+        available_seconds: 28_800,
+        recorded_percentage: Some(13),
     }
 }
 

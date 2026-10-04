@@ -1,19 +1,25 @@
 use super::session_state::keeps_safety_marker;
 use super::*;
-use crate::client::date_buttons::logical_date_buttons;
-use crate::{DeferPlan, DeferTaskRequest, ListTasksRequest, SessionTask, WebSuccess};
+use crate::client::date_buttons::logical_date_buttons_for_mode;
+use crate::{
+    CompletedTaskReport, DeferPlan, DeferTaskRequest, ListCompletedTasksRequest, ListTasksRequest,
+    SessionTask, WebSuccess,
+};
 
 pub(super) struct ReadState {
     pub(super) snapshot: Option<ServerSnapshot>,
     pub(super) date_buttons: Vec<LogicalDateButton>,
     pub(super) selected_logical_date: Option<String>,
+    pub(super) list_mode: ListMode,
     pub(super) scheduled_rows: Vec<ScheduledTaskRow>,
+    pub(super) completed_report: Option<CompletedTaskReport>,
     pub(super) has_list: bool,
     pub(super) auto_session_empty: bool,
     pub(super) auto_session_in_flight: bool,
     pub(super) next_request_id: u64,
     pub(super) latest_bootstrap_request_id: Option<u64>,
     pub(super) latest_list_request_id: Option<u64>,
+    pub(super) latest_completed_list_request_id: Option<u64>,
     pub(super) latest_auto_request_id: Option<u64>,
     pub(super) pending_defer_task: Option<(u64, DeferTaskRequest)>,
 }
@@ -24,13 +30,16 @@ impl ReadState {
             snapshot: None,
             date_buttons: Vec::new(),
             selected_logical_date: None,
+            list_mode: ListMode::Scheduled,
             scheduled_rows: Vec::new(),
+            completed_report: None,
             has_list: false,
             auto_session_empty: false,
             auto_session_in_flight: false,
             next_request_id: 1,
             latest_bootstrap_request_id: None,
             latest_list_request_id: None,
+            latest_completed_list_request_id: None,
             latest_auto_request_id: None,
             pending_defer_task: None,
         }
@@ -57,6 +66,54 @@ impl ClientState {
                 logical_date: logical_date.to_owned(),
             },
         }
+    }
+
+    pub fn request_completed_list(&mut self, logical_date: &str) -> ClientEffect {
+        let Some(request_id) = self.allocate_read_request_id() else {
+            return ClientEffect::None;
+        };
+        self.read.latest_completed_list_request_id = Some(request_id);
+        ClientEffect::ListCompletedTasks {
+            request_id,
+            request: ListCompletedTasksRequest {
+                logical_date: logical_date.to_owned(),
+            },
+        }
+    }
+
+    pub fn request_active_list(&mut self, logical_date: &str) -> ClientEffect {
+        match self.read.list_mode {
+            ListMode::Scheduled => self.request_list(logical_date),
+            ListMode::Completed => self.request_completed_list(logical_date),
+        }
+    }
+
+    pub fn switch_list_mode(&mut self, mode: ListMode) -> ClientEffect {
+        if self.read.list_mode == mode {
+            return ClientEffect::None;
+        }
+        let from_all = self.all_tasks.selection == ListSelection::All;
+        self.read.list_mode = mode;
+        self.all_tasks.selection = ListSelection::Date;
+        if let Some(snapshot) = self.read.snapshot.as_ref() {
+            self.read.date_buttons =
+                logical_date_buttons_for_mode(&snapshot.logical_date, mode).unwrap_or_default();
+        }
+        let logical_date = if from_all && mode == ListMode::Completed {
+            self.read
+                .snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.logical_date.clone())
+        } else {
+            self.read.selected_logical_date.clone().or_else(|| {
+                self.read
+                    .snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.logical_date.clone())
+            })
+        };
+        self.read.has_list = false;
+        logical_date.map_or(ClientEffect::None, |date| self.request_active_list(&date))
     }
 
     pub fn request_auto_session(&mut self) -> ClientEffect {
@@ -147,7 +204,7 @@ impl ClientState {
                     self.sessions.mutation_globally_blocked = true;
                 }
                 if defer_plan_changed && !self.sessions.mutation_globally_blocked {
-                    self.request_list(&selected_logical_date)
+                    self.request_active_list(&selected_logical_date)
                 } else {
                     ClientEffect::None
                 }
@@ -182,11 +239,11 @@ impl ClientState {
                     "更新しました。",
                 );
                 if let Some(logical_date) = cached_logical_date {
-                    return self.request_list(&logical_date);
+                    return self.request_active_list(&logical_date);
                 }
                 if self.refresh_list_after_bootstrap {
                     self.refresh_list_after_bootstrap = false;
-                    return self.request_list(&current_logical_date);
+                    return self.request_active_list(&current_logical_date);
                 }
                 self.request_deferred_load_band()
             }
@@ -230,6 +287,10 @@ impl ClientState {
             self.record_stale_response(invocation, result.is_ok());
             return ClientEffect::None;
         }
+        if self.read.list_mode != ListMode::Scheduled {
+            self.record_stale_response(invocation, result.is_ok());
+            return ClientEffect::None;
+        }
         match result {
             Ok(success) => {
                 let same_logical_date =
@@ -253,6 +314,71 @@ impl ClientState {
                     self.record_stale_response(invocation, true);
                 } else {
                     self.record_server(invocation, Outcome::Success, "一覧を更新しました。");
+                }
+            }
+            Err(error) => self.record_server_failure(invocation, error),
+        }
+        self.request_deferred_load_band()
+    }
+
+    pub fn apply_completed_list_result(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
+    ) -> ClientEffect {
+        self.apply_completed_list_result_with_policy(request_id, requested_date, result, false)
+    }
+
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    pub(crate) fn apply_background_completed_list_result(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
+    ) -> ClientEffect {
+        self.apply_completed_list_result_with_policy(request_id, requested_date, result, true)
+    }
+
+    fn apply_completed_list_result_with_policy(
+        &mut self,
+        request_id: u64,
+        requested_date: &str,
+        result: Result<WebSuccess<CompletedTaskReport>, ServerFailure>,
+        preserve_across_logical_date_change: bool,
+    ) -> ClientEffect {
+        let invocation = ServerActionInvocation::ListCompletedTasks(ListCompletedTasksRequest {
+            logical_date: requested_date.to_owned(),
+        });
+        if !consume_latest(&mut self.read.latest_completed_list_request_id, request_id)
+            || self.read.list_mode != ListMode::Completed
+        {
+            self.record_stale_response(invocation, result.is_ok());
+            return ClientEffect::None;
+        }
+        match result {
+            Ok(success) => {
+                let same_logical_date =
+                    self.read.snapshot.as_ref().is_some_and(|current| {
+                        current.logical_date == success.snapshot.logical_date
+                    });
+                let snapshot_result = if preserve_across_logical_date_change {
+                    self.apply_snapshot_metadata(success.snapshot)
+                } else {
+                    self.apply_snapshot(success.snapshot)
+                };
+                if (preserve_across_logical_date_change && snapshot_result.is_some())
+                    || snapshot_result == Some(false)
+                    || (snapshot_result.is_none() && same_logical_date)
+                {
+                    self.read.selected_logical_date = Some(requested_date.to_owned());
+                    self.read.completed_report = Some(success.data);
+                    self.read.has_list = true;
+                }
+                if snapshot_result.is_none() {
+                    self.record_stale_response(invocation, true);
+                } else {
+                    self.record_server(invocation, Outcome::Success, "完了一覧を更新しました。");
                 }
             }
             Err(error) => self.record_server_failure(invocation, error),
@@ -294,6 +420,7 @@ impl ClientState {
         if changed {
             self.read.selected_logical_date = None;
             self.read.scheduled_rows.clear();
+            self.read.completed_report = None;
             self.read.has_list = false;
         }
         Some(changed)
@@ -315,7 +442,7 @@ impl ClientState {
                 .as_ref()
                 .map(|snapshot| snapshot.logical_date.clone())
         });
-        logical_date.map_or(ClientEffect::None, |date| self.request_list(&date))
+        logical_date.map_or(ClientEffect::None, |date| self.request_active_list(&date))
     }
 
     pub(super) fn apply_snapshot_metadata(&mut self, snapshot: ServerSnapshot) -> Option<bool> {
@@ -334,7 +461,8 @@ impl ClientState {
             .is_none_or(|current| current.logical_date != snapshot.logical_date);
         if changed {
             self.read.date_buttons =
-                logical_date_buttons(&snapshot.logical_date).unwrap_or_default();
+                logical_date_buttons_for_mode(&snapshot.logical_date, self.read.list_mode)
+                    .unwrap_or_default();
         }
         self.read.snapshot = Some(snapshot);
         Some(changed)

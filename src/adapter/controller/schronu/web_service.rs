@@ -13,12 +13,14 @@ mod all_tasks_performance_tests;
 
 pub use error::{WebReadError, WebReadOverflowError};
 pub use model::{
-    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, DeadlineDisplayKind, DeferModeDto,
-    DeferPlanDto, ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto, ServerSnapshot,
-    SessionTaskDto, TaskDisplayKind, WebSuccess,
+    AllTaskPageDto, AllTaskRowDto, BandDayDto, BandDurationsDto, CompletedTaskReportDto,
+    CompletedTaskRowDto, DeadlineDisplayKind, DeferModeDto, DeferPlanDto, LoadDataDto,
+    RoutineLoadReportDto, RoutineLoadRowDto, ScheduleOccurrenceDto, ScheduledTaskDto,
+    ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
     build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
+    completed_task_row_dto,
 };
 #[cfg(test)]
 pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
@@ -31,6 +33,7 @@ use crate::adapter::gateway::free_time_manager::FreeTimeManager;
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
+use crate::application::completed_task_report::build_completed_task_report;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -97,16 +100,22 @@ impl WebService {
     pub fn load_band_at(
         &mut self,
         operation_now: DateTime<Local>,
-    ) -> Result<WebSuccess<Vec<BandDayDto>>, WebReadError> {
+    ) -> Result<WebSuccess<LoadDataDto>, WebReadError> {
         self.run_at(operation_now, |repository, free_time_manager, offset| {
             let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
-            let data = build_band_days(
+            let band_days = build_band_days(
                 repository,
                 free_time_manager,
                 &schedule,
                 operation_now,
                 offset,
             )?;
+            let routine_load =
+                read_model::build_routine_load_report_dto(repository, &schedule, operation_now)?;
+            let data = LoadDataDto {
+                band_days,
+                routine_load,
+            };
             let snapshot = build_server_snapshot_from_schedule(
                 repository,
                 free_time_manager,
@@ -145,6 +154,35 @@ impl WebService {
                 free_time_manager,
                 operation_now,
                 &schedule,
+                offset,
+            )?;
+            Ok(WebSuccess { snapshot, data })
+        })
+    }
+
+    pub fn list_completed_tasks_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        logical_date: NaiveDate,
+    ) -> Result<WebSuccess<CompletedTaskReportDto>, WebReadError> {
+        self.run_at(operation_now, |repository, free_time_manager, offset| {
+            let report =
+                build_completed_task_report(repository, free_time_manager, logical_date, offset)
+                    .map_err(WebReadCoreError::Application)?;
+            let data = CompletedTaskReportDto {
+                rows: report
+                    .rows
+                    .into_iter()
+                    .map(completed_task_row_dto)
+                    .collect(),
+                total_actual_work_seconds: report.total_actual_work_seconds,
+                available_seconds: report.available_seconds,
+                recorded_percentage: report.recorded_percentage,
+            };
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
                 offset,
             )?;
             Ok(WebSuccess { snapshot, data })
