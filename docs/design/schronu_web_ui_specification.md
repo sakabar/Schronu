@@ -135,6 +135,8 @@ ScheduledTaskRow {
 
 実task行は`Actual`、`task_id: Some`、`defer_plan: Some`を持つ。繰り返し予測行は`Projected`、`task_id: None`、`defer_plan: None`とし、`occurrence_key`は繰り返し元UUIDと基準deadline epoch millisecondsから安定生成する。
 
+繰り返し予測は28日窓内にある同じ繰り返し元の全実体回を起点に展開する。正確なdeadlineが実体回または別起点の予測回と一致する場合は重複生成せず、実体回を優先する。
+
 完了一覧の1行はtaskの完了時点の全情報を次の型で返す。
 
 ```text

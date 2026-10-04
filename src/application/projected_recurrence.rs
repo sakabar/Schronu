@@ -144,9 +144,29 @@ fn append_projected_occurrences(
         .map_err(ApplicationError::TaskTree)?;
     persisted_occurrences
         .sort_by_key(|(deadline, child)| (*deadline, child.get_id().unwrap_or(Uuid::nil())));
-    let Some((mut anchor, _frontier)) = persisted_occurrences.pop() else {
+    if persisted_occurrences.is_empty() {
         return Ok(());
-    };
+    }
+    let persisted_deadlines = persisted_occurrences
+        .iter()
+        .map(|(deadline, _)| *deadline)
+        .collect::<HashSet<_>>();
+    let mut anchors = Vec::new();
+    let mut fallback_anchor = None;
+    for (deadline, _) in &persisted_occurrences {
+        let logical_date = try_logical_date(*deadline)?;
+        if logical_date >= horizon_start && logical_date < horizon_end {
+            anchors.push(*deadline);
+        } else if logical_date < horizon_start {
+            fallback_anchor = Some(*deadline);
+        }
+    }
+    if anchors.is_empty() {
+        anchors.extend(fallback_anchor);
+    }
+    if anchors.is_empty() {
+        return Ok(());
+    }
 
     let repetition_start_time = parent
         .get_repetition_start_time_opt()
@@ -192,107 +212,114 @@ fn append_projected_occurrences(
             days_in_advance,
         )
     };
-    let mut occurrence = next_occurrence(anchor, interval_days)?;
-    let first_occurrence_date = try_logical_date(occurrence.deadline_time)?;
-    if first_occurrence_date < horizon_start {
-        let projection_range_error = || ApplicationError::LogicalDateOutOfRange {
-            operation: "repetition_projection_horizon",
-            datetime: anchor,
-        };
-        let distance_days = (horizon_start - first_occurrence_date).num_days();
-        let skipped_intervals = distance_days
-            .checked_add(
-                interval_days
-                    .checked_sub(1)
-                    .ok_or_else(projection_range_error)?,
-            )
-            .and_then(|days| days.checked_div(interval_days))
-            .ok_or_else(projection_range_error)?;
-        let interval_count =
-            skipped_intervals
-                .checked_add(1)
-                .ok_or(ApplicationError::LogicalDateOutOfRange {
-                    operation: "repetition_projection_horizon",
-                    datetime: anchor,
-                })?;
-        let jump_days = interval_days.checked_mul(interval_count).ok_or(
-            ApplicationError::LogicalDateOutOfRange {
+    let mut generated_deadlines = HashSet::new();
+    for mut anchor in anchors {
+        let mut occurrence = next_occurrence(anchor, interval_days)?;
+        let first_occurrence_date = try_logical_date(occurrence.deadline_time)?;
+        if first_occurrence_date < horizon_start {
+            let projection_range_error = || ApplicationError::LogicalDateOutOfRange {
                 operation: "repetition_projection_horizon",
                 datetime: anchor,
-            },
-        )?;
-        occurrence = next_occurrence(anchor, jump_days)?;
-    }
-
-    loop {
-        anchor = occurrence.deadline_time;
-        let occurrence_date = try_logical_date(occurrence.deadline_time)?;
-        if occurrence_date >= horizon_end {
-            break;
+            };
+            let distance_days = (horizon_start - first_occurrence_date).num_days();
+            let skipped_intervals = distance_days
+                .checked_add(
+                    interval_days
+                        .checked_sub(1)
+                        .ok_or_else(projection_range_error)?,
+                )
+                .and_then(|days| days.checked_div(interval_days))
+                .ok_or_else(projection_range_error)?;
+            let interval_count = skipped_intervals.checked_add(1).ok_or(
+                ApplicationError::LogicalDateOutOfRange {
+                    operation: "repetition_projection_horizon",
+                    datetime: anchor,
+                },
+            )?;
+            let jump_days = interval_days.checked_mul(interval_count).ok_or(
+                ApplicationError::LogicalDateOutOfRange {
+                    operation: "repetition_projection_horizon",
+                    datetime: anchor,
+                },
+            )?;
+            occurrence = next_occurrence(anchor, jump_days)?;
         }
 
-        let projected_internal_id = id_allocator.allocate()?;
-        let projected = TaskHandle::with_identity(
-            &format!(
-                "{}({}/{})",
-                name,
-                occurrence.deadline_time.month(),
-                occurrence.deadline_time.day()
-            ),
-            projected_internal_id,
-            last_synced_time,
-        )
-        .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_start_time(occurrence.start_time)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_deadline_time_opt(Some(occurrence.deadline_time))
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_estimated_work_seconds(estimate)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_priority(priority)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_atomic(atomic)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_fixed_start(fixed_start)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .set_project_category_opt(category)
-            .map_err(ApplicationError::TaskTree)?;
-        projected
-            .sync_clock(last_synced_time)
-            .map_err(ApplicationError::TaskTree)?;
-        candidates.push(TaskScheduleCandidate {
-            id: projected.get_id().map_err(ApplicationError::TaskTree)?,
-            occurrence: ScheduleOccurrenceKey::Projected {
-                source_task_id,
-                deadline: occurrence.deadline_time,
-            },
-            projected_metadata: Some(ProjectedTaskMetadata {
-                repetition_interval_days: interval_days,
-                repetition_start_time,
-                repetition_deadline_time,
-                repetition_anchor,
-                days_in_advance,
-            }),
-            task: projected,
-            first_available_time: max(occurrence.start_time, last_synced_time),
-            priority,
-            rank: 0,
-            deadline_time: Some(occurrence.deadline_time),
-            remaining_seconds: estimate,
-            dependency_ids: Vec::new(),
-            atomic,
-            fixed_start,
-            fixed_start_time: occurrence.start_time,
-            estimated_work_seconds: estimate,
-        });
-        occurrence = next_occurrence(anchor, interval_days)?;
+        loop {
+            anchor = occurrence.deadline_time;
+            let occurrence_date = try_logical_date(occurrence.deadline_time)?;
+            if occurrence_date >= horizon_end {
+                break;
+            }
+
+            if occurrence_date >= horizon_start
+                && !persisted_deadlines.contains(&occurrence.deadline_time)
+                && generated_deadlines.insert(occurrence.deadline_time)
+            {
+                let projected_internal_id = id_allocator.allocate()?;
+                let projected = TaskHandle::with_identity(
+                    &format!(
+                        "{}({}/{})",
+                        name,
+                        occurrence.deadline_time.month(),
+                        occurrence.deadline_time.day()
+                    ),
+                    projected_internal_id,
+                    last_synced_time,
+                )
+                .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_start_time(occurrence.start_time)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_deadline_time_opt(Some(occurrence.deadline_time))
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_estimated_work_seconds(estimate)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_priority(priority)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_atomic(atomic)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_fixed_start(fixed_start)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .set_project_category_opt(category)
+                    .map_err(ApplicationError::TaskTree)?;
+                projected
+                    .sync_clock(last_synced_time)
+                    .map_err(ApplicationError::TaskTree)?;
+                candidates.push(TaskScheduleCandidate {
+                    id: projected.get_id().map_err(ApplicationError::TaskTree)?,
+                    occurrence: ScheduleOccurrenceKey::Projected {
+                        source_task_id,
+                        deadline: occurrence.deadline_time,
+                    },
+                    projected_metadata: Some(ProjectedTaskMetadata {
+                        repetition_interval_days: interval_days,
+                        repetition_start_time,
+                        repetition_deadline_time,
+                        repetition_anchor,
+                        days_in_advance,
+                    }),
+                    task: projected,
+                    first_available_time: max(occurrence.start_time, last_synced_time),
+                    priority,
+                    rank: 0,
+                    deadline_time: Some(occurrence.deadline_time),
+                    remaining_seconds: estimate,
+                    dependency_ids: Vec::new(),
+                    atomic,
+                    fixed_start,
+                    fixed_start_time: occurrence.start_time,
+                    estimated_work_seconds: estimate,
+                });
+            }
+            occurrence = next_occurrence(anchor, interval_days)?;
+        }
     }
     Ok(())
 }

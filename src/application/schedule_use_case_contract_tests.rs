@@ -8,7 +8,8 @@ use super::task_use_case::{
 };
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
-use chrono::{DateTime, Duration, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone};
+use chrono::{DateTime, Datelike, Duration, FixedOffset, Local, NaiveDate, NaiveTime, TimeZone};
+use std::collections::HashSet;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use uuid::Uuid;
 
@@ -120,6 +121,23 @@ fn repeating_task_with_current_occurrence(
     (parent, current)
 }
 
+fn append_repeating_occurrence(
+    parent: &TaskHandle,
+    now: DateTime<Local>,
+    deadline: DateTime<Local>,
+) -> TaskHandle {
+    let mut attr = TaskAttr::with_identity(
+        &format!("繰返実体({}/{})", deadline.month(), deadline.day()),
+        Uuid::new_v4(),
+        now,
+    );
+    attr.set_start_time(deadline - Duration::hours(5));
+    attr.set_deadline_time_opt(Some(deadline)).unwrap();
+    attr.set_estimated_work_seconds(15 * 60);
+    attr.set_atomic(true);
+    parent.create_as_last_child(attr)
+}
+
 #[test]
 fn get_scheduleは3日周期を28日窓へ現在回を含む10回展開する() {
     let now = fixed_now();
@@ -150,6 +168,109 @@ fn get_scheduleは3日周期を28日窓へ現在回を含む10回展開する() 
         Some(NaiveDate::from_ymd_opt(2026, 9, 7).unwrap())
     );
     assert!(!deadlines.contains(&NaiveDate::from_ymd_opt(2026, 9, 8).unwrap()));
+}
+
+#[test]
+fn get_scheduleは窓内の7日連続実体回を全て起点に28日を毎日埋める() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 7, RepetitionAnchor::Deadline);
+    for offset in 1..7 {
+        append_repeating_occurrence(
+            &parent,
+            now,
+            Local
+                .with_ymd_and_hms(2026, 8, 11 + offset, 23, 0, 0)
+                .unwrap(),
+        );
+    }
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+    let dates = deadlines
+        .iter()
+        .map(|deadline| deadline.date_naive())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        schedule.iter().filter(|item| !item.is_projected()).count(),
+        7
+    );
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        21
+    );
+    assert_eq!(
+        dates,
+        (0..28)
+            .map(|offset| now.date_naive() + Duration::days(offset))
+            .collect::<HashSet<_>>()
+    );
+}
+
+#[test]
+fn get_scheduleは1日周期の複数実体回から同じdeadlineを重複投影しない() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 8, 12, 23, 0, 0).unwrap(),
+    );
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let deadlines = schedule
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(schedule.len(), 28);
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        schedule.iter().filter(|item| !item.is_projected()).count(),
+        2
+    );
+    assert_eq!(
+        schedule.iter().filter(|item| item.is_projected()).count(),
+        26
+    );
+}
+
+#[test]
+fn get_scheduleは窓より後の実体回で窓内の投影を抑止しない() {
+    let now = fixed_now();
+    let (parent, _) = repeating_task_with_current_occurrence(now, 1, RepetitionAnchor::Deadline);
+    append_repeating_occurrence(
+        &parent,
+        now,
+        Local.with_ymd_and_hms(2026, 9, 8, 23, 0, 0).unwrap(),
+    );
+    let repository = TestTaskRepository::new(vec![parent], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+    let in_window = schedule
+        .iter()
+        .filter(|item| {
+            let date = item.task.deadline_time.unwrap().date_naive();
+            (now.date_naive()..now.date_naive() + Duration::days(28)).contains(&date)
+        })
+        .collect::<Vec<_>>();
+    let deadlines = in_window
+        .iter()
+        .map(|item| item.task.deadline_time.unwrap())
+        .collect::<HashSet<_>>();
+
+    assert_eq!(in_window.len(), 28);
+    assert_eq!(deadlines.len(), 28);
+    assert_eq!(
+        in_window.iter().filter(|item| item.is_projected()).count(),
+        27
+    );
 }
 
 #[test]
@@ -287,7 +408,7 @@ fn get_scheduleは期限が窓内なら混雑で窓外へ終了する仮想回�
 }
 
 #[test]
-fn get_scheduleは空の反復親から展開せず最新の永続回だけをfrontierにする() {
+fn get_scheduleは空の反復親から展開せず永続回と同じdeadlineを重複投影しない() {
     let now = fixed_now();
     let empty_parent = task_with_schedule("空", now, 15 * 60, 1);
     empty_parent
