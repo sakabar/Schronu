@@ -228,10 +228,15 @@ RoutineLoadRow {
     repetition_interval_days: i64,
     total_work_seconds: i64,
     occurrence_day_count: usize,
+    average_work_seconds: Option<i64>,
+    peak_date: YYYY-MM-DD,
+    peak_work_seconds: i64,
 }
 ```
 
-`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使う。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。同じ繰返元の日別segment秒数を合算し、28日合計、異なるlogical date数である発生日数、合計秒数を発生日数で割った1日平均を求める。1日平均の`HH:MM`表示は1分未満を切り捨てる。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
+`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使う。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。同じ繰返元の日別segment秒数を合算し、28日合計、異なるlogical date数である発生日数、合計秒数を発生日数で割った1日平均を求める。application層で算出した平均秒数をserver DTOからclient wireへ運び、1分未満を切り捨てて`HH:MM`表示する。既存の`peak_date`と`peak_work_seconds`も情報量と旧wire互換性のため保持するが、現行のCLIとWebでは表示しない。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
+
+`horizon_day_count`と`average_work_seconds`は追加fieldとする。旧8日payloadで両fieldが欠落する場合、clientは`horizon_day_count`を8として補い、平均秒数を`total_work_seconds / occurrence_day_count`で求める。`peak_date`と`peak_work_seconds`は新payloadから削除しない。
 
 負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷の見出しは取得済みreportの`horizon_day_count`から「今日からN-1日後までの繰返負荷」を生成し、未取得中は「繰返負荷」とする。semantic tableの列は「間隔」「N日合計」「発生日数」「1日平均」「プロジェクト / 繰返」の順とする。間隔値は`N日`とし、「ごと」は付けない。繰返名には一覧tabと同じ`task-kind-repetitive` classを付け、`--task-repetitive`を正本とする。通常幅では先頭4列を`6rem`、`6.5rem`、`6.5rem`、`6.5rem`で右揃えし、末尾の名前列へ残り幅を割り当てる。`46rem`以下では5列を`11%`、`15%`、`14%`、`15%`、`45%`へ圧縮し、見出しと数値の折返しを許可する。tableと外側wrapperは横scrollさせず、末尾row header内の繰返名とプロジェクト名をまとめたfocus可能な領域だけを横scroll可能にする。
 
@@ -830,11 +835,11 @@ OperationHistoryEntry {
 
 ### 11.1 維持する契約
 
-- CLI`働`以外のcommand文法、renderer出力、current task遷移
+- CLI`働`以外のcommand文法とcurrent task遷移、およびCLI`働`と`荷`以外のrenderer出力
 - CLIのtask未選択時no-opと成功時だけfocus解除する規則
 - MCPのtool名、tool数、JSON schema、required field、default、response、error
 - MCP `complete_task`の`task_id`、`finished_at`、`additional_actual_work_seconds`というwire入力
-- Schronu-webのserver operationと`ServerSnapshot`を含むclient/server wire形式
+- Schronu-webのserver operationと`ServerSnapshot`を含む既存client/server wire field
 - 既存の`work_sessions`、mutation safety、持ち歩きロックのlocalStorage schema。view stateは独立keyとして追加する
 - YAMLを含むtask storage schema
 - repository lock、transaction、rollback、state uncertainの区別
@@ -844,6 +849,8 @@ OperationHistoryEntry {
 - CLI`働`の記録精度を分単位の更新から秒単位の加算へ変更する。
 - CLI`働`は既存実績の秒端数を保持する。
 - CLI`働 <minutes>`は負数を拒否する。
+- CLI`荷`は8日窓・最大日表示から28日窓・1日平均表示へ変更する。
+- Schronu-webの繰返負荷wireへ`horizon_day_count`と`average_work_seconds`を追加する。旧payloadの欠落はclientで補完し、既存の最大日fieldは保持する。
 - Schronu-webへ`list_all_tasks`のpage APIと`invalid_cursor` errorを追加する。既存endpointの入力、成功型、error情報は変更しない。
 
 ## 12. Test specification
@@ -871,7 +878,8 @@ OperationHistoryEntry {
 - `働 <minutes>`で分の60倍を加算し、既存秒端数を保持する。
 - task未選択no-op、0分、負数、時計後退、乗算・加算overflow、保存失敗を検証する。
 - 成功時だけfocusを解除し、失敗時は保持する。
-- command名、alias、引数個数、正常時出力を既存contract testで固定する。
+- command名、alias、引数個数を既存contract testで固定する。
+- `荷`以外の正常時出力を維持し、`荷`は28日窓、28日合計、発生日数、1日平均の出力を固定する。
 
 ### 12.3 MCP互換性
 
