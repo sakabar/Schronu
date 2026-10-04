@@ -5368,6 +5368,48 @@ fn 同じ日に分割されたprojected回の調整可能見積は一回だけ�
         .expect("projected scheduled date");
 
     assert_eq!(projected_row.adjustable_work_seconds, 60 * 60);
+
+    let display = RuntimeTaskTreeCommandContext {
+        task_repository: &mut task_repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: &config,
+    }
+    .show_task_list(None, TaskListOrder::ScheduledStartDesc, false)
+    .unwrap();
+    let DisplayModel::Sequence(models) = display else {
+        panic!("expected sequence, got {display:?}");
+    };
+    let task_list = models
+        .iter()
+        .find_map(|model| match model {
+            DisplayModel::TaskList(task_list) => Some(task_list),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected task list, got {models:?}"));
+    let projected_rows = task_list
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            super::renderer::TaskListRow::Projected(projected)
+                if projected.scheduled_start.date_naive()
+                    == projected_scheduled_at.date_naive() =>
+            {
+                Some(projected)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(projected_rows.len(), 2, "{projected_rows:?}");
+    assert!(
+        projected_rows.iter().all(|row| {
+            row.task_name.starts_with("<30/60>")
+                && row.task_name.contains("3日ごとの分割task")
+        }),
+        "{projected_rows:?}"
+    );
 }
 
 #[test]

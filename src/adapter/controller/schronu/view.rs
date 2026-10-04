@@ -43,6 +43,22 @@ use uuid::Uuid;
 const DAILY_SUMMARY_HORIZON_DAYS: usize = 28;
 const TASK_NAME_DISPLAY_WIDTH_LIMIT: usize = 70;
 
+fn format_split_task_name(
+    task_name: String,
+    scheduled_work_seconds: i64,
+    total_work_seconds: i64,
+) -> String {
+    if total_work_seconds > scheduled_work_seconds {
+        format!(
+            "<{}/{}>{task_name}",
+            round_up_sec_as_minute(scheduled_work_seconds),
+            round_up_sec_as_minute(total_work_seconds)
+        )
+    } else {
+        task_name
+    }
+}
+
 pub(super) fn backup_display(path: &Path, summary: &SnapshotSummary) -> DisplayModel {
     DisplayModel::Snapshot(SnapshotDisplay {
         operation: "backup",
@@ -1097,14 +1113,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
             } else {
                 name.to_string()
             };
-            if total_work_seconds > scheduled_work_seconds {
-                shorten_name = format!(
-                    "<{}/{}>{}",
-                    round_up_sec_as_minute(scheduled_work_seconds),
-                    round_up_sec_as_minute(total_work_seconds),
-                    shorten_name
-                );
-            }
+            shorten_name =
+                format_split_task_name(shorten_name, scheduled_work_seconds, total_work_seconds);
 
             // 元々見積もり時間から作業済時間を引いたのが残りの見積もり時間
             // ただし、作業時間が元々の見積もり時間をオーバーしている時には既に想定外の事態になっているため、
@@ -1340,7 +1350,11 @@ pub(super) fn build_show_all_tasks_display_with_config(
             );
             let deadline_string =
                 format_deadline_remaining_time(Some(&deadline), *scheduled_end, last_synced_time)?;
-            let task_name = format!("{adjustable_prefix_label}{}", scheduled_task.task.name);
+            let task_name = format_split_task_name(
+                format!("{adjustable_prefix_label}{}", scheduled_task.task.name),
+                scheduled_work_seconds,
+                total_work_seconds,
+            );
             let row = TaskListDisplayRow::new_projected(
                 logical_naive_date,
                 *rank,
