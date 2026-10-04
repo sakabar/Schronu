@@ -332,6 +332,26 @@ mod tests {
     }
 
     #[test]
+    fn 今日の予定内にある未完了taskの実績を合計と記録率へ加える() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let task = new_task_handle_at("in progress", now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(3_600).unwrap();
+        task.set_actual_work_seconds(900).unwrap();
+        let repository = TestTaskRepository::new(vec![task], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert!(report.rows.is_empty());
+        assert_eq!(report.total_actual_work_seconds, 900);
+        assert_eq!(report.recorded_percentage, Some(25));
+    }
+
+    #[test]
     fn 過去日の利用可能時間は従来どおりlogical_date全体を要求する() {
         let logical_date = NaiveDate::from_ymd_opt(2026, 8, 10).unwrap();
         let repository = TestTaskRepository::new(vec![], local_time(11, 12, 0, 0));
