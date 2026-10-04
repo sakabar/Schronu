@@ -75,7 +75,6 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         "9月16日の完了",
         "3件",
         "実績",
-        "差",
         "Project",
         "タスク",
         "100:00:01",
@@ -91,6 +90,14 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains("session-start"), "{html}");
     assert!(!html.contains("task-defer"), "{html}");
     assert!(!html.contains("<th scope=\"col\">見積</th>"), "{html}");
+    assert!(
+        html.contains("<th class=\"completed-difference\" scope=\"col\">予実差</th>"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("<th class=\"completed-difference\" scope=\"col\">差</th>"),
+        "{html}"
+    );
     assert!(!html.contains(">99:59:59</td>"), "{html}");
     assert!(
         html.contains("<th class=\"completed-subject\" scope=\"col\">タスク / Project</th>"),

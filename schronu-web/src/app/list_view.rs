@@ -422,7 +422,7 @@ fn CompletedTaskTable(
                         tr {
                             th { class: "completed-time", scope: "col", "完了" }
                             th { class: "completed-actual", scope: "col", "実績" }
-                            th { class: "completed-difference", scope: "col", "差" }
+                            th { class: "completed-difference", scope: "col", "予実差" }
                             th { class: "completed-subject", scope: "col", "タスク / Project" }
                         }
                     }
