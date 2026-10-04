@@ -509,14 +509,14 @@ fn render_completed_task_report_display(
     writer: &mut dyn SchronuWriter,
     display: &CompletedTaskReportDisplay,
 ) -> Result<(), std::io::Error> {
-    const HEADERS: [&str; 6] = ["完了時刻", "実績", "見積", "差", "Project", "タスク"];
+    const HEADERS: [&str; 6] = ["完了", "実績", "見積", "差", "Project", "タスク"];
     let rows = display
         .report
         .rows
         .iter()
         .map(|row| {
             [
-                row.completed_at.format("%H:%M:%S").to_string(),
+                row.completed_at.format("%H:%M").to_string(),
                 format_elapsed_seconds(row.actual_work_seconds),
                 format_elapsed_seconds(row.estimated_work_seconds),
                 format_completed_difference(row.actual_work_seconds, row.estimated_work_seconds),

@@ -2102,8 +2102,9 @@ fn completed_commandは製品handlerからapplication_queryを通して完了tas
 
     let result = execute_command_for_test(task, now, None, "済");
 
-    assert!(result.output.contains("完了時刻"));
-    assert!(result.output.contains("08:02:03"));
+    assert!(result.output.contains("完了"));
+    assert!(result.output.contains("08:02"));
+    assert!(!result.output.contains("08:02:03"));
     assert!(result.output.contains("00:01:05"));
     assert!(result.output.contains("+00:00:05"));
     assert!(result.output.contains("完了レポート対象"));

@@ -98,9 +98,58 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         .timestamp_millis_opt(1_789_551_723_000)
         .single()
         .expect("valid timestamp")
-        .format("%H:%M:%S")
+        .format("%H:%M")
         .to_string();
     assert!(html.contains(&expected_local_time), "{html}");
+    let seconds_precision = Local
+        .timestamp_millis_opt(1_789_551_723_000)
+        .single()
+        .expect("valid timestamp")
+        .format("%H:%M:%S")
+        .to_string();
+    assert!(
+        !html.contains(&format!(">{seconds_precision}</time>")),
+        "{html}"
+    );
+}
+
+#[test]
+fn 完了modeの表現不能な完了時刻は分精度placeholderへ退避する() {
+    fn invalid_time_root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![CompletedTaskRow {
+                        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                        task_name: "範囲外".to_owned(),
+                        project_name: "Schronu".to_owned(),
+                        completed_at_epoch_ms: i64::MAX,
+                        actual_work_seconds: 1,
+                        estimated_work_seconds: 1,
+                    }],
+                    total_actual_work_seconds: 1,
+                    available_seconds: 1,
+                    recorded_percentage: Some(100),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+
+    let mut dom = VirtualDom::new(invalid_time_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("aria-label=\"完了時刻 --:--\""), "{html}");
+    assert!(html.contains(">--:--</time>"), "{html}");
+    assert!(!html.contains("--:--:--"), "{html}");
 }
 
 #[test]
