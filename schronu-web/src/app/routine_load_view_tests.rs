@@ -2,6 +2,7 @@ use super::routine_load_view::{
     build_routine_load_projection, highlighted_dates, rows_for_scope, toggle_routine_selection,
     RoutineLoadScope, RoutineLoadTable,
 };
+use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::{RoutineLoadReport, RoutineLoadRow};
 use chrono::{Duration, NaiveDate};
 use dioxus::prelude::*;
@@ -220,4 +221,74 @@ fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する
     assert!(html.contains("2026年10月3日"), "{html}");
     assert!(html.contains("繰返時間 01:00"), "{html}");
     assert!(html.contains("可処分時間比 25%"), "{html}");
+}
+
+#[test]
+fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強調を解除する() {
+    fn root() -> Element {
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report(vec![row(
+                    "健康",
+                    "三日周期",
+                    "routine-1",
+                    &[("2026-10-03", 3_600), ("2026-10-06", 7_200)],
+                )])),
+                loading: false,
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let click_ids = rebuild_with_click_listeners(&mut dom);
+    assert_eq!(click_ids.len(), 37, "全体、曜日7、日付28、行1");
+
+    let weekday_html = (0..click_ids.len())
+        .find_map(|index| {
+            let mut candidate = VirtualDom::new(root);
+            let ids = rebuild_with_click_listeners(&mut candidate);
+            dispatch_click(&candidate, ids[index]);
+            candidate.render_immediate_to_vec();
+            let html = dioxus::ssr::render(&candidate);
+            (html.contains("曜日平均") && html.contains("00:30")).then_some(html)
+        })
+        .expect("火曜日buttonが曜日表へ切り替える");
+    for heading in ["曜日平均", "可処分時間比", "発生"] {
+        assert!(weekday_html.contains(heading), "{weekday_html}");
+    }
+    assert!(weekday_html.contains("00:30"), "{weekday_html}");
+    assert!(weekday_html.contains("4回中1回"), "{weekday_html}");
+
+    let date_html = (0..click_ids.len())
+        .find_map(|index| {
+            let mut candidate = VirtualDom::new(root);
+            let ids = rebuild_with_click_listeners(&mut candidate);
+            dispatch_click(&candidate, ids[index]);
+            candidate.render_immediate_to_vec();
+            let html = dioxus::ssr::render(&candidate);
+            html.contains("当日時間").then_some(html)
+        })
+        .expect("日付buttonが当日表へ切り替える");
+    for heading in ["当日時間", "可処分時間比", "28日合計"] {
+        assert!(date_html.contains(heading), "{date_html}");
+    }
+
+    let (mut selected_dom, selected_id, selected_html) = (0..click_ids.len())
+        .find_map(|index| {
+            let mut candidate = VirtualDom::new(root);
+            let ids = rebuild_with_click_listeners(&mut candidate);
+            dispatch_click(&candidate, ids[index]);
+            candidate.render_immediate_to_vec();
+            let html = dioxus::ssr::render(&candidate);
+            html.contains("routine-load-day is-emphasized")
+                .then_some((candidate, ids[index], html))
+        })
+        .expect("繰返行buttonが発生日を強調する");
+    assert!(selected_html.contains("routine-load-day is-emphasized"));
+    assert!(selected_html.contains("三日周期を強調"));
+    assert!(selected_html.contains("aria-pressed=true"));
+
+    dispatch_click(&selected_dom, selected_id);
+    selected_dom.render_immediate_to_vec();
+    let cleared_html = dioxus::ssr::render(&selected_dom);
+    assert!(!cleared_html.contains("routine-load-day is-emphasized"));
 }
