@@ -270,6 +270,7 @@ pub fn CompletedListView(
         total_actual_work_seconds: report.total_actual_work_seconds,
         available_seconds: report.available_seconds,
         recorded_percentage: report.recorded_percentage,
+        actual_estimate_percentage: actual_estimate_percentage(&report.rows),
     });
     let rows = report.map_or_else(Vec::new, |report| report.rows);
     let matching_rows = rows
@@ -446,6 +447,26 @@ struct CompletedReportSummary {
     total_actual_work_seconds: i64,
     available_seconds: i64,
     recorded_percentage: Option<i64>,
+    actual_estimate_percentage: Option<i128>,
+}
+
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+fn actual_estimate_percentage(rows: &[CompletedTaskRow]) -> Option<i128> {
+    let (total_actual, total_estimated) =
+        rows.iter()
+            .try_fold((0_i128, 0_i128), |(total_actual, total_estimated), row| {
+                Some((
+                    total_actual.checked_add(i128::from(row.actual_work_seconds))?,
+                    total_estimated.checked_add(i128::from(row.estimated_work_seconds))?,
+                ))
+            })?;
+    if total_estimated == 0 {
+        return None;
+    }
+    total_actual
+        .checked_mul(100)?
+        .checked_add(total_estimated / 2)?
+        .checked_div(total_estimated)
 }
 
 #[component]
@@ -457,6 +478,9 @@ fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
     let available = format_hh_mm_ss(i128::from(summary.available_seconds));
     let recorded_percentage = summary
         .recorded_percentage
+        .map_or_else(|| "--".to_owned(), |percentage| format!("{percentage}%"));
+    let actual_estimate_percentage = summary
+        .actual_estimate_percentage
         .map_or_else(|| "--".to_owned(), |percentage| format!("{percentage}%"));
     rsx! {
         dl { class: "completed-report-summary", aria_label: "完了日の集計",
@@ -477,6 +501,10 @@ fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
             div { class: "completed-report-summary-item",
                 dt { "記録率" }
                 dd { "{recorded_percentage}" }
+            }
+            div { class: "completed-report-summary-item",
+                dt { "予実比" }
+                dd { "{actual_estimate_percentage}" }
             }
         }
     }
