@@ -350,6 +350,11 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
+            work_seconds_by_date: row
+                .work_seconds_by_date
+                .into_iter()
+                .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
         }
     }
 }
@@ -360,6 +365,11 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
             start_date: report.start_date.format("%Y-%m-%d").to_string(),
             end_date: report.end_date.format("%Y-%m-%d").to_string(),
             horizon_day_count: report.horizon_day_count,
+            full_day_available_seconds_by_date: report
+                .full_day_available_seconds_by_date
+                .into_iter()
+                .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
     }

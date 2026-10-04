@@ -1,5 +1,6 @@
 use chrono::DateTime;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -39,6 +40,8 @@ pub struct RoutineLoadRow {
     pub average_work_seconds: Option<i64>,
     pub peak_date: String,
     pub peak_work_seconds: i64,
+    #[serde(default)]
+    pub work_seconds_by_date: BTreeMap<String, i64>,
 }
 
 impl RoutineLoadRow {
@@ -57,6 +60,8 @@ pub struct RoutineLoadReport {
     pub end_date: String,
     #[serde(default = "legacy_routine_load_horizon_day_count")]
     pub horizon_day_count: u64,
+    #[serde(default)]
+    pub full_day_available_seconds_by_date: BTreeMap<String, i64>,
     pub rows: Vec<RoutineLoadRow>,
 }
 
@@ -348,6 +353,7 @@ mod all_task_contract_tests {
             average_work_seconds: None,
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 60,
+            work_seconds_by_date: Default::default(),
         };
 
         assert_eq!(row.display_average_work_seconds(), None);
@@ -366,6 +372,7 @@ mod all_task_contract_tests {
             average_work_seconds: Some(240),
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 300,
+            work_seconds_by_date: Default::default(),
         };
 
         assert_eq!(row.display_average_work_seconds(), Some(240));

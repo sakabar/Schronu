@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -183,6 +184,8 @@ pub struct RoutineLoadRowDto {
     pub average_work_seconds: i64,
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
+    #[serde(default)]
+    pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -191,6 +194,8 @@ pub struct RoutineLoadReportDto {
     pub end_date: NaiveDate,
     #[serde(default = "legacy_routine_load_horizon_day_count")]
     pub horizon_day_count: u64,
+    #[serde(default)]
+    pub full_day_available_seconds_by_date: BTreeMap<NaiveDate, i64>,
     pub rows: Vec<RoutineLoadRowDto>,
 }
 

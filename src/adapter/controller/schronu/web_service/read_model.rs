@@ -23,22 +23,46 @@ use crate::application::schedule_use_case::{
 use crate::application::task_use_case::{
     get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
 };
-use chrono::{DateTime, Local, NaiveDate};
-use std::collections::{HashMap, HashSet};
+use chrono::{DateTime, Days, Local, NaiveDate};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
 
 pub(in crate::adapter::controller) fn build_routine_load_report_dto(
     repository: &dyn TaskRepositoryTrait,
+    free_time_manager: &mut dyn FreeTimeManagerTrait,
     schedule: &[ScheduledTaskView],
     operation_now: DateTime<Local>,
+    end_of_day_offset_minutes: i64,
 ) -> Result<RoutineLoadReportDto, WebReadCoreError> {
     let start_date = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
     let report = build_routine_load_report(repository, schedule, start_date)
         .map_err(WebReadCoreError::Application)?;
+    let full_day_available_seconds_by_date = (0..report.horizon_day_count)
+        .map(|offset| {
+            let date = report.start_date.checked_add_days(Days::new(offset)).ok_or(
+                WebReadCoreError::Application(ApplicationError::InvalidInput {
+                    field: "start_date",
+                    reason: "routine load horizon is out of range",
+                }),
+            )?;
+            let minutes =
+                calculate_full_day_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                    &date,
+                    free_time_manager,
+                    end_of_day_offset_minutes,
+                )
+                .map_err(WebReadCoreError::Application)?;
+            let seconds = minutes.checked_mul(60).ok_or_else(|| {
+                WebReadOverflowError::new("routine_load_available_seconds", minutes, 60)
+            })?;
+            Ok((date, seconds))
+        })
+        .collect::<Result<BTreeMap<_, _>, WebReadCoreError>>()?;
     Ok(RoutineLoadReportDto {
         start_date: report.start_date,
         end_date: report.end_date,
         horizon_day_count: report.horizon_day_count,
+        full_day_available_seconds_by_date,
         rows: report
             .rows
             .into_iter()
@@ -53,6 +77,7 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
                 average_work_seconds: row.average_work_seconds,
                 peak_date: row.peak_date,
                 peak_work_seconds: row.peak_work_seconds,
+                work_seconds_by_date: row.work_seconds_by_date,
             })
             .collect(),
     })

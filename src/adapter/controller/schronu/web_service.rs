@@ -111,8 +111,13 @@ impl WebService {
                 operation_now,
                 offset,
             )?;
-            let routine_load =
-                read_model::build_routine_load_report_dto(repository, &schedule, operation_now)?;
+            let routine_load = read_model::build_routine_load_report_dto(
+                repository,
+                free_time_manager,
+                &schedule,
+                operation_now,
+                offset,
+            )?;
             let data = LoadDataDto {
                 band_days,
                 routine_load,
