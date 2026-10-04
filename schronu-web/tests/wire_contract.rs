@@ -279,7 +279,8 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     estimated_work_seconds: 900,
                     task_display_kind: Default::default(),
                 }],
-                total_actual_work_seconds: 901,
+                in_progress_actual_work_seconds: Some(60),
+                total_actual_work_seconds: 961,
                 available_seconds: 43_200,
                 recorded_percentage: Some(2),
             },
@@ -300,11 +301,34 @@ fn completed_reportのrequestとsuccessは公開json_shapeを保持する() {
                     "estimated_work_seconds": 900,
                     "task_display_kind": "non_repetitive"
                 }],
-                "total_actual_work_seconds": 901,
+                "in_progress_actual_work_seconds": 60,
+                "total_actual_work_seconds": 961,
                 "available_seconds": 43_200,
                 "recorded_percentage": 2
             }
         }),
+    );
+}
+
+#[test]
+fn 旧completed_report_payloadは進行中実績なしとしてdeserializeできる() {
+    let report: CompletedTaskReport = serde_json::from_value(json!({
+        "rows": [],
+        "total_actual_work_seconds": 0,
+        "available_seconds": 43_200,
+        "recorded_percentage": 0
+    }))
+    .unwrap();
+
+    assert_eq!(report.in_progress_actual_work_seconds, None);
+    assert_eq!(
+        serde_json::to_value(report).unwrap(),
+        json!({
+            "rows": [],
+            "total_actual_work_seconds": 0,
+            "available_seconds": 43_200,
+            "recorded_percentage": 0
+        })
     );
 }
 

@@ -449,6 +449,7 @@ fn task() -> SessionTask {
 fn completed_report() -> CompletedTaskReport {
     CompletedTaskReport {
         rows: Vec::new(),
+        in_progress_actual_work_seconds: None,
         total_actual_work_seconds: 3_600,
         available_seconds: 28_800,
         recorded_percentage: Some(13),
