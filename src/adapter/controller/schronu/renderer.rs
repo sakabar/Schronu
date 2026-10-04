@@ -575,11 +575,19 @@ fn render_completed_task_report_display(
         .report
         .recorded_percentage
         .map_or_else(|| "--".to_string(), |value| format!("{value}%"));
-    writer.writeln_newline(&format!(
+    let summary = format!(
         "実績合計: {}  利用可能: {}  記録率: {percentage}",
         format_elapsed_seconds(display.report.total_actual_work_seconds),
         format_elapsed_seconds(display.report.available_seconds),
-    ))
+    );
+    if let Some(in_progress) = display.report.in_progress_actual_work_seconds {
+        writer.writeln_newline(&format!(
+            "進行中: {}  {summary}",
+            format_elapsed_seconds(in_progress),
+        ))
+    } else {
+        writer.writeln_newline(&summary)
+    }
 }
 
 fn render_routine_load_report(

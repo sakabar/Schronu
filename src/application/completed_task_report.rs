@@ -373,7 +373,13 @@ mod tests {
         task.set_start_time(now).unwrap();
         task.set_estimated_work_seconds(3_600).unwrap();
         task.set_actual_work_seconds(900).unwrap();
-        let repository = TestTaskRepository::new(vec![task], now);
+        let pending = new_task_handle_at("pending", now).unwrap();
+        pending.set_start_time(now).unwrap();
+        pending.set_estimated_work_seconds(1_800).unwrap();
+        pending.set_actual_work_seconds(300).unwrap();
+        pending.set_pending_until(now).unwrap();
+        pending.set_orig_status(Status::Pending).unwrap();
+        let repository = TestTaskRepository::new(vec![task, pending], now);
         let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
 
         let report =
@@ -381,9 +387,54 @@ mod tests {
                 .unwrap();
 
         assert!(report.rows.is_empty());
-        assert_eq!(report.in_progress_actual_work_seconds, Some(900));
-        assert_eq!(report.total_actual_work_seconds, 900);
-        assert_eq!(report.recorded_percentage, Some(25));
+        assert_eq!(report.in_progress_actual_work_seconds, Some(1_200));
+        assert_eq!(report.total_actual_work_seconds, 1_200);
+        assert_eq!(report.recorded_percentage, Some(33));
+    }
+
+    #[test]
+    fn 進行中の実績0は見積へ置換せず予定外taskも数えない() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let zero = new_task_handle_at("zero", now).unwrap();
+        zero.set_start_time(now).unwrap();
+        zero.set_estimated_work_seconds(3_600).unwrap();
+        let future = new_task_handle_at("future", now).unwrap();
+        future.set_start_time(local_time(12, 7, 0, 0)).unwrap();
+        future.set_estimated_work_seconds(3_600).unwrap();
+        future.set_actual_work_seconds(900).unwrap();
+        let repository = TestTaskRepository::new(vec![zero, future], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert_eq!(report.in_progress_actual_work_seconds, Some(0));
+        assert_eq!(report.total_actual_work_seconds, 0);
+        assert_eq!(report.recorded_percentage, Some(0));
+    }
+
+    #[test]
+    fn 同一taskの複数schedule_segmentは進行中実績を1回だけ数える() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let flexible = new_task_handle_at("flexible", now).unwrap();
+        flexible.set_start_time(now).unwrap();
+        flexible.set_estimated_work_seconds(10 * 3_600).unwrap();
+        flexible.set_actual_work_seconds(600).unwrap();
+        let fixed = new_task_handle_at("fixed", now).unwrap();
+        fixed.set_start_time(local_time(11, 15, 0, 0)).unwrap();
+        fixed.set_estimated_work_seconds(3_600).unwrap();
+        fixed.set_fixed_start(true).unwrap();
+        let repository = TestTaskRepository::new(vec![flexible, fixed], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(3_600);
+
+        let report =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap();
+
+        assert_eq!(report.in_progress_actual_work_seconds, Some(600));
     }
 
     #[test]
@@ -484,6 +535,59 @@ mod tests {
             ApplicationError::CompletedReportCalculationOverflow {
                 operation: "total_actual_work_seconds",
                 value: i64::MAX as i128 * 2,
+            }
+        );
+    }
+
+    #[test]
+    fn 進行中実績のi64範囲超過を値付きerrorで返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let first = new_task_handle_at("first", now).unwrap();
+        first.set_start_time(now).unwrap();
+        first.set_estimated_work_seconds(i64::MAX).unwrap();
+        first.set_actual_work_seconds(i64::MAX - 1).unwrap();
+        let second = new_task_handle_at("second", now).unwrap();
+        second.set_start_time(now).unwrap();
+        second.set_estimated_work_seconds(i64::MAX).unwrap();
+        second.set_actual_work_seconds(i64::MAX - 1).unwrap();
+        let repository = TestTaskRepository::new(vec![first, second], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(1);
+
+        let error =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "in_progress_actual_work_seconds",
+                value: i128::from(i64::MAX - 1) * 2,
+            }
+        );
+    }
+
+    #[test]
+    fn 完了と進行中を足した総実績のi64範囲超過を値付きerrorで返す() {
+        let logical_date = NaiveDate::from_ymd_opt(2026, 8, 11).unwrap();
+        let now = local_time(11, 12, 0, 0);
+        let completed = completed_task("completed", local_time(11, 9, 0, 0), i64::MAX, i64::MAX);
+        let in_progress = new_task_handle_at("in progress", now).unwrap();
+        in_progress.set_start_time(now).unwrap();
+        in_progress.set_estimated_work_seconds(2).unwrap();
+        in_progress.set_actual_work_seconds(1).unwrap();
+        let repository = TestTaskRepository::new(vec![completed, in_progress], now);
+        let mut free_time_manager = RecordingFreeTimeManager::new(1);
+
+        let error =
+            build_completed_task_report(&repository, &mut free_time_manager, logical_date, 120)
+                .unwrap_err();
+
+        assert_eq!(
+            error,
+            ApplicationError::CompletedReportCalculationOverflow {
+                operation: "total_actual_work_seconds",
+                value: i128::from(i64::MAX) + 1,
             }
         );
     }

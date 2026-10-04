@@ -391,6 +391,34 @@ fn view_state_v3は不整合な完了summaryを拒否する() {
         store_view_state(&storage, &state),
         Err(ViewStateStoreError::InvalidState)
     );
+
+    if let Some(StoredActiveList::Completed {
+        in_progress_actual_work_seconds,
+        total_actual_work_seconds,
+        recorded_percentage,
+        ..
+    }) = &mut state.list
+    {
+        *in_progress_actual_work_seconds = Some(-1);
+        *total_actual_work_seconds = 0;
+        *recorded_percentage = Some(0);
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
+
+    if let Some(StoredActiveList::Completed {
+        in_progress_actual_work_seconds,
+        ..
+    }) = &mut state.list
+    {
+        *in_progress_actual_work_seconds = Some(1);
+    }
+    assert_eq!(
+        store_view_state(&storage, &state),
+        Err(ViewStateStoreError::InvalidState)
+    );
 }
 
 #[test]

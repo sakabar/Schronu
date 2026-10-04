@@ -332,7 +332,7 @@ fn 完了modeは検索に依存しないsemanticな日次集計を表示する()
         "進行中",
         "00:15:00",
         "実績合計",
-        "100:00:01",
+        "100:15:01",
         "利用可能",
         "80:00:00",
         "記録率",
@@ -415,6 +415,7 @@ fn 完了modeの空結果を明示する() {
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("0件"), "{html}");
+    assert!(!html.contains("進行中"), "{html}");
     assert!(
         html.contains("この日に完了したタスクはありません。"),
         "{html}"

@@ -229,8 +229,6 @@ fn completed_report_renderer_shows_in_progress_actual_work_when_present() {
         })
         .lines()
         .last(),
-        Some(
-            "進行中: 00:15:00  実績合計: 00:15:00  利用可能: 01:00:00  記録率: 25%"
-        )
+        Some("進行中: 00:15:00  実績合計: 00:15:00  利用可能: 01:00:00  記録率: 25%")
     );
 }
