@@ -196,6 +196,50 @@ fn 旧payloadはmapと範囲選択を出さず全体表へfallbackする() {
 }
 
 #[test]
+fn 不正な日付内訳と集計overflowは拡張表示を行わない() {
+    let base_row = row("健康", "運動", "routine-1", &[("2026-10-03", 600)]);
+
+    let mut invalid_start = report(vec![base_row.clone()]);
+    invalid_start.start_date = "2026-10-xx".to_owned();
+
+    let mut missing_capacity = report(vec![base_row.clone()]);
+    missing_capacity
+        .full_day_available_seconds_by_date
+        .remove("2026-10-03");
+
+    let mut out_of_range = report(vec![base_row.clone()]);
+    out_of_range.rows[0].work_seconds_by_date = BTreeMap::from([("2026-10-31".to_owned(), 600)]);
+
+    let mut non_positive = report(vec![base_row]);
+    non_positive.rows[0].work_seconds_by_date = BTreeMap::from([("2026-10-03".to_owned(), 0)]);
+    non_positive.rows[0].total_work_seconds = 0;
+
+    let daily_overflow = report(vec![
+        row("A", "最大", "routine-max", &[("2026-10-03", i64::MAX)]),
+        row("B", "追加", "routine-extra", &[("2026-10-03", 1)]),
+    ]);
+
+    let mut weekday_capacity_overflow = report(Vec::new());
+    for seconds in weekday_capacity_overflow
+        .full_day_available_seconds_by_date
+        .values_mut()
+    {
+        *seconds = i64::MAX;
+    }
+
+    for invalid in [
+        invalid_start,
+        missing_capacity,
+        out_of_range,
+        non_positive,
+        daily_overflow,
+        weekday_capacity_overflow,
+    ] {
+        assert!(build_routine_load_projection(&invalid).is_none());
+    }
+}
+
+#[test]
 fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する() {
     fn root() -> Element {
         rsx! {
