@@ -75,12 +75,10 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
         "9月16日の完了",
         "3件",
         "実績",
-        "見積",
         "差",
         "Project",
         "タスク",
         "100:00:01",
-        "99:59:59",
         "+00:00:02",
         "+00:00:00",
         "-00:00:02",
@@ -92,6 +90,8 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
     assert!(!html.contains(">全て<"), "{html}");
     assert!(!html.contains("session-start"), "{html}");
     assert!(!html.contains("task-defer"), "{html}");
+    assert!(!html.contains("<th scope=\"col\">見積</th>"), "{html}");
+    assert!(!html.contains(">99:59:59</td>"), "{html}");
     assert!(html.contains("completed-task-table-scroll"), "{html}");
     assert!(html.contains("<time"), "{html}");
     let expected_local_time = Local

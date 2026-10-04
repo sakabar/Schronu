@@ -422,7 +422,6 @@ fn CompletedTaskTable(
                         tr {
                             th { scope: "col", "完了" }
                             th { scope: "col", "実績" }
-                            th { scope: "col", "見積" }
                             th { scope: "col", "差" }
                             th { scope: "col", "Project" }
                             th { scope: "col", "タスク" }
@@ -482,7 +481,6 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
         .unwrap_or_else(|| "--:--".to_owned());
     let completed_datetime = completed_at.map(|date| date.to_rfc3339());
     let actual = format_hh_mm_ss(i128::from(row.actual_work_seconds));
-    let estimated = format_hh_mm_ss(i128::from(row.estimated_work_seconds));
     let difference = i128::from(row.actual_work_seconds) - i128::from(row.estimated_work_seconds);
     let difference_label = if difference >= 0 {
         format!("+{}", format_hh_mm_ss(difference))
@@ -504,7 +502,6 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
                 }
             }
             td { class: "completed-number", "{actual}" }
-            td { class: "completed-number", "{estimated}" }
             td { class: difference_class, aria_label: format!("実績と見積の差 {difference_label}"), "{difference_label}" }
             td { class: "completed-project", "{row.project_name}" }
             td { class: "completed-task-name", "{row.task_name}" }
