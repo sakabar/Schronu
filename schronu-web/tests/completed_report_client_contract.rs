@@ -22,6 +22,7 @@ fn completed_row(task_id: &str, task_name: &str) -> CompletedTaskRow {
 fn completed_report(task_id: &str, task_name: &str) -> CompletedTaskReport {
     CompletedTaskReport {
         rows: vec![completed_row(task_id, task_name)],
+        in_progress_actual_work_seconds: None,
         total_actual_work_seconds: 120,
         available_seconds: 600,
         recorded_percentage: Some(20),

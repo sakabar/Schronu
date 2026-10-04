@@ -156,6 +156,7 @@ fn 保存済み完了一覧はbootstrap後に同じ日を完了endpointで背景
             list: Some(StoredActiveList::Completed {
                 logical_date: "2026-09-08".to_owned(),
                 rows: vec![cached_row.clone()],
+                in_progress_actual_work_seconds: None,
                 total_actual_work_seconds: 120,
                 available_seconds: 600,
                 recorded_percentage: Some(20),
@@ -220,6 +221,7 @@ fn 背景更新中の完了modeから一覧への復帰は再取得を発行し�
             list: Some(StoredActiveList::Completed {
                 logical_date: "2026-09-08".to_owned(),
                 rows: vec![cached_row.clone()],
+                in_progress_actual_work_seconds: None,
                 total_actual_work_seconds: 120,
                 available_seconds: 600,
                 recorded_percentage: Some(20),
@@ -274,6 +276,7 @@ fn 背景更新中の完了modeから一覧への復帰は再取得を発行し�
                 snapshot: snapshot(1_789_100_000_001),
                 data: crate::CompletedTaskReport {
                     rows: vec![cached_row],
+                    in_progress_actual_work_seconds: None,
                     total_actual_work_seconds: 120,
                     available_seconds: 600,
                     recorded_percentage: Some(20),
@@ -326,6 +329,7 @@ fn mode切替先の取得失敗時はcomponent_projectionに異modeの旧rowを�
                     estimated_work_seconds: 60,
                     task_display_kind: Default::default(),
                 }],
+                in_progress_actual_work_seconds: None,
                 total_actual_work_seconds: 120,
                 available_seconds: 600,
                 recorded_percentage: Some(20),

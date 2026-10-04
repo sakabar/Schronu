@@ -29,6 +29,8 @@ pub enum StoredActiveList {
     Completed {
         logical_date: String,
         rows: Vec<CompletedTaskRow>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        in_progress_actual_work_seconds: Option<i64>,
         total_actual_work_seconds: i64,
         available_seconds: i64,
         recorded_percentage: Option<i64>,
@@ -186,6 +188,7 @@ fn valid_view_state(state: &ViewState) -> bool {
             StoredActiveList::Completed {
                 logical_date,
                 rows,
+                in_progress_actual_work_seconds,
                 total_actual_work_seconds,
                 available_seconds,
                 recorded_percentage,
@@ -195,6 +198,7 @@ fn valid_view_state(state: &ViewState) -> bool {
                     && rows.iter().all(valid_completed_row)
                     && valid_completed_summary(
                         rows,
+                        *in_progress_actual_work_seconds,
                         *total_actual_work_seconds,
                         *available_seconds,
                         *recorded_percentage,
@@ -291,18 +295,24 @@ fn valid_completed_row(row: &CompletedTaskRow) -> bool {
 
 fn valid_completed_summary(
     rows: &[CompletedTaskRow],
+    in_progress_actual_work_seconds: Option<i64>,
     total_actual_work_seconds: i64,
     available_seconds: i64,
     recorded_percentage: Option<i64>,
 ) -> bool {
-    if total_actual_work_seconds < 0 || available_seconds < 0 {
+    if total_actual_work_seconds < 0
+        || available_seconds < 0
+        || in_progress_actual_work_seconds.is_some_and(|value| value < 0)
+    {
         return false;
     }
     let row_total = rows
         .iter()
         .map(|row| i128::from(row.actual_work_seconds))
         .sum::<i128>();
-    if row_total != i128::from(total_actual_work_seconds) {
+    let calculated_total =
+        row_total + i128::from(in_progress_actual_work_seconds.unwrap_or_default());
+    if calculated_total != i128::from(total_actual_work_seconds) {
         return false;
     }
     let expected_percentage = if available_seconds == 0 {

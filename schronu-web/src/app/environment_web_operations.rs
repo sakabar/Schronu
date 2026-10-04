@@ -313,6 +313,7 @@ impl From<CompletedTaskReportDto> for CompletedTaskReport {
     fn from(report: CompletedTaskReportDto) -> Self {
         Self {
             rows: report.rows.into_iter().map(Into::into).collect(),
+            in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
             total_actual_work_seconds: report.total_actual_work_seconds,
             available_seconds: report.available_seconds,
             recorded_percentage: report.recorded_percentage,

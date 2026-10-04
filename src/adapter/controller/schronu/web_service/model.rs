@@ -120,6 +120,8 @@ pub struct CompletedTaskRowDto {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CompletedTaskReportDto {
     pub rows: Vec<CompletedTaskRowDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub in_progress_actual_work_seconds: Option<i64>,
     pub total_actual_work_seconds: i64,
     pub available_seconds: i64,
     pub recorded_percentage: Option<i64>,

@@ -208,6 +208,7 @@ impl ClientState {
                 super::view_state::StoredActiveList::Completed {
                     logical_date,
                     rows,
+                    in_progress_actual_work_seconds,
                     total_actual_work_seconds,
                     available_seconds,
                     recorded_percentage,
@@ -216,6 +217,7 @@ impl ClientState {
                     self.read.selected_logical_date = Some(logical_date.clone());
                     self.read.completed_report = Some(CompletedTaskReport {
                         rows: rows.clone(),
+                        in_progress_actual_work_seconds: *in_progress_actual_work_seconds,
                         total_actual_work_seconds: *total_actual_work_seconds,
                         available_seconds: *available_seconds,
                         recorded_percentage: *recorded_percentage,
