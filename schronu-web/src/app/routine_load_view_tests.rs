@@ -117,7 +117,7 @@ fn 今日だけ残り容量比にし曜日は4日の全日容量比を維持す�
 }
 
 #[test]
-fn 今日の残り容量0は比率欠損とし容量到達表示にしない() {
+fn 今日の残り容量0は比率欠損とし投影上の濃度を0にする() {
     let report = report(vec![row(
         "健康",
         "運動",
@@ -358,7 +358,7 @@ fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する
 }
 
 #[test]
-fn 今日の日付cellと日付表は残り可処分時間比と明示する() {
+fn 分母0の日付マスは割合欠損と容量到達表示を併記する() {
     fn root() -> Element {
         rsx! {
             RoutineLoadTable {
@@ -402,14 +402,18 @@ fn 今日の日付cellと日付表は残り可処分時間比と明示する() {
     assert!(today_html.contains(">200%</td>"), "{today_html}");
 
     fn zero_capacity_root() -> Element {
+        let mut report = report(vec![row(
+            "健康",
+            "運動",
+            "routine-1",
+            &[("2026-10-03", 3_600), ("2026-10-04", 600)],
+        )]);
+        report
+            .full_day_available_seconds_by_date
+            .insert("2026-10-04".to_owned(), 0);
         rsx! {
             RoutineLoadTable {
-                report: Some(report(vec![row(
-                    "健康",
-                    "運動",
-                    "routine-1",
-                    &[("2026-10-03", 3_600)],
-                )])),
+                report: Some(report),
                 loading: false,
                 today_remaining_available_seconds: Some(0),
             }
@@ -424,7 +428,7 @@ fn 今日の日付cellと日付表は残り可処分時間比と明示する() {
     );
     assert_eq!(
         zero_capacity_html.matches("is-at-capacity").count(),
-        0,
+        2,
         "{zero_capacity_html}"
     );
 }
