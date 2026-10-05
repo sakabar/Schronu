@@ -150,7 +150,7 @@ pub(super) fn RoutineLoadTable(
                             "routine-load-day",
                             selected,
                             emphasized,
-                            is_at_capacity(day.percentage),
+                            is_day_at_capacity(&day),
                         );
                         let aria_label = format!(
                             "{date_label}、繰返時間 {work_label}、{percentage_label} {percentage}、{}",
@@ -604,6 +604,10 @@ fn format_optional_time(seconds: Option<i64>) -> String {
 
 fn is_at_capacity(percentage: Option<i128>) -> bool {
     percentage.is_some_and(|percentage| percentage >= 100)
+}
+
+fn is_day_at_capacity(day: &DailyLoadProjection) -> bool {
+    day.available_seconds == 0 || is_at_capacity(day.percentage)
 }
 
 fn load_cell_class(base: &str, selected: bool, emphasized: bool, at_capacity: bool) -> String {
