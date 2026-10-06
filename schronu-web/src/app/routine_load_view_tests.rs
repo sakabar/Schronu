@@ -1,6 +1,6 @@
 use super::routine_load_view::{
-    build_routine_load_projection, highlighted_dates, rows_for_scope, toggle_routine_selection,
-    RoutineLoadScope, RoutineLoadTable,
+    build_routine_load_projection, format_signed_time, highlighted_dates, rows_for_scope,
+    toggle_routine_selection, RoutineLoadScope, RoutineLoadTable,
 };
 use super::view_test_support::{dispatch_click, rebuild_with_click_listeners};
 use crate::{RoutineLoadReport, RoutineLoadRow};
@@ -353,8 +353,77 @@ fn 新payloadはmapと全体表と操作可能なaria情報を初期表示する
     assert!(html.contains("aria-pressed=true>全体"), "{html}");
     assert!(html.contains("28日合計"), "{html}");
     assert!(html.contains("2026年10月3日"), "{html}");
-    assert!(html.contains("繰返時間 01:00"), "{html}");
+    assert!(html.contains("繰返負荷との差 -3:00"), "{html}");
     assert!(html.contains("可処分時間比 25%"), "{html}");
+    assert!(html.contains(">-3:00</span>"), "{html}");
+    let cell_start = html
+        .find("aria-label=\"2026年10月3日、繰返負荷との差 -3:00")
+        .expect("日付buttonの差分aria label");
+    let cell = html[cell_start..]
+        .split_once('>')
+        .expect("日付buttonの開始タグ")
+        .1
+        .split_once("</button>")
+        .expect("日付buttonの終了タグ")
+        .0;
+    assert_eq!(cell.matches("<strong>").count(), 1);
+    assert_eq!(cell.matches("<span>").count(), 2);
+}
+
+#[test]
+fn 日付cellは可処分時間との差を符号付きで表示する() {
+    fn root() -> Element {
+        let mut report = report(vec![row(
+            "project",
+            "routine",
+            "routine-1",
+            &[
+                ("2026-10-03", 60 * 60),
+                ("2026-10-04", 4 * 60 * 60),
+                ("2026-10-05", 5 * 60 * 60),
+                ("2026-10-06", 10 * 60),
+            ],
+        )]);
+        report
+            .full_day_available_seconds_by_date
+            .insert("2026-10-06".to_owned(), 0);
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report),
+                loading: false,
+                today_remaining_available_seconds: Some(30 * 60),
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("2026年10月3日、繰返負荷との差 +0:30、残り可処分時間比 200%"),
+        "{html}"
+    );
+    assert!(
+        html.contains("2026年10月4日、繰返負荷との差 0:00、可処分時間比 100%"),
+        "{html}"
+    );
+    assert!(
+        html.contains("2026年10月5日、繰返負荷との差 +1:00、可処分時間比 125%"),
+        "{html}"
+    );
+    assert!(
+        html.contains("2026年10月6日、繰返負荷との差 +0:10、可処分時間比 --"),
+        "{html}"
+    );
+}
+
+#[test]
+fn 差分時刻は符号を保持して分未満を切り捨てる() {
+    assert_eq!(format_signed_time(0), "0:00");
+    assert_eq!(format_signed_time(59), "0:00");
+    assert_eq!(format_signed_time(-59), "0:00");
+    assert_eq!(format_signed_time(119), "+0:01");
+    assert_eq!(format_signed_time(-119), "-0:01");
 }
 
 #[test]
@@ -385,7 +454,7 @@ fn 分母0の日付マスは割合欠損と容量到達表示を併記する() {
         "{initial_html}"
     );
     assert!(
-        initial_html.contains("2026年10月4日、繰返時間 00:00、可処分時間比 0%"),
+        initial_html.contains("2026年10月4日、繰返負荷との差 -4:00、可処分時間比 0%"),
         "{initial_html}"
     );
 
@@ -423,7 +492,7 @@ fn 分母0の日付マスは割合欠損と容量到達表示を併記する() {
     zero_capacity.rebuild_in_place();
     let zero_capacity_html = dioxus::ssr::render(&zero_capacity);
     assert!(
-        zero_capacity_html.contains("残り可処分時間比 --"),
+        zero_capacity_html.contains("繰返負荷との差 +1:00、残り可処分時間比 --"),
         "{zero_capacity_html}"
     );
     assert_eq!(
@@ -469,7 +538,7 @@ fn 日付と曜日は100パーセント以上だけ容量到達表示にする()
     );
     assert!(
         html.contains("class=\"routine-load-day is-at-capacity\"")
-            && html.contains("2026年10月6日、繰返時間 04:00、可処分時間比 100%"),
+            && html.contains("2026年10月6日、繰返負荷との差 0:00、可処分時間比 100%"),
         "{html}"
     );
     assert!(html.contains("月曜日、可処分時間比 99%"), "{html}");

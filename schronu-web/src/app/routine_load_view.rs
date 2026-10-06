@@ -21,6 +21,7 @@ pub(super) struct DailyLoadProjection {
     pub(super) date: NaiveDate,
     pub(super) work_seconds: i64,
     pub(super) available_seconds: i64,
+    pub(super) difference_seconds: i128,
     pub(super) percentage: Option<i128>,
     pub(super) heat_percentage: u8,
     uses_remaining_capacity: bool,
@@ -137,7 +138,7 @@ pub(super) fn RoutineLoadTable(
                         let day = day.clone();
                         let date = day.date;
                         let date_label = format!("{}年{}月{}日", date.year(), date.month(), date.day());
-                        let work_label = format_unsigned(day.work_seconds);
+                        let difference_label = format_signed_time(day.difference_seconds);
                         let percentage = format_percentage(day.percentage);
                         let percentage_label = if day.uses_remaining_capacity {
                             "残り可処分時間比"
@@ -153,7 +154,7 @@ pub(super) fn RoutineLoadTable(
                             is_day_at_capacity(&day),
                         );
                         let aria_label = format!(
-                            "{date_label}、繰返時間 {work_label}、{percentage_label} {percentage}、{}",
+                            "{date_label}、繰返負荷との差 {difference_label}、{percentage_label} {percentage}、{}",
                             if selected { "選択中" } else { "未選択" }
                         );
                         rsx! {
@@ -168,7 +169,7 @@ pub(super) fn RoutineLoadTable(
                                     selected_routine_id.set(None);
                                 },
                                 strong { "{date.day()}" }
-                                span { "{work_label}" }
+                                span { "{difference_label}" }
                                 span { "{percentage}" }
                             }
                         }
@@ -407,10 +408,12 @@ pub(super) fn build_routine_load_projection(
                 available_by_date[date]
             };
             let percentage = rounded_percentage(work_seconds, available_seconds);
+            let difference_seconds = i128::from(work_seconds) - i128::from(available_seconds);
             Some(DailyLoadProjection {
                 date: *date,
                 work_seconds,
                 available_seconds,
+                difference_seconds,
                 percentage,
                 heat_percentage: heat_percentage(percentage),
                 uses_remaining_capacity,
@@ -594,6 +597,19 @@ fn format_percentage(percentage: Option<i128>) -> String {
     percentage
         .map(|percentage| format!("{percentage}%"))
         .unwrap_or_else(|| "--".to_owned())
+}
+
+pub(super) fn format_signed_time(seconds: i128) -> String {
+    let total_minutes = seconds / 60;
+    let sign = if total_minutes > 0 {
+        "+"
+    } else if total_minutes < 0 {
+        "-"
+    } else {
+        ""
+    };
+    let minutes = total_minutes.unsigned_abs();
+    format!("{sign}{}:{:02}", minutes / 60, minutes % 60)
 }
 
 fn format_optional_time(seconds: Option<i64>) -> String {
