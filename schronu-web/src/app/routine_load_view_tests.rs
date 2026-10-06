@@ -92,7 +92,7 @@ fn 曜日投影は4日平均と実発生日数と全日容量比を返す() {
 }
 
 #[test]
-fn 今日だけ残り容量比にし曜日は4日の全日容量比を維持する() {
+fn 今日を含む曜日集計は今日の残り容量を使う() {
     let report = report(vec![row(
         "健康",
         "土曜の運動",
@@ -110,8 +110,14 @@ fn 今日だけ残り容量比にし曜日は4日の全日容量比を維持す�
     assert_eq!(projection.days[0].available_seconds, 30 * 60);
     assert_eq!(projection.days[0].percentage, Some(200));
     assert_eq!(projection.days[1].available_seconds, 4 * 60 * 60);
-    assert_eq!(projection.weekdays[5].available_seconds, 4 * 4 * 60 * 60);
-    assert_eq!(projection.weekdays[5].percentage, Some(25));
+    assert_eq!(
+        projection.weekdays[5].available_seconds,
+        30 * 60 + 3 * 4 * 60 * 60
+    );
+    assert_eq!(projection.weekdays[5].percentage, Some(32));
+    assert_eq!(projection.weekdays[6].available_seconds, 4 * 4 * 60 * 60);
+    let weekday_rows = rows_for_scope(&projection, RoutineLoadScope::Weekday(5));
+    assert_eq!(weekday_rows[0].percentage, Some(32));
     let rows = rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")));
     assert_eq!(rows[0].percentage, Some(200));
 }
@@ -131,6 +137,8 @@ fn 今日の残り容量0は比率欠損とし投影上の濃度を0にする() 
     assert_eq!(projection.days[0].available_seconds, 0);
     assert_eq!(projection.days[0].percentage, None);
     assert_eq!(projection.days[0].heat_percentage, 0);
+    assert_eq!(projection.weekdays[5].available_seconds, 3 * 4 * 60 * 60);
+    assert_eq!(projection.weekdays[5].percentage, Some(8));
 }
 
 #[test]
@@ -146,6 +154,8 @@ fn 今日の残り容量がなければ全日容量へfallbackする() {
 
     assert_eq!(projection.days[0].available_seconds, 4 * 60 * 60);
     assert_eq!(projection.days[0].percentage, Some(25));
+    assert_eq!(projection.weekdays[5].available_seconds, 4 * 4 * 60 * 60);
+    assert_eq!(projection.weekdays[5].percentage, Some(6));
 }
 
 #[test]

@@ -429,7 +429,7 @@ pub(super) fn build_routine_load_projection(
                 matching_days.try_fold((0_i64, 0_i64), |(work_total, available_total), day| {
                     Some((
                         work_total.checked_add(day.work_seconds)?,
-                        available_total.checked_add(available_by_date[&day.date])?,
+                        available_total.checked_add(day.available_seconds)?,
                     ))
                 })?;
             Some(WeekdayLoadProjection {
