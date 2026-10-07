@@ -628,7 +628,7 @@ fn is_at_capacity(percentage: Option<i128>) -> bool {
 }
 
 fn is_day_at_capacity(day: &DailyLoadProjection) -> bool {
-    day.available_seconds == 0 || is_at_capacity(day.percentage)
+    day.available_seconds == 0 || day.work_seconds >= day.available_seconds
 }
 
 fn load_cell_class(base: &str, selected: bool, emphasized: bool, at_capacity: bool) -> String {
