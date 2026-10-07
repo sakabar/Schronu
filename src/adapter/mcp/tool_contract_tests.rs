@@ -914,14 +914,20 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
     current.set_estimated_work_seconds(60 * 60).unwrap();
     let repository = RecordingRepository::new(vec![parent]);
     let mut server = initialized_server(repository);
+    let from = now.date_naive().format("%F").to_string();
+    let until = (now.date_naive() + Duration::days(6))
+        .format("%F")
+        .to_string();
 
-    let response = server
-        .handle_request(tool_call_request(
+    let response = run_tool_at(
+        &mut server,
+        now,
+        tool_call_request(
             "projected-schedule",
             "get_schedule",
-            json!({"from": "2026-10-03", "until": "2026-10-08"}),
-        ))
-        .unwrap();
+            json!({"from": from, "until": until}),
+        ),
+    );
     let schedule = response["result"]["structuredContent"]["schedule"]
         .as_array()
         .unwrap();
