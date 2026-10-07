@@ -179,6 +179,46 @@ fn 割合は0容量を欠損とし100超を切り捨てず色だけ飽和する(
 }
 
 #[test]
+fn 日付の色濃度は未丸めの負荷を残り容量で割って決める() {
+    let mut report = report(vec![row(
+        "検証",
+        "負荷境界",
+        "routine-1",
+        &[
+            ("2026-10-03", 11_520),
+            ("2026-10-04", 11_592),
+            ("2026-10-05", 12_960),
+            ("2026-10-06", 13_680),
+            ("2026-10-07", 14_256),
+            ("2026-10-08", 14_400),
+            ("2026-10-09", 18_000),
+        ],
+    )]);
+    report
+        .full_day_available_seconds_by_date
+        .insert("2026-10-10".to_owned(), 0);
+    let projection = build_routine_load_projection(&report, None).unwrap();
+
+    let actual = projection.days[..8]
+        .iter()
+        .map(|day| (day.percentage, day.heat_percentage))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        [
+            (Some(80), 4),
+            (Some(81), 4),
+            (Some(90), 9),
+            (Some(95), 19),
+            (Some(99), 99),
+            (Some(100), 100),
+            (Some(125), 100),
+            (None, 0),
+        ]
+    );
+}
+
+#[test]
 fn 作業0秒の発生日を含む繰返でも拡張表示する() {
     let report = report(vec![row(
         "休息",
