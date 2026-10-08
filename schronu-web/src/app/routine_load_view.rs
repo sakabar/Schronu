@@ -415,7 +415,7 @@ pub(super) fn build_routine_load_projection(
                 available_seconds,
                 difference_seconds,
                 percentage,
-                heat_percentage: heat_percentage(percentage),
+                heat_percentage: heat_percentage(work_seconds, available_seconds),
                 uses_remaining_capacity,
             })
         })
@@ -585,10 +585,15 @@ fn rounded_percentage(work_seconds: i64, available_seconds: i64) -> Option<i128>
         .checked_div(available_seconds)
 }
 
-fn heat_percentage(percentage: Option<i128>) -> u8 {
-    percentage
-        .unwrap_or_default()
-        .clamp(0, 100)
+fn heat_percentage(work_seconds: i64, available_seconds: i64) -> u8 {
+    if work_seconds <= 0 || available_seconds <= 0 {
+        return 0;
+    }
+    if work_seconds >= available_seconds {
+        return 100;
+    }
+    (work_seconds / (available_seconds - work_seconds))
+        .min(100)
         .try_into()
         .unwrap_or_default()
 }
@@ -623,7 +628,7 @@ fn is_at_capacity(percentage: Option<i128>) -> bool {
 }
 
 fn is_day_at_capacity(day: &DailyLoadProjection) -> bool {
-    day.available_seconds == 0 || is_at_capacity(day.percentage)
+    day.available_seconds == 0 || day.work_seconds >= day.available_seconds
 }
 
 fn load_cell_class(base: &str, selected: bool, emphasized: bool, at_capacity: bool) -> String {
