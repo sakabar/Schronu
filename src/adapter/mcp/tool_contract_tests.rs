@@ -894,15 +894,7 @@ fn get_scheduleは非rootの実taskの親子identityを保持する() {
 
 #[test]
 fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task_idを付けない() {
-    let now = Local::now();
-    let from = crate::application::daily_capacity::try_logical_date(now)
-        .unwrap()
-        .format("%F")
-        .to_string();
-    let until = (crate::application::daily_capacity::try_logical_date(now).unwrap()
-        + chrono::Days::new(4))
-    .format("%F")
-    .to_string();
+    let now = fixed_now();
     let parent = new_task_handle("3-day routine").unwrap();
     let parent_id = parent.get_id().unwrap();
     parent.set_estimated_work_seconds(60 * 60).unwrap();
@@ -922,14 +914,20 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
     current.set_estimated_work_seconds(60 * 60).unwrap();
     let repository = RecordingRepository::new(vec![parent]);
     let mut server = initialized_server(repository);
+    let from = now.date_naive().format("%F").to_string();
+    let until = (now.date_naive() + Duration::days(6))
+        .format("%F")
+        .to_string();
 
-    let response = server
-        .handle_request(tool_call_request(
+    let response = run_tool_at(
+        &mut server,
+        now,
+        tool_call_request(
             "projected-schedule",
             "get_schedule",
             json!({"from": from, "until": until}),
-        ))
-        .unwrap();
+        ),
+    );
     let schedule = response["result"]["structuredContent"]["schedule"]
         .as_array()
         .unwrap();
