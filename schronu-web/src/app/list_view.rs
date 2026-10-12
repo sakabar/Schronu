@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use crate::client::state::ListMode;
 use crate::client::time_model::format_hh_mm_ss;
-use crate::client::view_projection::task_name_matches;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 use crate::client::view_projection::ScheduleDisplayViewModel;
+use crate::client::view_projection::{count_unique_list_tasks, task_name_matches};
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::{
     CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferPlan, SessionTask,
@@ -41,6 +41,7 @@ pub fn ListView(
     #[props(default)] all_tasks_status: Option<AllTasksViewStatus>,
     #[props(default)] visible_row_limit: Option<usize>,
     #[props(default)] has_more_rows: Option<bool>,
+    #[props(default)] matching_task_count: Option<usize>,
     #[props(default)] mutations_locked: bool,
     #[props(default)] mutation_globally_blocked: bool,
     #[props(default)] server_actions_blocked: bool,
@@ -70,6 +71,7 @@ pub fn ListView(
         usize::MAX
     };
     let has_more = has_more_rows.unwrap_or(matching_rows.len() > visible_limit);
+    let task_count = matching_task_count.unwrap_or_else(|| count_unique_list_tasks(&matching_rows));
     let filtered_rows = matching_rows
         .into_iter()
         .take(visible_limit)
@@ -187,9 +189,7 @@ pub fn ListView(
                     AllTasksViewStatus::Loaded => rsx! {},
                 }
             }
-            if search_available && no_matches {
-                p { class: "task-filter-empty", role: "status", "一致するタスクがありません。" }
-            } else if search_available {
+            if search_available {
                 div { class: "task-table-scroll",
                     table { class: table_class,
                         thead {
@@ -197,7 +197,10 @@ pub fn ListView(
                                 th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
                                 th { class: "deadline-heading", "締切" }
-                                th { class: "task-heading", "タスク" }
+                                th { class: "task-heading", aria_label: "タスク {task_count}件",
+                                    "タスク"
+                                    span { class: "task-heading-count", " ({task_count})" }
+                                }
                             }
                         }
                         tbody {
@@ -218,6 +221,9 @@ pub fn ListView(
                             }
                         }
                     }
+                }
+                if no_matches {
+                    p { class: "task-filter-empty", role: "status", "一致するタスクがありません。" }
                 }
                 if has_more {
                     button { class: "all-tasks-more", r#type: "button", onclick: move |_| on_show_more.call(()), "さらに表示" }

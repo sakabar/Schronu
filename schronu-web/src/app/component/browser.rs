@@ -75,6 +75,7 @@ pub(super) fn BrowserApp() -> Element {
         band_loading,
         band_error,
         has_more_rows,
+        matching_task_count,
         list_selection,
         all_tasks_status,
         all_tasks_failure,
@@ -238,6 +239,7 @@ pub(super) fn BrowserApp() -> Element {
                         visible_row_limit: (list_selection == ListSelection::All)
                             .then_some(all_tasks_visible_limit),
                         has_more_rows: (list_selection == ListSelection::All).then_some(has_more_rows),
+                        matching_task_count,
                         mutations_locked,
                         mutation_globally_blocked: global_blocked,
                         server_actions_blocked,

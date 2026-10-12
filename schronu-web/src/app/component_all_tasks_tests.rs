@@ -462,6 +462,7 @@ fn all行の区切りはtask件数上限に含めずさらに表示で先頭か�
     let first_page = project_visible_all_task_rows(&rows, "", 500);
     assert_eq!(first_page.rows.len(), 500);
     assert!(first_page.has_more);
+    assert_eq!(first_page.matching_task_count, 501);
     assert!(first_page.rows.iter().all(|row| row.gap_before.is_none()));
     assert!(first_page.rows.iter().all(|row| !row.date_boundary_before));
 
@@ -475,11 +476,48 @@ fn all行の区切りはtask件数上限に含めずさらに表示で先頭か�
 
     let filtered = project_visible_all_task_rows(&rows, "検索", 501);
     assert_eq!(filtered.rows.len(), 501);
+    assert_eq!(filtered.matching_task_count, 501);
     assert_eq!(filtered.rows[500].row_key, "all:task-500:2026-09-10:500");
     assert_eq!(
         filtered.rows[500].gap_before.as_deref(),
         Some("3日間の空き時間")
     );
+}
+
+#[test]
+fn all件数は分割実taskと見込み予定を各一件として数える() {
+    use crate::client::view_projection::project_visible_all_task_rows;
+
+    let first = all_row(0, "actual", "対象", true);
+    let split = all_row(1, "actual", "対象", true);
+    let mut projected = all_row(2, "source", "対象", true);
+    projected.task.task_id = None;
+    projected.occurrence = crate::ScheduleOccurrence::Projected {
+        occurrence_key: "source:1000".to_owned(),
+        source_task_id: "source".to_owned(),
+    };
+    let mut projected_split = projected.clone();
+    projected_split.segment_index = 3;
+    let mut projected_next = projected.clone();
+    projected_next.segment_index = 4;
+    projected_next.occurrence = crate::ScheduleOccurrence::Projected {
+        occurrence_key: "source:2000".to_owned(),
+        source_task_id: "source".to_owned(),
+    };
+    let unmatched = all_row(5, "other", "別件", true);
+    let rows = [
+        first,
+        split,
+        projected,
+        projected_split,
+        projected_next,
+        unmatched,
+    ];
+
+    let visible = project_visible_all_task_rows(&rows, "対象", 2);
+    assert_eq!(visible.rows.len(), 2);
+    assert!(visible.has_more);
+    assert_eq!(visible.matching_task_count, 3);
 }
 
 #[test]

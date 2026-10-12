@@ -258,6 +258,62 @@ fn named_row(
 }
 
 #[test]
+fn 予定一覧の見出しは検索後の実taskと見込み予定を重複なく数える() {
+    let first = named_row("actual-a", "対象A", false, true);
+    let mut split = first.clone();
+    split.row_key = "row:actual-a:second-segment".to_owned();
+    let mut projected = named_row("unused", "対象B", false, true);
+    projected.task.task_id = None;
+    projected.occurrence = crate::ScheduleOccurrence::Projected {
+        occurrence_key: "source:1000".to_owned(),
+        source_task_id: "source".to_owned(),
+    };
+    let mut next_projected = projected.clone();
+    next_projected.row_key = "row:next-projection".to_owned();
+    next_projected.occurrence = crate::ScheduleOccurrence::Projected {
+        occurrence_key: "source:2000".to_owned(),
+        source_task_id: "source".to_owned(),
+    };
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![
+            first,
+            split,
+            projected,
+            next_projected,
+            named_row("other", "別件", false, true),
+        ],
+        active_task_ids: Vec::new(),
+        filter_text: "対象".to_owned(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("aria-label=\"タスク 3件\""), "{html}");
+    assert!(
+        html.contains("class=\"task-heading-count\"> (3)</span>"),
+        "{html}"
+    );
+}
+
+#[test]
+fn 検索結果が空でも件数ゼロの列見出しを表示する() {
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![named_row("actual", "対象", false, true)],
+        active_task_ids: Vec::new(),
+        filter_text: "不一致".to_owned(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("aria-label=\"タスク 0件\""), "{html}");
+    assert!(
+        html.contains("class=\"task-heading-count\"> (0)</span>"),
+        "{html}"
+    );
+    assert!(html.contains("一致するタスクがありません。"), "{html}");
+}
+
+#[test]
 fn 分割task表示名は一覧へ無加工で描画し操作には正規名を使う() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut split_row = named_row("split", "タスク", false, true);
@@ -579,6 +635,7 @@ fn all一覧は先頭buttonとinline状態を表示する() {
     assert!(html.contains("class=\"date-jump-form\""), "{html}");
     assert!(!html.contains("class=\"task-name-filter\""), "{html}");
     assert!(!html.contains("class=\"task-table-scroll\""), "{html}");
+    assert!(!html.contains("class=\"task-heading-count\""), "{html}");
 }
 
 #[test]
@@ -626,6 +683,10 @@ fn all取得失敗と無効化はinlineから再試行できる() {
         failed_html.contains("再取得してください。"),
         "{failed_html}"
     );
+    assert!(
+        !failed_html.contains("class=\"task-heading-count\""),
+        "{failed_html}"
+    );
     dispatch_click(&failed, *failed_ids.last().unwrap());
     assert_eq!(*failed_events.lock().unwrap(), ["retry"]);
 
@@ -641,6 +702,10 @@ fn all取得失敗と無効化はinlineから再試行できる() {
     let invalidated_html = dioxus::ssr::render(&invalidated);
     assert!(
         invalidated_html.contains("タスクが更新されました。"),
+        "{invalidated_html}"
+    );
+    assert!(
+        !invalidated_html.contains("class=\"task-heading-count\""),
         "{invalidated_html}"
     );
     dispatch_click(&invalidated, *invalidated_ids.last().unwrap());
@@ -677,6 +742,7 @@ fn all一覧は500行ずつ描画し親は空操作cellとなる() {
                 filter_text: String::new(),
                 all_tasks_status: Some(AllTasksViewStatus::Loaded),
                 visible_row_limit: Some(500),
+                matching_task_count: Some(501),
                 on_select_date: move |_| {},
                 on_date_input_change: move |_| {},
                 on_submit_date_input: move |_| {},
@@ -689,6 +755,7 @@ fn all一覧は500行ずつ描画し親は空操作cellとなる() {
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert_eq!(html.matches("class=\"task-row\"").count(), 500, "{html}");
+    assert!(html.contains("aria-label=\"タスク 501件\""), "{html}");
     assert!(html.contains("さらに表示"), "{html}");
     assert!(
         html.contains("class=\"task-table all-task-table\""),

@@ -5,6 +5,7 @@ use crate::{
     TaskDisplayKind,
 };
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc, Weekday};
+use std::collections::HashSet;
 
 const INVALID_TIME: &str = "--:--";
 
@@ -65,6 +66,7 @@ pub enum ScheduleDisplayViewModel {
 pub struct VisibleAllTaskRows {
     pub rows: Vec<ListRowViewModel>,
     pub has_more: bool,
+    pub matching_task_count: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -102,13 +104,20 @@ pub fn project_visible_all_task_rows(
     let mut previous_date = None;
     let mut projected_rows = Vec::with_capacity(visible_limit.min(rows.len()));
     let mut has_more = false;
+    let mut identities = HashSet::new();
+    let mut matching_task_count = 0;
     for row in rows {
         if !task_name_matches(filter, &row.task.task_name) {
             continue;
         }
+        if task_count_identity(&row.task, &row.occurrence)
+            .is_none_or(|identity| identities.insert(identity))
+        {
+            matching_task_count += 1;
+        }
         if projected_rows.len() == visible_limit {
             has_more = true;
-            break;
+            continue;
         }
 
         let current_date = NaiveDate::parse_from_str(&row.schedule_date, "%Y-%m-%d").ok();
@@ -126,6 +135,28 @@ pub fn project_visible_all_task_rows(
     VisibleAllTaskRows {
         rows: projected_rows,
         has_more,
+        matching_task_count,
+    }
+}
+
+pub fn count_unique_list_tasks(rows: &[ListRowViewModel]) -> usize {
+    let mut identities = HashSet::new();
+    rows.iter()
+        .filter(|row| {
+            task_count_identity(&row.task, &row.occurrence)
+                .is_none_or(|identity| identities.insert(identity))
+        })
+        .count()
+}
+
+fn task_count_identity<'a>(
+    task: &'a ScheduledTask,
+    occurrence: &'a ScheduleOccurrence,
+) -> Option<(bool, &'a str)> {
+    match occurrence {
+        ScheduleOccurrence::Projected { occurrence_key, .. } => Some((true, occurrence_key)),
+        ScheduleOccurrence::Actual { task_id } => Some((false, task_id)),
+        ScheduleOccurrence::LegacyActual => task.task_id.as_deref().map(|id| (false, id)),
     }
 }
 

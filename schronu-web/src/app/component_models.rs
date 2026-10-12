@@ -25,6 +25,7 @@ pub(crate) struct BrowserPageModel {
     pub band_loading: bool,
     pub band_error: Option<String>,
     pub has_more_rows: bool,
+    pub matching_task_count: Option<usize>,
     pub list_selection: ListSelection,
     pub all_tasks_status: AllTasksStatus,
     pub all_tasks_failure: Option<String>,
@@ -53,23 +54,28 @@ impl BrowserPageModel {
         all_task_filter: &str,
         all_tasks_visible_limit: usize,
     ) -> Self {
-        let (rows, has_more_rows) = if state.list_selection() == ListSelection::All {
-            state
-                .all_task_rows()
-                .map(|rows| {
-                    let projection = project_visible_all_task_rows(
-                        rows,
-                        all_task_filter,
-                        all_tasks_visible_limit,
-                    );
-                    (projection.rows, projection.has_more)
-                })
-                .unwrap_or_default()
-        } else if state.has_scheduled_list() {
-            (project_list_rows_for_browser(state), false)
-        } else {
-            (Vec::new(), false)
-        };
+        let (rows, has_more_rows, matching_task_count) =
+            if state.list_selection() == ListSelection::All {
+                state
+                    .all_task_rows()
+                    .map(|rows| {
+                        let projection = project_visible_all_task_rows(
+                            rows,
+                            all_task_filter,
+                            all_tasks_visible_limit,
+                        );
+                        (
+                            projection.rows,
+                            projection.has_more,
+                            Some(projection.matching_task_count),
+                        )
+                    })
+                    .unwrap_or((Vec::new(), false, None))
+            } else if state.has_scheduled_list() {
+                (project_list_rows_for_browser(state), false, None)
+            } else {
+                (Vec::new(), false, None)
+            };
         Self {
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
@@ -84,6 +90,7 @@ impl BrowserPageModel {
             band_loading: state.band_loading(),
             band_error: state.band_error().map(str::to_owned),
             has_more_rows,
+            matching_task_count,
             list_selection: state.list_selection(),
             all_tasks_status: state.all_tasks_status(),
             all_tasks_failure: state.all_tasks_failure_message().map(str::to_owned),
