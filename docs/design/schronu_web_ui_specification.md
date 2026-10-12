@@ -354,9 +354,9 @@ cursorなしでrepositoryを読むcommandでは`operation_now`を1回だけ取�
 
 ### 4.5 `auto_session`
 
-- 入力: なし
+- 入力: `max_minutes: Option<i64>`。空欄は`None`、正の整数は`Some`として送る。不正な入力はclientで送信せず、serverも0以下と秒換算できない値を拒否する。
 - 成功出力: `WebSuccess<Option<SessionTask>>`
-- applicationの`get_focus`相当の選定を呼ぶが、current taskの設定処理は呼ばない。
+- `None`ではapplicationの`get_focus`相当の選定を呼ぶ。`Some`ではCLIの`全 <分数>`と共通のapplication選定関数を呼び、着手可能な実taskの葉で相手待ちを除き、現在logical date内に予定開始する区間のうち、指定分数未満で最長の区間を選ぶ。同値なら予定順の先頭とする。分割taskは区間の長さで判定し、選定した実task全体のsnapshotを返す。いずれもcurrent taskの設定処理は呼ばない。
 - 候補がなければ`None`を正常結果として返す。
 - task dataは変更しない。
 
@@ -675,7 +675,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### 7.2 セッション画面
 
-- 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonを表示する。
+- 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は「自動セッション」buttonと任意の分数入力を横並びで表示する。入力欄は「指定分数未満」の規則を説明し、空欄なら従来の自動選定とする。
+- 分数は画面内の一時stateとし、localStorageへ保存しない。入力変更だけでは通信せず、button押下時にASCII数字の正整数と秒換算可能な範囲を検証する。不正値は入力欄近くへerrorを表示して送信しない。通信中、持ち歩きロック中、背景更新中は入力欄とbuttonを無効にする。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
 - cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して再開」「計測を破棄して完了」「記録して完了」の順の5操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
 - 操作buttonは意味別classを持つ。「計測を破棄して再開」と「計測を破棄して解除」は灰、「記録して解除」は青、「計測を破棄して完了」は赤、「記録して完了」は緑とする。通常幅では解除系2buttonを1段目、「計測を破棄して再開」を全幅の2段目、完了系2buttonを3段目に配置し、34rem以下では同じ順序の1列にする。

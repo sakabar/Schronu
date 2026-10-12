@@ -18,10 +18,11 @@ use crate::application::daily_capacity::{
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
-    format_scheduled_task_display_name, get_schedule, scheduled_logical_dates, ScheduledTaskView,
+    format_scheduled_task_display_name, get_schedule, scheduled_logical_dates,
+    select_scheduled_task_within_minutes, ScheduledTaskView,
 };
 use crate::application::task_use_case::{
-    get_focus, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan,
+    get_focus, get_task, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan, TaskView,
 };
 use chrono::{DateTime, Days, Local, NaiveDate};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -492,16 +493,39 @@ fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {
 pub(in crate::adapter::controller) fn build_auto_session_dto(
     task_repository: &mut dyn TaskRepositoryTrait,
 ) -> Result<Option<SessionTaskDto>, ApplicationError> {
-    get_focus(task_repository).map(|task| {
-        task.map(|task| {
-            session_task_dto(
-                task.id.hyphenated().to_string(),
-                task.name,
-                task.estimated_work_seconds,
-                task.actual_work_seconds,
-            )
-        })
-    })
+    get_focus(task_repository).map(|task| task.map(session_task_dto_from_view))
+}
+
+pub(in crate::adapter::controller) fn build_auto_session_dto_with_minutes(
+    task_repository: &mut dyn TaskRepositoryTrait,
+    operation_now: DateTime<Local>,
+    max_minutes: Option<i64>,
+) -> Result<Option<SessionTaskDto>, ApplicationError> {
+    let Some(max_minutes) = max_minutes else {
+        return build_auto_session_dto(task_repository);
+    };
+    if max_minutes <= 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "max_minutes",
+            reason: "minutes must be positive",
+        });
+    }
+    let schedule = get_schedule(task_repository)?;
+    let selected = select_scheduled_task_within_minutes(&schedule, operation_now, max_minutes)?
+        .and_then(|index| schedule[index].actual_task_id());
+    selected
+        .map(|task_id| get_task(task_repository, task_id))
+        .transpose()
+        .map(|task| task.flatten().map(session_task_dto_from_view))
+}
+
+fn session_task_dto_from_view(task: TaskView) -> SessionTaskDto {
+    session_task_dto(
+        task.id.hyphenated().to_string(),
+        task.name,
+        task.estimated_work_seconds,
+        task.actual_work_seconds,
+    )
 }
 
 fn session_task_dto(

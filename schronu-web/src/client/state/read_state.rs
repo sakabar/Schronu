@@ -117,6 +117,10 @@ impl ClientState {
     }
 
     pub fn request_auto_session(&mut self) -> ClientEffect {
+        self.request_auto_session_with_minutes(None)
+    }
+
+    pub fn request_auto_session_with_minutes(&mut self, max_minutes: Option<i64>) -> ClientEffect {
         if self.read.auto_session_in_flight {
             return ClientEffect::None;
         }
@@ -125,7 +129,10 @@ impl ClientState {
         };
         self.read.latest_auto_request_id = Some(request_id);
         self.read.auto_session_in_flight = true;
-        ClientEffect::AutoSession { request_id }
+        ClientEffect::AutoSession {
+            request_id,
+            max_minutes,
+        }
     }
 
     pub fn request_defer_task<S: KeyValueStorage>(

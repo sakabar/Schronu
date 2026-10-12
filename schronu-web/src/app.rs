@@ -48,6 +48,8 @@ mod routine_load_view_tests;
 pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;
+#[cfg(all(test, feature = "server"))]
+mod timed_auto_session_tests;
 #[cfg(test)]
 mod view_test_support;
 mod web_endpoint;

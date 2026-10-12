@@ -183,7 +183,13 @@ pub(super) fn BrowserApp() -> Element {
                     mutations_locked,
                     auto_session_in_flight,
                     server_actions_blocked,
-                    on_auto_session: move |_| dispatch_action(client, ComponentAction::AutoSession),
+                    on_auto_session: move |max_minutes| {
+                        let action = max_minutes.map_or(
+                            ComponentAction::AutoSession,
+                            ComponentAction::TimedAutoSession,
+                        );
+                        dispatch_action(client, action);
+                    },
                     on_action: move |action| dispatch_session_action(client, action),
                 }
             } else if active_tab == ActiveTab::List {

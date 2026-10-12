@@ -26,6 +26,7 @@ pub enum ClientEffect {
     },
     AutoSession {
         request_id: u64,
+        max_minutes: Option<i64>,
     },
     DeferTask {
         request_id: u64,

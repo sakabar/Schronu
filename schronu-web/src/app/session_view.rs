@@ -21,6 +21,23 @@ pub struct SessionAction {
     pub kind: SessionActionKind,
 }
 
+#[cfg_attr(
+    not(any(test, all(feature = "web", target_arch = "wasm32"))),
+    allow(dead_code)
+)]
+fn parse_auto_session_minutes(input: &str) -> Result<Option<i64>, &'static str> {
+    if input.is_empty() {
+        return Ok(None);
+    }
+    if !input.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err("分数は正の整数で入力してください。");
+    }
+    match input.parse::<i64>() {
+        Ok(minutes) if minutes > 0 && minutes <= i64::MAX / 60 => Ok(Some(minutes)),
+        _ => Err("分数は1以上の有効な整数で入力してください。"),
+    }
+}
+
 #[component]
 pub fn SessionView(
     sessions: Vec<SessionCardViewModel>,
@@ -28,22 +45,45 @@ pub fn SessionView(
     #[props(default)] mutations_locked: bool,
     #[props(default)] auto_session_in_flight: bool,
     #[props(default)] server_actions_blocked: bool,
-    on_auto_session: EventHandler<()>,
+    on_auto_session: EventHandler<Option<i64>>,
     on_action: EventHandler<SessionAction>,
 ) -> Element {
+    let mut minutes_input = use_signal(String::new);
+    let mut input_error = use_signal(|| None::<&'static str>);
     if sessions.is_empty() {
         return rsx! {
             section { class: "session-empty",
-                button {
-                    class: "primary-action",
-                    r#type: "button",
-                    disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
-                    onclick: move |_| {
-                        if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
-                            on_auto_session.call(());
-                        }
-                    },
-                    "自動セッション"
+                div { class: "auto-session-controls",
+                    label { r#for: "auto-session-minutes", "分数 (任意)" }
+                    input {
+                        id: "auto-session-minutes",
+                        r#type: "text",
+                        inputmode: "numeric",
+                        value: minutes_input.read().clone(),
+                        disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
+                        oninput: move |event| {
+                            minutes_input.set(event.value());
+                            input_error.set(None);
+                        },
+                    }
+                    button {
+                        class: "primary-action",
+                        r#type: "button",
+                        disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
+                        onclick: move |_| {
+                            if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
+                                match parse_auto_session_minutes(&minutes_input.read()) {
+                                    Ok(max_minutes) => on_auto_session.call(max_minutes),
+                                    Err(message) => input_error.set(Some(message)),
+                                }
+                            }
+                        },
+                        "自動セッション"
+                    }
+                }
+                p { class: "auto-session-hint", "指定分数未満の予定区間から選びます。空欄では通常の自動選定です。" }
+                if let Some(message) = *input_error.read() {
+                    p { class: "error", role: "alert", "{message}" }
                 }
             }
         };

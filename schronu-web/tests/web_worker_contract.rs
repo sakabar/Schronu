@@ -87,7 +87,7 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
             })
         );
         assert_eq!(
-            worker.auto_session().await,
+            worker.auto_session(None).await,
             Ok(WebSuccess {
                 snapshot: snapshot(3),
                 data: Some(task()),
@@ -133,7 +133,7 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
             Event::ListCompleted("2026-09-04".to_owned()),
             Event::LoadBand,
             Event::ListAll(Some("cursor".to_owned())),
-            Event::Auto,
+            Event::Auto(None),
             Event::Record(123, 456),
             Event::Complete(123, 456, false),
             Event::Defer("task-1".to_owned()),
@@ -150,6 +150,15 @@ fn worker停止時だけworker_unavailableをretry可能として返す() {
 
     assert_eq!(error.code, web_error_codes::WORKER_UNAVAILABLE);
     assert_eq!(error.retry_advice, RetryAdvice::Retry);
+}
+
+#[test]
+fn workerは自動セッションの分数をoperationへ渡す() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let recorded = Arc::clone(&events);
+    let worker = WebWorkerHandle::spawn(move || RecordingOperations { events: recorded });
+    futures::executor::block_on(worker.auto_session(Some(30))).unwrap();
+    assert_eq!(*events.lock().unwrap(), vec![Event::Auto(Some(30))]);
 }
 
 #[test]
@@ -190,7 +199,7 @@ enum Event {
     ListCompleted(String),
     ListAll(Option<String>),
     LoadBand,
-    Auto,
+    Auto(Option<i64>),
     Defer(String),
     Record(i64, i64),
     Complete(i64, i64, bool),
@@ -225,7 +234,10 @@ impl WebOperations for StackWorkloadOperations {
         unreachable!()
     }
 
-    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+    fn auto_session(
+        &mut self,
+        _max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         unreachable!()
     }
 
@@ -277,7 +289,10 @@ impl WebOperations for PanickingOperations {
         unreachable!()
     }
 
-    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+    fn auto_session(
+        &mut self,
+        _max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         unreachable!()
     }
 
@@ -344,8 +359,11 @@ impl WebOperations for RecordingOperations {
         })
     }
 
-    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
-        self.events.lock().unwrap().push(Event::Auto);
+    fn auto_session(
+        &mut self,
+        max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        self.events.lock().unwrap().push(Event::Auto(max_minutes));
         Ok(WebSuccess {
             snapshot: snapshot(3),
             data: Some(task()),
