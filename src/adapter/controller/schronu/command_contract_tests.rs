@@ -46,6 +46,7 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
         (&["重", "priority", "pr"][..], CommandKind::Priority),
         (&["類", "category", "cat"][..], CommandKind::Category),
         (&["働", "work", "wk"][..], CommandKind::Work),
+        (&["刻", "slice"][..], CommandKind::WorkSlice),
         (&["後", "defer"][..], CommandKind::Defer),
         (
             &["清", "defer_all_frequent_routines"][..],

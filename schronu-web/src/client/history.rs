@@ -19,6 +19,7 @@ pub enum Operation {
     DeferTask,
     DiscardSession,
     RecordSession,
+    CompleteWorkSlice,
     CompleteSession,
     CompleteSessionWithoutRecording,
     ConfirmRepositoryCheck,
@@ -40,6 +41,7 @@ pub enum ServerActionInvocation {
     AutoSession,
     DeferTask(DeferTaskRequest),
     RecordSession(RecordSessionRequest),
+    CompleteWorkSlice(RecordSessionRequest),
     CompleteSession(CompleteSessionRequest),
 }
 
@@ -54,6 +56,7 @@ impl ServerActionInvocation {
             Self::AutoSession => Operation::AutoSession,
             Self::DeferTask(_) => Operation::DeferTask,
             Self::RecordSession(_) => Operation::RecordSession,
+            Self::CompleteWorkSlice(_) => Operation::CompleteWorkSlice,
             Self::CompleteSession(request) if request.record_elapsed_seconds => {
                 Operation::CompleteSession
             }
@@ -64,6 +67,7 @@ impl ServerActionInvocation {
     pub fn task_id(&self) -> Option<&str> {
         match self {
             Self::RecordSession(request) => Some(&request.task_id),
+            Self::CompleteWorkSlice(request) => Some(&request.task_id),
             Self::CompleteSession(request) => Some(&request.task_id),
             Self::DeferTask(request) => Some(&request.task_id),
             Self::Bootstrap
@@ -99,6 +103,14 @@ impl fmt::Display for ServerActionInvocation {
             Self::RecordSession(request) => write!(
                 formatter,
                 "record_session(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {})",
+                request.task_id,
+                request.started_at_epoch_ms,
+                request.ended_at_epoch_ms,
+                request.expected_actual_work_seconds
+            ),
+            Self::CompleteWorkSlice(request) => write!(
+                formatter,
+                "complete_work_slice(task_id: {:?}, started_at_epoch_ms: {}, ended_at_epoch_ms: {:?}, expected_actual_work_seconds: {})",
                 request.task_id,
                 request.started_at_epoch_ms,
                 request.ended_at_epoch_ms,

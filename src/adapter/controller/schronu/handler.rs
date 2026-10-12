@@ -143,6 +143,7 @@ pub(super) trait TaskAttributeCommandContext {
     fn set_priority(&mut self, priority: i64) -> Result<(), ApplicationError>;
     fn set_category(&mut self, value: &str) -> Result<(), HandlerError>;
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
+    fn complete_work_slice(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError>;
 }
 
 pub(super) trait DeferCommandContext {
@@ -698,6 +699,11 @@ pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Si
             value,
             ..
         }) => context.add_work(*value)?,
+        Command::Action(CommandAction::OptionalInteger {
+            kind: CommandKind::WorkSlice,
+            value,
+            ..
+        }) => context.complete_work_slice(*value)?,
         _ => return Ok(None),
     }
 

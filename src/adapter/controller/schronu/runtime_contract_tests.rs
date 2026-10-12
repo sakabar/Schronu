@@ -4340,6 +4340,47 @@ fn test_execute_work_明示分を秒へ変換して既存端数へ加算する()
 }
 
 #[test]
+fn test_execute_work_slice_明示分は完了子へ記録し親の実績を保つ() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("作業単位").unwrap();
+    task.set_estimated_work_seconds(30 * 60).unwrap();
+    task.set_actual_work_seconds(5 * 60).unwrap();
+    let task_id = task.get_id().unwrap();
+
+    let result = execute_command_for_test(task, now, Some(task_id), "刻 15");
+    let child = result.task.get_children().unwrap().remove(0);
+    assert_eq!(result.task.get_estimated_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(result.task.get_actual_work_seconds().unwrap(), 5 * 60);
+    assert_eq!(child.get_estimated_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(child.get_status().unwrap(), Status::Done);
+    assert_eq!(result.focused_task_id_opt, None);
+}
+
+#[test]
+fn test_execute_work_slice_省略時の経過秒と失敗時のfocusを扱う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 1, 1).unwrap();
+    let task = new_test_task_handle("作業単位").unwrap();
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_with_focus_started_for_test(
+        task,
+        now,
+        now - Duration::seconds(61),
+        Some(task_id),
+        "slice",
+    );
+    assert_eq!(result.task.get_children().unwrap()[0].get_actual_work_seconds().unwrap(), 61);
+
+    for command in ["刻 0", "刻 -1"] {
+        let task = new_test_task_handle("作業単位").unwrap();
+        let task_id = task.get_id().unwrap();
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+        assert!(result.task.get_children().unwrap().is_empty());
+        assert_eq!(result.focused_task_id_opt, Some(task_id));
+    }
+}
+
+#[test]
 fn test_execute_work_負数とoverflowはtaskとfocusを維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 

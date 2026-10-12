@@ -164,6 +164,17 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn complete_work_slice(
+        &mut self,
+        request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        let operation_now = self.clock.now();
+        self.service()?
+            .complete_work_slice_at(operation_now, request.into())
+            .map(convert_success)
+            .map_err(Into::into)
+    }
+
     fn complete_session(
         &mut self,
         request: CompleteSessionRequest,

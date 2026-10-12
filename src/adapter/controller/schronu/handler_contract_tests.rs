@@ -1309,6 +1309,11 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
         self.calls.push(format!("work:{minutes:?}"));
         Ok(())
     }
+
+    fn complete_work_slice(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        self.calls.push(format!("work_slice:{minutes:?}"));
+        Ok(())
+    }
 }
 
 #[test]
@@ -2248,6 +2253,10 @@ impl TaskAttributeCommandContext for CompositeTraceContext {
 
     fn add_work(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
         self.task_attribute.add_work(minutes)
+    }
+
+    fn complete_work_slice(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        self.task_attribute.complete_work_slice(minutes)
     }
 }
 

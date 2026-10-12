@@ -23,10 +23,10 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minutes, PackResult};
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
-    add_actual_work, breakdown_task, complete_task, create_task, defer_routine_task, defer_task,
-    estimated_work_seconds_from_minutes, set_category, set_deadline, set_estimate,
-    validate_task_name, AddActualWorkInput, ApplicationError, BreakdownTaskInput,
-    CompleteTaskInput, CreateTaskInput, TaskFactory,
+    add_actual_work, breakdown_task, complete_task, complete_work_slice, create_task,
+    defer_routine_task, defer_task, estimated_work_seconds_from_minutes, set_category,
+    set_deadline, set_estimate, validate_task_name, AddActualWorkInput, ApplicationError,
+    BreakdownTaskInput, CompleteTaskInput, CompleteWorkSliceInput, CreateTaskInput, TaskFactory,
 };
 use crate::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status,
@@ -1166,6 +1166,40 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
         }
         Ok(())
     }
+
+    fn complete_work_slice(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        let task_id = self
+            .focused_task_id_opt
+            .ok_or(ApplicationError::InvalidInput {
+                field: "task_id",
+                reason: "no focused task",
+            })?;
+        let finished_at = self.task_repository.get_last_synced_time();
+        let work_seconds = match minutes {
+            Some(minutes) => minutes
+                .checked_mul(60)
+                .ok_or(ApplicationError::InvalidInput {
+                    field: "work_seconds",
+                    reason: "seconds conversion overflow",
+                })?,
+            None => (finished_at - *self.focus_started_datetime).num_seconds(),
+        };
+        let mut next_id = Uuid::new_v4;
+        let mut factory = TaskFactory::new(finished_at, &mut next_id);
+        complete_work_slice(
+            self.task_repository,
+            CompleteWorkSliceInput {
+                task_id,
+                finished_at,
+                work_seconds,
+                expected_actual_work_seconds: None,
+                source_started_at: None,
+            },
+            &mut factory,
+        )?;
+        *self.focused_task_id_opt = None;
+        Ok(())
+    }
 }
 
 pub(super) struct RuntimeDeferCommandContext<'a> {
@@ -1593,6 +1627,16 @@ impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
             config: self.config,
         };
         context.add_work(minutes)
+    }
+
+    fn complete_work_slice(&mut self, minutes: Option<i64>) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.complete_work_slice(minutes)
     }
 }
 

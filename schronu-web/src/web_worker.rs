@@ -36,6 +36,12 @@ pub trait WebOperations: 'static {
         &mut self,
         request: RecordSessionRequest,
     ) -> Result<WebSuccess<RecordSessionResult>, WebError>;
+    fn complete_work_slice(
+        &mut self,
+        _request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        unreachable!("complete_work_slice is not implemented by this test operation")
+    }
     fn complete_session(
         &mut self,
         request: CompleteSessionRequest,
@@ -75,6 +81,10 @@ enum WebWorkerCommand {
         response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
     },
     RecordSession {
+        request: RecordSessionRequest,
+        response: oneshot::Sender<Result<WebSuccess<RecordSessionResult>, WebError>>,
+    },
+    CompleteWorkSlice {
         request: RecordSessionRequest,
         response: oneshot::Sender<Result<WebSuccess<RecordSessionResult>, WebError>>,
     },
@@ -191,6 +201,17 @@ impl WebWorkerHandle {
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
+
+    pub async fn complete_work_slice(
+        &self,
+        request: RecordSessionRequest,
+    ) -> Result<WebSuccess<RecordSessionResult>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::CompleteWorkSlice { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
 }
 
 fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebWorkerCommand>) {
@@ -222,6 +243,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::RecordSession { request, response } => {
                 let _ = response.send(operations.record_session(request));
+            }
+            WebWorkerCommand::CompleteWorkSlice { request, response } => {
+                let _ = response.send(operations.complete_work_slice(request));
             }
             WebWorkerCommand::CompleteSession { request, response } => {
                 let _ = response.send(operations.complete_session(request));

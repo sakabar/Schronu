@@ -105,6 +105,18 @@ pub async fn record_session(
     unreachable!("server function body only runs on the server")
 }
 
+#[server(endpoint = "web_complete_work_slice")]
+pub async fn complete_work_slice(
+    request: RecordSessionRequest,
+) -> Result<WebOperationResult<WebSuccess<RecordSessionResult>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker().await?.complete_work_slice(request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
 #[server(endpoint = "web_complete_session")]
 pub async fn complete_session(
     request: CompleteSessionRequest,

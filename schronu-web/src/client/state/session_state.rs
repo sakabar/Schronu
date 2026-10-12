@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum MutationKind {
     Record,
+    WorkSlice,
     Complete,
     CompleteWithoutRecording,
 }
@@ -172,6 +173,14 @@ impl ClientState {
         self.begin_mutation(storage, task_id, MutationKind::Record)
     }
 
+    pub fn begin_complete_work_slice<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        task_id: &str,
+    ) -> ClientEffect {
+        self.begin_mutation(storage, task_id, MutationKind::WorkSlice)
+    }
+
     pub fn begin_complete_session<S: KeyValueStorage>(
         &mut self,
         storage: &S,
@@ -331,22 +340,32 @@ impl ClientState {
                     request,
                 }
             }
-            MutationKind::Record => {
+            MutationKind::Record | MutationKind::WorkSlice => {
                 let request = RecordSessionRequest {
                     task_id: request_task_id,
                     started_at_epoch_ms,
                     ended_at_epoch_ms: Some(ended_at_epoch_ms),
                     expected_actual_work_seconds,
                 };
-                ClientEffect::RecordSession {
-                    request_id,
-                    request,
+                if kind == MutationKind::WorkSlice {
+                    ClientEffect::CompleteWorkSlice {
+                        request_id,
+                        request,
+                    }
+                } else {
+                    ClientEffect::RecordSession {
+                        request_id,
+                        request,
+                    }
                 }
             }
         };
         let invocation = match &effect {
             ClientEffect::RecordSession { request, .. } => {
                 ServerActionInvocation::RecordSession(request.clone())
+            }
+            ClientEffect::CompleteWorkSlice { request, .. } => {
+                ServerActionInvocation::CompleteWorkSlice(request.clone())
             }
             ClientEffect::CompleteSession { request, .. } => {
                 ServerActionInvocation::CompleteSession(request.clone())
@@ -365,9 +384,12 @@ impl ClientState {
 
     fn take_pending_record(&mut self, request_id: u64) -> Option<PendingMutation> {
         let pending = self.sessions.pending_mutations.get(&request_id)?;
-        let ServerActionInvocation::RecordSession(_) = &pending.invocation else {
+        if !matches!(
+            pending.invocation,
+            ServerActionInvocation::RecordSession(_) | ServerActionInvocation::CompleteWorkSlice(_)
+        ) {
             return None;
-        };
+        }
         self.sessions.pending_mutations.remove(&request_id)
     }
 

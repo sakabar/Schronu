@@ -1,5 +1,5 @@
 use crate::application::task_use_case::{
-    AddActualWorkInput, CompleteTaskInput, DeferMode, DeferTaskPlan,
+    AddActualWorkInput, CompleteTaskInput, CompleteWorkSliceInput, DeferMode, DeferTaskPlan,
 };
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
@@ -138,6 +138,25 @@ pub(super) fn prepare_add_actual_work_input(
         task_id,
         additional_actual_work_seconds,
         expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
+    })
+}
+
+pub(super) fn prepare_work_slice_input(
+    request: RecordSessionRequest,
+    operation_now: DateTime<Local>,
+) -> Result<CompleteWorkSliceInput, WebSessionInputError> {
+    let task_id = validate_task_and_expected_actual_work(
+        &request.task_id,
+        request.expected_actual_work_seconds,
+    )?;
+    let (ended_at, finished_at) = resolve_ended_at(request.ended_at_epoch_ms, operation_now)?;
+    Ok(CompleteWorkSliceInput {
+        task_id,
+        finished_at,
+        work_seconds: calculate_elapsed_seconds(request.started_at_epoch_ms, ended_at)?,
+        expected_actual_work_seconds: Some(request.expected_actual_work_seconds),
+        source_started_at: DateTime::<Utc>::from_timestamp_millis(request.started_at_epoch_ms)
+            .map(|started_at| started_at.with_timezone(&Local)),
     })
 }
 

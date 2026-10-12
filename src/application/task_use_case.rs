@@ -239,6 +239,111 @@ pub struct CompleteTaskInput {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct CompleteWorkSliceInput {
+    pub task_id: Uuid,
+    pub finished_at: DateTime<Local>,
+    pub work_seconds: i64,
+    pub expected_actual_work_seconds: Option<i64>,
+    pub source_started_at: Option<DateTime<Local>>,
+}
+
+pub fn complete_work_slice(
+    repository: &mut dyn TaskRepositoryTrait,
+    input: CompleteWorkSliceInput,
+    factory: &mut TaskFactory<'_>,
+) -> Result<Uuid, ApplicationError> {
+    if input.work_seconds <= 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "work_seconds",
+            reason: "must be positive",
+        });
+    }
+    let parent = find_task(repository, input.task_id)?;
+    if parent.get_status().map_err(ApplicationError::TaskTree)? == Status::Done {
+        return Err(ApplicationError::TaskAlreadyCompleted(input.task_id));
+    }
+    if parent
+        .is_repeating_task()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        return Err(ApplicationError::InvalidInput {
+            field: "task_id",
+            reason: "repeating task cannot be split into a completed work slice",
+        });
+    }
+    let actual = parent
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    calculate_updated_actual_work_seconds(
+        input.task_id,
+        actual,
+        input.expected_actual_work_seconds,
+        input.work_seconds,
+    )?;
+    let estimate = parent
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let slice_estimate = estimate.min(input.work_seconds);
+    let remaining_estimate = estimate - slice_estimate;
+    let name = format!(
+        "{}-{}",
+        parent.get_name().map_err(ApplicationError::TaskTree)?,
+        input.finished_at.format("%Y%m%d-%H%M")
+    );
+    if let Some(started_at) = input.source_started_at {
+        let prefix = format!(
+            "{}-",
+            parent.get_name().map_err(ApplicationError::TaskTree)?
+        );
+        for existing_child in parent.get_children().map_err(ApplicationError::TaskTree)? {
+            if existing_child
+                .get_status()
+                .map_err(ApplicationError::TaskTree)?
+                == Status::Done
+                && existing_child
+                    .get_name()
+                    .map_err(ApplicationError::TaskTree)?
+                    .starts_with(&prefix)
+                && existing_child
+                    .get_start_time()
+                    .map_err(ApplicationError::TaskTree)?
+                    == started_at
+            {
+                return Err(ApplicationError::InvalidInput {
+                    field: "source_started_at",
+                    reason: "work slice session was already completed",
+                });
+            }
+        }
+    }
+    validate_task_name(&name, "name")?;
+    let mut child_attr = factory.create_task_attr(&name);
+    if let Some(started_at) = input.source_started_at {
+        child_attr.set_start_time(started_at);
+    }
+    child_attr.set_estimated_work_seconds(slice_estimate);
+    child_attr.set_actual_work_seconds(input.work_seconds);
+    child_attr.set_orig_status(Status::Done);
+    child_attr.set_end_time_opt(Some(input.finished_at));
+    if let Some(deadline) = parent
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        child_attr
+            .set_deadline_time_opt(Some(deadline))
+            .map_err(ApplicationError::TaskTree)?;
+    }
+    ensure_task_ids_available(repository, [*child_attr.get_id()])?;
+    parent
+        .set_estimated_work_seconds(remaining_estimate)
+        .map_err(ApplicationError::TaskTree)?;
+    let child = parent
+        .create_child(child_attr)
+        .map_err(ApplicationError::TaskTree)?;
+    child.get_id().map_err(ApplicationError::TaskTree)
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct AddActualWorkInput {
     pub task_id: Uuid,
     pub additional_actual_work_seconds: i64,
