@@ -1037,12 +1037,14 @@ button:disabled {
 
 .task-table thead tr {
     min-height: 1.75rem;
-    align-items: center;
+    align-items: stretch;
     background: var(--surface-muted);
 }
 
 .task-table th {
+    display: flex;
     min-width: 0;
+    align-items: center;
     padding: 0.3rem 0.35rem;
     border-radius: 0;
     border-bottom: 1px solid var(--line);
