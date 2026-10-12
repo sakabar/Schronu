@@ -80,6 +80,7 @@ fn 数値選定は未来開始と翌日境界と相手待ちと親と予測を�
     let mut future_schedule = base.clone();
     future_schedule.scheduled_start =
         super::daily_capacity::try_next_logical_date_start(now).unwrap();
+    future_schedule.scheduled_end = future_schedule.scheduled_start + Duration::minutes(20);
     let mut waiting = base.clone();
     waiting.task.is_on_other_side = true;
     let mut parent = base.clone();
