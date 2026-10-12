@@ -915,13 +915,18 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
     let repository = RecordingRepository::new(vec![parent]);
     let mut server = initialized_server(repository);
 
-    let response = server
-        .handle_request(tool_call_request(
+    let response = run_tool_at(
+        &mut server,
+        now,
+        tool_call_request(
             "projected-schedule",
             "get_schedule",
-            json!({"from": "2026-10-03", "until": "2026-10-08"}),
-        ))
-        .unwrap();
+            json!({
+                "from": now.format("%F").to_string(),
+                "until": (now + Duration::days(5)).format("%F").to_string(),
+            }),
+        ),
+    );
     let schedule = response["result"]["structuredContent"]["schedule"]
         .as_array()
         .unwrap();
