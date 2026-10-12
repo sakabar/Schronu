@@ -196,7 +196,7 @@ pub fn list_effect(effect: ClientEffect) -> (u64, schronu_web::ListTasksRequest)
 
 pub fn auto_effect(effect: ClientEffect) -> u64 {
     match effect {
-        ClientEffect::AutoSession { request_id } => request_id,
+        ClientEffect::AutoSession { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
     }
 }

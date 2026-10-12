@@ -27,6 +27,7 @@ pub(crate) enum ComponentAction {
     #[allow(dead_code)]
     RetryAllTasks,
     AutoSession,
+    TimedAutoSession(i64),
     AddSession {
         task: SessionTask,
         is_leaf: bool,
@@ -517,6 +518,7 @@ fn action_requires_server(state: Option<&ClientState>, action: &ComponentAction)
             | ComponentAction::SelectLoadDate(_)
             | ComponentAction::RefreshLoad
             | ComponentAction::AutoSession
+            | ComponentAction::TimedAutoSession(_)
             | ComponentAction::DeferTask { .. }
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
@@ -561,6 +563,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::SelectAllTasks => state.select_all_tasks(),
         ComponentAction::RetryAllTasks => state.retry_all_tasks(),
         ComponentAction::AutoSession => state.request_auto_session(),
+        ComponentAction::TimedAutoSession(max_minutes) => {
+            state.request_auto_session_with_minutes(Some(max_minutes))
+        }
         ComponentAction::DeferTask {
             task_id,
             expected_plan,
@@ -629,6 +634,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
     matches!(
         action,
         ComponentAction::AutoSession
+            | ComponentAction::TimedAutoSession(_)
             | ComponentAction::DeferTask { .. }
             | ComponentAction::AddSession { .. }
             | ComponentAction::RestartSessionWithoutRecording(_)

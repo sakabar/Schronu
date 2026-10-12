@@ -176,6 +176,41 @@ pub fn get_schedule(
     get_schedule_with_first_available_time_overrides(repository, &HashMap::new())
 }
 
+pub fn select_scheduled_task_within_minutes(
+    schedule: &[ScheduledTaskView],
+    now: DateTime<Local>,
+    max_minutes: i64,
+) -> Result<Option<usize>, ApplicationError> {
+    let limit_seconds = max_minutes
+        .checked_mul(60)
+        .ok_or(ApplicationError::InvalidInput {
+            field: "max_minutes",
+            reason: "minutes exceed supported range",
+        })?;
+    let limit_seconds = i128::from(limit_seconds);
+    let next_logical_date_start = try_next_logical_date_start(now)?;
+    let mut selected = None;
+    let mut longest_seconds = 0;
+    for (index, segment) in schedule.iter().enumerate() {
+        let seconds = schronu_work_time::remaining_work_seconds(
+            segment.task.estimated_work_seconds,
+            segment.task.actual_work_seconds,
+        );
+        if segment.actual_task_id().is_some()
+            && segment.is_leaf()
+            && !segment.task.is_on_other_side
+            && segment.task.start_time <= now
+            && segment.scheduled_start < next_logical_date_start
+            && seconds < limit_seconds
+            && seconds > longest_seconds
+        {
+            selected = Some(index);
+            longest_seconds = seconds;
+        }
+    }
+    Ok(selected)
+}
+
 pub(crate) fn get_schedule_with_task_first_available_time(
     repository: &dyn TaskRepositoryTrait,
     task_id: Uuid,

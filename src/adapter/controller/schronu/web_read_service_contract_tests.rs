@@ -540,6 +540,47 @@ fn busy_time_slots_yaml() -> String {
 }
 
 #[test]
+fn 自動セッションの分数指定は予定区間の厳密な上限で選定する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_unconstrained_task(now);
+    let before = fixture.persisted_bytes();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    assert_eq!(
+        service
+            .auto_session_at_with_minutes(now, Some(30))
+            .unwrap()
+            .data,
+        None
+    );
+    assert_eq!(
+        service
+            .auto_session_at_with_minutes(now, Some(31))
+            .unwrap()
+            .data
+            .unwrap()
+            .task_id,
+        task_id.hyphenated().to_string()
+    );
+    assert_eq!(
+        service
+            .auto_session_at_with_minutes(now, None)
+            .unwrap()
+            .data
+            .unwrap()
+            .task_id,
+        task_id.hyphenated().to_string()
+    );
+    for invalid_minutes in [0, -1, i64::MAX] {
+        assert!(service
+            .auto_session_at_with_minutes(now, Some(invalid_minutes))
+            .is_err());
+    }
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
+#[test]
 fn serviceの4read操作は実storageを同期して同一snapshotとtyped_dataを返し保存しない() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();

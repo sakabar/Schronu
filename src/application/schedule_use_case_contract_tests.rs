@@ -1,7 +1,8 @@
 use super::interface::TaskRepositoryTrait;
 use super::schedule_use_case::{
     format_scheduled_task_display_name, get_schedule, scheduled_end_by_occurrence,
-    scheduled_logical_dates, ScheduleOccurrenceKey, ScheduledTaskView,
+    scheduled_logical_dates, select_scheduled_task_within_minutes, ScheduleOccurrenceKey,
+    ScheduledTaskView,
 };
 use super::task_use_case::{
     complete_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
@@ -15,6 +16,100 @@ use uuid::Uuid;
 
 fn fixed_now() -> DateTime<Local> {
     Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap()
+}
+
+#[test]
+fn 数値選定は分割片ではなくtask全体の残作業を比較し同値では予定順を守る() {
+    let now = fixed_now();
+    let task = task_with_schedule("候補", now, 90 * 60, 1);
+    let repository = TestTaskRepository::new(vec![task.clone()], now);
+    let view = get_task(&repository, task.get_id().unwrap())
+        .unwrap()
+        .unwrap();
+    let segment = |seconds| ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Actual { task_id: view.id },
+        task: view.clone().into(),
+        first_available_time: now,
+        scheduled_start: now,
+        scheduled_end: now + Duration::seconds(seconds),
+        scheduled_work_seconds: seconds,
+        total_work_seconds: 90 * 60,
+        rank: 0,
+    };
+    let schedule = vec![
+        segment(10 * 60),
+        segment(29 * 60),
+        segment(29 * 60),
+        segment(30 * 60),
+    ];
+
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 30),
+        Ok(None)
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 91),
+        Ok(Some(0))
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 10),
+        Ok(None)
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 0),
+        Ok(None)
+    );
+}
+
+#[test]
+fn 数値選定は未来開始と翌日境界と相手待ちと親と予測を除外する() {
+    let now = fixed_now();
+    let task = task_with_schedule("候補", now, 20 * 60, 1);
+    let repository = TestTaskRepository::new(vec![task.clone()], now);
+    let view = get_task(&repository, task.get_id().unwrap())
+        .unwrap()
+        .unwrap();
+    let base = ScheduledTaskView {
+        occurrence: ScheduleOccurrenceKey::Actual { task_id: view.id },
+        task: view.into(),
+        first_available_time: now,
+        scheduled_start: now,
+        scheduled_end: now + Duration::minutes(20),
+        scheduled_work_seconds: 20 * 60,
+        total_work_seconds: 20 * 60,
+        rank: 0,
+    };
+    let mut future_start = base.clone();
+    future_start.task.start_time = now + Duration::minutes(1);
+    let mut future_schedule = base.clone();
+    future_schedule.scheduled_start =
+        super::daily_capacity::try_next_logical_date_start(now).unwrap();
+    future_schedule.scheduled_end = future_schedule.scheduled_start + Duration::minutes(20);
+    let mut waiting = base.clone();
+    waiting.task.is_on_other_side = true;
+    let mut parent = base.clone();
+    parent.rank = 1;
+    let mut projected = base.clone();
+    projected.occurrence = ScheduleOccurrenceKey::Projected {
+        source_task_id: base.actual_task_id().unwrap(),
+        deadline: now + Duration::days(1),
+    };
+
+    assert_eq!(
+        select_scheduled_task_within_minutes(
+            &[
+                future_start,
+                future_schedule,
+                waiting,
+                parent,
+                projected,
+                base
+            ],
+            now,
+            30,
+        ),
+        Ok(Some(5))
+    );
 }
 
 #[test]

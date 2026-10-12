@@ -19,11 +19,13 @@ pub use model::{
     ScheduledTaskRowDto, ServerSnapshot, SessionTaskDto, TaskDisplayKind, WebSuccess,
 };
 pub(super) use read_model::{
-    build_all_task_rows, build_auto_session_dto, build_band_days, build_scheduled_task_rows,
-    classify_task_display_kind, completed_task_row_dto,
+    build_all_task_rows, build_auto_session_dto_with_minutes, build_band_days,
+    build_scheduled_task_rows, classify_task_display_kind, completed_task_row_dto,
 };
 #[cfg(test)]
-pub(super) use read_model::{build_server_snapshot, calculate_buffer_seconds};
+pub(super) use read_model::{
+    build_auto_session_dto, build_server_snapshot, calculate_buffer_seconds,
+};
 
 use super::web_session_write::{
     prepare_add_actual_work_input, prepare_complete_task_input, prepare_defer_task_input,
@@ -208,8 +210,17 @@ impl WebService {
         &mut self,
         operation_now: DateTime<Local>,
     ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
+        self.auto_session_at_with_minutes(operation_now, None)
+    }
+
+    pub fn auto_session_at_with_minutes(
+        &mut self,
+        operation_now: DateTime<Local>,
+        max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
         self.run_at(operation_now, |repository, free_time_manager, offset| {
-            let data = build_auto_session_dto(repository).map_err(WebReadCoreError::Application)?;
+            let data = build_auto_session_dto_with_minutes(repository, operation_now, max_minutes)
+                .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
                 free_time_manager,

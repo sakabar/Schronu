@@ -1015,7 +1015,7 @@ fn 一時許可中のauto_sessionで最初のsessionが追加されると即時�
     orchestrator.action(&storage, 1_000, ComponentAction::EnableCarryLock);
     orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
     let request_id = match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
-        ClientEffect::AutoSession { request_id } => request_id,
+        ClientEffect::AutoSession { request_id, .. } => request_id,
         effect => panic!("auto_session effectを期待しました: {effect:?}"),
     };
 
@@ -1056,7 +1056,7 @@ fn auto_sessionが追加しない応答では一時許可を維持する() {
         orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
         let request_id =
             match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
-                ClientEffect::AutoSession { request_id } => request_id,
+                ClientEffect::AutoSession { request_id, .. } => request_id,
                 effect => panic!("auto_session effectを期待しました: {effect:?}"),
             };
 
@@ -1084,7 +1084,7 @@ fn auto_sessionのtaskあり応答でも0件から1件以外では一時許可�
         orchestrator.action(&storage, 2_000, ComponentAction::ArmCarryLock);
         let request_id =
             match orchestrator.action(&storage, 2_001, ComponentAction::AutoSession) {
-                ClientEffect::AutoSession { request_id } => request_id,
+                ClientEffect::AutoSession { request_id, .. } => request_id,
                 effect => panic!("auto_session effectを期待しました: {effect:?}"),
             };
 
@@ -1125,7 +1125,7 @@ fn auto_sessionのtaskあり応答でも0件から1件以外では一時許可�
         2_001,
         ComponentAction::AutoSession,
     ) {
-        ClientEffect::AutoSession { request_id } => request_id,
+        ClientEffect::AutoSession { request_id, .. } => request_id,
         effect => panic!("auto_session effectを期待しました: {effect:?}"),
     };
 

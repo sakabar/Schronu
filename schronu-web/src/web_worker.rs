@@ -27,7 +27,10 @@ pub trait WebOperations: 'static {
     fn load_band(&mut self) -> Result<WebSuccess<LoadData>, WebError> {
         unreachable!("load_band is not implemented by this test operation")
     }
-    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
+    fn auto_session(
+        &mut self,
+        max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError>;
     fn defer_task(&mut self, request: DeferTaskRequest) -> Result<ServerSnapshot, WebError>;
     fn record_session(
         &mut self,
@@ -64,6 +67,7 @@ enum WebWorkerCommand {
         response: oneshot::Sender<Result<WebSuccess<LoadData>, WebError>>,
     },
     AutoSession {
+        max_minutes: Option<i64>,
         response: oneshot::Sender<Result<WebSuccess<Option<SessionTask>>, WebError>>,
     },
     DeferTask {
@@ -144,10 +148,16 @@ impl WebWorkerHandle {
         receiver.await.map_err(|_| unavailable_error())?
     }
 
-    pub async fn auto_session(&self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+    pub async fn auto_session(
+        &self,
+        max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         let (response, receiver) = oneshot::channel();
         self.commands
-            .send(WebWorkerCommand::AutoSession { response })
+            .send(WebWorkerCommand::AutoSession {
+                max_minutes,
+                response,
+            })
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
@@ -201,8 +211,11 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             WebWorkerCommand::LoadBand { response } => {
                 let _ = response.send(operations.load_band());
             }
-            WebWorkerCommand::AutoSession { response } => {
-                let _ = response.send(operations.auto_session());
+            WebWorkerCommand::AutoSession {
+                max_minutes,
+                response,
+            } => {
+                let _ = response.send(operations.auto_session(max_minutes));
             }
             WebWorkerCommand::DeferTask { request, response } => {
                 let _ = response.send(operations.defer_task(request));

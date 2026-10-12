@@ -71,10 +71,11 @@ pub async fn load_band() -> Result<WebOperationResult<WebSuccess<LoadData>>, Ser
 
 #[server(endpoint = "web_auto_session")]
 pub async fn auto_session(
+    max_minutes: Option<i64>,
 ) -> Result<WebOperationResult<WebSuccess<Option<SessionTask>>>, ServerFnError> {
     #[cfg(feature = "server")]
     {
-        Ok(dispatch_auto_session(extract_worker().await?).await)
+        Ok(dispatch_auto_session(extract_worker().await?, max_minutes).await)
     }
     #[cfg(not(feature = "server"))]
     unreachable!("server function body only runs on the server")
@@ -162,8 +163,9 @@ async fn dispatch_load_band(worker: WebWorkerHandle) -> WebOperationResult<WebSu
 #[cfg(feature = "server")]
 async fn dispatch_auto_session(
     worker: WebWorkerHandle,
+    max_minutes: Option<i64>,
 ) -> WebOperationResult<WebSuccess<Option<SessionTask>>> {
-    worker.auto_session().await
+    worker.auto_session(max_minutes).await
 }
 
 #[cfg(feature = "server")]
@@ -261,7 +263,7 @@ mod tests {
             let _: WebOperationResult<WebSuccess<LoadData>> =
                 dispatch_load_band(worker.clone()).await;
             let _: WebOperationResult<WebSuccess<Option<SessionTask>>> =
-                dispatch_auto_session(worker.clone()).await;
+                dispatch_auto_session(worker.clone(), None).await;
             let _: WebOperationResult<ServerSnapshot> = dispatch_defer_task(
                 worker.clone(),
                 DeferTaskRequest {
@@ -398,7 +400,10 @@ mod tests {
             })
         }
 
-        fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+        fn auto_session(
+            &mut self,
+            _max_minutes: Option<i64>,
+        ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
             self.count();
             Ok(WebSuccess {
                 snapshot: snapshot(),
