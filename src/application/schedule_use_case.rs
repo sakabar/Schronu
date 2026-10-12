@@ -196,7 +196,7 @@ pub fn select_scheduled_task_within_minutes(
             && segment.is_leaf()
             && !segment.task.is_on_other_side
             && segment.task.start_time <= now
-            && segment.scheduled_start <= next_logical_date_start
+            && segment.scheduled_start < next_logical_date_start
             && seconds < limit_seconds
             && seconds > longest_seconds
         {

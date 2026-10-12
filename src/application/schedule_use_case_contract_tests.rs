@@ -58,7 +58,7 @@ fn 数値選定は予定区間が指定分数未満の最長候補を選び同�
 }
 
 #[test]
-fn 数値選定は未来開始と相手待ちと親と予測を除外する() {
+fn 数値選定は未来開始と翌日境界と相手待ちと親と予測を除外する() {
     let now = fixed_now();
     let task = task_with_schedule("候補", now, 20 * 60, 1);
     let repository = TestTaskRepository::new(vec![task.clone()], now);
@@ -78,7 +78,8 @@ fn 数値選定は未来開始と相手待ちと親と予測を除外する() {
     let mut future_start = base.clone();
     future_start.task.start_time = now + Duration::minutes(1);
     let mut future_schedule = base.clone();
-    future_schedule.scheduled_start = now + Duration::days(1);
+    future_schedule.scheduled_start =
+        super::daily_capacity::try_next_logical_date_start(now).unwrap();
     let mut waiting = base.clone();
     waiting.task.is_on_other_side = true;
     let mut parent = base.clone();
