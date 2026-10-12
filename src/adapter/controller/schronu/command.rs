@@ -1066,7 +1066,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "見" | "focus" | "fc" => {
             CommandDefinition::new(Kind::Focus, "見", "見 <task_id>", 1, None)
         }
-        "選" | "pick" => CommandDefinition::new(Kind::Pick, "選", "選 [task_id]", 0, Some(1)),
+        "選" | "pick" => CommandDefinition::new(Kind::Pick, "選", "選 [task_id]", 0, None),
         "開" | "open" | "op" => CommandDefinition::new(Kind::Open, "開", "開", 0, Some(0)),
         "計" | "timer" => CommandDefinition::new(Kind::Timer, "計", "計 [忘]", 0, Some(1)),
         "黒" | "obs" => CommandDefinition::new(Kind::Obsidian, "黒", "黒", 0, Some(0)),

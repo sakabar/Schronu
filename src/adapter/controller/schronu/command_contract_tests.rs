@@ -406,7 +406,7 @@ fn all_commands_enforce_argument_bounds() {
             mode: ParseMode::NonInteractive,
             valid_arguments: &["00000000-0000-0000-0000-000000000001"],
             minimum: 0,
-            maximum: Some(1),
+            maximum: None,
             usage: "選 [task_id]",
         },
         Case {
@@ -691,6 +691,33 @@ fn pick_accepts_an_omitted_task_id() {
     let error = parse_command("選 invalid", ParseMode::NonInteractive).unwrap_err();
     assert_eq!(error.field(), "task_id");
     assert_eq!(error.reason(), "UUIDで指定してください");
+}
+
+#[test]
+fn pickは全aliasとmodeで先頭argumentだけを受理する() {
+    let task_id = Uuid::new_v4();
+
+    for alias in ["選", "pick"] {
+        for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+            let input = format!("{alias} {task_id} ignored invalid");
+            assert_eq!(
+                parse_command(&input, mode).unwrap(),
+                Command::Action(CommandAction::Pick {
+                    task_id: Some(task_id)
+                }),
+                "input: {input}, mode: {mode:?}"
+            );
+
+            let invalid_first = format!("{alias} invalid {task_id}");
+            let error = parse_command(&invalid_first, mode).unwrap_err();
+            assert_eq!(error.field(), "task_id", "input: {invalid_first}");
+            assert_eq!(
+                error.reason(),
+                "UUIDで指定してください",
+                "input: {invalid_first}"
+            );
+        }
+    }
 }
 
 #[test]
