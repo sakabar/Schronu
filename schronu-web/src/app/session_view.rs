@@ -66,22 +66,26 @@ pub fn SessionView(
                             input_error.set(None);
                         },
                     }
-                    button {
-                        class: "primary-action",
-                        r#type: "button",
-                        disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
-                        onclick: move |_| {
-                            if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
-                                match parse_auto_session_minutes(&minutes_input.read()) {
-                                    Ok(max_minutes) => on_auto_session.call(max_minutes),
-                                    Err(message) => input_error.set(Some(message)),
-                                }
-                            }
-                        },
-                        "自動セッション"
-                    }
                 }
-                p { class: "auto-session-hint", "指定分数未満の予定区間から選びます。空欄では通常の自動選定です。" }
+                button {
+                    class: "primary-action",
+                    r#type: "button",
+                    disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
+                    onclick: move |_| {
+                        if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
+                            match parse_auto_session_minutes(&minutes_input.read()) {
+                                Ok(max_minutes) => on_auto_session.call(max_minutes),
+                                Err(message) => input_error.set(Some(message)),
+                            }
+                        }
+                    },
+                    "自動セッション"
+                }
+                p { class: "auto-session-hint",
+                    "指定分数未満の予定区間から選びます。"
+                    br {}
+                    "空欄では通常の自動選定です。"
+                }
                 if let Some(message) = *input_error.read() {
                     p { class: "error", role: "alert", "{message}" }
                 }
