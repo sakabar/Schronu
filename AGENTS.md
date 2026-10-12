@@ -77,7 +77,7 @@ cargo check --locked -p schronu-web --no-default-features --features web --targe
 5. 契約全体がGreenになった後、サブエージェントreviewを1回実施する。
 6. 同じ原因と契約に属し、個別revertの意味がない指摘はまとめて修正し、対象testを再実行する。
 
-root全体の品質gateは、PR作成または実装完了報告の直前に1回実行する。
+root全体の品質gateは、最後の実装・review修正後、PR作成または実装完了報告の直前に1回実行する。
 
 ### 標準経路
 
@@ -89,11 +89,11 @@ root全体の品質gateは、PR作成または実装完了報告の直前に1回
 2. 対象testを実行し、期待した1つの理由でRedになることを確認する。
 3. Red testだけをcommitする。
 4. 最小実装で対象testをGreenにする。
-5. 全品質gateを実行する。
+5. `cargo fmt --check`、対象test、変更packageのtestとclippyを実行する。
 6. 基礎Green実装をcommitする。
 7. commit済みの基礎Green実装をサブエージェントでreviewする。
-8. 指摘を1件ずつ修正し、関連testを実行して個別commitにする。
-9. 全品質gateを再実行する。
+8. 指摘を1件ずつ修正し、関連testと変更packageのtest・clippyを実行して個別commitにする。
+9. 最後の実装・review修正後、PR作成または実装完了報告の直前に全品質gateを1回実行する。
 
 「基礎Green実装」は、直前のRed testが示す1つの契約を満たす最小実装を指す。parser、handler、renderer、gateway、use case、transaction・外部I/O調停など、独立した境界を一括りにしない。
 
@@ -121,7 +121,7 @@ reviewで完了条件を満たさないと判明した変更はGreen完了扱い
 
 ## 品質gateとPR前確認
 
-標準経路のGreen commit前と最終確認では、次を実行する。fast pathでは前述のpackage単位検証後、最終確認時に1回実行する。
+fast path・標準経路ともに、各Green commit前は前述の変更範囲に絞った検証を行う。最後の実装・review修正後、PR作成または実装完了報告の直前に次のroot全体の品質gateを1回実行する。最終gate後に製品コードを変更した場合は、変更範囲の検証とroot全体の品質gateを再実行する。
 
 ```bash
 cargo fmt --check
