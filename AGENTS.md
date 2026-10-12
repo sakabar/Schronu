@@ -23,7 +23,6 @@ cargo test -q entity::task
 - 公開APIは最小限にし、`adapter`で副作用を隔離し、`entity`を純粋なdomain logicに保つ。
 - 単体testは各fileの`mod tests`、結合testは必要に応じて`tests/`へ置く。変更した契約を製品経路で検証する。
 - commit messageは命令形の短い要約(約50文字)とし、必要なら本文へ背景・方針・影響範囲を書く。
-- PRには目的、変更点、test方針、互換性、関連Issueを記載する。
 - 秘密情報をcommitせず、file書き込みを必要最小限のpathへ限定し、外部commandの引数を検証する。
 
 ## Agent固有規則
@@ -38,90 +37,32 @@ cargo test -q entity::task
 - 標準libraryや利用中crateの型で意味を表せる場合はwrapper型を増やさない。chronoのlocal時刻変換では`LocalResult`を使い、呼び出し側で`Single`だけを採用する。
 - 意図的に未使用の仮引数やprivate fieldは`_`始まりにする。保持や将来利用の意図がある値をwarning対応だけで削除しない。
 - `全`commandのtask行またはSpreadsheet列を変える場合は、controller出力、`shell/copy_for_spreadsheet.sh`、`shell/generate_command_from_spreadsheet.sh`、`apps_script/main.js`、`README.md`を連動確認する。列定義の正本は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)、詳細は[apps_script/README.md](apps_script/README.md)とする。
-- `schronu-web`改修時は[UI要件](docs/design/schronu_web_ui_requirements.md)と[UI実装仕様](docs/design/schronu_web_ui_specification.md)を事前参照し、同じ変更内でコード、test、両文書を一致させる。
+- `schronu-web`のUIを変える場合は[UI要件](docs/design/schronu_web_ui_requirements.md)と[UI実装仕様](docs/design/schronu_web_ui_specification.md)の該当箇所を確認し、影響するコード、test、記述を一致させる。
 
 ## Worktree build cache
 
 - `target/`を分岐元からcopyせず、分岐元checkoutのabsolute pathを設定やcommandへ埋め込まない。
 - Local environmentのsetupでは`cargo fetch --locked`だけを実行し、全worktree共通のcompileや`dx build`を行わない。
-- `schronu-web`の製品コードを変更し、最終gateでWASM buildが必要なtaskでは、作業範囲の確定後に次をbackgroundで1回先行実行する。
+- `schronu-web`の製品コードを変更し、WASM buildが必要な場合は、作業範囲の確定後に次のcheckをbackgroundで先行実行してよい。
 
 ```bash
 cargo check --locked -p schronu-web --no-default-features --features web --target wasm32-unknown-unknown
 ```
 
 - background build中は同じworktreeで別のCargo commandを実行せず、終了codeと出力を必ず回収する。
-- 先行checkはcache warmup専用とし、変更後の最終検証の代わりにしない。
-- `~/.cargo/bin/dx build --locked --web --package schronu-web`はsetupやprewarmでは実行せず、Web変更の最終品質gateで1回だけ実行する。
+- 先行checkはcache warmup専用とし、変更後の検証の代わりにしない。
+- `~/.cargo/bin/dx build --locked --web --package schronu-web`はsetupやprewarmでは実行せず、Web製品コード変更の最終品質gateで1回だけ実行する。
 
 ## 開発workflow
 
-### 経路選択
+### 通常の変更
 
-1つの契約または変更理由を1つのcycleとして扱う。複数の責務や境界を含むbacklog項目は、独立して検証・review・revertできる単位へ分ける。
+- 変更する契約と影響範囲を確認し、必要なコード、既存test、文書だけを読む。複数の責務や境界にまたがる変更は、独立して検証・review・revertできる単位に分ける。
+- 挙動を変える場合は製品経路を通る回帰testを追加または更新する。可能なら修正前に期待した理由で失敗することを確かめ、修正後に対象testを再実行する。旧契約を肯定する既存testも探し、維持・更新・削除を理由とともに判断する。
+- 変更したコードと影響範囲を検証する。Rustコードでは通常`cargo fmt --check`、対象test、変更packageのtest・clippyを使う。共有契約や複数packageへ影響する場合はroot全体のgateを使う。文書だけの変更にはRustのbuild・testを要求しない。
+- testやreviewで見つかった、今回の変更に起因する失敗を修正して再検証する。最初の実装だけで完了とせず、依頼された成果と検証結果を報告する。
 
-次をすべて満たす場合だけfast pathを使う。判断に迷う場合や、途中で条件を外れた場合は標準経路へ切り替える。
-
-- 製品コードの変更理由と固定する契約を、それぞれ1文で説明できる。
-- 製品コードが3file以下で、機械的変更を除く追加・削除の合計が100行以下である。
-- storage schema、wire format、公開API、security境界、transaction、並行制御、外部I/O protocolを変えない。
-- file移動、module分割、dependency追加、migrationを含まない。
-- 既存test構造の延長で回帰を固定できる。
-
-### Fast path
-
-1. 回帰testを追加し、対象testが期待した1つの理由でRedになることを確認する。Red test単独commitは必須としない。
-2. 最小実装でGreenにする。同じ利用者向け契約を保つ小さなvertical sliceは層ごとに分割しなくてよい。
-3. `cargo fmt --check`、対象test、変更packageのtestとclippyを実行する。
-4. 関連test、実装、契約に直結するdocumentationを1つのGreen commitにまとめてよい。
-5. 契約全体がGreenになった後、サブエージェントreviewを1回実施する。
-6. 同じ原因と契約に属し、個別revertの意味がない指摘はまとめて修正し、対象testを再実行する。
-
-root全体の品質gateは、最後の実装・review修正後、PR作成または実装完了報告の直前に1回実行する。
-
-### 標準経路
-
-実装前にcommit計画を作り、各commitのmessage、契約、責務・module、依存、対象test、Green確認方法を明記する。
-
-各契約を次の順序で進める。
-
-1. 期待する挙動を示すRed testを追加する。
-2. 対象testを実行し、期待した1つの理由でRedになることを確認する。
-3. Red testだけをcommitする。
-4. 最小実装で対象testをGreenにする。
-5. `cargo fmt --check`、対象test、変更packageのtestとclippyを実行する。
-6. 基礎Green実装をcommitする。
-7. commit済みの基礎Green実装をサブエージェントでreviewする。
-8. 指摘を1件ずつ修正し、関連testと変更packageのtest・clippyを実行して個別commitにする。
-9. 最後の実装・review修正後、PR作成または実装完了報告の直前に全品質gateを1回実行する。
-
-「基礎Green実装」は、直前のRed testが示す1つの契約を満たす最小実装を指す。parser、handler、renderer、gateway、use case、transaction・外部I/O調停など、独立した境界を一括りにしない。
-
-### 共通commit規則
-
-次に該当する変更はcommitを分ける。
-
-- 複数の責務、境界、変更理由またはRedになる理由がある。
-- 一部分だけを安全にrevertできない。
-- 差分の大半を読まなければ契約を確認できない。
-- file移動、module分割、rename、formattingなどの機械的変更と挙動変更が混在する。
-- 契約変更時は、新しいtestの追加だけでなく、旧契約を肯定する既存testを検索し、維持・反転・削除の判断をcommit計画へ明記する。
-
-機械的移動は挙動変更と分離し、移動と同時に型、error、公開APIを変えず、移動前後で全testをGreenに保つ。例外的な大規模commitは、機械的移動または自動生成だけで、挙動変更がなく、後続の変更と分離できる場合に限り、その理由をcommit本文へ記載する。
-
-Red test commitを除く各commitはbuild・test可能なGreen状態にする。commit前に次を確認する。
-
-- 目的と変更理由を1文で説明でき、無関係なmodule変更がない。
-- 既存testを削除・緩和・意味変更していない。
-- 新規testが製品経路を通り、test専用分岐や不要な公開APIを導入していない。
-- `adapter`、`application`、`entity`の依存方向を悪化させていない。
-- commit単体でrevertでき、`git diff --check`が成功する。
-
-reviewで完了条件を満たさないと判明した変更はGreen完了扱いにしない。判断が難しい指摘は保留一覧へ記録し、安全な修正を止めない。将来へ残す負債は影響と回避策をbacklogへ記録し、userの明示承認を得る。
-
-## 品質gateとPR前確認
-
-fast path・標準経路ともに、各Green commit前は前述の変更範囲に絞った検証を行う。最後の実装・review修正後、PR作成または実装完了報告の直前に次のroot全体の品質gateを1回実行する。最終gate後に製品コードを変更した場合は、変更範囲の検証とroot全体の品質gateを再実行する。
+root全体のgateが必要な場合のcommandは次のとおり。Web固有の検証は[README.md](README.md)の「schronu-web」を参照する。
 
 ```bash
 cargo fmt --check
@@ -129,36 +70,12 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 ```
 
-commit後は次を確認する。
+### Commitとreview
 
-```bash
-git status --short --branch
-git show --stat --oneline HEAD
-```
+- commitは1つの変更理由を説明でき、単体でrevertできる単位にする。機械的な移動・rename・formattingは挙動変更と分ける。Red test専用commitや指摘ごとのcommitは必須としない。
+- commit前に`git diff --check`と差分を確認する。既存testを理由なく削除・緩和したり、test専用分岐や不要な公開APIを製品コードへ加えたり、層の依存方向を悪化させたりしない。
+- 差分の規模とリスクに応じてreviewを行う。公開API、schema、security、transaction、外部I/Oなどの境界を変える場合は、その契約と失敗経路を重点的に確認する。
+- 大きなfile、fixtureやmockの肥大化、重複する検証・error変換、1moduleへの責務集中を見つけたら構造を再検討する。行数だけを停止条件にせず、分割の要否と残存負債を説明する。
+- PRには目的、変更点、検証結果、互換性、関連Issueを記載する。公開前にはbranchの累積差分を確認する。履歴の再構成は未共有branchだけを対象とする。共有済みbranchではbackup branchを作り、影響を説明し、承認なしにforce-pushしない。
 
-契約群の完了時、変更が計画より増えた時、PR作成、backlog完了、または「実装完了」「PR作成可能」と報告する前にbranch累積差分を確認する。
-
-```bash
-git diff --stat main...HEAD
-git diff --numstat main...HEAD
-git diff --name-only main...HEAD
-```
-
-累積差分について、責務境界、依存方向、状態遷移、I/Oとerrorの所有場所、test helperの共通化、残存負債を説明できる状態にする。次に該当する場合は実装を止め、module・責務・test構造の分割を再検討する。
-
-- 新規または大幅拡張した1fileが800行を超える、または1fileへの累積追加が800行を超える。
-- fixtureやmock準備がtest本体より支配的である。
-- 1moduleで複数の独立した状態遷移やI/O protocolを追う必要がある。
-- `allow(clippy::too_many_arguments)`、多数の`expect`、同型の`map_err`やmockなど、構造上の圧力が増えている。
-- 計画外の補助責務、互換処理、security処理、cleanupが同じmoduleへ累積している。
-
-800行は不合格基準ではなく設計再検討の閾値とする。分割しない場合は責務が1つである根拠、代替案、保守方法、残存負債を報告し、userの明示承認を得る。
-
-最終reviewでは、正しさに加えて次を確認する。
-
-- module名と責務が一致し、同じ検証、path計算、error変換、fixtureが重複せず、旧moduleの負債を移動しただけになっていない。
-- testの網羅性と変更容易性を保ち、行数削減のために可読性、error情報、failure coverageを落としていない。
-- Red testとGreen実装、review修正が契約単位で対応し、機械的移動が独立している。
-- 各commitの目的と検証記録が判断でき、巨大module、巨大fixture、責務集中が残っていない。
-
-履歴を再構成する場合、未共有branchだけを対象とする。共有済みbranchではbackup branchを作り、影響を説明し、承認なしにforce-pushしない。
+`backlog.md`のWaveを統括する場合は[専用skill](.codex/skills/orchestrating-backlog-waves/SKILL.md)の厳格な計画、Red/Green、review、品質gate、公開手順に従う。
