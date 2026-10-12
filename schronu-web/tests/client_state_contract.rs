@@ -10,6 +10,22 @@ mod client_state_support;
 use client_state_support::*;
 
 #[test]
+fn 見積超過sessionのbufferは補正後の完了予定まで計測を相殺する() {
+    let storage = FakeStorage::default();
+    let started_at = 1_000_000;
+    let mut state = load_client_state(&storage, started_at).unwrap();
+    state.add_session_from_row(&storage, &row(TASK_ID, 1_200));
+    let request_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(request_id, Ok(snapshot("2026-09-05", started_at)));
+
+    state.tick(started_at + 5 * 60_000);
+    assert_eq!(state.display_buffer_seconds(), Some(60));
+
+    state.tick(started_at + 11 * 60_000);
+    assert_eq!(state.display_buffer_seconds(), Some(0));
+}
+
+#[test]
 fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000).unwrap();

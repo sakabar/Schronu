@@ -530,14 +530,15 @@ elapsed_seconds = max(0, floor((display_now - started_at_epoch_ms) / 1000))
 ### 6.3 完了予定、進捗、残り時間
 
 ```text
-remaining_at_start = max(estimated_at_start - actual_at_start, 0)
+remaining_at_start = remaining_work_seconds(estimated_at_start, actual_at_start)
 estimated_completion = started_at + remaining_at_start
 worked_seconds = actual_at_start + elapsed_seconds
 progress_percent = floor(worked_seconds * 100 / estimated_at_start)
 remaining_seconds = remaining_at_start - elapsed_seconds
 ```
 
-- 見積秒が0なら除算せず`--%`とする。
+- `remaining_work_seconds`は予定生成と共有する。`actual_at_start <= estimated_at_start`なら`max(estimated_at_start - actual_at_start, 0)`、超過していれば`max(2 * estimated_at_start - actual_at_start, 0)`とし、中間計算は`i128`で行う。自動追加と一覧からの追加に同じ規則を適用する。
+- 進捗率の分母は元の見積秒のままとし、見積秒が0なら除算せず`--%`とする。
 - `remaining_seconds >= 0`は通常色の`MM:SS`、負なら絶対値を赤い`MM:SS`で表示する。
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
 - 残り・超過`MM:SS`は「残り」または「超過」と組み合わせた大きな主表示とする。開始`HH:MM`、矢印、完了予定`HH:MM`、開始時実績`MM:SS`はその下の補助情報領域へ置き、必要なら項目単位で折り返して320px幅でもcardを横へ超過させない。開始と完了予定は`time`要素とし、残り・超過および開始時実績を含む各値へ意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。
@@ -589,7 +590,7 @@ snapshot_elapsed = max(0, floor((tick_now - observed_at) / 1000))
 buffer_sessions = work_sessions - server commit済みでlocal削除に失敗したsessions
 stopped_at(session) = 終了処理中またはrepository状態不確実なsessionのclick時刻
 estimated_completion(session) =
-  session.started_at + max(session.estimated_at_start - session.actual_at_start, 0)
+  session.started_at + remaining_work_seconds(session.estimated_at_start, session.actual_at_start)
 protected_until(session) = min(
   estimated_completion(session),
   session.stopped_atがあればその時刻
@@ -611,12 +612,12 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 ```
 
-`protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが見積到達以前なら開始から競合解消までを連続して加算し、見積到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。見積到達時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
+`protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが補正後の完了予定への到達以前なら開始から競合解消までを連続して加算し、補正後の完了予定への到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。補正後の完了予定時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
 
 - `snapshot_elapsed`はserver観測時刻からbrowser現在時刻までのbuffer減算として1回だけ差し引く。
 - 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。page内で開始したセッションとlocalStorageから復元したセッションを区別せず、観測時刻以前も含む未送信進捗秒を新基準へ加算する。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
-- 終了操作をdispatchしたsessionはclick時刻と見積到達時刻の早い方で未送信進捗の加算を打ち切る。未commitが確定するerrorでは対象を計測中へ戻し、transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。完了実績競合では初回click後の壁時計減算を相殺し、確認中と再送中の表示を固定する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間を未送信進捗へ加算しない。
+- 終了操作をdispatchしたsessionはclick時刻と補正後の完了予定時刻の早い方で未送信進捗の加算を打ち切る。未commitが確定するerrorでは対象を計測中へ戻し、transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。完了実績競合では初回click後の壁時計減算を相殺し、確認中と再送中の表示を固定する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間を未送信進捗へ加算しない。
 - 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。2件が10分ずつ同時計測された場合は20分を加算する。
 - 「計測を破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
@@ -871,7 +872,7 @@ OperationHistoryEntry {
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - 睡眠時間表示: buffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
-- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず開始時見積内のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
+- buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず補正後の完了予定前のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。
 - 共有segment metadata: `get_schedule`の対応順を保つlogical date、06:00境界、`rank == 0`だけを葉とする判定を固定し、CLI「全」、日付別Web、全件Webが共通helperを使用することを検証する。
 - 全件read model: 全表示対象task/occurrence segmentとの1対1対応、順序、連続index、同一occurrenceの複数segment、親子、Pending葉、締切label・超過、500/501境界を実repository経路で検証する。
@@ -902,11 +903,11 @@ OperationHistoryEntry {
 - reload、timer遅延、browser時計後退で開始時刻基準の経過秒になることを検証する。
 - session追加はserver callを生成せず、破棄はlocalStorage削除成功後だけ一覧再取得を生成し、削除失敗時は生成しないことを検証する。
 - 一覧の手動session追加は`is_leaf == false`でlocalStorage、memory state、発火履歴を変更しないことを検証する。
-- bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの同時計測、単一・複数sessionの見積到達、開始時に見積到達済みのsession、sessionの個別破棄、全session破棄で、server bufferからsnapshot後の壁時計経過秒を1回減算し、各sessionの未送信進捗秒を個別に合算することを検証する。
+- bufferはsession 0件、snapshot以前からの復元session、snapshot後の途中開始、複数sessionの同時計測、単一・複数sessionの補正後の完了予定への到達、開始時に補正後の完了予定への到達済みのsession、sessionの個別破棄、全session破棄で、server bufferからsnapshot後の壁時計経過秒を1回減算し、各sessionの未送信進捗秒を個別に合算することを検証する。
 - 破棄のlocalStorage保存失敗ではsessionとbuffer表示を維持し、server commit済みでlocal削除に失敗したsessionはbuffer計算上の計測中sessionから除外することを検証する。
 - 同じlogical dateのread snapshot、実績反映済みmutation snapshot、06:00を跨ぐlogical date更新を新たなbuffer基準とし、page内開始と復元を区別せず各sessionの未送信進捗秒を新snapshotへ加算することを検証する。一覧再取得の繰り返しと正・0・負のbufferを含める。
 - 記録と2種類の完了についてserver mutation成功、競合、保存失敗、worker停止、多重送信防止、global・manual safety block時のsession遷移を検証する。
-- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、見積到達時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの打ち切りを注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
+- 3終了操作でclick時刻をrequestへ保持し、pending中のcard停止、補正後の完了予定時刻とclick時刻の早い方で打ち切る未送信進捗、単一・複数sessionのbuffer遷移、未commit確定error後の自動再開、transport切断・repository状態不確実時の確認完了までの打ち切りを注入epochだけで検証する。実時間のsleepやtimer待機は使用しない。
 - 完了実績競合について、記録方針別の確認、初回click時刻でのcard・buffer停止、元requestを保った最新実績での再送、新request ID、再競合更新、成功cleanup、旧payloadのmanual block、計測再開の待ち時間除外とstorage失敗時の原子性を検証する。記録操作の競合は従来どおりmanual blockとなることを検証する。
 - 4種類のセッション終了成功後に選択中または最新snapshotのlogical dateをactive modeのendpointで再取得し、response全体で一覧を置換することを検証する。終了errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持して再取得することも検証する。
 - 完了成功response受理時点でin-flightだった`list_tasks` requestを無効化し、その後にresponseが到着しても完了taskが復活しないことを検証する。完了成功後の再取得responseと、それより後に開始した明示的な`list_tasks` responseは適用されることを検証する。logical date境界を跨ぐ完了responseではsnapshotと日付buttonを更新し、反復taskは再取得responseに従うことを検証する。
@@ -947,7 +948,7 @@ OperationHistoryEntry {
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
 - 完了実績競合では通常の5操作をaccessibility付き確認groupへ置換し、記録方針ごとの正確な文言、`HH:MM:SS`、計測再開と再完了のtyped callbackを確認する。
 - 確認表示ではtimerが進み、3終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
-- 33%、100%、133%、見積0、buffer正負の表示を確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
+- 33%、100%、133%、見積0、buffer正負の表示を確認する。30分見積・40分実績では133%と残り20分が同時に表示されることを確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
 - 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 全件取得を除く利用者起点のserver通信では全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。全件取得とreload背景更新ではoverlayを出さず、前者は一覧内statusと移動中のpage継続、後者はstale表示、再試行、成功時だけの一覧置換、失敗時維持、local操作許可とserver依存操作の二重guardを確認する。
