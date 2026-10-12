@@ -33,11 +33,11 @@ worktree準備中で`clientThreadId`だけが返った場合、それをreadyな
 各laneで次を実施する。
 
 1. 契約単位のRed testを1つ追加して実行し、想定した1つの理由で失敗したことを確認してからcommitする。
-2. 最小のGreen実装を追加し、対象testとrepositoryの品質gateを実行する。review対象を固定するため、基礎Green実装をcommitする。
-3. Green commit後に内部subagentによる仕様・code quality reviewを行う。指摘は1件ずつ、対象testで検証し、1指摘1commitで修正する。P1/P2を却下したり、以前のtestを弱めたりしない。
+2. 最小のGreen実装を追加し、`cargo fmt --check`、対象test、変更packageのtest・clippyを実行する。review対象を固定するため、基礎Green実装をcommitする。
+3. Green commit後に内部subagentによる仕様・code quality reviewを行う。指摘は1件ずつ、関連testと変更packageのtest・clippyで検証し、1指摘1commitで修正する。P1/P2を却下したり、以前のtestを弱めたりしない。
 4. `main...branch`累積差分について、責務境界、重複、file size、fixture、failure path、依存方向、repository固有の保守性閾値をreviewする。
 5. 製品Green後、親からそのlane専用の`backlog.md`文書leaseを得てから、自laneのstatus、詳細、検証、残存作業だけを独立した文書commitで更新する。commit後はleaseを解放する。leaseは依存順と予定PR merge順に付与し、共有の全体検証summaryや他laneの項目は編集しない。
-6. cleanなworktree、全品質gate、`git diff --check`、履歴reviewを確認して終了する。この時点ではpushもPR作成も行わない。
+6. 最後の実装・review修正後に全品質gateを1回実行し、cleanなworktree、`git diff --check`、履歴reviewを確認して終了する。最終gate後に製品コードを変更した場合は、変更範囲の検証と全品質gateを再実行する。この時点ではpushもPR作成も行わない。
 
 予約外file、公開API・schema・error変更、異なるRed理由が必要になった場合は、その範囲拡張だけを停止し、現在の状態を保持させる。影響をreviewし、親またはユーザーの明示承認を得てから予約表とcommit計画を更新する。古くなった予約内へ収めるために、人工的な呼び出し、製品コードのtest専用分岐、error情報の削減、helperの複製を行ってはならない。
 
