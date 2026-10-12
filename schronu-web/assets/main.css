@@ -347,11 +347,32 @@ button:disabled {
 
 .session-empty {
     display: grid;
+    align-content: center;
+    gap: 0.75rem;
     min-height: 13rem;
     place-items: center;
     border: 1px dashed var(--line);
     border-radius: 1rem;
     background: var(--surface);
+}
+
+.auto-session-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.auto-session-controls input {
+    width: 6rem;
+}
+
+.auto-session-hint {
+    margin: 0;
+    padding: 0 1rem;
+    color: var(--muted);
+    text-align: center;
 }
 
 .primary-action,

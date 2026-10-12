@@ -33,6 +33,7 @@ pub(crate) trait WebGateway {
 
     async fn auto_session(
         &self,
+        max_minutes: Option<i64>,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError>;
 
     async fn defer_task(
@@ -87,8 +88,9 @@ impl WebGateway for ServerFunctionGateway {
 
     async fn auto_session(
         &self,
+        max_minutes: Option<i64>,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError> {
-        super::auto_session().await
+        super::auto_session(max_minutes).await
     }
 
     async fn defer_task(
@@ -200,9 +202,12 @@ pub(crate) async fn execute_effect<G: WebGateway>(
             request_id,
             result: normalize_endpoint_result(gateway.load_band().await),
         }),
-        ClientEffect::AutoSession { request_id } => Some(ClientResponse::AutoSession {
+        ClientEffect::AutoSession {
             request_id,
-            result: normalize_endpoint_result(gateway.auto_session().await),
+            max_minutes,
+        } => Some(ClientResponse::AutoSession {
+            request_id,
+            result: normalize_endpoint_result(gateway.auto_session(max_minutes).await),
         }),
         ClientEffect::DeferTask {
             request_id,

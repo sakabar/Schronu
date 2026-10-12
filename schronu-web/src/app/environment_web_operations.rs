@@ -134,10 +134,13 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
-    fn auto_session(&mut self) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
+    fn auto_session(
+        &mut self,
+        max_minutes: Option<i64>,
+    ) -> Result<WebSuccess<Option<SessionTask>>, WebError> {
         let operation_now = self.clock.now();
         self.service()?
-            .auto_session_at(operation_now)
+            .auto_session_at_with_minutes(operation_now, max_minutes)
             .map(convert_success)
             .map_err(Into::into)
     }
@@ -578,7 +581,7 @@ mod tests {
         assert!(!row.deadline_label.is_empty());
         assert!(!row.misses_deadline);
         assert!(row.is_leaf);
-        let selected = operations.auto_session().unwrap();
+        let selected = operations.auto_session(None).unwrap();
         assert_eq!(
             selected.snapshot.observed_at_epoch_ms,
             now.timestamp_millis()

@@ -1465,6 +1465,7 @@ fn 持ち歩きロックはguard対象actionの期限を延長し最初のsessio
 
     for action in [
         ComponentAction::AutoSession,
+        ComponentAction::TimedAutoSession(30),
         ComponentAction::AddSession {
             task: task(RECORD_ID),
             is_leaf: true,
@@ -1486,6 +1487,7 @@ fn 持ち歩きロックはguard対象actionの期限を延長し最初のsessio
 
     for action in [
         ComponentAction::AutoSession,
+        ComponentAction::TimedAutoSession(30),
         ComponentAction::AddSession {
             task: task(RECORD_ID),
             is_leaf: true,

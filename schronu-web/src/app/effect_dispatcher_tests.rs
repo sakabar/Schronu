@@ -30,6 +30,19 @@ fn gatewayはopaqueなall_task_cursorを保持する() {
 }
 
 #[test]
+fn 時間指定effectは分数をendpointへ渡す() {
+    let gateway = FakeGateway::default();
+    futures::executor::block_on(execute_effect(
+        &gateway,
+        ClientEffect::AutoSession {
+            request_id: 1,
+            max_minutes: Some(30),
+        },
+    ));
+    assert_eq!(*gateway.calls.borrow(), ["auto:Some(30)".to_owned()]);
+}
+
+#[test]
 fn 九effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ() {
     let gateway = FakeGateway::default();
     let request = RecordSessionRequest {
@@ -78,7 +91,14 @@ fn 九effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
                 },
             )
             .await,
-            execute_effect(&gateway, ClientEffect::AutoSession { request_id: 12 }).await,
+            execute_effect(
+                &gateway,
+                ClientEffect::AutoSession {
+                    request_id: 12,
+                    max_minutes: None,
+                },
+            )
+            .await,
             execute_effect(
                 &gateway,
                 ClientEffect::DeferTask {
@@ -163,7 +183,7 @@ fn 九effectはrequest_idとpayloadを保持して各endpointを1回だけ呼ぶ
             "list:2026-09-05",
             "list_completed:2026-09-04",
             "list_all:Some(\"opaque\")",
-            "auto",
+            "auto:None",
             "defer:task",
             "record:task",
             "complete:task:true"
@@ -296,6 +316,7 @@ impl WebGateway for BootstrapGateway {
 
     async fn auto_session(
         &self,
+        _max_minutes: Option<i64>,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError> {
         unreachable!("bootstrap test gateway")
     }
@@ -374,8 +395,11 @@ impl WebGateway for FakeGateway {
 
     async fn auto_session(
         &self,
+        max_minutes: Option<i64>,
     ) -> Result<Result<WebSuccess<Option<SessionTask>>, WebError>, ServerFnError> {
-        self.calls.borrow_mut().push("auto".to_owned());
+        self.calls
+            .borrow_mut()
+            .push(format!("auto:{max_minutes:?}"));
         Ok(Ok(WebSuccess {
             snapshot: snapshot(),
             data: None,
