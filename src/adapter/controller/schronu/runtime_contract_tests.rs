@@ -2514,6 +2514,33 @@ fn task_list数値filterはtyped待ち属性のtaskを候補から除外する()
 }
 
 #[test]
+fn task_list数値filterは分割片でなくtask全体の残作業を比較する() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("候補選定fixture").unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+    let target = add_scheduled_child_for_test(&root, "分割対象", now, 120);
+    let blocker = add_scheduled_child_for_test(
+        &root,
+        "固定予定",
+        now + Duration::minutes(60),
+        60,
+    );
+    blocker.set_fixed_start(true).unwrap();
+
+    let repository = TestTaskRepository::new(root.clone(), now);
+    let segments = crate::application::schedule_use_case::get_schedule(&repository)
+        .unwrap()
+        .into_iter()
+        .filter(|segment| segment.actual_task_id() == Some(target.get_id().unwrap()))
+        .map(|segment| segment.scheduled_work_seconds)
+        .collect::<Vec<_>>();
+    assert_eq!(segments, [60 * 60, 60 * 60]);
+
+    let output = execute_show_all_command_for_test("全 90", now, root);
+    assert!(!output.contains("分割対象"), "{output}");
+}
+
+#[test]
 fn test_execute_all_締切順の予定時刻を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root_task = new_test_task_handle("親タスク").unwrap();
