@@ -894,7 +894,15 @@ fn get_scheduleは非rootの実taskの親子identityを保持する() {
 
 #[test]
 fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task_idを付けない() {
-    let now = fixed_now();
+    let now = Local::now();
+    let from = crate::application::daily_capacity::try_logical_date(now)
+        .unwrap()
+        .format("%F")
+        .to_string();
+    let until = (crate::application::daily_capacity::try_logical_date(now).unwrap()
+        + chrono::Days::new(4))
+    .format("%F")
+    .to_string();
     let parent = new_task_handle("3-day routine").unwrap();
     let parent_id = parent.get_id().unwrap();
     parent.set_estimated_work_seconds(60 * 60).unwrap();
@@ -919,7 +927,7 @@ fn get_scheduleはprojected回をsourceとoccurrence_keyで返しactionable_task
         .handle_request(tool_call_request(
             "projected-schedule",
             "get_schedule",
-            json!({"from": "2026-10-03", "until": "2026-10-08"}),
+            json!({"from": from, "until": until}),
         ))
         .unwrap();
     let schedule = response["result"]["structuredContent"]["schedule"]
