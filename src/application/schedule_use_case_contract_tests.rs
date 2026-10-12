@@ -1241,7 +1241,7 @@ fn get_scheduleは祖先時刻の既存残秒式とcandidate残秒を区別す�
 }
 
 #[test]
-fn get_scheduleは残作業補正のoverflowを値付きerrorにしtaskを変更しない() {
+fn get_scheduleは巨大な見積超過を中間計算overflowと誤認しない() {
     const ESTIMATED_WORK_SECONDS: i64 = 9_223_372_036_854_775_800;
     const ACTUAL_WORK_SECONDS: i64 = ESTIMATED_WORK_SECONDS + 1;
 
@@ -1253,18 +1253,14 @@ fn get_scheduleは残作業補正のoverflowを値付きerrorにしtaskを変更
     let original_view = get_task(&repository, task_id).unwrap().unwrap();
     let original_revision = task.get_persistent_mutation_revision().unwrap();
 
-    let actual = catch_unwind(AssertUnwindSafe(|| get_schedule(&repository)))
-        .expect("remaining work overflow must not panic");
-
-    assert_eq!(
-        actual,
-        Err(
-            super::task_use_case::ApplicationError::RemainingWorkCalculationOverflow {
-                task_id,
-                estimated_work_seconds: ESTIMATED_WORK_SECONDS,
-                actual_work_seconds: ACTUAL_WORK_SECONDS,
-            }
-        )
+    let result = catch_unwind(AssertUnwindSafe(|| get_schedule(&repository)))
+        .expect("remaining work calculation must not panic");
+    assert!(
+        matches!(
+            result,
+            Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange { .. })
+        ),
+        "valid remaining work must reach schedule time validation: {result:?}"
     );
     assert_eq!(
         get_task(&repository, task_id).unwrap().unwrap(),
