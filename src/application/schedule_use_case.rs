@@ -534,21 +534,15 @@ fn calculate_remaining_work_seconds(
     let actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let remaining_work_seconds = if estimated_work_seconds >= actual_work_seconds {
-        estimated_work_seconds.checked_sub(actual_work_seconds)
-    } else {
-        estimated_work_seconds
-            .checked_mul(2)
-            .and_then(|doubled_estimate| doubled_estimate.checked_sub(actual_work_seconds))
-    };
-
-    remaining_work_seconds
-        .map(|remaining| max(0, remaining))
-        .ok_or(ApplicationError::RemainingWorkCalculationOverflow {
-            task_id,
-            estimated_work_seconds,
-            actual_work_seconds,
-        })
+    i64::try_from(schronu_work_time::remaining_work_seconds(
+        estimated_work_seconds,
+        actual_work_seconds,
+    ))
+    .map_err(|_| ApplicationError::RemainingWorkCalculationOverflow {
+        task_id,
+        estimated_work_seconds,
+        actual_work_seconds,
+    })
 }
 
 fn calculate_ancestry_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {
