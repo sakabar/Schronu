@@ -23,7 +23,9 @@ fn 数値選定は予定区間が指定分数未満の最長候補を選び同�
     let now = fixed_now();
     let task = task_with_schedule("候補", now, 90 * 60, 1);
     let repository = TestTaskRepository::new(vec![task.clone()], now);
-    let view = get_task(&repository, task.get_id().unwrap()).unwrap().unwrap();
+    let view = get_task(&repository, task.get_id().unwrap())
+        .unwrap()
+        .unwrap();
     let segment = |seconds| ScheduledTaskView {
         occurrence: ScheduleOccurrenceKey::Actual { task_id: view.id },
         task: view.clone().into(),
@@ -34,11 +36,25 @@ fn 数値選定は予定区間が指定分数未満の最長候補を選び同�
         total_work_seconds: 90 * 60,
         rank: 0,
     };
-    let schedule = vec![segment(10 * 60), segment(29 * 60), segment(29 * 60), segment(30 * 60)];
+    let schedule = vec![
+        segment(10 * 60),
+        segment(29 * 60),
+        segment(29 * 60),
+        segment(30 * 60),
+    ];
 
-    assert_eq!(select_scheduled_task_within_minutes(&schedule, now, 30), Ok(Some(1)));
-    assert_eq!(select_scheduled_task_within_minutes(&schedule, now, 10), Ok(None));
-    assert_eq!(select_scheduled_task_within_minutes(&schedule, now, 0), Ok(None));
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 30),
+        Ok(Some(1))
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 10),
+        Ok(None)
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 0),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -46,7 +62,9 @@ fn 数値選定は未来開始と相手待ちと親と予測を除外する() {
     let now = fixed_now();
     let task = task_with_schedule("候補", now, 20 * 60, 1);
     let repository = TestTaskRepository::new(vec![task.clone()], now);
-    let view = get_task(&repository, task.get_id().unwrap()).unwrap().unwrap();
+    let view = get_task(&repository, task.get_id().unwrap())
+        .unwrap()
+        .unwrap();
     let base = ScheduledTaskView {
         occurrence: ScheduleOccurrenceKey::Actual { task_id: view.id },
         task: view.into(),
@@ -73,7 +91,14 @@ fn 数値選定は未来開始と相手待ちと親と予測を除外する() {
 
     assert_eq!(
         select_scheduled_task_within_minutes(
-            &[future_start, future_schedule, waiting, parent, projected, base],
+            &[
+                future_start,
+                future_schedule,
+                waiting,
+                parent,
+                projected,
+                base
+            ],
             now,
             30,
         ),

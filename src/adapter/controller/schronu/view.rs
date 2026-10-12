@@ -27,7 +27,7 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
     format_scheduled_task_display_name, get_schedule, scheduled_end_by_occurrence,
-    scheduled_logical_dates, ScheduleOccurrenceKey,
+    scheduled_logical_dates, select_scheduled_task_within_minutes, ScheduleOccurrenceKey,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
@@ -858,13 +858,25 @@ pub(super) fn build_show_all_tasks_display_with_config(
     }
     let scheduled_logical_dates = scheduled_logical_dates(&scheduled_tasks)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
-    let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
-    let mut available_biggest_task_estimate_work_seconds = 0;
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
     let last_synced_logical_date = try_logical_date(last_synced_time)?;
     let next_logical_date_start = try_next_logical_date_start(last_synced_time)?;
+    let selected_scheduled_index = pattern_opt
+        .as_deref()
+        .filter(|pattern| !pattern.is_empty() && pattern.bytes().all(|byte| byte.is_ascii_digit()))
+        .map(|pattern| {
+            let minutes = pattern
+                .parse::<i64>()
+                .map_err(|_| ApplicationError::InvalidInput {
+                    field: "pattern",
+                    reason: "minutes exceed supported range",
+                })?;
+            select_scheduled_task_within_minutes(&scheduled_tasks, last_synced_time, minutes)
+        })
+        .transpose()?
+        .flatten();
 
     let eod = try_logical_date_end(last_synced_logical_date, config.end_of_day_offset_minutes)?;
     // ここまでρ計算用
@@ -1289,25 +1301,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if integer_reg.is_match(pattern) {
-                        let caps = integer_reg.captures(pattern).unwrap();
-                        let input_minute: i64 = caps[0].parse().unwrap();
-                        let target_free_time_seconds = input_minute * 60;
-
-                        if *scheduled_start > next_logical_date_start
-                            || last_synced_time
-                                < task.get_start_time().map_err(ApplicationError::TaskTree)?
-                        {
-                            continue;
-                        }
-
-                        if scheduled_task.is_leaf()
-                            && !is_on_other_side
-                            && estimated_work_seconds < target_free_time_seconds
-                            && estimated_work_seconds > available_biggest_task_estimate_work_seconds
-                        {
-                            available_biggest_task_estimate_work_seconds = estimated_work_seconds;
-
-                            available_biggest_row_opt = Some(task_list_display_row.clone());
+                        if selected_scheduled_index == Some(ind) {
+                            task_list_display_rows.push(task_list_display_row.clone());
                         }
                     } else if name.to_lowercase().contains(&pattern.to_lowercase())
                         || task_search_text.contains(pattern)
@@ -1422,11 +1417,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 task_list_display_rows.push(row);
             }
         }
-    }
-
-    // 着手可能な最大のタスクを実施するモード
-    if let Some(row) = available_biggest_row_opt {
-        task_list_display_rows.push(row);
     }
 
     let capacity_issues = if is_daily_summary_func {
