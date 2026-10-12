@@ -19,7 +19,7 @@ fn fixed_now() -> DateTime<Local> {
 }
 
 #[test]
-fn 数値選定は予定区間が指定分数未満の最長候補を選び同値では予定順を守る() {
+fn 数値選定は分割片ではなくtask全体の残作業を比較し同値では予定順を守る() {
     let now = fixed_now();
     let task = task_with_schedule("候補", now, 90 * 60, 1);
     let repository = TestTaskRepository::new(vec![task.clone()], now);
@@ -45,7 +45,11 @@ fn 数値選定は予定区間が指定分数未満の最長候補を選び同�
 
     assert_eq!(
         select_scheduled_task_within_minutes(&schedule, now, 30),
-        Ok(Some(1))
+        Ok(None)
+    );
+    assert_eq!(
+        select_scheduled_task_within_minutes(&schedule, now, 91),
+        Ok(Some(0))
     );
     assert_eq!(
         select_scheduled_task_within_minutes(&schedule, now, 10),
@@ -1332,7 +1336,7 @@ fn get_scheduleは祖先時刻の既存残秒式とcandidate残秒を区別す�
 }
 
 #[test]
-fn get_scheduleは残作業補正のoverflowを値付きerrorにしtaskを変更しない() {
+fn get_scheduleは巨大な見積超過を中間計算overflowと誤認しない() {
     const ESTIMATED_WORK_SECONDS: i64 = 9_223_372_036_854_775_800;
     const ACTUAL_WORK_SECONDS: i64 = ESTIMATED_WORK_SECONDS + 1;
 
@@ -1344,18 +1348,14 @@ fn get_scheduleは残作業補正のoverflowを値付きerrorにしtaskを変更
     let original_view = get_task(&repository, task_id).unwrap().unwrap();
     let original_revision = task.get_persistent_mutation_revision().unwrap();
 
-    let actual = catch_unwind(AssertUnwindSafe(|| get_schedule(&repository)))
-        .expect("remaining work overflow must not panic");
-
-    assert_eq!(
-        actual,
-        Err(
-            super::task_use_case::ApplicationError::RemainingWorkCalculationOverflow {
-                task_id,
-                estimated_work_seconds: ESTIMATED_WORK_SECONDS,
-                actual_work_seconds: ACTUAL_WORK_SECONDS,
-            }
-        )
+    let result = catch_unwind(AssertUnwindSafe(|| get_schedule(&repository)))
+        .expect("remaining work calculation must not panic");
+    assert!(
+        matches!(
+            result,
+            Err(super::task_use_case::ApplicationError::ScheduleTimeOutOfRange { .. })
+        ),
+        "valid remaining work must reach schedule time validation: {result:?}"
     );
     assert_eq!(
         get_task(&repository, task_id).unwrap().unwrap(),

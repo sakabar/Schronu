@@ -33,8 +33,8 @@ fn 進捗率は100パーセントを超えて保持する() {
 
     assert_eq!(actual.total_work_seconds, 116);
     assert_eq!(actual.progress_percent, Some(116));
-    assert_eq!(actual.remaining_work_seconds_at_start, 0);
-    assert_eq!(actual.remaining_work_seconds, -2);
+    assert_eq!(actual.remaining_work_seconds_at_start, 86);
+    assert_eq!(actual.remaining_work_seconds, 84);
 }
 
 #[test]

@@ -3126,6 +3126,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "schemars",
+ "schronu-work-time",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -3150,6 +3151,7 @@ dependencies = [
  "gloo-timers",
  "js-sys",
  "schronu",
+ "schronu-work-time",
  "serde",
  "serde_json",
  "tokio",
@@ -3157,6 +3159,10 @@ dependencies = [
  "wasm-bindgen",
  "web-sys",
 ]
+
+[[package]]
+name = "schronu-work-time"
+version = "0.1.0"
 
 [[package]]
 name = "scopeguard"

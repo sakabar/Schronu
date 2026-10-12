@@ -187,11 +187,15 @@ pub fn select_scheduled_task_within_minutes(
             field: "max_minutes",
             reason: "minutes exceed supported range",
         })?;
+    let limit_seconds = i128::from(limit_seconds);
     let next_logical_date_start = try_next_logical_date_start(now)?;
     let mut selected = None;
     let mut longest_seconds = 0;
     for (index, segment) in schedule.iter().enumerate() {
-        let seconds = segment.scheduled_work_seconds;
+        let seconds = schronu_work_time::remaining_work_seconds(
+            segment.task.estimated_work_seconds,
+            segment.task.actual_work_seconds,
+        );
         if segment.actual_task_id().is_some()
             && segment.is_leaf()
             && !segment.task.is_on_other_side
@@ -565,21 +569,15 @@ fn calculate_remaining_work_seconds(
     let actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let remaining_work_seconds = if estimated_work_seconds >= actual_work_seconds {
-        estimated_work_seconds.checked_sub(actual_work_seconds)
-    } else {
-        estimated_work_seconds
-            .checked_mul(2)
-            .and_then(|doubled_estimate| doubled_estimate.checked_sub(actual_work_seconds))
-    };
-
-    remaining_work_seconds
-        .map(|remaining| max(0, remaining))
-        .ok_or(ApplicationError::RemainingWorkCalculationOverflow {
-            task_id,
-            estimated_work_seconds,
-            actual_work_seconds,
-        })
+    i64::try_from(schronu_work_time::remaining_work_seconds(
+        estimated_work_seconds,
+        actual_work_seconds,
+    ))
+    .map_err(|_| ApplicationError::RemainingWorkCalculationOverflow {
+        task_id,
+        estimated_work_seconds,
+        actual_work_seconds,
+    })
 }
 
 fn calculate_ancestry_work_seconds(task: &TaskHandle) -> Result<i64, TaskTreeError> {

@@ -15,6 +15,45 @@ const START_EPOCH_MS: i64 = 1_788_568_200_000; // 2026-09-05 00:30 UTC
 const JST_OFFSET_MINUTES: i32 = 9 * 60;
 
 #[test]
+fn 見積超過taskは自動追加と一覧追加の両方で補正後の残り時間を示す() {
+    let expected_completion = "09:40";
+    let task_row = session_row();
+    let mut task_row = task_row;
+    task_row.task.estimated_work_seconds = 900;
+    task_row.task.actual_work_seconds = 1_200;
+
+    let storage = FakeStorage::default();
+    let mut manual = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    manual.add_session_from_row(&storage, &task_row);
+    let manual_card = project_session_cards(&manual, JST_OFFSET_MINUTES);
+    assert_eq!(
+        manual_card[0].completion_hh_mm.as_deref(),
+        Some(expected_completion)
+    );
+    assert_eq!(manual_card[0].remaining_seconds, 600);
+    assert_eq!(manual_card[0].progress_percent, Some(133));
+
+    let storage = FakeStorage::default();
+    let mut automatic = load_client_state(&storage, START_EPOCH_MS).unwrap();
+    let request_id = auto_effect(automatic.request_auto_session());
+    automatic.apply_auto_session_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+            data: Some(task_row.task.actionable_task().unwrap()),
+        }),
+    );
+    let automatic_card = project_session_cards(&automatic, JST_OFFSET_MINUTES);
+    assert_eq!(
+        automatic_card[0].completion_hh_mm.as_deref(),
+        Some(expected_completion)
+    );
+    assert_eq!(automatic_card[0].remaining_seconds, 600);
+    assert_eq!(automatic_card[0].progress_percent, Some(133));
+}
+
+#[test]
 fn fixed_offsetでsession時刻と進捗を生成しcommit済みtimerは停止する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
