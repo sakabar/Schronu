@@ -214,7 +214,7 @@ fn session_card_renders_time_progress_overrun_and_six_typed_actions() {
         "計測を破棄して再開",
         "計測を破棄して解除",
         "記録して解除",
-        "記録して分割完了",
+        "記録して分割",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -236,7 +236,7 @@ fn session_card_renders_time_progress_overrun_and_six_typed_actions() {
         "計測を破棄して再開",
         "計測を破棄して解除",
         "記録して解除",
-        "記録して分割完了",
+        "記録して分割",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -250,7 +250,7 @@ fn session_card_renders_time_progress_overrun_and_six_typed_actions() {
         "計測を破棄して解除",
         "記録して解除",
         "計測を破棄して再開",
-        "記録して分割完了",
+        "記録して分割",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -628,7 +628,7 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
         assert!(html.contains(message), "{html}");
         assert!(html.contains("計測を再開"), "{html}");
         assert!(html.contains(confirm_label), "{html}");
-        for normal_action in ["計測を破棄して再開", "計測を破棄して解除", "記録して解除", "記録して分割完了", "計測を破棄して完了", "記録して完了"] {
+        for normal_action in ["計測を破棄して再開", "計測を破棄して解除", "記録して解除", "記録して分割", "計測を破棄して完了", "記録して完了"] {
             assert!(!html.contains(normal_action), "{html}");
         }
         assert_eq!(ids.len(), 2);

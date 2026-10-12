@@ -320,7 +320,7 @@ fn SessionCard(
                     }
                     SessionActionButton {
                         class: "session-action-work-slice",
-                        label: "記録して分割完了",
+                        label: "記録して分割",
                         task_name: session.task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::WorkSlice,
