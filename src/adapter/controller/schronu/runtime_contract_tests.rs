@@ -1531,6 +1531,31 @@ fn routine_loadは製品経路で共通集計を表示する() {
 }
 
 #[test]
+fn test_execute_選は余分なargumentを無視して先頭taskをtodoに戻す() {
+    let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("選択対象").unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    let task_id = task.get_id().unwrap();
+    let mut task_repository = TestTaskRepository::new(task.clone(), now);
+    let mut free_time_manager = TestFreeTimeManager::default();
+    let mut focused_task_id_opt = None;
+    let mut stdout = TestWriter::new();
+
+    execute(
+        &mut stdout,
+        &mut task_repository,
+        &mut free_time_manager,
+        &mut focused_task_id_opt,
+        &now,
+        &format!("選 {task_id} ignored invalid"),
+    )
+    .unwrap();
+
+    assert_eq!(focused_task_id_opt, Some(task_id));
+    assert_eq!(task.get_orig_status().unwrap(), Status::Todo);
+}
+
+#[test]
 fn test_execute_選_task_id省略時はfocus中taskをtodoに戻す() {
     let now = Local.with_ymd_and_hms(2026, 8, 28, 12, 0, 0).unwrap();
     let task = new_test_task_handle("focus対象").unwrap();
