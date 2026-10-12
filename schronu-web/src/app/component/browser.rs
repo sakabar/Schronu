@@ -183,7 +183,7 @@ pub(super) fn BrowserApp() -> Element {
                     mutations_locked,
                     auto_session_in_flight,
                     server_actions_blocked,
-                    on_auto_session: move |max_minutes| {
+                    on_auto_session: move |max_minutes: Option<i64>| {
                         let action = max_minutes.map_or(
                             ComponentAction::AutoSession,
                             ComponentAction::TimedAutoSession,
