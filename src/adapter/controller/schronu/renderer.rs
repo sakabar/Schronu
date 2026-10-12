@@ -513,7 +513,7 @@ fn render_completed_task_report_display(
     writer: &mut dyn SchronuWriter,
     display: &CompletedTaskReportDisplay,
 ) -> Result<(), std::io::Error> {
-    const HEADERS: [&str; 6] = ["完了", "実績", "見積", "差", "Project", "タスク"];
+    const HEADERS: [&str; 7] = ["完了", "実績", "見積", "差", "task_id", "Project", "タスク"];
     let rows = display
         .report
         .rows
@@ -524,6 +524,7 @@ fn render_completed_task_report_display(
                 format_elapsed_seconds(row.actual_work_seconds),
                 format_elapsed_seconds(row.estimated_work_seconds),
                 format_completed_difference(row.actual_work_seconds, row.estimated_work_seconds),
+                row.task_id.to_string(),
                 truncate_project_name(&row.project_name),
                 row.task_name.clone(),
             ]
@@ -534,12 +535,13 @@ fn render_completed_task_report_display(
         for index in 0..4 {
             widths[index] = widths[index].max(UnicodeWidthStr::width(row[index].as_str()));
         }
-        widths[4] = widths[4]
-            .max(UnicodeWidthStr::width(row[4].as_str()))
+        widths[4] = widths[4].max(UnicodeWidthStr::width(row[4].as_str()));
+        widths[5] = widths[5]
+            .max(UnicodeWidthStr::width(row[5].as_str()))
             .min(20);
     }
 
-    let format_row = |row: [&str; 6]| {
+    let format_row = |row: [&str; 7]| {
         let pad_left = |value: &str, width: usize| {
             format!(
                 "{}{value}",
@@ -553,13 +555,14 @@ fn render_completed_task_report_display(
             )
         };
         format!(
-            "{}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}  {}",
             pad_left(row[0], widths[0]),
             pad_left(row[1], widths[1]),
             pad_left(row[2], widths[2]),
             pad_left(row[3], widths[3]),
-            pad_right(row[4], widths[4]),
-            row[5],
+            pad_left(row[4], widths[4]),
+            pad_right(row[5], widths[5]),
+            row[6],
         )
     };
 

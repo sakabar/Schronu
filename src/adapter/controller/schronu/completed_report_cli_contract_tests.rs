@@ -152,6 +152,10 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
     assert!(output.contains("+99:59:59"));
     assert!(output.contains("-00:00:01"));
     assert!(output.contains("+00:00:00"));
+    assert!(output.contains("task_id"));
+    assert!(output.contains("00000000-0000-0000-0000-000000000001"));
+    assert!(output.contains("00000000-0000-0000-0000-000000000002"));
+    assert!(output.contains("00000000-0000-0000-0000-000000000003"));
     assert!(output.contains("abcdefghijklmnopqrs…"));
     assert!(!output.contains("tail"));
     assert!(output.contains("末尾まで省略しない長いタスク名"));
@@ -174,8 +178,8 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
             .iter()
             .zip(["タスク", "末尾まで省略しない長いタスク名", "second", "zero"])
     {
-        assert_eq!(suffix_at_width(line, 61), task);
-        assert_eq!(UnicodeWidthStr::width(&line[..line.len() - task.len()]), 61);
+        assert_eq!(suffix_at_width(line, 99), task);
+        assert_eq!(UnicodeWidthStr::width(&line[..line.len() - task.len()]), 99);
     }
     assert_eq!(
         lines.last().copied(),
@@ -194,7 +198,7 @@ fn completed_report_renderer_explicitly_reports_empty_results() {
             recorded_percentage: Some(0),
         }),
         concat!(
-            "完了  実績  見積  差  Project  タスク\n",
+            "完了  実績  見積  差  task_id  Project  タスク\n",
             "完了したタスクはありません。\n",
             "実績合計: 00:00:00  利用可能: 08:00:00  記録率: 0%\n",
         )
