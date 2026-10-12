@@ -1103,6 +1103,10 @@ button:disabled {
     grid-area: task;
 }
 
+.task-heading {
+    white-space: nowrap;
+}
+
 .session-heading,
 .session-cell {
     grid-area: action;
@@ -1909,17 +1913,6 @@ button.routine-load-day.is-at-capacity {
 }
 
 @media (max-width: 34rem) {
-    .task-table .task-heading {
-        padding: 0;
-        font-size: 0.6rem;
-        line-height: 1;
-        white-space: nowrap;
-    }
-
-    .task-heading-count {
-        letter-spacing: 0;
-    }
-
     .shell {
         width: min(100% - 1rem, 82rem);
         padding-top: 0.75rem;
