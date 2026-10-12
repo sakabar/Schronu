@@ -257,6 +257,20 @@ fn 自動sessionは最新応答を受けるまで多重送信しない() {
 }
 
 #[test]
+fn 時間指定の自動sessionは分数をserver_effectへ渡す() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+
+    assert!(matches!(
+        state.request_auto_session_with_minutes(Some(31)),
+        ClientEffect::AutoSession {
+            max_minutes: Some(31),
+            ..
+        }
+    ));
+}
+
+#[test]
 fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 0).unwrap();
