@@ -56,7 +56,7 @@ fn auto_root(props: AutoRootProps) -> Element {
 }
 
 #[test]
-fn carry_lockはauto_sessionと五操作をすべて無効化する() {
+fn carry_lockはauto_sessionと六操作をすべて無効化する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut empty = VirtualDom::new_with_props(
         locked_root,
@@ -82,7 +82,7 @@ fn carry_lockはauto_sessionと五操作をすべて無効化する() {
         },
     );
     let ids = rebuild_with_click_listeners(&mut session);
-    assert_eq!(dioxus::ssr::render(&session).matches("disabled").count(), 5);
+    assert_eq!(dioxus::ssr::render(&session).matches("disabled").count(), 6);
     for id in ids {
         dispatch_click(&session, id);
     }
@@ -133,7 +133,7 @@ fn falseからtrueへ再描画されたcarry_lock_propは完了確認を閉じ�
         .into_iter()
         .rev()
         .collect::<Vec<_>>();
-    dispatch_click(&dom, action_ids[3]);
+    dispatch_click(&dom, action_ids[4]);
     render_with_click_listeners(&mut dom);
     assert!(dioxus::ssr::render(&dom).contains("タスクを完了しますか?"));
 
@@ -144,7 +144,7 @@ fn falseからtrueへ再描画されたcarry_lock_propは完了確認を閉じ�
 
     let html = dioxus::ssr::render(&dom);
     assert!(!html.contains("タスクを完了しますか?"), "{html}");
-    assert_eq!(html.matches("disabled").count(), 5, "{html}");
+    assert_eq!(html.matches("disabled").count(), 6, "{html}");
 }
 
 fn render(sessions: Vec<SessionCardViewModel>, global_blocked: bool) -> (String, Vec<String>) {
@@ -200,7 +200,7 @@ fn empty_session_view_only_offers_auto_session_without_firing_callbacks() {
 }
 
 #[test]
-fn session_card_renders_time_progress_overrun_and_five_typed_actions() {
+fn session_card_renders_time_progress_overrun_and_six_typed_actions() {
     let (html, events) = render(vec![card("task-1")], false);
 
     for text in [
@@ -214,6 +214,7 @@ fn session_card_renders_time_progress_overrun_and_five_typed_actions() {
         "計測を破棄して再開",
         "計測を破棄して解除",
         "記録して解除",
+        "記録して分割完了",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -235,6 +236,7 @@ fn session_card_renders_time_progress_overrun_and_five_typed_actions() {
         "計測を破棄して再開",
         "計測を破棄して解除",
         "記録して解除",
+        "記録して分割完了",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -248,6 +250,7 @@ fn session_card_renders_time_progress_overrun_and_five_typed_actions() {
         "計測を破棄して解除",
         "記録して解除",
         "計測を破棄して再開",
+        "記録して分割完了",
         "計測を破棄して完了",
         "記録して完了",
     ] {
@@ -470,6 +473,7 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
         "session-action-restart",
         "session-action-discard",
         "session-action-record",
+        "session-action-work-slice",
         "session-action-complete-without-recording",
         "session-action-complete",
     ] {
@@ -495,6 +499,11 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
             "color: var(--blue-dark);",
         ),
         (
+            ".session-action-work-slice",
+            "border-color: var(--green-dark);",
+            "color: var(--green-dark);",
+        ),
+        (
             ".session-action-complete-without-recording",
             "border-color: var(--red);",
             "color: var(--red);",
@@ -517,6 +526,7 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
         css_rule_body(narrow_layout, ".session-actions").contains("grid-template-columns: 1fr;")
     );
     assert!(css_rule_body(css, ".session-action-restart").contains("grid-column: 1 / -1;"));
+    assert!(css_rule_body(css, ".session-action-work-slice").contains("grid-column: 1 / -1;"));
 }
 
 fn css_rule_body<'a>(css: &'a str, selector: &str) -> &'a str {
@@ -564,7 +574,7 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         },
     ] {
         let (html, _) = render(vec![blocked_card, card("active")], false);
-        assert_eq!(html.matches("disabled").count(), 5, "{html}");
+        assert_eq!(html.matches("disabled").count(), 6, "{html}");
     }
 
     let manually_blocked = SessionCardViewModel {
@@ -572,10 +582,10 @@ fn each_block_reason_disables_only_the_affected_session_actions() {
         ..card("blocked")
     };
     let (html, _) = render(vec![manually_blocked, card("active")], false);
-    assert_eq!(html.matches("disabled").count(), 4, "{html}");
+    assert_eq!(html.matches("disabled").count(), 5, "{html}");
 
     let (globally_blocked, _) = render(vec![card("one"), card("two")], true);
-    assert_eq!(globally_blocked.matches("disabled").count(), 8);
+    assert_eq!(globally_blocked.matches("disabled").count(), 10);
 }
 
 #[test]
@@ -608,7 +618,7 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
         assert!(html.contains(message), "{html}");
         assert!(html.contains("計測を再開"), "{html}");
         assert!(html.contains(confirm_label), "{html}");
-        for normal_action in ["計測を破棄して再開", "計測を破棄して解除", "記録して解除", "計測を破棄して完了", "記録して完了"] {
+        for normal_action in ["計測を破棄して再開", "計測を破棄して解除", "記録して解除", "記録して分割完了", "計測を破棄して完了", "記録して完了"] {
             assert!(!html.contains(normal_action), "{html}");
         }
         assert_eq!(ids.len(), 2);
@@ -629,10 +639,10 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
 fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送る() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (mut cancel_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
-    assert_eq!(action_ids.len(), 5);
+    assert_eq!(action_ids.len(), 6);
     let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
 
-    dispatch_click(&cancel_dom, action_ids[3]);
+    dispatch_click(&cancel_dom, action_ids[4]);
     assert!(events.lock().unwrap().is_empty());
     let confirm_ids = render_with_click_listeners(&mut cancel_dom);
     let html = dioxus::ssr::render(&cancel_dom);
@@ -647,7 +657,7 @@ fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送�
     events.lock().unwrap().clear();
     let (mut confirm_dom, action_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
     let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
-    dispatch_click(&confirm_dom, action_ids[3]);
+    dispatch_click(&confirm_dom, action_ids[4]);
     let confirm_ids = render_with_click_listeners(&mut confirm_dom);
     dispatch_click(&confirm_dom, confirm_ids[1]);
     assert_eq!(*events.lock().unwrap(), ["task-b:CompleteWithoutRecording"]);
@@ -663,7 +673,7 @@ fn 計測破棄完了の確認状態は選択したcardだけに保持する() {
     );
     let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
 
-    dispatch_click(&dom, action_ids[3]);
+    dispatch_click(&dom, action_ids[4]);
     render_with_click_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
 
@@ -686,11 +696,12 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 
     events.lock().unwrap().clear();
     let (action_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
-    assert_eq!(action_ids.len(), 5);
+    assert_eq!(action_ids.len(), 6);
     for (element_id, expected) in action_ids.into_iter().rev().zip([
         Some("task-a:Discard"),
         Some("task-a:Record"),
         Some("task-a:RestartWithoutRecording"),
+        Some("task-a:WorkSlice"),
         None,
         Some("task-a:Complete"),
     ]) {
@@ -705,13 +716,14 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
             "task-a:Discard",
             "task-a:Record",
             "task-a:RestartWithoutRecording",
+            "task-a:WorkSlice",
             "task-a:Complete"
         ]
     );
 
     events.lock().unwrap().clear();
     let (other_dom, other_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
-    dispatch_click(&other_dom, other_ids[2]);
+    dispatch_click(&other_dom, other_ids[3]);
     assert_eq!(*events.lock().unwrap(), ["task-b:RestartWithoutRecording"]);
 }
 

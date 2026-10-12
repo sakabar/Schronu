@@ -66,6 +66,134 @@ fn complete_task_with_fresh_factory(
 }
 
 #[test]
+fn complete_work_sliceは今回の実績だけを完了子に移す() {
+    let parent = crate::test_support::new_task_handle("作業単位").unwrap();
+    parent.set_estimated_work_seconds(30 * 60).unwrap();
+    parent.set_actual_work_seconds(5 * 60).unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let finished_at = fixed_now();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], finished_at);
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(finished_at, &mut next_id);
+
+    let child_id = complete_work_slice(
+        &mut repository,
+        CompleteWorkSliceInput {
+            task_id: parent_id,
+            finished_at,
+            work_seconds: 15 * 60,
+            expected_actual_work_seconds: Some(5 * 60),
+            source_started_at: None,
+        },
+        &mut factory,
+    )
+    .unwrap();
+
+    let child = parent.get_by_id(child_id).unwrap().unwrap();
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(parent.get_actual_work_seconds().unwrap(), 5 * 60);
+    assert_eq!(child.get_estimated_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 15 * 60);
+    assert_eq!(child.get_status().unwrap(), Status::Done);
+    assert_eq!(child.get_end_time_opt().unwrap(), Some(finished_at));
+    assert_eq!(child.get_name().unwrap(), "作業単位-20260811-1200");
+}
+
+#[test]
+fn complete_work_sliceは見積超過と既存実績超過を保持する() {
+    let parent = crate::test_support::new_task_handle("作業単位").unwrap();
+    parent.set_estimated_work_seconds(10 * 60).unwrap();
+    parent.set_actual_work_seconds(25 * 60).unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+    let child_id = complete_work_slice(
+        &mut repository,
+        CompleteWorkSliceInput {
+            task_id: parent_id,
+            finished_at: fixed_now(),
+            work_seconds: 15 * 60,
+            expected_actual_work_seconds: Some(25 * 60),
+            source_started_at: None,
+        },
+        &mut factory,
+    )
+    .unwrap();
+    let child = parent.get_by_id(child_id).unwrap().unwrap();
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 0);
+    assert_eq!(parent.get_actual_work_seconds().unwrap(), 25 * 60);
+    assert_eq!(child.get_estimated_work_seconds().unwrap(), 10 * 60);
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 15 * 60);
+}
+
+#[test]
+fn complete_work_sliceは無効な入力と実績競合で親を変更しない() {
+    let parent = crate::test_support::new_task_handle("作業単位").unwrap();
+    parent.set_estimated_work_seconds(30 * 60).unwrap();
+    parent.set_actual_work_seconds(5 * 60).unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+    for (work_seconds, expected) in [(0, Some(5 * 60)), (-1, None), (60, Some(0))] {
+        assert!(complete_work_slice(
+            &mut repository,
+            CompleteWorkSliceInput {
+                task_id: parent.get_id().unwrap(),
+                finished_at: fixed_now(),
+                work_seconds,
+                expected_actual_work_seconds: expected,
+                source_started_at: None,
+            },
+            &mut factory,
+        )
+        .is_err());
+        assert_eq!(parent.get_estimated_work_seconds().unwrap(), 30 * 60);
+        assert!(parent.get_children().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn complete_work_sliceは繰り返しtask自身を拒否し同じ分の別sessionを許可する() {
+    let repeating = crate::test_support::new_task_handle("定期作業").unwrap();
+    repeating.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let mut repository = TestTaskRepository::new(vec![repeating.clone()], fixed_now());
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(fixed_now(), &mut next_id);
+    assert!(complete_work_slice(
+        &mut repository,
+        CompleteWorkSliceInput {
+            task_id: repeating.get_id().unwrap(),
+            finished_at: fixed_now(),
+            work_seconds: 60,
+            expected_actual_work_seconds: None,
+            source_started_at: None,
+        },
+        &mut factory,
+    )
+    .is_err());
+    assert!(repeating.get_children().unwrap().is_empty());
+
+    let parent = crate::test_support::new_task_handle("作業単位").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    for offset in [60, 30] {
+        complete_work_slice(
+            &mut repository,
+            CompleteWorkSliceInput {
+                task_id: parent.get_id().unwrap(),
+                finished_at: fixed_now(),
+                work_seconds: 30,
+                expected_actual_work_seconds: Some(0),
+                source_started_at: Some(fixed_now() - Duration::seconds(offset)),
+            },
+            &mut factory,
+        )
+        .unwrap();
+    }
+    assert_eq!(parent.get_children().unwrap().len(), 2);
+}
+
+#[test]
 fn add_actual_work_uuid指定で秒数を加算する() {
     let task = crate::test_support::new_task_handle("作業対象").unwrap();
     task.set_actual_work_seconds(61).unwrap();

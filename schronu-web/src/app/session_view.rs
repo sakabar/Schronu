@@ -9,6 +9,7 @@ pub enum SessionActionKind {
     RestartWithoutRecording,
     Discard,
     Record,
+    WorkSlice,
     Complete,
     CompleteWithoutRecording,
     ResumeCompletionConflict,
@@ -315,6 +316,15 @@ fn SessionCard(
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::RestartWithoutRecording,
                         disabled: restart_disabled,
+                        on_action,
+                    }
+                    SessionActionButton {
+                        class: "session-action-work-slice",
+                        label: "記録して分割完了",
+                        task_name: session.task_name.clone(),
+                        task_id: session.task_id.clone(),
+                        kind: SessionActionKind::WorkSlice,
+                        disabled: mutation_disabled,
                         on_action,
                     }
                     SessionDiscardCompletionButton {

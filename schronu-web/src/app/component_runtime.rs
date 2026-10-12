@@ -40,6 +40,7 @@ pub(crate) enum ComponentAction {
     RestartSessionWithoutRecording(String),
     DiscardSession(String),
     RecordSession(String),
+    CompleteWorkSlice(String),
     CompleteSession(String),
     CompleteSessionWithoutRecording(String),
     ResumeCompletionConflict(String),
@@ -87,6 +88,7 @@ pub(crate) fn component_action_from_session_action(action: SessionAction) -> Com
         }
         SessionActionKind::Discard => ComponentAction::DiscardSession(action.task_id),
         SessionActionKind::Record => ComponentAction::RecordSession(action.task_id),
+        SessionActionKind::WorkSlice => ComponentAction::CompleteWorkSlice(action.task_id),
         SessionActionKind::Complete => ComponentAction::CompleteSession(action.task_id),
         SessionActionKind::CompleteWithoutRecording => {
             ComponentAction::CompleteSessionWithoutRecording(action.task_id)
@@ -108,6 +110,7 @@ pub(crate) fn component_actions_from_session_action(
         action.kind,
         SessionActionKind::RestartWithoutRecording
             | SessionActionKind::Record
+            | SessionActionKind::WorkSlice
             | SessionActionKind::Complete
             | SessionActionKind::CompleteWithoutRecording
             | SessionActionKind::ResumeCompletionConflict
@@ -522,6 +525,7 @@ fn action_requires_server(state: Option<&ClientState>, action: &ComponentAction)
             | ComponentAction::DeferTask { .. }
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
+            | ComponentAction::CompleteWorkSlice(_)
             | ComponentAction::CompleteSession(_)
             | ComponentAction::CompleteSessionWithoutRecording(_)
             | ComponentAction::ConfirmCompletionConflict(_)
@@ -589,6 +593,9 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         }
         ComponentAction::DiscardSession(task_id) => state.discard_session(storage, &task_id),
         ComponentAction::RecordSession(task_id) => state.begin_record_session(storage, &task_id),
+        ComponentAction::CompleteWorkSlice(task_id) => {
+            state.begin_complete_work_slice(storage, &task_id)
+        }
         ComponentAction::CompleteSession(task_id) => {
             state.begin_complete_session(storage, &task_id)
         }
@@ -640,6 +647,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
             | ComponentAction::RestartSessionWithoutRecording(_)
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
+            | ComponentAction::CompleteWorkSlice(_)
             | ComponentAction::CompleteSession(_)
             | ComponentAction::CompleteSessionWithoutRecording(_)
             | ComponentAction::ResumeCompletionConflict(_)

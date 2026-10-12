@@ -57,6 +57,7 @@ pub(super) enum CommandKind {
     Priority,
     Category,
     Work,
+    WorkSlice,
     TuckAway,
     Defer,
     DeferRoutines,
@@ -831,7 +832,7 @@ fn parse_action(
                 "value",
             )?,
         },
-        CommandKind::Work => CommandAction::OptionalInteger {
+        CommandKind::Work | CommandKind::WorkSlice => CommandAction::OptionalInteger {
             kind,
             canonical_name,
             value: optional_i64(arguments.first(), definition, "actual_work_minutes")?,
@@ -1104,6 +1105,9 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "働" | "work" | "wk" => {
             CommandDefinition::new(Kind::Work, "働", "働 [minutes]", 0, Some(1))
         }
+        "刻" | "slice" => {
+            CommandDefinition::new(Kind::WorkSlice, "刻", "刻 [minutes]", 0, Some(1))
+        }
         "後" | "defer" => CommandDefinition::new(Kind::Defer, "後", "後 <量> [単位]", 1, Some(2)),
         "清" | "defer_all_frequent_routines" => {
             CommandDefinition::new(Kind::DeferRoutines, "清", "清", 0, Some(0))
@@ -1157,7 +1161,7 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
         "割" | "split" | "sp" => " 15 child",
         "〆" | "締" | "deadline" => " 今",
         "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
-        | "priority" | "pr" | "働" | "work" | "wk" | "押" | "extrude" => " 15",
+        | "priority" | "pr" | "働" | "work" | "wk" | "刻" | "slice" | "押" | "extrude" => " 15",
         "類" | "category" | "cat" => " 資",
         "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
         "空" | "clear" | "集" | "gather" => " 明",
@@ -1173,8 +1177,8 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
     let names = [
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "済", "尾", "今",
         "単", "暦", "帯", "荷", "見", "選", "開", "計", "黒", "外", "親", "子", "深", "上", "下",
-        "割", "待", "〆", "予", "揃", "実", "重", "類", "働", "後", "清", "逃", "平", "詰", "押",
-        "空", "集", "終", "高", "低", "backup", "検証",
+        "割", "待", "〆", "予", "揃", "実", "重", "類", "働", "刻", "後", "清", "逃", "平", "詰",
+        "押", "空", "集", "終", "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

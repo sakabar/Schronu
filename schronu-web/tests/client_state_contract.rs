@@ -26,6 +26,42 @@ fn 見積超過sessionのbufferは補正後の完了予定まで計測を相殺�
 }
 
 #[test]
+fn 分割完了は記録requestを送り成功時だけセッションを解除する() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    state.tick(60_000);
+    let (request_id, request) = match state.begin_complete_work_slice(&storage, TASK_ID) {
+        ClientEffect::CompleteWorkSlice {
+            request_id,
+            request,
+        } => (request_id, request),
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    assert_eq!(request.ended_at_epoch_ms, Some(60_000));
+    assert_eq!(state.sessions().len(), 1);
+    assert_eq!(
+        state.begin_complete_work_slice(&storage, TASK_ID),
+        ClientEffect::None
+    );
+
+    state.apply_record_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 0),
+            data: RecordSessionResult {
+                actual_work_seconds: 100,
+            },
+        }),
+    );
+    assert!(state.sessions().is_empty());
+    assert_eq!(
+        state.history().back().unwrap().invocation.operation(),
+        Operation::CompleteWorkSlice
+    );
+}
+
+#[test]
 fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 1_000).unwrap();

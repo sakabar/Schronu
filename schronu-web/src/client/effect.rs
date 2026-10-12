@@ -36,6 +36,10 @@ pub enum ClientEffect {
         request_id: u64,
         request: RecordSessionRequest,
     },
+    CompleteWorkSlice {
+        request_id: u64,
+        request: RecordSessionRequest,
+    },
     CompleteSession {
         request_id: u64,
         request: CompleteSessionRequest,

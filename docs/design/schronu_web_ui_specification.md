@@ -474,6 +474,10 @@ expected_actual_work_seconds: Option<i64>
 - Webの`complete_session`は、`record_elapsed_seconds`が`true`なら経過秒、`false`なら0を追加実績秒として渡す。
 - MCPの入力structおよび生成JSON schemaへこのfieldを追加しない。
 
+### 5.4 `complete_work_slice`
+
+CLI`刻 [minutes]`とWeb「記録して分割完了」から共用する。今回の正の作業秒だけを新しい完了子taskの実績とし、子の見積は`min(作業秒, 親の見積秒)`、親の見積は差分、親の既存実績は維持する。子名は完了時刻のlocal timeで`元の名前-YYYYMMDD-HHMM`とする。Webは`record_session`と同じ開始時実績の期待値検査、click時刻の計測停止、成功後だけのセッション削除と安全状態を使用する。繰り返し設定を持つtask自身と0秒は拒否する。Webの同一セッション再送は子の開始時刻で検出し、重複保存しない。
+
 ## 6. Client state and calculations
 
 ### 6.1 State

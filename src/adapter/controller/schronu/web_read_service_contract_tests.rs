@@ -988,6 +988,38 @@ fn record_sessionは経過ミリ秒をfloor秒へ変換して実績を1回だけ
 }
 
 #[test]
+fn complete_work_sliceは完了子を1回だけ保存し再送を拒否する() {
+    let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let task_id = fixture.seed_fixed_task(seeded_at);
+    let request = RecordSessionRequest {
+        task_id: task_id.to_string(),
+        started_at_epoch_ms: operation_now.timestamp_millis() - 15 * 60 * 1_000,
+        ended_at_epoch_ms: Some(operation_now.timestamp_millis()),
+        expected_actual_work_seconds: 300,
+    };
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    service
+        .complete_work_slice_at(operation_now, request.clone())
+        .unwrap();
+    let after_first = fixture.persisted_bytes();
+    assert!(service
+        .complete_work_slice_at(operation_now, request)
+        .is_err());
+    assert_eq!(fixture.persisted_bytes(), after_first);
+
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let parent = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(parent.get_actual_work_seconds().unwrap(), 300);
+    assert_eq!(parent.get_children().unwrap().len(), 1);
+    let child = parent.get_children().unwrap().remove(0);
+    assert_eq!(child.get_actual_work_seconds().unwrap(), 900);
+    assert_eq!(child.get_status().unwrap(), Status::Done);
+}
+
+#[test]
 fn record_sessionの二重送信は競合となり2回目は保存しない() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();

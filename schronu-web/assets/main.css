@@ -617,6 +617,12 @@ button:disabled {
     color: var(--green-dark);
 }
 
+.session-action-work-slice {
+    grid-column: 1 / -1;
+    border-color: var(--green-dark);
+    color: var(--green-dark);
+}
+
 .session-action-complete-without-recording {
     border-color: var(--red);
     color: var(--red);

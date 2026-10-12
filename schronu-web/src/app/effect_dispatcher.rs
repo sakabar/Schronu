@@ -46,6 +46,13 @@ pub(crate) trait WebGateway {
         request: RecordSessionRequest,
     ) -> Result<Result<WebSuccess<RecordSessionResult>, WebError>, ServerFnError>;
 
+    async fn complete_work_slice(
+        &self,
+        _request: RecordSessionRequest,
+    ) -> Result<Result<WebSuccess<RecordSessionResult>, WebError>, ServerFnError> {
+        unreachable!("complete_work_slice is not implemented by this test gateway")
+    }
+
     async fn complete_session(
         &self,
         request: CompleteSessionRequest,
@@ -107,6 +114,13 @@ impl WebGateway for ServerFunctionGateway {
         super::record_session(request).await
     }
 
+    async fn complete_work_slice(
+        &self,
+        request: RecordSessionRequest,
+    ) -> Result<Result<WebSuccess<RecordSessionResult>, WebError>, ServerFnError> {
+        super::complete_work_slice(request).await
+    }
+
     async fn complete_session(
         &self,
         request: CompleteSessionRequest,
@@ -149,6 +163,10 @@ pub(crate) enum ClientResponse {
         result: Result<ServerSnapshot, ServerFailure>,
     },
     RecordSession {
+        request_id: u64,
+        result: Result<WebSuccess<RecordSessionResult>, ServerFailure>,
+    },
+    CompleteWorkSlice {
         request_id: u64,
         result: Result<WebSuccess<RecordSessionResult>, ServerFailure>,
     },
@@ -222,6 +240,13 @@ pub(crate) async fn execute_effect<G: WebGateway>(
         } => Some(ClientResponse::RecordSession {
             request_id,
             result: normalize_endpoint_result(gateway.record_session(request).await),
+        }),
+        ClientEffect::CompleteWorkSlice {
+            request_id,
+            request,
+        } => Some(ClientResponse::CompleteWorkSlice {
+            request_id,
+            result: normalize_endpoint_result(gateway.complete_work_slice(request).await),
         }),
         ClientEffect::CompleteSession {
             request_id,
@@ -299,6 +324,9 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
             state.apply_defer_task_result(storage, request_id, result)
         }
         ClientResponse::RecordSession { request_id, result } => {
+            state.apply_record_result(storage, request_id, result)
+        }
+        ClientResponse::CompleteWorkSlice { request_id, result } => {
             state.apply_record_result(storage, request_id, result)
         }
         ClientResponse::CompleteSession { request_id, result } => {
