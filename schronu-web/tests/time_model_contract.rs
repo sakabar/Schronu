@@ -41,6 +41,8 @@ fn session_progress_and_bars_cover_33_100_and_133_percent() {
     assert_eq!(overrun.progress_percent, Some(133));
     assert_eq!(overrun.normal_bar_percent, 100);
     assert_eq!(overrun.overrun_bar_percent, 33);
+    assert_eq!(overrun.remaining_at_start_seconds, 600);
+    assert_eq!(overrun.estimated_completion_epoch_ms, Some(600_000));
 }
 
 #[test]
