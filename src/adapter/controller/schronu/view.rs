@@ -859,7 +859,7 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let scheduled_logical_dates = scheduled_logical_dates(&scheduled_tasks)?;
     let mut task_list_display_rows: Vec<TaskListDisplayRow> = vec![];
     let mut available_biggest_row_opt: Option<TaskListDisplayRow> = None;
-    let mut available_biggest_task_estimate_work_seconds = 0;
+    let mut available_biggest_remaining_work_seconds = 0;
 
     // ここからρ計算用
     let last_synced_time = task_repository.get_last_synced_time();
@@ -1290,8 +1290,20 @@ pub(super) fn build_show_all_tasks_display_with_config(
                         }
                     } else if integer_reg.is_match(pattern) {
                         let caps = integer_reg.captures(pattern).unwrap();
-                        let input_minute: i64 = caps[0].parse().unwrap();
-                        let target_free_time_seconds = input_minute * 60;
+                        let input_minute: i128 =
+                            caps[0]
+                                .parse()
+                                .map_err(|_| ApplicationError::InvalidInput {
+                                    field: "pattern",
+                                    reason: "invalid minute count",
+                                })?;
+                        let target_free_time_seconds =
+                            input_minute
+                                .checked_mul(60)
+                                .ok_or(ApplicationError::InvalidInput {
+                                    field: "pattern",
+                                    reason: "minute count out of range",
+                                })?;
 
                         if *scheduled_start > next_logical_date_start
                             || last_synced_time
@@ -1300,12 +1312,18 @@ pub(super) fn build_show_all_tasks_display_with_config(
                             continue;
                         }
 
+                        let remaining_work_seconds = schronu_work_time::remaining_work_seconds(
+                            task.get_estimated_work_seconds()
+                                .map_err(ApplicationError::TaskTree)?,
+                            task.get_actual_work_seconds()
+                                .map_err(ApplicationError::TaskTree)?,
+                        );
                         if scheduled_task.is_leaf()
                             && !is_on_other_side
-                            && estimated_work_seconds < target_free_time_seconds
-                            && estimated_work_seconds > available_biggest_task_estimate_work_seconds
+                            && remaining_work_seconds < target_free_time_seconds
+                            && remaining_work_seconds > available_biggest_remaining_work_seconds
                         {
-                            available_biggest_task_estimate_work_seconds = estimated_work_seconds;
+                            available_biggest_remaining_work_seconds = remaining_work_seconds;
 
                             available_biggest_row_opt = Some(task_list_display_row.clone());
                         }
