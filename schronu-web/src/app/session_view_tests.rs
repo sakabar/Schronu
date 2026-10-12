@@ -467,21 +467,33 @@ fn session_timing_subtree(html: &str) -> &str {
 }
 
 #[test]
-fn session操作は意味別classと狭幅1列layoutを持つ() {
+fn session操作は意味別classと縦順2列layoutを持つ() {
     let (html, _) = render(vec![card("task-1")], false);
+    let mut previous_position = 0;
     for class in [
-        "session-action-restart",
         "session-action-discard",
         "session-action-record",
+        "session-action-restart",
         "session-action-work-slice",
         "session-action-complete-without-recording",
         "session-action-complete",
     ] {
-        assert!(html.contains(&format!("class=\"{class}\"")), "{html}");
+        let position = html
+            .find(&format!("class=\"{class}\""))
+            .unwrap_or_else(|| panic!("missing {class}: {html}"));
+        assert!(position > previous_position, "{class} is out of order");
+        previous_position = position;
     }
 
     let css = include_str!("../../assets/main.css");
     assert!(!css.contains(".session-actions button:nth-child"));
+    let layout = css_rule_body(css, ".session-actions");
+    assert!(layout.contains("grid-template-columns: repeat(2, minmax(0, 1fr));"));
+    assert!(layout.contains("grid-template-rows: repeat(3, auto);"));
+    assert!(layout.contains("grid-auto-flow: column;"));
+    let buttons = css_rule_body(css, ".session-actions button");
+    assert!(buttons.contains("min-width: 0;"));
+    assert!(buttons.contains("overflow-wrap: anywhere;"));
     for (selector, border, color) in [
         (
             ".session-action-restart",
@@ -522,11 +534,9 @@ fn session操作は意味別classと狭幅1列layoutを持つ() {
         .split_once("@media (max-width: 34rem)")
         .expect("narrow viewport rule must exist")
         .1;
-    assert!(
-        css_rule_body(narrow_layout, ".session-actions").contains("grid-template-columns: 1fr;")
-    );
-    assert!(css_rule_body(css, ".session-action-restart").contains("grid-column: 1 / -1;"));
-    assert!(css_rule_body(css, ".session-action-work-slice").contains("grid-column: 1 / -1;"));
+    assert!(!narrow_layout.contains(".session-actions {"));
+    assert!(!css_rule_body(css, ".session-action-restart").contains("grid-column:"));
+    assert!(!css_rule_body(css, ".session-action-work-slice").contains("grid-column:"));
 }
 
 fn css_rule_body<'a>(css: &'a str, selector: &str) -> &'a str {

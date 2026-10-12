@@ -683,8 +683,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 初期化時など、削除を伴わずセッション0件でセッションtabを表示している場合は任意の分数入力、その下に「自動セッション」buttonを表示する。説明は「指定分数未満」の規則と空欄時の従来の自動選定を2行に分けて表示する。
 - 分数は画面内の一時stateとし、localStorageへ保存しない。入力変更だけでは通信せず、button押下時にASCII数字の正整数と秒換算可能な範囲を検証する。不正値は入力欄近くへerrorを表示して送信しない。通信中、持ち歩きロック中、背景更新中は入力欄とbuttonを無効にする。
 - 1件以上ではbuttonを隠し、各`work_session`をcard表示する。
-- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して再開」「計測を破棄して完了」「記録して完了」の順の5操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
-- 操作buttonは意味別classを持つ。「計測を破棄して再開」と「計測を破棄して解除」は灰、「記録して解除」は青、「計測を破棄して完了」は赤、「記録して完了」は緑とする。通常幅では解除系2buttonを1段目、「計測を破棄して再開」を全幅の2段目、完了系2buttonを3段目に配置し、34rem以下では同じ順序の1列にする。
+- cardはtask名、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`、進捗率、bar、残り・超過`MM:SS`、「計測を破棄して解除」「記録して解除」「計測を破棄して再開」「記録して分割完了」「計測を破棄して完了」「記録して完了」の順の6操作buttonを持つ。timing領域は残り・超過を大きな主表示、開始、矢印、完了予定、開始時実績を折り返し可能な補助表示とし、mobileのgridをtask名、timing、progress、操作の順にする。
+- 操作buttonは意味別classを持つ。「計測を破棄して再開」と「計測を破棄して解除」は灰、「記録して解除」は青、「記録して分割完了」と「記録して完了」は緑、「計測を破棄して完了」は赤とする。全幅で2列×3段とし、DOM順の前半3操作を左列、後半3操作を右列へ上から並べる。34rem以下でも2列を維持し、320px幅ではbutton内の文言を折り返す。
 - 「計測を破棄して完了」をclickすると当該cardだけを確認表示へ切り替え、「このセッションの計測時間は記録されません。タスクを完了しますか?」と「キャンセル」「計測を破棄して完了」を表示する。最初のclickとキャンセルではserver requestを送らず、確定時だけ`record_elapsed_seconds: false`の`complete_session`を1回送る。
 - 「記録して完了」は確認を挟まず、`record_elapsed_seconds: true`の`complete_session`を送る。
 - 「記録して解除」と2種類の完了確定ではclick時刻を`ended_at_epoch_ms`として送信し、応答待ち中は対象cardの進捗、bar、残り・超過時間をその時刻で停止する。「計測を破棄して完了」の確認表示だけでは停止しない。
@@ -742,7 +742,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 4種類の終了成功では一覧再取得effectを生成し、response全体で一覧を置換する。server errorでは再取得せず、server commit成功後のlocalStorage削除失敗では安全状態を維持しつつ再取得する。
 - `record_session`、`complete_session`、`defer_task`の成功responseを適用した時だけ全件取得状態を`Invalidated`へ変える。取得中のrequest IDも同時に失効させ、後着responseを無視する。localのセッション追加、破棄、再開では全件取得状態を変更しない。
 - 完了responseの`ServerSnapshot`は通常どおり適用し、logical dateが変わった場合は日付buttonを再生成する。一覧再取得には選択中のlogical dateを維持して用い、未選択なら最新snapshotのlogical dateを用いる。
-- in-flight中は対象sessionの5buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中は「計測を破棄して再開」とserver mutationの3buttonを無効化し、「計測を破棄して解除」は利用可能とする。
+- in-flight中は対象sessionの6buttonを無効化する。他sessionの計測は継続する。globalまたはmanual safety block中は「計測を破棄して再開」とserver mutationの4buttonを無効化し、「計測を破棄して解除」は利用可能とする。
 
 ### 7.5 持ち歩きロックbar
 
@@ -948,11 +948,11 @@ OperationHistoryEntry {
 - 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
 - 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。「表示」の文字がbutton内で上下左右の中央に揃うこと、日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
-- 5操作buttonのlabel、ARIA名、意味別class、通常幅の解除系2button、再開button全幅、完了系2buttonの3段配置と、狭幅で同じ順序の1列配置を確認する。
+- 6操作buttonのlabel、ARIA名、意味別class、全幅で左列1→2→3・右列4→5→6の3段配置を確認する。390×844pxの1セッションでは固定tab barより上に全操作が見えること、320px幅では文字切れと横はみ出しがないことを確認する。
 - 「計測を破棄して再開」で開始時刻だけがclick時刻へ更新され、他のsnapshot、session数・順序、tab、一覧、発火履歴を維持することを確認する。保存失敗と安全停止中の拒否、背景更新中の成功も確認する。
 - 「計測を破棄して完了」の最初のclickでは通信せず、card単位の確認表示、キャンセル、確定時の1回だけのtyped callbackを確認する。
-- 完了実績競合では通常の5操作をaccessibility付き確認groupへ置換し、記録方針ごとの正確な文言、`HH:MM:SS`、計測再開と再完了のtyped callbackを確認する。
-- 確認表示ではtimerが進み、3終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
+- 完了実績競合では通常の6操作をaccessibility付き確認groupへ置換し、記録方針ごとの正確な文言、`HH:MM:SS`、計測再開と再完了のtyped callbackを確認する。
+- 確認表示ではtimerが進み、終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。30分見積・40分実績では133%と残り20分が同時に表示されることを確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
 - 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
