@@ -1,9 +1,9 @@
 use schronu_web::{
     web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
-    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
-    ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    RoutineLoadReport, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebOperations,
-    WebSuccess, WebWorkerHandle,
+    CompletedTaskReport, CreateTaskRequest, CreateTaskResult, DeferTaskRequest,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -14,7 +14,7 @@ const STACK_FRAME_BYTES: usize = 4 * 1024;
 const STACK_DEPTH: usize = 3 * 1024;
 
 #[test]
-fn workerは9操作を送信順に専用threadで実行してpayloadを保持する() {
+fn workerは10操作を送信順に専用threadで実行してpayloadを保持する() {
     let caller_thread = thread::current().id();
     let events = Arc::new(Mutex::new(Vec::new()));
     let factory_events = Arc::clone(&events);
@@ -43,6 +43,21 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
 
     futures::executor::block_on(async {
         assert_eq!(worker.bootstrap().await, Ok(snapshot(1)));
+        assert_eq!(
+            worker
+                .create_task(CreateTaskRequest {
+                    name: "contract task".to_owned(),
+                    estimated_work_minutes: Some(25),
+                })
+                .await,
+            Ok(WebSuccess {
+                snapshot: snapshot(10),
+                data: CreateTaskResult {
+                    task_id: "created-task".to_owned(),
+                    pending_until_epoch_ms: 600,
+                },
+            })
+        );
         assert_eq!(
             worker
                 .list_tasks(ListTasksRequest {
@@ -129,6 +144,7 @@ fn workerは9操作を送信順に専用threadで実行してpayloadを保持す
         &events[1..],
         &[
             Event::Bootstrap,
+            Event::Create("contract task".to_owned(), Some(25)),
             Event::List("2026-09-05".to_owned()),
             Event::ListCompleted("2026-09-04".to_owned()),
             Event::LoadBand,
@@ -195,6 +211,7 @@ fn workerは32mib_stackを要する操作を完了する() {
 enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
+    Create(String, Option<i64>),
     List(String),
     ListCompleted(String),
     ListAll(Option<String>),
@@ -326,6 +343,23 @@ impl WebOperations for PanickingOperations {
 }
 
 impl WebOperations for RecordingOperations {
+    fn create_task(
+        &mut self,
+        request: CreateTaskRequest,
+    ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
+        self.events
+            .lock()
+            .unwrap()
+            .push(Event::Create(request.name, request.estimated_work_minutes));
+        Ok(WebSuccess {
+            snapshot: snapshot(10),
+            data: CreateTaskResult {
+                task_id: "created-task".to_owned(),
+                pending_until_epoch_ms: 600,
+            },
+        })
+    }
+
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
         self.events.lock().unwrap().push(Event::Bootstrap);
         Ok(snapshot(1))

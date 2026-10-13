@@ -4,7 +4,83 @@ use schronu_web::client::state::{
 };
 use schronu_web::client::view_projection::project_session_cards;
 use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
-use schronu_web::{web_error_codes, RecordSessionResult, RetryAdvice, SessionTask, WebSuccess};
+use schronu_web::{
+    web_error_codes, CreateTaskRequest, CreateTaskResult, RecordSessionResult, RetryAdvice,
+    SessionTask, WebSuccess,
+};
+
+#[test]
+fn 作成成功は一覧を無効化して次の一覧進入時に再取得する() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
+    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 0)));
+    state.switch_tab(ActiveTab::Create);
+    let request = CreateTaskRequest {
+        name: "contract task".to_owned(),
+        estimated_work_minutes: Some(25),
+    };
+    let request_id = match state.request_create_task(&storage, request.clone()) {
+        ClientEffect::CreateTask {
+            request_id,
+            request: actual,
+        } => {
+            assert_eq!(actual, request);
+            request_id
+        }
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    assert_eq!(
+        state.request_create_task(&storage, request),
+        ClientEffect::None
+    );
+
+    state.apply_create_task_result(
+        &storage,
+        request_id,
+        Ok(WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: CreateTaskResult {
+                task_id: TASK_ID.to_owned(),
+                pending_until_epoch_ms: 2,
+            },
+        }),
+    );
+    assert_eq!(state.active_tab(), ActiveTab::Create);
+    assert_eq!(
+        state.history().back().unwrap().invocation.operation(),
+        Operation::CreateTask
+    );
+    assert!(!state.mutation_globally_blocked());
+    assert!(matches!(
+        state.switch_tab(ActiveTab::List),
+        ClientEffect::ListTasks { .. }
+    ));
+}
+
+#[test]
+fn 作成の通信結果不明は後続変更を止める() {
+    let storage = FakeStorage::default();
+    let mut state = load_client_state(&storage, 0).unwrap();
+    let request = CreateTaskRequest {
+        name: "contract task".to_owned(),
+        estimated_work_minutes: None,
+    };
+    let request_id = match state.request_create_task(&storage, request.clone()) {
+        ClientEffect::CreateTask { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    state.apply_create_task_result(
+        &storage,
+        request_id,
+        Err(ServerFailure::Transport("connection closed".to_owned())),
+    );
+    assert!(state.mutation_globally_blocked());
+    assert_eq!(
+        state.request_create_task(&storage, request),
+        ClientEffect::None
+    );
+}
 
 mod client_state_support;
 use client_state_support::*;

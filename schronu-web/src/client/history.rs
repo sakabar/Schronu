@@ -1,8 +1,8 @@
 use std::{collections::VecDeque, fmt};
 
 use crate::{
-    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
-    ListTasksRequest, RecordSessionRequest,
+    CompleteSessionRequest, CreateTaskRequest, DeferTaskRequest, ListAllTasksRequest,
+    ListCompletedTasksRequest, ListTasksRequest, RecordSessionRequest,
 };
 
 const MAX_HISTORY_ENTRIES: usize = 100;
@@ -15,6 +15,7 @@ pub enum Operation {
     ListAllTasks,
     LoadBand,
     AutoSession,
+    CreateTask,
     AddSession,
     DeferTask,
     DiscardSession,
@@ -39,6 +40,7 @@ pub enum ServerActionInvocation {
     ListAllTasks(ListAllTasksRequest),
     LoadBand,
     AutoSession,
+    CreateTask(CreateTaskRequest),
     DeferTask(DeferTaskRequest),
     RecordSession(RecordSessionRequest),
     CompleteWorkSlice(RecordSessionRequest),
@@ -54,6 +56,7 @@ impl ServerActionInvocation {
             Self::ListAllTasks(_) => Operation::ListAllTasks,
             Self::LoadBand => Operation::LoadBand,
             Self::AutoSession => Operation::AutoSession,
+            Self::CreateTask(_) => Operation::CreateTask,
             Self::DeferTask(_) => Operation::DeferTask,
             Self::RecordSession(_) => Operation::RecordSession,
             Self::CompleteWorkSlice(_) => Operation::CompleteWorkSlice,
@@ -75,7 +78,8 @@ impl ServerActionInvocation {
             | Self::ListCompletedTasks(_)
             | Self::ListAllTasks(_)
             | Self::LoadBand
-            | Self::AutoSession => None,
+            | Self::AutoSession
+            | Self::CreateTask(_) => None,
         }
     }
 }
@@ -97,6 +101,12 @@ impl fmt::Display for ServerActionInvocation {
             }
             Self::LoadBand => formatter.write_str("load_band()"),
             Self::AutoSession => formatter.write_str("auto_session()"),
+            Self::CreateTask(request) => write!(
+                formatter,
+                "create_task(name: {:?}, estimated_work_minutes: {:?})",
+                request.name,
+                request.estimated_work_minutes
+            ),
             Self::DeferTask(request) => {
                 write!(formatter, "defer_task(task_id: {:?})", request.task_id)
             }

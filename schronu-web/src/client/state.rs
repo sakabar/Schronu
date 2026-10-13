@@ -29,6 +29,7 @@ use std::collections::VecDeque;
 pub enum ActiveTab {
     Session,
     List,
+    Create,
     Load,
     History,
 }
@@ -380,7 +381,11 @@ impl ClientState {
         if entering_load {
             self.request_load_band()
         } else if entering_list && self.read.list_mode == ListMode::Completed {
+            self.read.list_stale_after_create = false;
             self.switch_list_mode(ListMode::Scheduled)
+        } else if entering_list && self.read.list_stale_after_create {
+            self.read.list_stale_after_create = false;
+            self.request_selected_or_current_list()
         } else {
             ClientEffect::None
         }

@@ -263,7 +263,7 @@ button:disabled {
     bottom: 0;
     left: 50%;
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     width: min(100%, 82rem);
     min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));
     padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom)
@@ -298,6 +298,61 @@ button:disabled {
     background: var(--surface);
     box-shadow: inset 0 0.2rem 0 var(--green);
     color: var(--green-dark);
+}
+
+.create-task-view {
+    width: min(100%, 32rem);
+    margin-inline: auto;
+    padding: 0.5rem 0 1rem;
+}
+
+.create-task-view h2 {
+    margin: 0 0 0.4rem;
+}
+
+.create-task-help {
+    margin: 0 0 1.5rem;
+    color: var(--muted);
+}
+
+.create-task-view form {
+    display: grid;
+    gap: 0.55rem;
+}
+
+.create-task-view label {
+    margin-top: 0.5rem;
+    font-weight: 600;
+}
+
+.create-task-view input {
+    width: 100%;
+    min-height: 44px;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    padding: 0.65rem 0.75rem;
+}
+
+.create-task-view button[type="submit"] {
+    margin-top: 0.8rem;
+    border-color: var(--green-dark);
+    background: var(--green);
+    color: white;
+}
+
+.create-task-error {
+    margin: 0;
+    color: var(--red);
+}
+
+.create-task-success {
+    margin-top: 1.3rem;
+    border-left: 4px solid var(--green);
+    background: var(--surface);
+    padding: 0.8rem 1rem;
 }
 
 .date-pill {

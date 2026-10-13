@@ -11,7 +11,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ## 2. 対象範囲
 
 - 現行`schronu-web`の画面、component構造、CSS、`today_text`表示、60秒更新は全面的に置換してよい。
-- Web UIは「セッション」「一覧」「負荷」「発火履歴」の4画面を提供する。
+- Web UIは「セッション」「一覧」「作成」「負荷」「発火履歴」の5画面を提供する。
 - taskの取得・更新にはSchronuのapplication層とrepository transactionを使用する。
 - CLIおよびMCPの外部契約は、REQ-COMPAT-002で明示するCLI`働`の変更を除いて維持する。
 - 認証、外部公開、端末間同期、別browser tab間の即時同期は対象外とする。
@@ -34,9 +34,12 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.1 共通画面
 
-- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「負荷」「発火履歴」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
-- **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし「負荷」へ入る時は最新の負荷を取得し、完了modeから別tabを経て「一覧」へ戻る時は予定modeへ戻して選択日の予定一覧を取得すること。tab barは通信中overlayより背面に配置すること。
-- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
+- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「作成」「負荷」「発火履歴」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。5buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
+- **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし「負荷」へ入る時は最新の負荷を取得し、完了modeから別tabを経て「一覧」へ戻る時と作成成功後に「一覧」へ入る時は選択日の予定一覧を取得すること。tab barは通信中overlayより背面に配置すること。
+- **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは5画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
+
+- **REQ-CREATE-001**: 作成tabはタスク名と任意の非負整数の見積分数を受け付け、省略時は15分とすること。CLI`新`と同じapplicationの`create_task`でルートのプロジェクトタスクを作り、翌論理日06:00までPendingとする。WebからCLIのフォーカスは変更しない。
+- **REQ-CREATE-002**: 作成成功時は作成tabに留まり、成功内容を表示して入力を空にすること。失敗時は入力を保持する。成功後は古い一覧と全件取得を無効化し、次の一覧進入時に日付別一覧を取得する。作成は持ち歩きロック、背景更新、repository状態不確実の変更guardに従う。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば睡眠時間の確定値を`schronu-buffer-ready`へ表示し、なければ睡眠時間と一覧を未取得として示すこと。続けて`bootstrap`を1度送り、保存済みのactive一覧があればそのlogical dateを予定modeでは`list_tasks`、完了modeでは`list_completed_tasks`で再取得すること。view stateが破損・未知version・不正行・読込失敗で復元されなかった場合は、`bootstrap`が返した現在logical dateを予定modeの`list_tasks`で新規取得すること。「全て」の選択、取得結果、取得状態は復元せず、active mode、選択日、予定・全件・完了で共有する検索文字列を復元すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
@@ -182,7 +185,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 - **REQ-LOCK-001**: 画面上部へ常時表示されるstickyな持ち歩きロックbarを設け、通常モードでは「持ち歩きロック」の1 clickで即時にロックできること。持ち歩きロックだけを理由に画面を覆うoverlayや画面内容を非表示にする方式は使用しないこと。server通信中の待機表示は`REQ-NET-008`を優先すること。
 - **REQ-LOCK-002**: ロック中もbufferとセッションの表示・更新、scroll、tab切替、日付選択、一覧取得を利用可能とすること。
-- **REQ-LOCK-003**: ロック中は「自動セッション」、一覧からの「セッション」追加と「先送り」、「計測を破棄して再開」、「計測を破棄して解除」、「記録して解除」、「計測を破棄して完了」、「記録して完了」、完了実績競合の再完了・計測再開、「repository確認済み」の変更操作をclientの共通guardで遮断すること。
+- **REQ-LOCK-003**: ロック中は「自動セッション」、タスクの「作成」、一覧からの「セッション」追加と「先送り」、「計測を破棄して再開」、「計測を破棄して解除」、「記録して解除」、「計測を破棄して完了」、「記録して完了」、完了実績競合の再完了・計測再開、「repository確認済み」の変更操作をclientの共通guardで遮断すること。
 - **REQ-LOCK-004**: ロックbarをpointerまたはSpace・Enterで1.0秒長押しすると、15秒間変更操作を許可すること。pointerup、pointerleave、pointercancel、buttonのblur、window scroll、または1.0秒未満の入力終了では長押しを成立させないこと。
 - **REQ-LOCK-005**: 一時許可中に封印対象の変更操作をdispatchするたび、成功可否や実際の変更有無にかかわらず、単調時計による無操作期限をdispatch時点から15秒後へ更新すること。ただし、最初のsession追加成功後は`REQ-LOCK-013`の即時再ロックを優先すること。封印対象外の操作では期限を更新せず、期限到達または単調時計の後退で再ロックすること。
 - **REQ-LOCK-006**: 「計測を破棄して完了」は確認表示では無操作期限を更新せず、確定dispatchで更新すること。確認のキャンセルでは一時許可と期限を維持し、一時許可の期限切れでは確認表示を閉じて再ロックすること。
@@ -224,7 +227,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 | ID | 受入条件 |
 | --- | --- |
-| AC-001 | viewport下端に「セッション」「一覧」「負荷」「発火履歴」の固定tabが表示され、desktopで44px以上、46rem以下で40px以上の均等幅button、safe area、本文との非重複、選択indicatorと`aria-pressed`を維持し、利用者向け文言に「フォーカス」が残っていない。 |
+| AC-001 | viewport下端に「セッション」「一覧」「作成」「負荷」「発火履歴」の固定tabが表示され、desktopで44px以上、46rem以下で40px以上の均等幅button、safe area、本文との非重複、選択indicatorと`aria-pressed`を維持し、利用者向け文言に「フォーカス」が残っていない。 |
 | AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示は各セッションの未送信進捗秒を個別に加算し、終了操作中の加算は補正後の完了予定時刻と終了click時刻の早い方で打ち切る。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。30分見積、開始時実績40分のtaskは開始直後から133%かつ残り20分となる。いずれの進捗でもtrack全幅の3分の2に100%境界線を表示する。 |
 | AC-004 | 残り・超過`MM:SS`がtiming領域の主表示となり、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`が補助情報として表示され、320px幅でもcardが横へ超過しない。各値をassistive technologyが識別でき、見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |
@@ -241,7 +244,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 | AC-015 | 各cardに6操作が2列×3段の縦順で表示され、計測を破棄して再開は解除系2操作の後で経過秒だけを破棄し、計測を破棄して完了はcard内の確認を経た確定時だけ1回送信され、キャンセルでは送信されない。終了操作はclick時刻でcardの計測を停止し、通信待ちで表示や実績を増やさない。2種類の完了は`record_elapsed_seconds`の真偽を含む発火履歴で区別される。 |
 | AC-016 | 4種類のセッション終了が成功すると選択中または最新snapshotのlogical dateをactive modeで再取得し、予定modeでは実績変更後の再schedule・完了taskの除去・反復task、完了modeでは新しい完了rowを含むresponse全体で置換する。終了失敗では再取得せず一覧とsessionを保持し、server commit成功後にlocalStorage削除だけが失敗した場合は安全状態を維持して一覧を再取得する。 |
 | AC-017 | 320px、360px、46rem、1024pxの画面幅で一覧が同じ可視header付きの高さ32px以上の1行tableとなり、左端の幅44px・高さ32pxの「＋」またはdisabledの「✓」と「→」、`HH:MM (MMM)`の日付別予定、固定された締切、cell内だけを横スクロールできる長いtask名を表示する。予定分数は1分未満を切り上げ、括弧付きの1〜3桁を右寄5文字幅、開始時刻との間を最低1文字幅で表示し、1000分以上を省略しない。task名cellに縦scrollbarを表示せず、viewport全体は横に超えず、rank非0の操作cellは空になる。曜日button、日付入力・表示button、検索欄は高さ36px、検索clear buttonは36px四方、曜日・入力・検索・table間は8pxとする。「表示」の文字はbutton内で上下左右の中央に揃う。34rem以下ではbufferを圧縮する。 |
-| AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、10変更操作はdispatchされない。 |
+| AC-018 | 通常モードから1 clickで持ち歩きロックを有効化でき、ロック中は状態と説明を長押しbutton内へ集約した2行以内のbarを表示する。ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得を利用できる一方、タスク作成を含む変更操作はdispatchされない。 |
 | AC-019 | 44px以上のbuttonをpointerまたはSpace・Enterで1.0秒長押しすると15秒間許可され、封印対象操作のdispatchごとに成否を問わず無操作期限が15秒後へ延長される。ただし、最初のsession追加成功時は即時再ロックが優先される。閲覧操作と確認キャンセルでは延長せず、各中断event、期限到達、単調時計の後退で安全側へ戻る。一時許可中は残り秒数の横に44px以上の「今すぐロック」を表示し、1 clickで通信・履歴・保存なしに即時再ロックする。 |
 | AC-020 | 持ち歩きロックの正常な保存値を復元し、ロック状態では圧縮したbarを表示する。不正値・未知version・読込失敗では元valueを維持してwarning付きで同じロック表示にする。ロック開始の保存失敗ではmemory上のロックを維持し、通常モード復帰の保存失敗では解除しない。一時許可はreload後に復元しない。 |
 | AC-021 | タッチ主体の端末ではbuttonをタップした後にhover配色が残らず、hover可能なfine pointerでは既存hover表現が適用される。選択済み日付buttonはdesktop hover中も緑背景と白文字を維持し、`:active`と`:focus-visible`は両環境で機能する。 |
