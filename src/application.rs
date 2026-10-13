@@ -16,6 +16,7 @@ mod scheduling_instrumentation;
 pub(crate) use scheduling_instrumentation::capture_schedule_metrics;
 mod scheduling_policy;
 pub mod session_progress;
+pub(crate) mod task_link;
 mod task_list;
 pub(crate) mod task_name;
 pub mod task_use_case;

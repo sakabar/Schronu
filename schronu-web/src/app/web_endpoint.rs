@@ -35,6 +35,18 @@ pub async fn bootstrap() -> Result<WebOperationResult<ServerSnapshot>, ServerFnE
     unreachable!("server function body only runs on the server")
 }
 
+#[server(endpoint = "web_resolve_task_link")]
+pub async fn resolve_task_link(
+    task_id: String,
+) -> Result<WebOperationResult<Option<String>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker().await?.resolve_task_link(task_id).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
 #[server(endpoint = "web_list_tasks")]
 pub async fn list_tasks(
     request: ListTasksRequest,
@@ -236,6 +248,28 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     #[test]
+    fn resolve_task_link_endpointはworkerからurl有無を返す() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let worker_calls = Arc::clone(&calls);
+        let worker = WebWorkerHandle::spawn(move || CountingOperations {
+            calls: worker_calls,
+            bootstrap_error: None,
+            all_task_cursors: Arc::new(Mutex::new(Vec::new())),
+        });
+        let mut request = Request::builder().body(()).unwrap();
+        request.extensions_mut().insert(worker);
+        let context = FullstackContext::new(request.into_parts().0);
+        let found = futures::executor::block_on(
+            context.scope(super::resolve_task_link("task-link".to_owned())),
+        );
+        assert_eq!(
+            found.unwrap(),
+            Ok(Some("https://example.com/link".to_owned()))
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn 九endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
@@ -356,6 +390,11 @@ mod tests {
     }
 
     impl WebOperations for CountingOperations {
+        fn resolve_task_link(&mut self, task_id: String) -> Result<Option<String>, WebError> {
+            self.count();
+            Ok((task_id == "task-link").then(|| "https://example.com/link".to_owned()))
+        }
+
         fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
             self.count();
             match self.bootstrap_error.take() {

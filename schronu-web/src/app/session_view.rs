@@ -48,6 +48,7 @@ pub fn SessionView(
     #[props(default)] server_actions_blocked: bool,
     on_auto_session: EventHandler<Option<i64>>,
     on_action: EventHandler<SessionAction>,
+    #[props(default)] on_open_link: EventHandler<String>,
 ) -> Element {
     let mut minutes_input = use_signal(String::new);
     let mut input_error = use_signal(|| None::<&'static str>);
@@ -104,6 +105,7 @@ pub fn SessionView(
                     mutations_locked,
                     server_actions_blocked,
                     on_action,
+                    on_open_link,
                 }
             }
         }
@@ -117,6 +119,7 @@ fn SessionCard(
     mutations_locked: bool,
     server_actions_blocked: bool,
     on_action: EventHandler<SessionAction>,
+    on_open_link: EventHandler<String>,
 ) -> Element {
     let mut confirming_discard_completion = use_signal(|| false);
     use_effect(use_reactive(
@@ -192,11 +195,26 @@ fn SessionCard(
             "実績を維持して完了"
         }
     });
+    let open_task_id = session.task_id.clone();
+    let open_task_label = format!("{}: 開", session.task_name);
 
     rsx! {
         article { class: "session-card",
             div { class: "session-card-heading",
-                h2 { "{session.task_name}" }
+                h2 {
+                    button {
+                        class: "session-task-link",
+                        r#type: "button",
+                        aria_label: open_task_label,
+                        disabled: server_actions_blocked,
+                        onclick: move |_| {
+                            if !server_actions_blocked {
+                                on_open_link.call(open_task_id.clone());
+                            }
+                        },
+                        "{session.task_name} ↗"
+                    }
+                }
                 span { class: "session-progress-label", "{progress}" }
             }
             div { class: "session-timing",

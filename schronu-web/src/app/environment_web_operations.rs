@@ -22,6 +22,7 @@ use schronu::adapter::gateway::schronu_config::load_schronu_config;
 use schronu::application::task_use_case::DeferMode as CoreDeferMode;
 use std::env;
 use std::ffi::OsString;
+use uuid::Uuid;
 
 trait Clock: 'static {
     fn now(&mut self) -> DateTime<Local>;
@@ -106,6 +107,14 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
         self.service()?
             .bootstrap_at(operation_now)
             .map(Into::into)
+            .map_err(Into::into)
+    }
+
+    fn resolve_task_link(&mut self, task_id: String) -> Result<Option<String>, WebError> {
+        let task_id = Uuid::parse_str(&task_id).map_err(|_| invalid_input_error())?;
+        let operation_now = self.clock.now();
+        self.service()?
+            .resolve_task_link_at(operation_now, task_id)
             .map_err(Into::into)
     }
 

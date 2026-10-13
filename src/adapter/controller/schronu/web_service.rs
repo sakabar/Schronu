@@ -43,6 +43,7 @@ use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::get_schedule;
+use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, complete_work_slice, create_task, execute_defer_task_plan,
     CreateTaskInput, TaskFactory,
@@ -53,6 +54,7 @@ use error::{WebReadCoreError, WebReadOperationError};
 use read_model::{build_server_snapshot_from_schedule, build_server_snapshot_with_offset};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 pub struct WebService {
     storage_directory: PathBuf,
@@ -65,6 +67,16 @@ pub struct WebService {
 }
 
 impl WebService {
+    pub fn resolve_task_link_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        task_id: Uuid,
+    ) -> Result<Option<String>, WebReadError> {
+        self.run_at(operation_now, |repository, _, _| {
+            resolve_task_link_by_id(repository, task_id).map_err(WebReadCoreError::Application)
+        })
+    }
+
     pub fn create_task_at(
         &mut self,
         operation_now: DateTime<Local>,

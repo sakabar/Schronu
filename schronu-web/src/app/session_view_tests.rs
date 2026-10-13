@@ -22,6 +22,7 @@ struct RootProps {
 fn test_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
+    let open_events = Arc::clone(&props.events);
     rsx! {
         SessionView {
             sessions: props.sessions,
@@ -32,8 +33,20 @@ fn test_root(props: RootProps) -> Element {
                 .lock()
                 .unwrap()
                 .push(format!("{}:{:?}", action.task_id, action.kind)),
+            on_open_link: move |task_id: String| open_events.lock().unwrap().push(format!("open:{task_id}")),
         }
     }
+}
+
+#[test]
+fn sessionのtask名はlink操作を対象idで通知する() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, ids) = build_dom(vec![card("task-link")], false, Arc::clone(&events));
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("class=\"session-task-link\""), "{html}");
+    assert!(html.contains("aria-label=\"コピーをせん: 開\""), "{html}");
+    dispatch_click(&dom, ids[0]);
+    assert_eq!(*events.lock().unwrap(), ["open:task-link"]);
 }
 
 #[derive(Clone)]
@@ -86,12 +99,13 @@ fn carry_lockはauto_sessionと六操作をすべて無効化する() {
     for id in ids {
         dispatch_click(&session, id);
     }
-    assert!(events.lock().unwrap().is_empty());
+    assert_eq!(*events.lock().unwrap(), ["open:locked"]);
 }
 
 fn locked_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
+    let open_events = Arc::clone(&props.events);
     rsx! {
         SessionView {
             sessions: props.sessions,
@@ -99,6 +113,7 @@ fn locked_root(props: RootProps) -> Element {
             mutations_locked: true,
             on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
             on_action: move |action: SessionAction| action_events.lock().unwrap().push(format!("{}:{:?}", action.task_id, action.kind)),
+            on_open_link: move |task_id: String| open_events.lock().unwrap().push(format!("open:{task_id}")),
         }
     }
 }
@@ -631,8 +646,8 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
         for normal_action in ["計測を破棄して再開", "計測を破棄して解除", "記録して解除", "記録して分割", "計測を破棄して完了", "記録して完了"] {
             assert!(!html.contains(normal_action), "{html}");
         }
-        assert_eq!(ids.len(), 2);
-        for id in ids.into_iter().rev() {
+        assert_eq!(ids.len(), 3);
+        for id in ids.into_iter().rev().take(2) {
             dispatch_click(&dom, id);
         }
         assert_eq!(
@@ -649,8 +664,8 @@ fn 完了実績競合は計測方針に応じた確認文とtyped_actionだけ�
 fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送る() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (mut cancel_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
-    assert_eq!(action_ids.len(), 6);
-    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+    assert_eq!(action_ids.len(), 7);
+    let action_ids: Vec<_> = action_ids.into_iter().rev().take(6).collect();
 
     dispatch_click(&cancel_dom, action_ids[4]);
     assert!(events.lock().unwrap().is_empty());
@@ -666,7 +681,7 @@ fn 計測破棄完了はcard内で確認し確定時だけtyped_callbackを送�
 
     events.lock().unwrap().clear();
     let (mut confirm_dom, action_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
-    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+    let action_ids: Vec<_> = action_ids.into_iter().rev().take(6).collect();
     dispatch_click(&confirm_dom, action_ids[4]);
     let confirm_ids = render_with_click_listeners(&mut confirm_dom);
     dispatch_click(&confirm_dom, confirm_ids[1]);
@@ -681,7 +696,7 @@ fn 計測破棄完了の確認状態は選択したcardだけに保持する() {
         false,
         Arc::clone(&events),
     );
-    let action_ids: Vec<_> = action_ids.into_iter().rev().collect();
+    let action_ids: Vec<_> = action_ids.into_iter().rev().take(6).collect();
 
     dispatch_click(&dom, action_ids[4]);
     render_with_click_listeners(&mut dom);
@@ -706,8 +721,8 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 
     events.lock().unwrap().clear();
     let (action_dom, action_ids) = build_dom(vec![card("task-a")], false, Arc::clone(&events));
-    assert_eq!(action_ids.len(), 6);
-    for (element_id, expected) in action_ids.into_iter().rev().zip([
+    assert_eq!(action_ids.len(), 7);
+    for (element_id, expected) in action_ids.into_iter().rev().take(6).zip([
         Some("task-a:Discard"),
         Some("task-a:Record"),
         Some("task-a:RestartWithoutRecording"),
@@ -733,7 +748,7 @@ fn enabled_buttons_dispatch_the_exact_typed_callback_once() {
 
     events.lock().unwrap().clear();
     let (other_dom, other_ids) = build_dom(vec![card("task-b")], false, Arc::clone(&events));
-    dispatch_click(&other_dom, other_ids[3]);
+    dispatch_click(&other_dom, other_ids[4]);
     assert_eq!(*events.lock().unwrap(), ["task-b:RestartWithoutRecording"]);
 }
 
@@ -755,7 +770,7 @@ fn safety_blocks_keep_read_and_local_discard_available() {
     for element_id in action_ids {
         dispatch_click(&action_dom, element_id);
     }
-    assert_eq!(*events.lock().unwrap(), ["blocked:Discard"]);
+    assert_eq!(*events.lock().unwrap(), ["open:blocked", "blocked:Discard"]);
 }
 
 #[test]
@@ -776,7 +791,7 @@ fn in_flight_and_committed_sessions_reject_every_action_callback() {
             dispatch_click(&action_dom, element_id);
         }
 
-        assert!(events.lock().unwrap().is_empty());
+        assert_eq!(*events.lock().unwrap(), ["open:blocked"]);
     }
 }
 

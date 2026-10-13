@@ -23,6 +23,8 @@ WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの
 
 clientはCLI command文字列を生成・submitせず、型付きserver functionを呼ぶ。serverもCLI renderer出力をparseしない。
 
+session cardのtask名は読み取り専用の「開」操作とする。`resolve_task_link(task_id)`はworkerを通じてtaskと親をたどり、CLIと共有する抽出規則で最初のURLを`Option<String>`として返す。clientはclick時に新tabを確保し、成功したHTTP(S) URLへ移動する。URLなし、取得error、popup拒否は元画面へ表示し、session、snapshot、発火履歴を変更しない。持ち歩きロックはこの読み取り操作を遮断しない。
+
 ## 3. Data contracts
 
 ### 3.1 Wire primitive

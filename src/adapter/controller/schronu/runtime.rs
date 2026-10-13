@@ -42,6 +42,9 @@ use crate::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
+#[cfg(test)]
+use crate::application::task_link::extract_url;
+use crate::application::task_link::resolve_task_link;
 use crate::application::task_use_case::{get_focus_excluding, ApplicationError, TaskFactory};
 #[cfg(test)]
 use crate::entity::task::{ProjectCategory, TaskAttr, TaskTreeError};
@@ -63,7 +66,6 @@ use super::storage_directory;
 use std::time::Duration as StdDuration;
 use storage_directory::resolve_project_storage_directory;
 use termion::style;
-use url::Url;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -450,45 +452,6 @@ include!("runtime_test_support.rs");
 #[path = "runtime_unit_tests.rs"]
 mod tests;
 
-// 文字列の中からhttpから始まる部分文字列でURLとして解釈できる一番長い文字列を抽出する
-fn extract_url(s: &str) -> Option<String> {
-    // "http"が始まるインデックスを探す
-    if let Some(start) = s.find("http") {
-        // "http"から始まる部分文字列を取得する
-        let (_, http_str) = s.split_at(start);
-
-        // 末尾の文字を必ずNGにするために、番兵として日本語の文字を置く
-        let chars: Vec<char> = (http_str.to_owned() + "あ").chars().collect();
-
-        // その中で二分探索する
-        let mut ok: usize = 0;
-        let mut ng: usize = chars.len();
-
-        let mut mid = (ok + ng) / 2;
-
-        while ng - ok > 1 {
-            let cand_str: String = chars[0..mid].iter().collect();
-            let encoded_cand_str: String =
-                percent_encode(cand_str.as_bytes(), MY_ASCII_SET).to_string();
-
-            // Url::parse()は未パーセントエンコーディングの文字列(日本語)も受け付けてしまう。
-            // もし cand_str == encoded_cand_str なら、日本語が混ざっていないということ
-            if Url::parse(&cand_str).is_ok() && cand_str == encoded_cand_str {
-                ok = mid;
-            } else {
-                ng = mid;
-            }
-
-            mid = (ok + ng) / 2;
-        }
-
-        let ans: String = chars[0..ok].iter().collect();
-        Some(ans)
-    } else {
-        None
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ResolvedExternalRequest {
     BrowserUrl(String),
@@ -520,18 +483,11 @@ fn resolve_external_request(
                 "フォーカス中のタスクがありません",
             )))
             .map(Some),
-        ExternalRequest::OpenFocusedLink => {
-            let mut task_opt = focused_task_opt.clone();
-            while let Some(task) = &task_opt {
-                if let Some(url) =
-                    extract_url(&task.get_name().map_err(ApplicationError::TaskTree)?)
-                {
-                    return Ok(Some(ResolvedExternalRequest::BrowserUrl(url)));
-                }
-                task_opt = task.parent().map_err(ApplicationError::TaskTree)?;
-            }
-            Ok(None)
-        }
+        ExternalRequest::OpenFocusedLink => focused_task_opt
+            .as_ref()
+            .map(resolve_task_link)
+            .transpose()
+            .map(|url| url.flatten().map(ResolvedExternalRequest::BrowserUrl)),
         ExternalRequest::OpenObsidianRootSearch => focused_task_opt
             .as_ref()
             .map(|focused_task| {

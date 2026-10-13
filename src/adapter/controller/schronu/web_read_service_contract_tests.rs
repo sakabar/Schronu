@@ -25,6 +25,56 @@ struct WebReadServiceFixture {
     busy_time_slots: PathBuf,
 }
 
+#[test]
+fn resolve_task_linkは子から親へ最初のurlを探し保存しない() {
+    let fixture = WebReadServiceFixture::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let parent_id = Uuid::new_v4();
+    let child_id = Uuid::new_v4();
+    let own_link_id = Uuid::new_v4();
+    let no_link_id = Uuid::new_v4();
+    let parent =
+        TaskHandle::with_identity("parent https://example.com/parent", parent_id, now).unwrap();
+    parent
+        .create_child(TaskAttr::with_identity("child", child_id, now))
+        .unwrap();
+    parent
+        .create_child(TaskAttr::with_identity(
+            "child https://example.com/child",
+            own_link_id,
+            now,
+        ))
+        .unwrap();
+    let no_link = TaskHandle::with_identity("without link", no_link_id, now).unwrap();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.start_new_project(parent).unwrap();
+    repository.start_new_project(no_link).unwrap();
+    repository.save().unwrap();
+
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    assert_eq!(
+        service.resolve_task_link_at(now, child_id).unwrap(),
+        Some("https://example.com/parent".to_owned())
+    );
+    assert_eq!(
+        service.resolve_task_link_at(now, parent_id).unwrap(),
+        Some("https://example.com/parent".to_owned())
+    );
+    assert_eq!(
+        service.resolve_task_link_at(now, own_link_id).unwrap(),
+        Some("https://example.com/child".to_owned())
+    );
+    assert_eq!(service.resolve_task_link_at(now, no_link_id).unwrap(), None);
+    assert!(matches!(
+        service.resolve_task_link_at(now, Uuid::new_v4()),
+        Err(WebReadError::Application(
+            crate::application::task_use_case::ApplicationError::TaskNotFound(_)
+        ))
+    ));
+}
+
 impl WebReadServiceFixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(

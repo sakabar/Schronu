@@ -20,12 +20,14 @@ use super::{
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
+use wasm_bindgen::JsValue;
 
 const TICK_MILLIS: u32 = 1_000;
 
 #[component]
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
+    let open_link_error = use_signal(|| None::<String>);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
@@ -183,6 +185,9 @@ pub(super) fn BrowserApp() -> Element {
             if let Some(error) = display_error {
                 section { class: "error", role: "alert", p { "{error}" } }
             }
+            if let Some(error) = open_link_error.read().as_deref() {
+                section { class: "error", role: "alert", p { "{error}" } }
+            }
             if active_tab == ActiveTab::Session {
                 if auto_session_empty && sessions.is_empty() {
                     p { role: "status", "自動選定できるタスクがありません。" }
@@ -201,6 +206,9 @@ pub(super) fn BrowserApp() -> Element {
                         dispatch_action(client, action);
                     },
                     on_action: move |action| dispatch_session_action(client, action),
+                    on_open_link: move |task_id| {
+                        open_session_link(client, open_link_error, task_id);
+                    },
                 }
             } else if active_tab == ActiveTab::List {
                 section { class: "list-screen",
@@ -334,4 +342,58 @@ pub(super) fn BrowserApp() -> Element {
             LoadingOverlay {}
         }
     }
+}
+
+fn open_session_link(
+    mut client: Signal<ComponentOrchestrator>,
+    mut open_link_error: Signal<Option<String>>,
+    task_id: String,
+) {
+    if client.read().server_actions_blocked() || client.read().server_effect_in_flight() {
+        return;
+    }
+    open_link_error.set(None);
+    let Some(browser) = web_sys::window() else {
+        open_link_error.set(Some("browserを利用できません。".to_owned()));
+        return;
+    };
+    let new_tab = match browser.open_with_url_and_target("about:blank", "_blank") {
+        Ok(Some(tab)) => tab,
+        _ => {
+            open_link_error.set(Some(
+                "新しいタブを開けませんでした。ポップアップの設定を確認してください。".to_owned(),
+            ));
+            return;
+        }
+    };
+    if js_sys::Reflect::set(
+        new_tab.as_ref(),
+        &JsValue::from_str("opener"),
+        &JsValue::NULL,
+    )
+    .is_err()
+    {
+        let _ = new_tab.close();
+        open_link_error.set(Some("新しいタブを安全に開けませんでした。".to_owned()));
+        return;
+    }
+    client.write().begin_server_effect();
+    spawn(async move {
+        let result = super::super::web_endpoint::resolve_task_link(task_id).await;
+        client.write().finish_server_effect();
+        let error = match result {
+            Ok(Ok(Some(url))) if url.starts_with("https://") || url.starts_with("http://") => {
+                match new_tab.location().set_href(&url) {
+                    Ok(()) => return,
+                    Err(_) => "リンク先を開けませんでした。".to_owned(),
+                }
+            }
+            Ok(Ok(Some(_))) => "このリンクはbrowserで開けません。".to_owned(),
+            Ok(Ok(None)) => "このタスクと親タスクにURLがありません。".to_owned(),
+            Ok(Err(error)) => error.message,
+            Err(_) => "リンクを取得できませんでした。再試行してください。".to_owned(),
+        };
+        let _ = new_tab.close();
+        open_link_error.set(Some(error));
+    });
 }
