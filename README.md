@@ -315,7 +315,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `list_tasks` | optional: `period`、`statuses`、`categories`、`query`、`root_task_id`、`limit`、`cursor`、`unbounded` | project treeのpre-orderでtaskをpage取得し、指定したfilterで絞り込む |
 | `get_schedule` | optional: `from`、`until` | 06:00開始のローカル論理日範囲と重なるschedule segmentを返す |
 | `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | root project taskを作成する。見積もり省略時は15分 |
-| `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に子taskを追加し、親のdeadlineがあれば継承する |
+| `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に親→子の直列taskを作り、`task_ids`を入力順に返す。指定親のdeadlineを全taskへ継承する |
 | `defer_task` | `task_id`、`pending_until` | original statusをPendingにして延期する。deadline policyにより指定時刻が早まる場合がある |
 | `defer_routine_task` | `task_id` | 親の反復間隔に従ってdeadlineと開始時刻を次周期へ移し、original statusをTodoへ戻す |
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
@@ -329,7 +329,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `get_schedule`の保存済みoccurrenceは変更操作に使える`task_id`を持ちます。繰り返しの将来回を示すread-onlyのprojected occurrenceは、一意な`occurrence_key`と繰り返し元の`source_task_id`を持ち、操作可能な`task_id`を持ちません。CLIの`全`と日付・名前filterでは既存の固定幅10列で表示し、B列へ表示専用のnil UUID(`00000000-0000-0000-0000-000000000000`)を置きます。この行はSpreadsheetのA〜J列へcopyしません。
 
-`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では全childへ同じ`pending_until`を設定し、親のdeadline継承によってその時刻が早まる場合があります。
+`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`breakdown_task.names`は1〜64件です。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では作成する全taskへ同じ`pending_until`を設定し、指定親のdeadline継承によってその時刻が早まる場合があります。
 
 `defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。この補正では完了するoccurrenceとその全子孫を対象とし、各taskの実作業秒数が正ならその値を、0なら見積秒数を用いた合計を今回のみなし実績とします。保存済みの実作業秒数は補完値で上書きしません。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
 
@@ -463,11 +463,10 @@ task_idを省略した場合は、現在フォーカスが当たっているタ�
 ### タスクを細分化する
 
 ``` shell
-schronu> breakdown 新しいタスク名
+schronu> 下 段階A 段階B 段階C
 ```
 
-今フォーカスが当たっているタスクを細分化し、子タスクとして新しいタスクを作成します。  
-フォーカスは新しく作成したタスクに移ります。
+フォーカス中のtaskから`段階A`→`段階B`→`段階C`と、入力順に親子の鎖を作ります。`breakdown`と`bd`も同じ動作です。名前は1〜64件指定でき、作成した全taskのIDを入力順に表示します。フォーカスは末端の`段階C`へ移ります。親の作業は子の作業後に予定されるため、着手順は`段階C`→`段階B`→`段階A`です。
 
 `刻 [minutes]`または`slice [minutes]`は、現在のフォーカス時間を完了子タスクとして記録します。対話モードで分数を省略するとフォーカス開始からの完了済み整数秒、指定するとその分数を使用します。非対話モードではフォーカス開始と実行時刻が同じため、分数を指定してください。子の名前は`元の名前-YYYYMMDD-HHMM`で、元taskの既存実績は維持します。0秒、完了済みtask、繰り返し設定を持つtask自身、フォーカスなしはエラーです。成功時だけフォーカスを解除します。
 

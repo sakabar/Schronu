@@ -746,7 +746,7 @@ fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を�
         "breakdown_task",
         Some(json!({"parent_id": parent_id, "names": ["oversized child"]})),
     );
-    let child_id = breakdown["result"]["structuredContent"]["child_ids"][0]
+    let child_id = breakdown["result"]["structuredContent"]["task_ids"][0]
         .as_str()
         .unwrap();
     let estimate_update = call_tool(
@@ -867,7 +867,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         "breakdown_task",
         Some(json!({"parent_id": parent_id, "names": ["integration child"]})),
     );
-    let child_id = breakdown["result"]["structuredContent"]["child_ids"][0]
+    let child_id = breakdown["result"]["structuredContent"]["task_ids"][0]
         .as_str()
         .unwrap()
         .to_string();

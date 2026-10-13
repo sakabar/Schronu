@@ -715,37 +715,39 @@ fn create_task_秒変換がoverflowする見積もりをerrorにする() {
 }
 
 #[test]
-fn breakdown_task_入力順と締切を維持する() {
+fn breakdown_task_入力順に直列化して締切を継承する() {
     let parent = crate::test_support::new_task_handle("親").unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
     parent.set_deadline_time_opt(Some(deadline)).unwrap();
     let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-    let child_ids = breakdown_task_with_fresh_factory(
+    let task_ids = breakdown_task_with_fresh_factory(
         &mut repository,
         BreakdownTaskInput {
             parent_id: parent.get_id().unwrap(),
-            names: vec!["一".to_string(), "二".to_string()],
+            names: vec![
+                "段階一".to_string(),
+                "段階二".to_string(),
+                "段階三".to_string(),
+            ],
             pending_until: None,
         },
     )
     .unwrap();
 
-    assert_eq!(
-        parent
-            .get_children()
-            .unwrap()
-            .iter()
-            .map(|task| task.get_name().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["一", "二"]
-    );
-    assert_eq!(child_ids.len(), 2);
-    assert!(parent
-        .get_children()
-        .unwrap()
-        .iter()
-        .all(|child| child.get_deadline_time_opt().unwrap() == Some(deadline)));
+    assert_eq!(task_ids.len(), 3);
+    let mut current = parent;
+    for (expected_name, expected_id) in ["段階一", "段階二", "段階三"].into_iter().zip(task_ids)
+    {
+        let children = current.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        let child = children[0].clone();
+        assert_eq!(child.get_name().unwrap(), expected_name);
+        assert_eq!(child.get_id().unwrap(), expected_id);
+        assert_eq!(child.get_deadline_time_opt().unwrap(), Some(deadline));
+        current = child;
+    }
+    assert!(current.get_children().unwrap().is_empty());
 }
 
 #[test]
@@ -776,7 +778,9 @@ fn breakdown_task_operationで固定したid列と時刻を使う() {
     .unwrap();
 
     assert_eq!(actual_ids, expected_ids);
-    for (child, expected_id) in parent.get_children().unwrap().into_iter().zip(expected_ids) {
+    let first = parent.get_children().unwrap().remove(0);
+    let second = first.get_children().unwrap().remove(0);
+    for (child, expected_id) in [first, second].into_iter().zip(expected_ids) {
         assert_eq!(child.get_id().unwrap(), expected_id);
         assert_eq!(child.get_create_time().unwrap(), now);
         assert_eq!(child.get_start_time().unwrap(), now);
@@ -841,12 +845,12 @@ fn breakdown_task_batch内で生成uuidが衝突する場合は変更しない()
 }
 
 #[test]
-fn breakdown_task_全ての子を指定時刻までpendingにする() {
+fn breakdown_task_全ての段階を指定時刻までpendingにする() {
     let parent = crate::test_support::new_task_handle("親").unwrap();
     let pending_until = Local.with_ymd_and_hms(2026, 8, 13, 6, 0, 0).unwrap();
     let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
 
-    let child_ids = breakdown_task_with_fresh_factory(
+    let task_ids = breakdown_task_with_fresh_factory(
         &mut repository,
         BreakdownTaskInput {
             parent_id: parent.get_id().unwrap(),
@@ -856,20 +860,138 @@ fn breakdown_task_全ての子を指定時刻までpendingにする() {
     )
     .unwrap();
 
+    assert_eq!(task_ids.len(), 2);
+    let first = parent.get_children().unwrap().remove(0);
+    let second = first.get_children().unwrap().remove(0);
+    for task in [first, second] {
+        assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task.get_pending_until().unwrap(), pending_until);
+    }
+}
+
+#[test]
+fn breakdown_task_64件を超える入力では変更しない() {
+    let parent = crate::test_support::new_task_handle("対象").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let input = BreakdownTaskInput {
+        parent_id: parent.get_id().unwrap(),
+        names: (0..65).map(|index| format!("段階{index}")).collect(),
+        pending_until: None,
+    };
+
     assert_eq!(
-        parent
-            .get_children()
-            .unwrap()
-            .iter()
-            .map(|task| task.get_name().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["一", "二"]
+        breakdown_task_with_fresh_factory(&mut repository, input),
+        Err(ApplicationError::InvalidInput {
+            field: "names",
+            reason: "must contain at most 64 names",
+        })
     );
-    assert_eq!(child_ids.len(), 2);
-    assert!(parent.get_children().unwrap().iter().all(|child| {
-        child.get_orig_status().unwrap() == Status::Pending
-            && child.get_pending_until().unwrap() == pending_until
-    }));
+    assert!(parent.get_children().unwrap().is_empty());
+}
+
+#[test]
+fn breakdown_task_継承締切の計算不能では作成前に止める() {
+    let parent = crate::test_support::new_task_handle("対象").unwrap();
+    parent.set_estimated_work_seconds(0).unwrap();
+    let deadline: DateTime<Local> = DateTime::<Local>::MIN_UTC.into();
+    parent
+        .set_deadline_time_opt(Some(deadline + chrono::Duration::minutes(70)))
+        .unwrap();
+    let revision = parent.get_persistent_mutation_revision().unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+    let result = breakdown_task_with_fresh_factory(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["段階A".into(), "段階B".into()],
+            pending_until: None,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(ApplicationError::TaskTree(
+            TaskTreeError::DeadlineCalculation {
+                field: "deadline_time",
+                ..
+            }
+        ))
+    ));
+    assert!(parent.get_children().unwrap().is_empty());
+    assert_eq!(parent.get_persistent_mutation_revision().unwrap(), revision);
+}
+
+#[test]
+fn breakdown_task_64件の入力を受け付ける() {
+    let parent = crate::test_support::new_task_handle("対象").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let task_ids = breakdown_task_with_fresh_factory(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: (0..64).map(|index| format!("段階{index}")).collect(),
+            pending_until: None,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(task_ids.len(), 64);
+    let mut current = parent;
+    for task_id in task_ids {
+        let children = current.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        current = children[0].clone();
+        assert_eq!(current.get_id().unwrap(), task_id);
+    }
+    assert!(current.get_children().unwrap().is_empty());
+}
+
+#[test]
+fn breakdown_task_予定と完了は末端から親へ進む() {
+    let parent = crate::test_support::new_task_handle("対象").unwrap();
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+    let task_ids = breakdown_task_with_fresh_factory(
+        &mut repository,
+        BreakdownTaskInput {
+            parent_id: parent.get_id().unwrap(),
+            names: vec!["段階A".into(), "段階B".into(), "段階C".into()],
+            pending_until: None,
+        },
+    )
+    .unwrap();
+    let schedule = crate::application::schedule_use_case::get_schedule(&repository).unwrap();
+    let position = |task_id| {
+        schedule
+            .iter()
+            .position(|entry| entry.actual_task_id() == Some(task_id))
+            .unwrap()
+    };
+    assert!(position(task_ids[2]) < position(task_ids[1]));
+    assert!(position(task_ids[1]) < position(task_ids[0]));
+
+    let finish = |repository: &mut TestTaskRepository, task_id| {
+        complete_task_with_fresh_factory(
+            repository,
+            CompleteTaskInput {
+                task_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 0,
+                expected_actual_work_seconds: None,
+            },
+        )
+    };
+    assert!(matches!(
+        finish(&mut repository, task_ids[0]),
+        Err(ApplicationError::HasUndoneChildren(_))
+    ));
+    assert!(matches!(
+        finish(&mut repository, task_ids[1]),
+        Err(ApplicationError::HasUndoneChildren(_))
+    ));
+    for task_id in task_ids.into_iter().rev() {
+        finish(&mut repository, task_id).unwrap();
+    }
 }
 
 #[test]

@@ -565,15 +565,15 @@ fn breakdown_task_handlerはtyped_inputの順序と時刻をapplication入力へ
 
     assert_eq!(response["result"]["isError"], false);
     assert_tool_result_content_matches_structured(&response);
-    let child_ids = response["result"]["structuredContent"]["child_ids"]
+    let task_ids = response["result"]["structuredContent"]["task_ids"]
         .as_array()
         .unwrap();
-    assert_eq!(child_ids.len(), 2);
+    assert_eq!(task_ids.len(), 2);
     for (index, expected_name) in ["first typed child", "second typed child"]
         .iter()
         .enumerate()
     {
-        let child_id = Uuid::parse_str(child_ids[index].as_str().unwrap()).unwrap();
+        let child_id = Uuid::parse_str(task_ids[index].as_str().unwrap()).unwrap();
         let child = call_get_task(
             &repository,
             json!("typed-child"),

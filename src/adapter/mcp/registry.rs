@@ -34,7 +34,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "breakdown_task",
-            "description": "Add child tasks to an existing parent task in the order supplied. Each child inherits the parent's deadline when present. Its original status is Todo when pending_until is omitted and Pending when provided; its effective status can be Todo if that time is not in the future, and deadline policy can move pending_until earlier.",
+            "description": "Create a chain of one to 64 tasks beneath an existing task, in the supplied name order. Returns task_ids in that order. Every created task inherits the original parent's deadline when present. Original status is Todo without pending_until and Pending with it; deadline policy can move pending_until earlier.",
             "inputSchema": generated_input_schema::<BreakdownTaskInput>()
         }),
         json!({

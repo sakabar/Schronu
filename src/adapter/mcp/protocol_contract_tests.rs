@@ -1021,6 +1021,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_eq!(names_schema["items"]["type"], "string");
     assert_eq!(names_schema["items"]["minLength"], 1);
     assert_eq!(names_schema["minItems"], 1);
+    assert_eq!(names_schema["maxItems"], 64);
     assert_string_property(tools, "breakdown_task", "pending_until", Some("date-time"));
     assert_string_property(tools, "defer_task", "task_id", Some("uuid"));
     assert_string_property(tools, "defer_task", "pending_until", Some("date-time"));

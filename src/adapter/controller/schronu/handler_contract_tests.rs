@@ -1237,7 +1237,7 @@ fn breakdownとsplitはhandlerがtyped_fieldを直接matchして所有する() {
             pending_until: None,
         }]
     );
-    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(3)));
+    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(4)));
 
     let split = Command::Action(CommandAction::Split {
         minutes: 5,
@@ -2402,7 +2402,7 @@ fn 全command_groupは単一handler入口からtyped_contextへdispatchされる
             pending_until: None,
         }]
     );
-    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(3)));
+    assert_eq!(context.project.focused_task_id, Some(Uuid::from_u128(4)));
     assert_eq!(
         outcomes[1].display,
         semantic_project_display(

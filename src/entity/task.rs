@@ -479,6 +479,37 @@ impl TaskAttr {
         &self.deadline_time_opt
     }
 
+    pub(crate) fn validate_deadline_calculations(
+        task_id: Uuid,
+        deadline_time_opt: Option<DateTime<Local>>,
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+        field: &'static str,
+    ) -> Result<(), TaskTreeError> {
+        let Some(deadline) = deadline_time_opt else {
+            return Ok(());
+        };
+        let policy = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
+        policy
+            .try_deadline_pending_limit(deadline, estimated_work_seconds)
+            .map_err(|source| TaskTreeError::DeadlineCalculation {
+                task_id,
+                field,
+                source,
+            })?;
+        policy
+            .try_deadline_force_todo_after_start_threshold(
+                deadline,
+                max(0, estimated_work_seconds - actual_work_seconds),
+            )
+            .map_err(|source| TaskTreeError::DeadlineCalculation {
+                task_id,
+                field,
+                source,
+            })?;
+        Ok(())
+    }
+
     pub fn set_estimated_work_seconds(&mut self, estimated_work_seconds: i64) {
         self.estimated_work_seconds = estimated_work_seconds;
     }
@@ -680,29 +711,13 @@ impl TaskHandle {
         actual_work_seconds: i64,
         field: &'static str,
     ) -> Result<(), TaskTreeError> {
-        let Some(deadline) = deadline_time_opt else {
-            return Ok(());
-        };
-        let task_id = self.get_id()?;
-        let policy = LogicalDateTimePolicy::new(DEFAULT_END_OF_DAY_OFFSET_MINUTES);
-        policy
-            .try_deadline_pending_limit(deadline, estimated_work_seconds)
-            .map_err(|source| TaskTreeError::DeadlineCalculation {
-                task_id,
-                field,
-                source,
-            })?;
-        policy
-            .try_deadline_force_todo_after_start_threshold(
-                deadline,
-                max(0, estimated_work_seconds - actual_work_seconds),
-            )
-            .map_err(|source| TaskTreeError::DeadlineCalculation {
-                task_id,
-                field,
-                source,
-            })?;
-        Ok(())
+        TaskAttr::validate_deadline_calculations(
+            self.get_id()?,
+            deadline_time_opt,
+            estimated_work_seconds,
+            actual_work_seconds,
+            field,
+        )
     }
 
     fn validate_current_deadline_calculations(
