@@ -20,6 +20,7 @@ mod component_models;
 mod component_runtime;
 #[cfg(test)]
 mod component_tests;
+pub(crate) mod create_task_view;
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 mod effect_dispatcher;
 #[cfg(test)]
@@ -58,8 +59,9 @@ pub use component::app;
 #[cfg(feature = "server")]
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
-    auto_session, bootstrap, complete_session, complete_work_slice, defer_task, list_all_tasks,
-    list_completed_tasks, list_tasks, load_band, record_session, WebOperationResult,
+    auto_session, bootstrap, complete_session, complete_work_slice, create_task, defer_task,
+    list_all_tasks, list_completed_tasks, list_tasks, load_band, record_session,
+    WebOperationResult,
 };
 
 #[cfg(test)]

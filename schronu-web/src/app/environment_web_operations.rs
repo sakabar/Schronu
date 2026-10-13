@@ -1,10 +1,11 @@
 use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
-    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
-    DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
-    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
-    RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, CreateTaskRequest,
+    CreateTaskResult, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, RoutineLoadRow,
+    ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
@@ -82,6 +83,24 @@ impl<C: Clock> EnvironmentWebOperations<C> {
 }
 
 impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
+    fn create_task(
+        &mut self,
+        request: CreateTaskRequest,
+    ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
+        let operation_now = self.clock.now();
+        let (snapshot, task_id, pending_until_epoch_ms) = self
+            .service()?
+            .create_task_at(operation_now, request.name, request.estimated_work_minutes)
+            .map_err(WebError::from)?;
+        Ok(WebSuccess {
+            snapshot: snapshot.into(),
+            data: CreateTaskResult {
+                task_id,
+                pending_until_epoch_ms,
+            },
+        })
+    }
+
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError> {
         let operation_now = self.clock.now();
         self.service()?

@@ -139,6 +139,7 @@ impl ClientState {
         task_id: &str,
     ) -> ClientEffect {
         if self.sessions.mutation_globally_blocked
+            || self.read.pending_create_task.is_some()
             || self.sessions.in_flight_task_ids.contains(task_id)
             || self
                 .sessions
@@ -293,6 +294,7 @@ impl ClientState {
         kind: MutationKind,
     ) -> ClientEffect {
         if self.sessions.mutation_globally_blocked
+            || self.read.pending_create_task.is_some()
             || self.sessions.in_flight_task_ids.contains(task_id)
             || self
                 .sessions

@@ -4,7 +4,7 @@ use crate::client::state::{
 };
 use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
-use crate::{DeferPlan, SessionTask};
+use crate::{CreateTaskRequest, DeferPlan, SessionTask};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
 use super::list_view::DateButtonViewModel;
@@ -26,6 +26,8 @@ pub(crate) enum ComponentAction {
     SelectAllTasks,
     #[allow(dead_code)]
     RetryAllTasks,
+    #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+    CreateTask(CreateTaskRequest),
     AutoSession,
     TimedAutoSession(i64),
     AddSession {
@@ -137,6 +139,7 @@ pub(crate) fn initialize_client<S: KeyValueStorage>(
     (state, effect)
 }
 
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 pub(crate) struct ComponentOrchestrator {
     state: Option<ClientState>,
     mounted: bool,
@@ -145,6 +148,10 @@ pub(crate) struct ComponentOrchestrator {
     date_input: DateInputState,
     task_name_filter: String,
     all_tasks_visible_limit: usize,
+    create_name: String,
+    create_minutes: String,
+    create_error: Option<String>,
+    create_success: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -155,6 +162,7 @@ enum RefreshState {
     Fresh,
 }
 
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 impl ComponentOrchestrator {
     pub fn new() -> Self {
         Self {
@@ -165,6 +173,10 @@ impl ComponentOrchestrator {
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
             all_tasks_visible_limit: 500,
+            create_name: String::new(),
+            create_minutes: String::new(),
+            create_error: None,
+            create_success: None,
         }
     }
 
@@ -201,6 +213,68 @@ impl ComponentOrchestrator {
 
     pub fn all_tasks_visible_limit(&self) -> usize {
         self.all_tasks_visible_limit
+    }
+
+    pub fn create_name(&self) -> &str {
+        &self.create_name
+    }
+    pub fn create_minutes(&self) -> &str {
+        &self.create_minutes
+    }
+    pub fn create_error(&self) -> Option<&str> {
+        self.create_error.as_deref()
+    }
+    pub fn create_success(&self) -> Option<&str> {
+        self.create_success.as_deref()
+    }
+
+    pub fn edit_create_name(&mut self, value: String) {
+        self.create_name = value;
+        self.create_error = None;
+        self.create_success = None;
+    }
+
+    pub fn edit_create_minutes(&mut self, value: String) {
+        self.create_minutes = value;
+        self.create_error = None;
+        self.create_success = None;
+    }
+
+    pub fn submit_create_task<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        monotonic_now_ms: u64,
+    ) -> ClientEffect {
+        let name = self.create_name.trim();
+        if name.is_empty() || {
+            let digits = name.strip_prefix(['+', '-']).unwrap_or(name);
+            !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+        } {
+            self.create_error = Some("タスク名を確認してください。".to_owned());
+            return ClientEffect::None;
+        }
+        let estimated_work_minutes = if self.create_minutes.trim().is_empty() {
+            None
+        } else {
+            match self.create_minutes.trim().parse::<i64>() {
+                Ok(value) if value >= 0 => Some(value),
+                _ => {
+                    self.create_error =
+                        Some("見積時間には0以上の整数を入力してください。".to_owned());
+                    return ClientEffect::None;
+                }
+            }
+        };
+        self.create_error = None;
+        self.create_success = None;
+        self.action(
+            storage,
+            monotonic_now_ms,
+            ComponentAction::CreateTask(CreateTaskRequest {
+                name: self.create_name.clone(),
+                estimated_work_minutes,
+            }),
+        )
     }
 
     #[cfg(test)]
@@ -354,6 +428,10 @@ impl ComponentOrchestrator {
         storage: &S,
         response: ClientResponse,
     ) -> ClientEffect {
+        let created_name = match &response {
+            ClientResponse::CreateTask { result: Ok(_), .. } => Some(self.create_name.clone()),
+            _ => None,
+        };
         let refresh_result = match (&self.refresh_state, &response) {
             (
                 RefreshState::Bootstrap(expected),
@@ -393,6 +471,13 @@ impl ComponentOrchestrator {
             switch_to_list_after_last_session_removed(state, previous_session_count);
             effect
         });
+        if let Some(name) = created_name {
+            self.create_name.clear();
+            self.create_minutes.clear();
+            self.create_success = Some(format!(
+                "「{name}」を作成しました。翌論理日06:00から有効です。"
+            ));
+        }
         if let Some(succeeded) = refresh_result {
             self.refresh_state = if succeeded {
                 if matches!(
@@ -523,6 +608,7 @@ fn action_requires_server(state: Option<&ClientState>, action: &ComponentAction)
             | ComponentAction::AutoSession
             | ComponentAction::TimedAutoSession(_)
             | ComponentAction::DeferTask { .. }
+            | ComponentAction::CreateTask(_)
             | ComponentAction::DiscardSession(_)
             | ComponentAction::RecordSession(_)
             | ComponentAction::CompleteWorkSlice(_)
@@ -566,6 +652,7 @@ pub(crate) fn reduce_component_action_at<S: KeyValueStorage>(
         ComponentAction::RefreshLoad => state.request_load_band(),
         ComponentAction::SelectAllTasks => state.select_all_tasks(),
         ComponentAction::RetryAllTasks => state.retry_all_tasks(),
+        ComponentAction::CreateTask(request) => state.request_create_task(storage, request),
         ComponentAction::AutoSession => state.request_auto_session(),
         ComponentAction::TimedAutoSession(max_minutes) => {
             state.request_auto_session_with_minutes(Some(max_minutes))
@@ -643,6 +730,7 @@ fn is_carry_lock_mutation(action: &ComponentAction) -> bool {
         ComponentAction::AutoSession
             | ComponentAction::TimedAutoSession(_)
             | ComponentAction::DeferTask { .. }
+            | ComponentAction::CreateTask(_)
             | ComponentAction::AddSession { .. }
             | ComponentAction::RestartSessionWithoutRecording(_)
             | ComponentAction::DiscardSession(_)

@@ -37,13 +37,15 @@ use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::completed_task_report::build_completed_task_report;
+use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
-    add_actual_work, complete_task, complete_work_slice, execute_defer_task_plan, TaskFactory,
+    add_actual_work, complete_task, complete_work_slice, create_task, execute_defer_task_plan,
+    CreateTaskInput, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -63,6 +65,44 @@ pub struct WebService {
 }
 
 impl WebService {
+    pub fn create_task_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        name: String,
+        estimated_work_minutes: Option<i64>,
+    ) -> Result<(ServerSnapshot, String, i64), WebReadError> {
+        self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
+            let pending_until = try_next_logical_date_start(operation_now)
+                .map_err(WebReadCoreError::Application)?;
+            let mut next_id = uuid::Uuid::new_v4;
+            let mut factory = TaskFactory::new(operation_now, &mut next_id);
+            let task_id = create_task(
+                repository,
+                CreateTaskInput {
+                    name,
+                    estimated_work_minutes,
+                    pending_until: Some(pending_until),
+                },
+                &mut factory,
+            )
+            .map_err(WebReadCoreError::Application)?;
+            let snapshot = build_server_snapshot_with_offset(
+                repository,
+                free_time_manager,
+                operation_now,
+                offset,
+            )?;
+            Ok((
+                (
+                    snapshot,
+                    task_id.to_string(),
+                    pending_until.timestamp_millis(),
+                ),
+                true,
+            ))
+        })
+    }
+
     pub fn new(storage_directory: PathBuf, config: SchronuConfig) -> Self {
         let task_repository = storage_directory.to_str().map(TaskRepository::new);
         Self {
