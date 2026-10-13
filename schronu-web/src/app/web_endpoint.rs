@@ -1,8 +1,8 @@
 use crate::{
     AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
-    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    CreateTaskRequest, CreateTaskResult, DeferTaskRequest, ListAllTasksRequest,
+    ListCompletedTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest,
+    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -12,6 +12,18 @@ use crate::WebWorkerHandle;
 use dioxus::fullstack::axum::Extension;
 
 pub type WebOperationResult<T> = Result<T, WebError>;
+
+#[server(endpoint = "web_create_task")]
+pub async fn create_task(
+    request: CreateTaskRequest,
+) -> Result<WebOperationResult<WebSuccess<CreateTaskResult>>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker().await?.create_task(request).await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
 
 #[server(endpoint = "web_bootstrap")]
 pub async fn bootstrap() -> Result<WebOperationResult<ServerSnapshot>, ServerFnError> {

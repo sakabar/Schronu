@@ -6,6 +6,7 @@ use super::super::component_models::{
     browser_monotonic_now_ms, browser_now_epoch_ms, BrowserPageModel,
 };
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
+use super::super::create_task_view::CreateTaskView;
 use super::super::history_view::HistoryView;
 use super::super::list_view::{AllTasksViewStatus, CompletedListView, ListModeControl, ListView};
 use super::super::load_view::LoadView;
@@ -104,6 +105,10 @@ pub(super) fn BrowserApp() -> Element {
         date_input_error,
         filter_text,
         all_tasks_visible_limit,
+        create_name,
+        create_minutes,
+        create_error,
+        create_success,
     ) = {
         let client = client.read();
         (
@@ -116,6 +121,10 @@ pub(super) fn BrowserApp() -> Element {
             client.date_input().error().map(|error| error.to_string()),
             client.task_name_filter().to_owned(),
             client.all_tasks_visible_limit(),
+            client.create_name().to_owned(),
+            client.create_minutes().to_owned(),
+            client.create_error().map(str::to_owned),
+            client.create_success().map(str::to_owned),
         )
     };
     let all_tasks_view_status = (list_mode == ListMode::Scheduled
@@ -293,6 +302,23 @@ pub(super) fn BrowserApp() -> Element {
                         },
                     }
                     }
+                }
+            } else if active_tab == ActiveTab::Create {
+                CreateTaskView {
+                    name: create_name,
+                    minutes: create_minutes,
+                    error: create_error,
+                    success: create_success,
+                    blocked: mutations_locked || global_blocked || server_actions_blocked,
+                    on_name_change: move |value| client.write().edit_create_name(value),
+                    on_minutes_change: move |value| client.write().edit_create_minutes(value),
+                    on_submit: move |_| {
+                        let effect = client.write().submit_create_task(
+                            &BrowserLocalStorage,
+                            browser_monotonic_now_ms(),
+                        );
+                        dispatch_action_effect(client, effect);
+                    },
                 }
             } else if active_tab == ActiveTab::Load {
                 LoadView {

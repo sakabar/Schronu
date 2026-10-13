@@ -301,6 +301,18 @@ pub struct ListAllTasksRequest {
     pub cursor: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateTaskRequest {
+    pub name: String,
+    pub estimated_work_minutes: Option<i64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateTaskResult {
+    pub task_id: String,
+    pub pending_until_epoch_ms: i64,
+}
+
 #[cfg(test)]
 mod all_task_contract_tests {
     use super::*;

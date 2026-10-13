@@ -1,8 +1,9 @@
 use crate::{
     web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
-    CompletedTaskReport, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
-    ListTasksRequest, LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice,
-    ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    CompletedTaskReport, CreateTaskRequest, CreateTaskResult, DeferTaskRequest,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, WebError, WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -11,6 +12,12 @@ use tokio::sync::oneshot;
 const WEB_WORKER_STACK_SIZE_BYTES: usize = 32 * 1024 * 1024;
 
 pub trait WebOperations: 'static {
+    fn create_task(
+        &mut self,
+        _request: CreateTaskRequest,
+    ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
+        unreachable!("create_task is not implemented by this test operation")
+    }
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError>;
     fn resolve_task_link(&mut self, _task_id: String) -> Result<Option<String>, WebError> {
         unreachable!("resolve_task_link is not implemented by this test operation")
@@ -57,6 +64,10 @@ pub struct WebWorkerHandle {
 }
 
 enum WebWorkerCommand {
+    CreateTask {
+        request: CreateTaskRequest,
+        response: oneshot::Sender<Result<WebSuccess<CreateTaskResult>, WebError>>,
+    },
     Bootstrap {
         response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
     },
@@ -102,6 +113,17 @@ enum WebWorkerCommand {
 }
 
 impl WebWorkerHandle {
+    pub async fn create_task(
+        &self,
+        request: CreateTaskRequest,
+    ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::CreateTask { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
     pub fn spawn<F, O>(factory: F) -> Self
     where
         F: FnOnce() -> O + Send + 'static,
@@ -232,6 +254,9 @@ impl WebWorkerHandle {
 fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebWorkerCommand>) {
     while let Ok(command) = receiver.recv() {
         match command {
+            WebWorkerCommand::CreateTask { request, response } => {
+                let _ = response.send(operations.create_task(request));
+            }
             WebWorkerCommand::Bootstrap { response } => {
                 let _ = response.send(operations.bootstrap());
             }

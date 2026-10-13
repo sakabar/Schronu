@@ -19,7 +19,7 @@ use crate::client::state::{ActiveTab, ClientEffect, ServerFailure};
 use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
-    web_error_codes, BandDay, BandDurations, CompletedTaskRow, LoadData, RecordSessionResult,
+    web_error_codes, BandDay, BandDurations, CompletedTaskRow, CreateTaskResult, LoadData, RecordSessionResult,
     RetryAdvice, RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask,
     WebError, WebSuccess,
 };
@@ -81,7 +81,7 @@ fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
 }
 
 #[test]
-fn 固定navigationは4tabの選択状態とcallbackを提供する() {
+fn 固定navigationは5tabの選択状態とcallbackを提供する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         navigation_root,
@@ -94,8 +94,8 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
-    assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
-    for label in ["セッション", "一覧", "負荷", "発火履歴"] {
+    assert_eq!(html.matches("class=\"tab-button").count(), 5, "{html}");
+    for label in ["セッション", "一覧", "作成", "負荷", "発火履歴"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
     assert!(
@@ -113,6 +113,7 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
         [
             ActiveTab::History,
             ActiveTab::Load,
+            ActiveTab::Create,
             ActiveTab::List,
             ActiveTab::Session
         ]
@@ -1248,6 +1249,72 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
     assert!(task_name_filter.is_empty());
     assert_eq!(date_input.text(), "2026/9/16");
     assert_eq!(date_input.error(), None);
+}
+
+#[test]
+fn 作成formは成功時だけ入力を消して作成tabに留まる() {
+    let storage = MemoryStorage::default();
+    let mut orchestrator = ComponentOrchestrator::new();
+    let bootstrap_id = match orchestrator.mount(&storage, 1_000) {
+        ClientEffect::Bootstrap { request_id } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    let initial = ServerSnapshot {
+        observed_at_epoch_ms: 1_000,
+        logical_date: "2026-09-05".to_owned(),
+        buffer_seconds: 0,
+    };
+    orchestrator.apply_response(&storage, ClientResponse::Bootstrap {
+        request_id: bootstrap_id,
+        result: Ok(initial),
+    });
+    orchestrator.action(&storage, 1_000, ComponentAction::SwitchTab(ActiveTab::Create));
+    orchestrator.edit_create_name("contract task".to_owned());
+    orchestrator.edit_create_minutes("25".to_owned());
+    let request_id = match orchestrator.submit_create_task(&storage, 1_000) {
+        ClientEffect::CreateTask { request_id, request } => {
+            assert_eq!(request.name, "contract task");
+            assert_eq!(request.estimated_work_minutes, Some(25));
+            request_id
+        }
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    orchestrator.apply_response(&storage, ClientResponse::CreateTask {
+        request_id,
+        result: Ok(WebSuccess {
+            snapshot: ServerSnapshot {
+                observed_at_epoch_ms: 2_000,
+                logical_date: "2026-09-05".to_owned(),
+                buffer_seconds: 0,
+            },
+            data: CreateTaskResult {
+                task_id: RECORD_ID.to_owned(),
+                pending_until_epoch_ms: 3_000,
+            },
+        }),
+    });
+    assert_eq!(orchestrator.create_name(), "");
+    assert_eq!(orchestrator.create_minutes(), "");
+    assert!(orchestrator.create_success().unwrap().contains("contract task"));
+    assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::Create);
+
+    orchestrator.edit_create_name("second contract task".to_owned());
+    let request_id = match orchestrator.submit_create_task(&storage, 2_000) {
+        ClientEffect::CreateTask { request_id, .. } => request_id,
+        other => panic!("unexpected effect: {other:?}"),
+    };
+    orchestrator.apply_response(&storage, ClientResponse::CreateTask {
+        request_id,
+        result: Err(ServerFailure::Operation(WebError {
+            code: web_error_codes::INVALID_INPUT.to_owned(),
+            message: "入力を確認してください。".to_owned(),
+            retry_advice: RetryAdvice::ManualCheck,
+            current_actual_work_seconds: None,
+        })),
+    });
+    assert_eq!(orchestrator.create_name(), "second contract task");
+    assert_eq!(orchestrator.create_minutes(), "");
+    assert!(orchestrator.create_success().is_none());
 }
 
 #[test]

@@ -3,13 +3,19 @@ use crate::client::state::{ClientEffect, ServerFailure};
 use crate::client::{state::ClientState, work_sessions::KeyValueStorage};
 use crate::{
     AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
-    DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    CreateTaskRequest, CreateTaskResult, DeferTaskRequest, ListAllTasksRequest,
+    ListCompletedTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest,
+    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use dioxus::prelude::ServerFnError;
 
 pub(crate) trait WebGateway {
+    async fn create_task(
+        &self,
+        _request: CreateTaskRequest,
+    ) -> Result<Result<WebSuccess<CreateTaskResult>, WebError>, ServerFnError> {
+        unreachable!("create_task is not implemented by this test gateway")
+    }
     async fn bootstrap(&self) -> Result<Result<ServerSnapshot, WebError>, ServerFnError>;
 
     async fn list_tasks(
@@ -64,6 +70,12 @@ pub(crate) struct ServerFunctionGateway;
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 impl WebGateway for ServerFunctionGateway {
+    async fn create_task(
+        &self,
+        request: CreateTaskRequest,
+    ) -> Result<Result<WebSuccess<CreateTaskResult>, WebError>, ServerFnError> {
+        super::create_task(request).await
+    }
     async fn bootstrap(&self) -> Result<Result<ServerSnapshot, WebError>, ServerFnError> {
         super::bootstrap().await
     }
@@ -131,6 +143,10 @@ impl WebGateway for ServerFunctionGateway {
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) enum ClientResponse {
+    CreateTask {
+        request_id: u64,
+        result: Result<WebSuccess<CreateTaskResult>, ServerFailure>,
+    },
     Bootstrap {
         request_id: u64,
         result: Result<ServerSnapshot, ServerFailure>,
@@ -182,6 +198,13 @@ pub(crate) async fn execute_effect<G: WebGateway>(
 ) -> Option<ClientResponse> {
     match effect {
         ClientEffect::None => None,
+        ClientEffect::CreateTask {
+            request_id,
+            request,
+        } => Some(ClientResponse::CreateTask {
+            request_id,
+            result: normalize_endpoint_result(gateway.create_task(request).await),
+        }),
         ClientEffect::Bootstrap { request_id } => Some(ClientResponse::Bootstrap {
             request_id,
             result: normalize_endpoint_result(gateway.bootstrap().await),
@@ -284,6 +307,9 @@ pub(crate) fn apply_response<S: KeyValueStorage>(
     background_list: bool,
 ) -> ClientEffect {
     match response {
+        ClientResponse::CreateTask { request_id, result } => {
+            state.apply_create_task_result(storage, request_id, result)
+        }
         ClientResponse::Bootstrap { request_id, result } => {
             state.apply_bootstrap_result(request_id, result)
         }

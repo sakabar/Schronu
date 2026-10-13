@@ -67,6 +67,7 @@ WebSuccess<T> {
 - `list_completed_tasks`: `WebSuccess<CompletedTaskReport>`
 - `list_all_tasks`: `WebSuccess<AllTaskPage>`
 - `auto_session`: `WebSuccess<Option<SessionTask>>`
+- `create_task`: `WebSuccess<CreateTaskResult>`。作成したUUIDと翌論理日開始のepoch millisecondsを返す。
 - `record_session`: `WebSuccess<RecordSessionResult>`
 - `complete_session`: `CompleteSessionResponse` (`ServerSnapshot`のtype alias)
 
@@ -665,9 +666,9 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateをactive modeのendpointで再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
-5. viewport下端へ「セッション」「一覧」「負荷」「発火履歴」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
+5. viewport下端へ「セッション」「一覧」「作成」「負荷」「発火履歴」の5tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
-7. 完了modeから別tabを経た一覧tabへの再進入は、予定modeへ戻し、選択中のlogical dateの`list_tasks`を1回送る。「負荷」への切替は`load_band`を1回送る。その他のtab切替ではserver操作を行わない。選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
+7. 完了modeから別tabを経た一覧tabへの再進入は、予定modeへ戻し、選択中のlogical dateの`list_tasks`を1回送る。作成成功後の一覧tab進入でも選択日の`list_tasks`を1回送る。「負荷」への切替は`load_band`を1回送る。その他のtab切替ではserver操作を行わない。選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧または発火履歴tab表示中は強制遷移しない。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
@@ -933,7 +934,7 @@ OperationHistoryEntry {
 
 ### 12.5 UI and integration
 
-- 固定された「セッション」「一覧」「負荷」「発火履歴」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
+- 固定された「セッション」「一覧」「作成」「負荷」「発火履歴」の5tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、分母0の日付cellが差分と`--`表示かつ超過色になること、差分の正負と一致、今日の残り容量差分、曜日見出しと日付表の0容量表示、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅の3行表示と横はみ出しなし、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・発火履歴でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。

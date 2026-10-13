@@ -2,8 +2,8 @@ use super::session_state::keeps_safety_marker;
 use super::*;
 use crate::client::date_buttons::logical_date_buttons_for_mode;
 use crate::{
-    CompletedTaskReport, DeferPlan, DeferTaskRequest, ListCompletedTasksRequest, ListTasksRequest,
-    SessionTask, WebSuccess,
+    CompletedTaskReport, CreateTaskRequest, CreateTaskResult, DeferPlan, DeferTaskRequest,
+    ListCompletedTasksRequest, ListTasksRequest, SessionTask, WebSuccess,
 };
 
 pub(super) struct ReadState {
@@ -22,6 +22,8 @@ pub(super) struct ReadState {
     pub(super) latest_completed_list_request_id: Option<u64>,
     pub(super) latest_auto_request_id: Option<u64>,
     pub(super) pending_defer_task: Option<(u64, DeferTaskRequest)>,
+    pub(super) pending_create_task: Option<(u64, CreateTaskRequest)>,
+    pub(super) list_stale_after_create: bool,
 }
 
 impl ReadState {
@@ -42,11 +44,84 @@ impl ReadState {
             latest_completed_list_request_id: None,
             latest_auto_request_id: None,
             pending_defer_task: None,
+            pending_create_task: None,
+            list_stale_after_create: false,
         }
     }
 }
 
 impl ClientState {
+    pub fn request_create_task<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        request: CreateTaskRequest,
+    ) -> ClientEffect {
+        if self.sessions.mutation_globally_blocked
+            || !self.sessions.pending_mutations.is_empty()
+            || self.read.pending_defer_task.is_some()
+            || self.read.pending_create_task.is_some()
+        {
+            return ClientEffect::None;
+        }
+        let Some(request_id) = self.allocate_read_request_id() else {
+            return ClientEffect::None;
+        };
+        if self.sessions.mutation_safety.arm(storage).is_err() {
+            self.record_local_result(None, false);
+            return ClientEffect::None;
+        }
+        self.read.pending_create_task = Some((request_id, request.clone()));
+        ClientEffect::CreateTask {
+            request_id,
+            request,
+        }
+    }
+
+    pub fn apply_create_task_result<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        request_id: u64,
+        result: Result<WebSuccess<CreateTaskResult>, ServerFailure>,
+    ) -> ClientEffect {
+        let Some((expected_id, request)) = self.read.pending_create_task.take() else {
+            return ClientEffect::None;
+        };
+        let invocation = ServerActionInvocation::CreateTask(request.clone());
+        if expected_id != request_id {
+            self.read.pending_create_task = Some((expected_id, request));
+            self.record_stale_response(invocation, result.is_ok());
+            return ClientEffect::None;
+        }
+        match result {
+            Ok(success) => {
+                self.record_server(invocation, Outcome::Success, "タスクを作成しました。");
+                if !self.finish_mutation_safety(storage, false) {
+                    self.sessions.mutation_globally_blocked = true;
+                }
+                self.invalidate_all_tasks();
+                self.read.latest_list_request_id = None;
+                self.read.latest_completed_list_request_id = None;
+                self.read.has_list = false;
+                self.read.scheduled_rows.clear();
+                self.read.completed_report = None;
+                self.read.list_stale_after_create = true;
+                self.all_tasks.selection = ListSelection::Date;
+                let _ = self.apply_snapshot_metadata(success.snapshot);
+            }
+            Err(error) => {
+                let keep_safety = keeps_safety_marker(&error);
+                if keep_safety {
+                    self.sessions.mutation_globally_blocked = true;
+                }
+                self.record_server_failure(invocation, error);
+                if !self.finish_mutation_safety(storage, keep_safety) && !keep_safety {
+                    self.sessions.mutation_globally_blocked = true;
+                }
+            }
+        }
+        ClientEffect::None
+    }
+
     pub fn request_bootstrap(&mut self) -> ClientEffect {
         let Some(request_id) = self.allocate_read_request_id() else {
             return ClientEffect::None;
@@ -145,6 +220,7 @@ impl ClientState {
         if self.sessions.mutation_globally_blocked
             || !self.sessions.pending_mutations.is_empty()
             || self.read.pending_defer_task.is_some()
+            || self.read.pending_create_task.is_some()
             || self
                 .sessions()
                 .iter()

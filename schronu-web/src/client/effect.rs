@@ -1,6 +1,6 @@
 use crate::{
-    CompleteSessionRequest, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest,
-    ListTasksRequest, RecordSessionRequest,
+    CompleteSessionRequest, CreateTaskRequest, DeferTaskRequest, ListAllTasksRequest,
+    ListCompletedTasksRequest, ListTasksRequest, RecordSessionRequest,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +27,10 @@ pub enum ClientEffect {
     AutoSession {
         request_id: u64,
         max_minutes: Option<i64>,
+    },
+    CreateTask {
+        request_id: u64,
+        request: CreateTaskRequest,
     },
     DeferTask {
         request_id: u64,

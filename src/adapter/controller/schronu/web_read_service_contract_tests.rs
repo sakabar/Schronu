@@ -849,6 +849,70 @@ fn serviceはbusy_time_slot読込失敗を元情報付きtyped_errorで返す() 
 }
 
 #[test]
+fn create_taskはcli新と同じ翌論理日まで保留して保存する() {
+    for (hour, expected_day) in [(5, 5), (6, 6)] {
+        let operation_now = Local.with_ymd_and_hms(2026, 9, 5, hour, 0, 0).unwrap();
+        let fixture = WebReadServiceFixture::new();
+        let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+        let (snapshot, task_id, pending_until_epoch_ms) = service
+            .create_task_at(operation_now, "contract task".to_owned(), Some(25))
+            .unwrap();
+
+        let pending_until = Local
+            .with_ymd_and_hms(2026, 9, expected_day, 6, 0, 0)
+            .unwrap();
+        assert_eq!(
+            snapshot.observed_at_epoch_ms,
+            operation_now.timestamp_millis()
+        );
+        assert_eq!(pending_until_epoch_ms, pending_until.timestamp_millis());
+        let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+        repository.reload_if_changed(operation_now).unwrap();
+        let task = repository
+            .get_by_id(Uuid::parse_str(&task_id).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(task.get_name().unwrap(), "contract task");
+        assert_eq!(task.get_estimated_work_seconds().unwrap(), 25 * 60);
+        assert_eq!(task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(task.get_pending_until().unwrap(), pending_until);
+    }
+}
+
+#[test]
+fn create_taskは不正な名前と見積で保存しない() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+
+    for (name, minutes) in [(" ", None), ("123", None), ("contract task", Some(-1))] {
+        assert!(matches!(
+            service.create_task_at(operation_now, name.to_owned(), minutes),
+            Err(WebReadError::Application(_))
+        ));
+    }
+    assert!(!fixture.storage.join(".revision").exists());
+}
+
+#[test]
+fn create_taskは見積省略で15分にする() {
+    let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let (_, task_id, _) = service
+        .create_task_at(operation_now, "default estimate task".to_owned(), None)
+        .unwrap();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(operation_now).unwrap();
+    let task = repository
+        .get_by_id(Uuid::parse_str(&task_id).unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(task.get_estimated_work_seconds().unwrap(), 15 * 60);
+}
+
+#[test]
 fn defer_taskは表示日が未来ならその翌日の論理日開始まで延期して1回保存する() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
