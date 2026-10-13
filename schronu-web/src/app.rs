@@ -59,7 +59,8 @@ pub use component::app;
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
     auto_session, bootstrap, complete_session, complete_work_slice, defer_task, list_all_tasks,
-    list_completed_tasks, list_tasks, load_band, record_session, WebOperationResult,
+    list_completed_tasks, list_tasks, load_band, record_session, resolve_task_link,
+    WebOperationResult,
 };
 
 #[cfg(test)]

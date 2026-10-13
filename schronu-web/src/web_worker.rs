@@ -12,6 +12,9 @@ const WEB_WORKER_STACK_SIZE_BYTES: usize = 32 * 1024 * 1024;
 
 pub trait WebOperations: 'static {
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError>;
+    fn resolve_task_link(&mut self, _task_id: String) -> Result<Option<String>, WebError> {
+        unreachable!("resolve_task_link is not implemented by this test operation")
+    }
     fn list_tasks(
         &mut self,
         request: ListTasksRequest,
@@ -56,6 +59,10 @@ pub struct WebWorkerHandle {
 enum WebWorkerCommand {
     Bootstrap {
         response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
+    },
+    ResolveTaskLink {
+        task_id: String,
+        response: oneshot::Sender<Result<Option<String>, WebError>>,
     },
     ListTasks {
         request: ListTasksRequest,
@@ -113,6 +120,14 @@ impl WebWorkerHandle {
         let (response, receiver) = oneshot::channel();
         self.commands
             .send(WebWorkerCommand::Bootstrap { response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
+    pub async fn resolve_task_link(&self, task_id: String) -> Result<Option<String>, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::ResolveTaskLink { task_id, response })
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
@@ -219,6 +234,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
         match command {
             WebWorkerCommand::Bootstrap { response } => {
                 let _ = response.send(operations.bootstrap());
+            }
+            WebWorkerCommand::ResolveTaskLink { task_id, response } => {
+                let _ = response.send(operations.resolve_task_link(task_id));
             }
             WebWorkerCommand::ListTasks { request, response } => {
                 let _ = response.send(operations.list_tasks(request));
