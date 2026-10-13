@@ -240,8 +240,8 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
     factory: &mut TaskFactory<'_>,
 ) -> Value {
     let input = input.into_application();
-    let child_ids = match breakdown_task_use_case(repository, input, factory) {
-        Ok(child_ids) => child_ids,
+    let task_ids = match breakdown_task_use_case(repository, input, factory) {
+        Ok(task_ids) => task_ids,
         Err(ApplicationError::TaskNotFound(task_id)) => {
             return task_not_found_response(id, task_id, Some("parent_id"))
         }
@@ -254,7 +254,7 @@ fn call_breakdown_task<R: TaskRepositoryTrait>(
     tool_result_response(
         id,
         json!({
-            "child_ids": child_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
+            "task_ids": task_ids.iter().map(Uuid::to_string).collect::<Vec<_>>()
         }),
         false,
     )

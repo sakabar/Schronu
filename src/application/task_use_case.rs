@@ -211,6 +211,8 @@ pub struct BreakdownTaskInput {
     pub pending_until: Option<DateTime<Local>>,
 }
 
+pub(crate) const MAX_BREAKDOWN_TASK_NAMES: usize = 64;
+
 pub struct TaskFactory<'a> {
     now: DateTime<Local>,
     next_id: &'a mut dyn FnMut() -> Uuid,
@@ -433,45 +435,59 @@ pub fn breakdown_task(
             reason: "must not be empty",
         });
     }
+    if input.names.len() > MAX_BREAKDOWN_TASK_NAMES {
+        return Err(ApplicationError::InvalidInput {
+            field: "names",
+            reason: "must contain at most 64 names",
+        });
+    }
     for name in &input.names {
         validate_task_name(name, "names")?;
     }
 
     let parent_task = find_task(repository, input.parent_id)?;
+    let inherited_deadline = parent_task
+        .get_deadline_time_opt()
+        .map_err(ApplicationError::TaskTree)?;
     let child_attrs = input
         .names
         .into_iter()
         .map(|name| {
             let mut child_attr = factory.create_task_attr(&name);
+            child_attr
+                .set_deadline_time_opt(inherited_deadline)
+                .map_err(ApplicationError::TaskTree)?;
+            TaskAttr::validate_deadline_calculations(
+                *child_attr.get_id(),
+                inherited_deadline,
+                child_attr.get_estimated_work_seconds(),
+                child_attr.get_actual_work_seconds(),
+                "deadline_time",
+            )
+            .map_err(ApplicationError::TaskTree)?;
             if let Some(pending_until) = input.pending_until {
                 child_attr.set_orig_status(Status::Pending);
                 child_attr.set_pending_until(pending_until);
             }
-            child_attr
+            Ok(child_attr)
         })
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>, ApplicationError>>()?;
     ensure_task_ids_available(
         repository,
         child_attrs.iter().map(|child_attr| *child_attr.get_id()),
     )?;
-    let mut child_ids = Vec::with_capacity(child_attrs.len());
+    let mut task_ids = Vec::with_capacity(child_attrs.len());
+    let mut current_parent = parent_task;
 
     for child_attr in child_attrs {
-        let child_task = parent_task
+        let child_task = current_parent
             .create_child(child_attr)
             .map_err(ApplicationError::TaskTree)?;
-        if let Some(deadline_time) = parent_task
-            .get_deadline_time_opt()
-            .map_err(ApplicationError::TaskTree)?
-        {
-            child_task
-                .set_deadline_time_opt(Some(deadline_time))
-                .map_err(ApplicationError::TaskTree)?;
-        }
-        child_ids.push(child_task.get_id().map_err(ApplicationError::TaskTree)?);
+        task_ids.push(child_task.get_id().map_err(ApplicationError::TaskTree)?);
+        current_parent = child_task;
     }
 
-    Ok(child_ids)
+    Ok(task_ids)
 }
 
 pub fn defer_task(

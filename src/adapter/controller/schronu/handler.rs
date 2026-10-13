@@ -632,7 +632,7 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
             if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
                 let names = names.iter().map(String::as_str).collect::<Vec<_>>();
                 match execute_breakdown(context, &names, &None) {
-                    Ok(Some(child_ids)) => append_project_lines(&mut lines, &child_ids, &names),
+                    Ok(Some(task_ids)) => append_project_lines(&mut lines, &task_ids, &names),
                     Ok(None) => {}
                     Err(error) => reported_error = Some(error),
                 }
@@ -1118,13 +1118,13 @@ fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
         .iter()
         .map(|name| (*name).to_string())
         .collect::<Vec<_>>();
-    let child_ids = context.breakdown_task(BreakdownTaskInput {
+    let task_ids = context.breakdown_task(BreakdownTaskInput {
         parent_id,
         names,
         pending_until: *pending_until_opt,
     })?;
-    context.set_focused_task_id(child_ids.first().copied());
-    Ok(Some(child_ids))
+    context.set_focused_task_id(task_ids.last().copied());
+    Ok(Some(task_ids))
 }
 
 fn execute_split<C: ProjectCommandContext + ?Sized>(

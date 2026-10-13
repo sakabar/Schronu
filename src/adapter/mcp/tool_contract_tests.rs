@@ -1319,7 +1319,7 @@ fn create_task_save失敗を成功扱いしない() {
 }
 
 #[test]
-fn breakdown_task_子を入力順に追加して1回saveする() {
+fn breakdown_task_入力順に直列化して1回saveする() {
     let pending_until = fixed_now() + Duration::hours(18);
     let parent = new_task_handle("parent").unwrap();
     let parent_id = parent.get_id().unwrap();
@@ -1343,11 +1343,11 @@ fn breakdown_task_子を入力順に追加して1回saveする() {
     assert_eq!(response["id"], "breakdown");
     assert_eq!(response["result"]["isError"], false);
     assert_tool_result_content_matches_structured(&response);
-    let child_ids = response["result"]["structuredContent"]["child_ids"]
+    let task_ids = response["result"]["structuredContent"]["task_ids"]
         .as_array()
         .unwrap();
-    assert_eq!(child_ids.len(), 2);
-    assert!(child_ids
+    assert_eq!(task_ids.len(), 2);
+    assert!(task_ids
         .iter()
         .all(|id| Uuid::parse_str(id.as_str().unwrap()).is_ok()));
     assert_eq!(save_count.get(), 1);
@@ -1361,18 +1361,34 @@ fn breakdown_task_子を入力順に追加して1回saveする() {
         .unwrap();
     assert_eq!(
         parent_response["result"]["structuredContent"]["task"]["child_ids"],
-        serde_json::Value::Array(child_ids.clone())
+        json!([task_ids[0]])
     );
     for (index, expected_name) in ["first child", "second child"].iter().enumerate() {
         let child_response = server
             .handle_request(tool_call_request(
                 "child-after-breakdown",
                 "get_task",
-                json!({"task_id": child_ids[index].as_str().unwrap()}),
+                json!({"task_id": task_ids[index].as_str().unwrap()}),
             ))
             .unwrap();
         let child = &child_response["result"]["structuredContent"]["task"];
         assert_eq!(child["name"], *expected_name);
+        assert_eq!(
+            child["parent_id"],
+            if index == 0 {
+                json!(parent_id)
+            } else {
+                task_ids[0].clone()
+            }
+        );
+        assert_eq!(
+            child["child_ids"],
+            if index == 0 {
+                json!([task_ids[1]])
+            } else {
+                json!([])
+            }
+        );
         assert_eq!(child["original_status"], "pending");
         assert_eq!(child["pending_until"], pending_until.to_rfc3339());
     }
@@ -1402,6 +1418,11 @@ fn breakdown_task_schema違反では親を変更しない() {
             "name-type",
             json!({"parent_id": Uuid::new_v4().to_string(), "names": [1]}),
             "names[0]",
+        ),
+        (
+            "too-many-names",
+            json!({"parent_id": Uuid::new_v4().to_string(), "names": vec!["step"; 65]}),
+            "names",
         ),
     ];
 
@@ -1513,7 +1534,7 @@ fn breakdown_task_save失敗を成功扱いしない() {
         .handle_request(tool_call_request(
             "breakdown-save-failure",
             "breakdown_task",
-            json!({"parent_id": parent_id.to_string(), "names": ["child"]}),
+            json!({"parent_id": parent_id.to_string(), "names": ["stage one", "stage two"]}),
         ))
         .unwrap();
 
@@ -1530,7 +1551,10 @@ fn breakdown_task_save失敗を成功扱いしない() {
         .unwrap()
         .is_empty());
     assert_eq!(save_count.get(), 1);
-    assert_eq!(parent_observer.get_children().unwrap().len(), 1);
+    let first = parent_observer.get_children().unwrap().remove(0);
+    assert_eq!(first.get_name().unwrap(), "stage one");
+    let second = first.get_children().unwrap().remove(0);
+    assert_eq!(second.get_name().unwrap(), "stage two");
 
     let parent_response = server
         .handle_request(tool_call_request(
@@ -2923,9 +2947,9 @@ fn breakdown_taskはrepository同期と全child生成に同じoperation時刻を
 
     assert_eq!(response["result"]["isError"], false);
     assert_eq!(*sync_clock_times.borrow(), vec![operation_now]);
-    let children = parent_observer.get_children().unwrap();
-    assert_eq!(children.len(), 2);
-    for child in children {
+    let first = parent_observer.get_children().unwrap().remove(0);
+    let second = first.get_children().unwrap().remove(0);
+    for child in [first, second] {
         assert_eq!(child.get_create_time().unwrap(), operation_now);
         assert_eq!(child.get_start_time().unwrap(), operation_now);
     }

@@ -3048,7 +3048,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
 }
 
 #[test]
-fn test_execute_breakdown_子を順に作り締切を継承して最初の子へfocusする() {
+fn test_execute_breakdown_直列の子を作り締切を継承して末端へfocusする() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
     let parent_task = new_test_task_handle("親タスク").unwrap();
@@ -3059,26 +3059,58 @@ fn test_execute_breakdown_子を順に作り締切を継承して最初の子へ
         parent_task.clone(),
         now,
         Some(parent_task.get_id().unwrap()),
-        "下 子A 子B",
+        "下 段階A 段階B 段階C",
     );
-    let children = result.task.get_children().unwrap();
+    let mut current = result.task;
+    let mut displayed_positions = Vec::new();
+    for name in ["段階A", "段階B", "段階C"] {
+        let children = current.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        current = children[0].clone();
+        assert_eq!(current.get_name().unwrap(), name);
+        assert_eq!(current.get_deadline_time_opt().unwrap(), Some(deadline));
+        let displayed = format!("{} {name}", current.get_id().unwrap());
+        displayed_positions.push(result.output.find(&displayed).unwrap());
+    }
+    assert!(displayed_positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(result.focused_task_id_opt, Some(current.get_id().unwrap()));
+    assert!(current.get_children().unwrap().is_empty());
+}
 
-    assert_eq!(
-        children
-            .iter()
-            .map(|task| task.get_name().unwrap())
-            .collect::<Vec<_>>(),
-        vec!["子A", "子B"]
-    );
-    assert!(children
-        .iter()
-        .all(|task| task.get_deadline_time_opt().unwrap() == Some(deadline)));
-    assert_eq!(
-        result.focused_task_id_opt,
-        Some(children[0].get_id().unwrap())
-    );
-    assert!(result.output.contains("子A"));
-    assert!(result.output.contains("子B"));
+#[test]
+fn breakdownの別名も直列の子を作る() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for command in ["breakdown", "bd"] {
+        let parent = new_test_task_handle("対象").unwrap();
+        let result = execute_command_for_test(
+            parent.clone(),
+            now,
+            Some(parent.get_id().unwrap()),
+            &format!("{command} 段階A 段階B"),
+        );
+        let first = result.task.get_children().unwrap().remove(0);
+        let second = first.get_children().unwrap().remove(0);
+        assert_eq!(first.get_name().unwrap(), "段階A");
+        assert_eq!(second.get_name().unwrap(), "段階B");
+        assert_eq!(result.focused_task_id_opt, Some(second.get_id().unwrap()));
+    }
+}
+
+#[test]
+fn breakdownは65件の入力で既存taskを変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let parent = new_test_task_handle("対象").unwrap();
+    let parent_id = parent.get_id().unwrap();
+    let names = (0..65)
+        .map(|index| format!("段階{index}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let result = execute_command_for_test(parent, now, Some(parent_id), &format!("下 {names}"));
+
+    assert!(result.task.get_children().unwrap().is_empty());
+    assert_eq!(result.focused_task_id_opt, Some(parent_id));
+    assert!(result.output.contains("must contain at most 64 names"));
 }
 
 #[test]

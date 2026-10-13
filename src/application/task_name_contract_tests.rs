@@ -95,15 +95,14 @@ fn breakdown_taskは許可名を原文のまま保存する() {
     )
     .unwrap();
 
-    assert_eq!(
-        parent
-            .get_children()
-            .unwrap()
-            .into_iter()
-            .map(|child| child.get_name().unwrap())
-            .collect::<Vec<_>>(),
-        names
-    );
+    let mut current = parent;
+    for name in names {
+        let children = current.get_children().unwrap();
+        assert_eq!(children.len(), 1);
+        current = children[0].clone();
+        assert_eq!(current.get_name().unwrap(), name);
+    }
+    assert!(current.get_children().unwrap().is_empty());
 }
 
 #[test]

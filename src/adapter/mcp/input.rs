@@ -4,7 +4,7 @@ use crate::application::task_use_case::{
     ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
     CompleteTaskInput as ApplicationCompleteTaskInput,
     CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, ListTasksPageRequest,
-    TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE,
+    TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE, MAX_BREAKDOWN_TASK_NAMES,
 };
 use crate::entity::task::{ProjectCategory, Status};
 use chrono::{DateTime, Local, NaiveDate};
@@ -471,18 +471,22 @@ impl CreateTaskInput {
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct BreakdownTaskInput {
-    /// The UUID of the existing parent task to which the children are added.
+    /// The UUID of the existing task under which the first task is added.
     pub(super) parent_id: UuidValue,
-    /// One or more child task names, added to the parent in this array order.
+    /// One to 64 task names, each added as a child of the previous task in array order.
     #[schemars(schema_with = "child_task_names_schema")]
     pub(super) names: NonEmptyVec<NonEmptyString>,
-    /// A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every child's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the parent's deadline can move this time earlier. Omit it for an original status of Todo.
+    /// A common RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets every created task's original status to Pending, but the effective status can be Todo when the time is not in the future. Inheriting the original parent's deadline can move this time earlier. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
 
 fn child_task_names_schema(generator: &mut SchemaGenerator) -> Schema {
     let mut schema = generator.subschema_for::<NonEmptyVec<NonEmptyString>>();
+    schema.ensure_object().insert(
+        "maxItems".to_string(),
+        Value::from(MAX_BREAKDOWN_TASK_NAMES),
+    );
     let item_schema = schema
         .ensure_object()
         .get_mut("items")
@@ -491,7 +495,7 @@ fn child_task_names_schema(generator: &mut SchemaGenerator) -> Schema {
     item_schema.insert(
         "description".to_string(),
         Value::from(
-            "A child task name is preserved exactly without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.",
+            "A task name is preserved exactly without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.",
         ),
     );
     schema
@@ -1124,6 +1128,21 @@ fn preflight_object_contract<T: JsonSchema>(value: &Value) -> Result<(), ToolInp
             field: field.to_string(),
             reason: "field is required",
         }));
+    }
+
+    for (field, property_schema) in properties {
+        let Some(max_items) = property_schema.get("maxItems").and_then(Value::as_u64) else {
+            continue;
+        };
+        let Some(items) = arguments.get(field).and_then(Value::as_array) else {
+            continue;
+        };
+        if u64::try_from(items.len()).unwrap_or(u64::MAX) > max_items {
+            return Err(ToolInputError::Schema(InvalidParams {
+                field: field.clone(),
+                reason: "array has too many items",
+            }));
+        }
     }
 
     if required_alternatives_are_unmet(&schema, arguments) {
