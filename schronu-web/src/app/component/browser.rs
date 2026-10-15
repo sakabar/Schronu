@@ -12,6 +12,7 @@ use super::super::list_view::{AllTasksViewStatus, CompletedListView, ListModeCon
 use super::super::load_view::LoadView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
 use super::super::long_press_controller::LongPressSchedulerHandle;
+use super::super::session_links::SessionLinks;
 use super::super::session_view::SessionView;
 use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
@@ -28,6 +29,7 @@ const TICK_MILLIS: u32 = 1_000;
 pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
     let open_link_error = use_signal(|| None::<String>);
+    let mut session_links = use_signal(SessionLinks::default);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
@@ -47,6 +49,41 @@ pub(super) fn BrowserApp() -> Element {
                     wall_now_epoch_ms: browser_now_epoch_ms(),
                 },
             );
+        }
+    });
+
+    use_effect(move || {
+        let (active, task_ids) = {
+            let client = client.read();
+            let active = client
+                .state()
+                .is_some_and(|state| state.active_tab() == ActiveTab::Session);
+            let task_ids = client
+                .state()
+                .map(|state| {
+                    state
+                        .sessions()
+                        .iter()
+                        .map(|session| session.task_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (active, task_ids)
+        };
+        let requests = session_links.write().reconcile(active, &task_ids);
+        for (task_id, request_id) in requests {
+            spawn(async move {
+                let result = match super::super::web_endpoint::resolve_task_link(task_id.clone())
+                    .await
+                {
+                    Ok(Ok(url)) => Ok(url),
+                    Ok(Err(error)) => Err(error.message),
+                    Err(_) => Err("リンクを取得できませんでした。再試行してください。".to_owned()),
+                };
+                session_links
+                    .write()
+                    .apply_result(&task_id, request_id, result);
+            });
         }
     });
 
@@ -95,6 +132,8 @@ pub(super) fn BrowserApp() -> Element {
         carry_lock,
     } = model;
     let mutations_locked = carry_lock.mutations_locked();
+    let linkable_task_ids = session_links.read().linkable_task_ids();
+    let link_lookup_errors = session_links.read().errors();
     let (
         server_effect_in_flight,
         background_refreshing,
@@ -189,11 +228,17 @@ pub(super) fn BrowserApp() -> Element {
                 section { class: "error", role: "alert", p { "{error}" } }
             }
             if active_tab == ActiveTab::Session {
+                for error in link_lookup_errors {
+                    section { class: "error", role: "alert", p { "リンクを確認できませんでした: {error}" } }
+                }
+            }
+            if active_tab == ActiveTab::Session {
                 if auto_session_empty && sessions.is_empty() {
                     p { role: "status", "自動選定できるタスクがありません。" }
                 }
                 SessionView {
                     sessions,
+                    linkable_task_ids,
                     global_blocked,
                     mutations_locked,
                     auto_session_in_flight,
@@ -207,7 +252,7 @@ pub(super) fn BrowserApp() -> Element {
                     },
                     on_action: move |action| dispatch_session_action(client, action),
                     on_open_link: move |task_id| {
-                        open_session_link(client, open_link_error, task_id);
+                        open_session_link(client, open_link_error, session_links, task_id);
                     },
                 }
             } else if active_tab == ActiveTab::List {
@@ -345,19 +390,23 @@ pub(super) fn BrowserApp() -> Element {
 }
 
 fn open_session_link(
-    mut client: Signal<ComponentOrchestrator>,
+    client: Signal<ComponentOrchestrator>,
     mut open_link_error: Signal<Option<String>>,
+    session_links: Signal<SessionLinks>,
     task_id: String,
 ) {
     if client.read().server_actions_blocked() || client.read().server_effect_in_flight() {
         return;
     }
+    let Some(url) = session_links.read().url_for(&task_id).map(str::to_owned) else {
+        return;
+    };
     open_link_error.set(None);
     let Some(browser) = web_sys::window() else {
         open_link_error.set(Some("browserを利用できません。".to_owned()));
         return;
     };
-    let new_tab = match browser.open_with_url_and_target("about:blank", "_blank") {
+    let new_tab = match browser.open_with_url_and_target(&url, "_blank") {
         Ok(Some(tab)) => tab,
         _ => {
             open_link_error.set(Some(
@@ -377,23 +426,4 @@ fn open_session_link(
         open_link_error.set(Some("新しいタブを安全に開けませんでした。".to_owned()));
         return;
     }
-    client.write().begin_server_effect();
-    spawn(async move {
-        let result = super::super::web_endpoint::resolve_task_link(task_id).await;
-        client.write().finish_server_effect();
-        let error = match result {
-            Ok(Ok(Some(url))) if url.starts_with("https://") || url.starts_with("http://") => {
-                match new_tab.location().set_href(&url) {
-                    Ok(()) => return,
-                    Err(_) => "リンク先を開けませんでした。".to_owned(),
-                }
-            }
-            Ok(Ok(Some(_))) => "このリンクはbrowserで開けません。".to_owned(),
-            Ok(Ok(None)) => "このタスクと親タスクにURLがありません。".to_owned(),
-            Ok(Err(error)) => error.message,
-            Err(_) => "リンクを取得できませんでした。再試行してください。".to_owned(),
-        };
-        let _ = new_tab.close();
-        open_link_error.set(Some(error));
-    });
 }

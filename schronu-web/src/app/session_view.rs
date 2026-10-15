@@ -1,4 +1,5 @@
 use dioxus::prelude::*;
+use std::collections::HashSet;
 
 use crate::client::time_model::{format_hh_mm_ss, format_mm_ss};
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
@@ -42,6 +43,7 @@ fn parse_auto_session_minutes(input: &str) -> Result<Option<i64>, &'static str> 
 #[component]
 pub fn SessionView(
     sessions: Vec<SessionCardViewModel>,
+    #[props(default)] linkable_task_ids: HashSet<String>,
     global_blocked: bool,
     #[props(default)] mutations_locked: bool,
     #[props(default)] auto_session_in_flight: bool,
@@ -100,6 +102,7 @@ pub fn SessionView(
             for session in sessions {
                 SessionCard {
                     key: "{session.task_id}",
+                    linkable: linkable_task_ids.contains(&session.task_id),
                     session,
                     global_blocked,
                     mutations_locked,
@@ -115,6 +118,7 @@ pub fn SessionView(
 #[component]
 fn SessionCard(
     session: SessionCardViewModel,
+    linkable: bool,
     global_blocked: bool,
     mutations_locked: bool,
     server_actions_blocked: bool,
@@ -202,17 +206,21 @@ fn SessionCard(
         article { class: "session-card",
             div { class: "session-card-heading",
                 h2 {
-                    button {
-                        class: "session-task-link",
-                        r#type: "button",
-                        aria_label: open_task_label,
-                        disabled: server_actions_blocked,
-                        onclick: move |_| {
-                            if !server_actions_blocked {
-                                on_open_link.call(open_task_id.clone());
-                            }
-                        },
-                        "{session.task_name} ↗"
+                    if linkable {
+                        button {
+                            class: "session-task-link",
+                            r#type: "button",
+                            aria_label: open_task_label,
+                            disabled: server_actions_blocked,
+                            onclick: move |_| {
+                                if !server_actions_blocked {
+                                    on_open_link.call(open_task_id.clone());
+                                }
+                            },
+                            "{session.task_name} ↗"
+                        }
+                    } else {
+                        "{session.task_name}"
                     }
                 }
                 span { class: "session-progress-label", "{progress}" }
