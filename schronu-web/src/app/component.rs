@@ -163,11 +163,6 @@ pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<Acti
                 selected: active_tab == ActiveTab::Load,
                 onclick: move |_| on_switch.call(ActiveTab::Load),
             }
-            TabButton {
-                label: "発火履歴",
-                selected: active_tab == ActiveTab::History,
-                onclick: move |_| on_switch.call(ActiveTab::History),
-            }
         }
     }
 }

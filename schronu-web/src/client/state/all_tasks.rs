@@ -135,12 +135,10 @@ impl ClientState {
         let current = std::mem::replace(&mut self.all_tasks.load, AllTasksLoadState::NotLoaded);
         let AllTasksLoadState::Loading(mut loading) = current else {
             self.all_tasks.load = current;
-            self.record_stale_response(invocation, result.is_ok());
             return ClientEffect::None;
         };
         if loading.expected_request_id != request_id || loading.expected_cursor != request.cursor {
             self.all_tasks.load = AllTasksLoadState::Loading(loading);
-            self.record_stale_response(invocation, result.is_ok());
             return ClientEffect::None;
         }
 
@@ -148,7 +146,7 @@ impl ClientState {
             Ok(success) => {
                 let _ = self.apply_snapshot_metadata(success.snapshot);
                 loading.rows.extend(success.data.rows);
-                self.record_server(invocation, Outcome::Success, "全件一覧を取得しました。");
+                self.record_server_success(invocation);
                 let Some(next_cursor) = success.data.next_cursor else {
                     self.all_tasks.load = AllTasksLoadState::Loaded(loading.rows);
                     return ClientEffect::None;
@@ -173,11 +171,6 @@ impl ClientState {
                 }
             }
             Err(error) => {
-                self.record_server(
-                    invocation,
-                    Outcome::Failure,
-                    "全件一覧の取得に失敗しました。",
-                );
                 self.all_tasks.load = AllTasksLoadState::Failed(error);
                 ClientEffect::None
             }

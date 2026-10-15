@@ -1,6 +1,6 @@
 use schronu_web::client::state::{
-    load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Operation, Outcome,
-    ServerActionInvocation, ServerFailure,
+    load_client_state, load_client_state_for_ui, ClientEffect, DisplayError, Operation,
+    ServerFailure,
 };
 use schronu_web::{
     web_error_codes, DeferMode, DeferPlan, RecordSessionResult, RetryAdvice, WebError, WebSuccess,
@@ -53,10 +53,6 @@ fn task先送りはsafety_marker保存後に送信し成功後は一覧を再取
     let (refresh_id, refresh) = list_effect(follow_up);
     assert_eq!(refresh.logical_date, "2026-09-06");
     assert_eq!(state.scheduled_rows(), &[row(OTHER_TASK_ID, 2)]);
-    assert_eq!(
-        state.history().back().unwrap().invocation,
-        ServerActionInvocation::DeferTask(request)
-    );
     state.apply_list_result(
         refresh_id,
         &refresh.logical_date,
@@ -125,72 +121,6 @@ fn task先送りはplan変更時にsafetyを解除して表示中一覧を再取
     assert!(!load_client_state(&storage, 0)
         .unwrap()
         .mutation_globally_blocked());
-}
-
-#[test]
-fn server発火履歴は実actionと送信時の全引数を保持する() {
-    let storage = FakeStorage::default();
-    let mut state = load_client_state(&storage, 1_000).unwrap();
-
-    let bootstrap_id = bootstrap_effect(state.request_bootstrap());
-    state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 1)));
-
-    let (list_id, list_request) = list_effect(state.request_list("2026-09-06"));
-    state.apply_list_result(
-        list_id,
-        &list_request.logical_date,
-        Ok(WebSuccess {
-            snapshot: snapshot("2026-09-05", 2),
-            data: Vec::new(),
-        }),
-    );
-
-    let auto_id = auto_effect(state.request_auto_session());
-    state.apply_auto_session_result(
-        &storage,
-        auto_id,
-        Ok(WebSuccess {
-            snapshot: snapshot("2026-09-05", 3),
-            data: None,
-        }),
-    );
-
-    state.add_session_from_row(&storage, &row(TASK_ID, 0));
-    let (record_id, record_request) = record_effect(state.begin_record_session(&storage, TASK_ID));
-    state.tick(9_999);
-    state.apply_record_result(
-        &storage,
-        record_id,
-        Err(ServerFailure::Operation(web_error(
-            web_error_codes::ACTUAL_WORK_CONFLICT,
-            RetryAdvice::ManualCheck,
-        ))),
-    );
-
-    let mut complete_state = state_with_sessions(&storage, &[OTHER_TASK_ID]);
-    let (complete_id, complete_request) = complete_effect(
-        complete_state.begin_complete_session_without_recording(&storage, OTHER_TASK_ID),
-    );
-    complete_state.apply_complete_result(&storage, complete_id, Ok(snapshot("2026-09-05", 4)));
-
-    let invocations: Vec<_> = state
-        .history()
-        .iter()
-        .map(|entry| entry.invocation.clone())
-        .collect();
-    assert_eq!(
-        invocations,
-        vec![
-            ServerActionInvocation::Bootstrap,
-            ServerActionInvocation::ListTasks(list_request),
-            ServerActionInvocation::AutoSession,
-            ServerActionInvocation::RecordSession(record_request),
-        ]
-    );
-    assert_eq!(
-        complete_state.history().back().unwrap().invocation,
-        ServerActionInvocation::CompleteSession(complete_request)
-    );
 }
 
 #[test]
@@ -309,19 +239,6 @@ fn 逆順のlist応答と古いsnapshotは最新表示を巻き戻さない() {
         state.scheduled_rows()[0].task.task_id.as_deref(),
         Some(OTHER_TASK_ID)
     );
-    let list_invocations: Vec<_> = state
-        .history()
-        .iter()
-        .filter_map(|entry| match &entry.invocation {
-            ServerActionInvocation::ListTasks(request) => Some(request.logical_date.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        list_invocations,
-        vec!["2026-09-06", "2026-09-05"],
-        "stale responseも元のrequest引数と共に受信履歴へ残す"
-    );
 }
 
 #[test]
@@ -371,7 +288,7 @@ fn manual_check_blockはsession破棄成功時だけ解消する() {
 }
 
 #[test]
-fn server_commit後のlocal削除失敗はserver成功だけを履歴へ記録する() {
+fn server_commit後のlocal削除失敗はerrorを表示する() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
     let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -388,10 +305,6 @@ fn server_commit後のlocal削除失敗はserver成功だけを履歴へ記録�
         }),
     );
 
-    assert_eq!(state.history().len(), 1);
-    let entry = state.history().front().unwrap();
-    assert_eq!(entry.invocation.operation(), Operation::RecordSession);
-    assert_eq!(entry.outcome, Outcome::Success);
     assert!(matches!(
         state.display_error(),
         Some(DisplayError::LocalStorage {
@@ -471,14 +384,6 @@ fn auto_sessionは古いsnapshotを無視してtask_payloadを適用する() {
 
     assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
     assert_eq!(state.sessions()[0].task_id, TASK_ID);
-    assert_eq!(
-        state
-            .history()
-            .iter()
-            .filter(|entry| entry.invocation.operation() == Operation::AutoSession)
-            .count(),
-        1
-    );
 }
 
 #[test]
@@ -520,20 +425,18 @@ fn 未解決の手動確認errorは無関係な成功で解消しない() {
 }
 
 #[test]
-fn session重複追加と不存在破棄はstorage履歴へ偽装しない() {
+fn session重複追加と不存在破棄はerrorを生まない() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
-    let history_len = state.history().len();
 
     state.add_session_from_row(&storage, &row(TASK_ID, 0));
     state.discard_session(&storage, OTHER_TASK_ID);
 
-    assert_eq!(state.history().len(), history_len);
     assert_eq!(state.display_error(), None);
 }
 
 #[test]
-fn latest_readの古いsnapshotも受信履歴へ記録する() {
+fn latest_readの古いsnapshotは表示へ適用しない() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 0).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -548,15 +451,7 @@ fn latest_readの古いsnapshotも受信履歴へ記録する() {
     );
 
     state.apply_bootstrap_result(bootstrap_id, Ok(snapshot("2026-09-05", 100)));
-
-    assert_eq!(
-        state
-            .history()
-            .iter()
-            .filter(|entry| entry.invocation.operation() == Operation::Bootstrap)
-            .count(),
-        1
-    );
+    assert_eq!(state.snapshot().unwrap().observed_at_epoch_ms, 200);
 }
 
 #[test]

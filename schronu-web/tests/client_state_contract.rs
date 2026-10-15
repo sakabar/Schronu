@@ -1,7 +1,5 @@
 use chrono::{Local, TimeZone};
-use schronu_web::client::state::{
-    load_client_state, ActiveTab, ClientEffect, Operation, Outcome, ServerFailure,
-};
+use schronu_web::client::state::{load_client_state, ActiveTab, ClientEffect, ServerFailure};
 use schronu_web::client::view_projection::project_session_cards;
 use schronu_web::client::work_sessions::{load_work_sessions, WorkSession};
 use schronu_web::{
@@ -47,10 +45,6 @@ fn 作成成功は一覧を無効化して次の一覧進入時に再取得す�
         }),
     );
     assert_eq!(state.active_tab(), ActiveTab::Create);
-    assert_eq!(
-        state.history().back().unwrap().invocation.operation(),
-        Operation::CreateTask
-    );
     assert!(!state.mutation_globally_blocked());
     assert!(matches!(
         state.switch_tab(ActiveTab::List),
@@ -131,10 +125,6 @@ fn 分割完了は記録requestを送り成功時だけセッションを解除�
         }),
     );
     assert!(state.sessions().is_empty());
-    assert_eq!(
-        state.history().back().unwrap().invocation.operation(),
-        Operation::CompleteWorkSlice
-    );
 }
 
 #[test]
@@ -144,8 +134,8 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
 
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
-    assert_eq!(state.switch_tab(ActiveTab::History), ClientEffect::None);
-    assert_eq!(state.active_tab(), ActiveTab::History);
+    assert_eq!(state.switch_tab(ActiveTab::Create), ClientEffect::None);
+    assert_eq!(state.active_tab(), ActiveTab::Create);
     assert_eq!(state.switch_tab(ActiveTab::List), ClientEffect::None);
     assert_eq!(state.tick(2_000), ClientEffect::None);
     assert_eq!(state.tick_now_epoch_ms(), 2_000);
@@ -187,10 +177,6 @@ fn 通信matrixとstorage_firstのlocal状態遷移を固定する() {
     storage.fail_writes.set(false);
     assert_eq!(state.discard_session(&storage, TASK_ID), ClientEffect::None);
     assert!(state.sessions().is_empty());
-    assert!(
-        state.history().is_empty(),
-        "localStorage操作は発火履歴へ記録しない"
-    );
 }
 
 #[test]
@@ -203,7 +189,6 @@ fn 計測破棄再開は開始時刻だけをstorage_firstで更新する() {
     assert_eq!(state.display_buffer_seconds(), Some(70));
 
     let before = state.sessions().to_vec();
-    let history_len = state.history().len();
     assert_eq!(
         state.restart_session_without_recording(&storage, TASK_ID),
         ClientEffect::None
@@ -223,7 +208,6 @@ fn 計測破棄再開は開始時刻だけをstorage_firstで更新する() {
     );
     assert_eq!(state.sessions()[1], before[1], "sessionの順序を維持する");
     assert_eq!(state.display_buffer_seconds(), Some(60));
-    assert_eq!(state.history().len(), history_len);
 
     let restored = load_client_state(&storage, 10_000).unwrap();
     assert_eq!(restored.sessions(), state.sessions());
@@ -353,7 +337,6 @@ fn rank非0の一覧taskは手動sessionへ追加しない() {
 
     assert!(state.sessions().is_empty());
     assert!(storage.value.borrow().is_none());
-    assert!(state.history().is_empty());
 }
 
 #[test]
@@ -1172,7 +1155,7 @@ fn mutationは対象だけを直列化しerror助言とcommit後storage失敗を
 }
 
 #[test]
-fn 完了effectは計測の記録方針と履歴種別を保持する() {
+fn 完了effectは計測の記録方針を保持する() {
     let recording_storage = FakeStorage::default();
     let mut recording_state = state_with_sessions(&recording_storage, &[TASK_ID]);
     let (_, recording_request) =
@@ -1191,9 +1174,6 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         request_id,
         Ok(snapshot("2026-09-05", 1)),
     );
-    assert!(discard_state.history().iter().any(|entry| {
-        entry.invocation.operation() == Operation::CompleteSessionWithoutRecording
-    }));
     assert!(discard_state.sessions().is_empty());
 
     let failed_storage = FakeStorage::default();
@@ -1210,10 +1190,6 @@ fn 完了effectは計測の記録方針と履歴種別を保持する() {
         ))),
     );
     assert_eq!(failed_state.sessions().len(), 1);
-    assert!(failed_state.history().iter().any(|entry| {
-        entry.invocation.operation() == Operation::CompleteSessionWithoutRecording
-            && entry.outcome == Outcome::Failure
-    }));
 }
 
 #[test]
@@ -1273,11 +1249,6 @@ fn 完了実績競合は初回clickの計測を保持して最新実績で再送
                 .current_actual_work_seconds,
             300
         );
-        assert_eq!(state.history().len(), 2);
-        assert!(state
-            .history()
-            .iter()
-            .all(|entry| entry.outcome == Outcome::Failure));
 
         let (final_request_id, final_request) =
             complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
@@ -1661,7 +1632,7 @@ fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
 }
 
 #[test]
-fn mutation成功時だけsessionを消し履歴を最新100件へ制限する() {
+fn mutation成功時だけsessionを消す() {
     let storage = FakeStorage::default();
     let mut state = state_with_sessions(&storage, &[TASK_ID]);
     let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -1682,24 +1653,6 @@ fn mutation成功時だけsessionを消し履歴を最新100件へ制限する()
         complete_effect(complete_state.begin_complete_session(&storage, OTHER_TASK_ID));
     complete_state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2)));
     assert!(complete_state.sessions().is_empty());
-
-    for epoch in 0..101 {
-        state.tick(epoch);
-        let request_id = bootstrap_effect(state.request_bootstrap());
-        state.apply_bootstrap_result(
-            request_id,
-            Err(ServerFailure::Operation(web_error(
-                "failure",
-                RetryAdvice::Retry,
-            ))),
-        );
-    }
-    assert_eq!(state.history().len(), 100);
-    assert_eq!(state.history().front().unwrap().occurred_at_epoch_ms, 1);
-    assert!(!state
-        .history()
-        .iter()
-        .any(|entry| entry.summary.contains("network detail")));
 }
 
 #[test]

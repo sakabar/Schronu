@@ -47,14 +47,6 @@ fn button_hover_styles_are_limited_to_hover_capable_fine_pointers() {
 }
 
 #[test]
-fn history_invocation_wraps_long_arguments_inside_the_viewport() {
-    let invocation = block_body(MAIN_CSS, ".history-invocation");
-
-    assert!(invocation.contains("overflow-wrap: anywhere;"));
-    assert!(invocation.contains("min-width: 0;"));
-}
-
-#[test]
 fn loading_overlay_blocks_the_viewport_and_respects_reduced_motion() {
     let overlay = block_body(MAIN_CSS, ".loading-overlay");
     assert!(overlay.contains("position: fixed;"));
@@ -82,7 +74,7 @@ fn navigation_is_fixed_safe_and_never_covers_page_content() {
     assert!(tabs.contains(
         "min-height: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom));"
     ));
-    assert!(tabs.contains("grid-template-columns: repeat(5, minmax(0, 1fr));"));
+    assert!(tabs.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
 
     let tab_button = block_body(MAIN_CSS, ".tab-button");
     assert!(tab_button.contains("min-height: max(2.75rem, 44px);"));

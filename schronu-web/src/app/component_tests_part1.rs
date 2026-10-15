@@ -81,12 +81,12 @@ fn navigation_root(props: NavigationProps) -> dioxus::prelude::Element {
 }
 
 #[test]
-fn 固定navigationは5tabの選択状態とcallbackを提供する() {
+fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let mut dom = VirtualDom::new_with_props(
         navigation_root,
         NavigationProps {
-            active_tab: ActiveTab::History,
+            active_tab: ActiveTab::Load,
             events: Arc::clone(&events),
         },
     );
@@ -94,13 +94,13 @@ fn 固定navigationは5tabの選択状態とcallbackを提供する() {
     let html = dioxus::ssr::render(&dom);
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
-    assert_eq!(html.matches("class=\"tab-button").count(), 5, "{html}");
-    for label in ["セッション", "一覧", "作成", "負荷", "発火履歴"] {
+    assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
+    for label in ["セッション", "一覧", "作成", "負荷"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
     assert!(
         html.contains(
-            "class=\"tab-button is-selected\" type=\"button\" aria-pressed=true>発火履歴"
+            "class=\"tab-button is-selected\" type=\"button\" aria-pressed=true>負荷"
         ),
         "{html}"
     );
@@ -111,7 +111,6 @@ fn 固定navigationは5tabの選択状態とcallbackを提供する() {
     assert_eq!(
         *events.lock().unwrap(),
         [
-            ActiveTab::History,
             ActiveTab::Load,
             ActiveTab::Create,
             ActiveTab::List,
@@ -1015,7 +1014,7 @@ fn 負荷tab進入と更新はload_bandを要求する() {
             &mut state,
             &storage,
             1_000,
-            ComponentAction::SwitchTab(ActiveTab::History),
+            ComponentAction::SwitchTab(ActiveTab::Session),
         ),
         ClientEffect::None
     );
@@ -1245,7 +1244,6 @@ fn 一覧のセッション追加後はセッションtabへ切り替えられse
         state.carry_lock_mode(),
         crate::client::carry_lock::CarryLockMode::Normal
     );
-    assert!(state.history().is_empty());
     assert!(task_name_filter.is_empty());
     assert_eq!(date_input.text(), "2026/9/16");
     assert_eq!(date_input.error(), None);
@@ -1371,7 +1369,6 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     assert_eq!(date_input.submit("2026-09-05"), None);
     assert!(date_input.error().is_some());
     orchestrator.edit_task_name_filter(&storage, "実装".to_owned());
-    let previous_history_len = orchestrator.state().unwrap().history().len();
 
     let effect = orchestrator.start_session_from_list(
         &storage,
@@ -1384,7 +1381,6 @@ fn 製品orchestratorの一覧追加は成功時だけ検索を解除し日付�
     assert_eq!(effect, ClientEffect::None);
     assert_eq!(state.active_tab(), ActiveTab::Session);
     assert_eq!(state.selected_logical_date(), Some("2026-09-16"));
-    assert_eq!(state.history().len(), previous_history_len);
     assert!(orchestrator.task_name_filter().is_empty());
     assert_eq!(date_input.text(), "不正");
     assert!(date_input.error().is_some());
@@ -1996,7 +1992,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        history,
         warnings,
         safety_warning,
         display_error,
@@ -2014,7 +2009,6 @@ fn carry_lock_warningはbrowser_page_modelのwarningsへ合流する() {
         rows,
         active_task_ids,
         dates,
-        history,
         warnings,
         safety_warning,
         display_error,
