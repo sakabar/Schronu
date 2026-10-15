@@ -73,6 +73,7 @@ cargo test --locked
 ### Commitとreview
 
 - commitは1つの変更理由を説明でき、単体でrevertできる単位にする。機械的な移動・rename・formattingは挙動変更と分ける。Red test専用commitや指摘ごとのcommitは必須としない。
+- commit前に受入条件ごとの変更理由を列挙し、各変更を単独でrevertしても他の受入条件を維持できるか確認する。独立してrevertできる変更は、同じ依頼・計画・PRに含まれていても別commitに分け、対応するtestと文書を各commitへ含める。機能削除と保存済みstateの復元仕様変更も別の変更理由として判定する。
 - commit前に`git diff --check`と差分を確認する。既存testを理由なく削除・緩和したり、test専用分岐や不要な公開APIを製品コードへ加えたり、層の依存方向を悪化させたりしない。
 - 差分の規模とリスクに応じてreviewを行う。公開API、schema、security、transaction、外部I/Oなどの境界を変える場合は、その契約と失敗経路を重点的に確認する。
 - 大きなfile、fixtureやmockの肥大化、重複する検証・error変換、1moduleへの責務集中を見つけたら構造を再検討する。行数だけを停止条件にせず、分割の要否と残存負債を説明する。
