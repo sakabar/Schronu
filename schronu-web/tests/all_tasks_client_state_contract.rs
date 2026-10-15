@@ -1,6 +1,5 @@
 use schronu_web::client::state::{
-    load_client_state, AllTasksStatus, ClientEffect, ListSelection, Outcome,
-    ServerActionInvocation, ServerFailure,
+    load_client_state, AllTasksStatus, ClientEffect, ListSelection, ServerFailure,
 };
 use schronu_web::{
     AllTaskPage, AllTaskRow, DeferMode, DeferPlan, ListAllTasksRequest, SessionTask, WebSuccess,
@@ -119,7 +118,6 @@ fn all一覧は失敗時に途中行を破棄しretryを先頭から開始する
         state.all_tasks_failure_message(),
         Some("通信に失敗しました。時間をおいて再試行してください。")
     );
-    assert_eq!(state.history().back().unwrap().outcome, Outcome::Failure);
 
     let _ = state.select_logical_date("2026-09-06");
     assert_eq!(state.list_selection(), ListSelection::Date);
@@ -131,7 +129,7 @@ fn all一覧は失敗時に途中行を破棄しretryを先頭から開始する
 }
 
 #[test]
-fn 日付選択中もall取得を継続し古いresponseは履歴だけに残す() {
+fn 日付選択中もall取得を継続し古いresponseは無視する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 0).unwrap();
     let (request_id, request) = all_effect(state.select_all_tasks());
@@ -170,13 +168,6 @@ fn 日付選択中もall取得を継続し古いresponseは履歴だけに残す
         Ok(page(vec![all_row(1)], None)),
     );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
-    let history = state.history().back().unwrap();
-    assert_eq!(
-        history.invocation,
-        ServerActionInvocation::ListAllTasks(request)
-    );
-    assert_eq!(history.outcome, Outcome::Success);
-    assert!(history.summary.contains("古い応答"));
 }
 
 #[test]

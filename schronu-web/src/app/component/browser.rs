@@ -7,7 +7,6 @@ use super::super::component_models::{
 };
 use super::super::component_runtime::{ComponentAction, ComponentOrchestrator};
 use super::super::create_task_view::CreateTaskView;
-use super::super::history_view::HistoryView;
 use super::super::list_view::{AllTasksViewStatus, CompletedListView, ListModeControl, ListView};
 use super::super::load_view::LoadView;
 use super::super::long_press_browser::BrowserLongPressScheduler;
@@ -121,7 +120,6 @@ pub(super) fn BrowserApp() -> Element {
         all_tasks_failure,
         active_task_ids,
         dates,
-        history,
         warnings,
         safety_warning,
         display_error,
@@ -379,8 +377,6 @@ pub(super) fn BrowserApp() -> Element {
                         dispatch_action(client, ComponentAction::SelectLoadDate(date));
                     },
                 }
-            } else {
-                HistoryView { entries: history }
             }
         }
         if server_effect_in_flight {

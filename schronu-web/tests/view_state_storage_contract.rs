@@ -52,6 +52,48 @@ fn view_stateは最後の一覧と画面入力をversion付きで復元する() 
 }
 
 #[test]
+fn 存在しない保存tabは他の画面状態を保ってセッションへ復元する() {
+    let storage = MemoryStorage::default();
+    let state = view_state(
+        "2026-09-09",
+        vec![row("00000000-0000-4000-8000-000000000001", "契約タスク")],
+    );
+    store_view_state(&storage, &state).unwrap();
+    let original: serde_json::Value =
+        serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
+
+    for tab in ["history", "future_tab"] {
+        let mut saved = original.clone();
+        saved["active_tab"] = serde_json::json!(tab);
+        *storage.value.borrow_mut() = Some(saved.to_string());
+
+        let loaded = load_view_state(&storage);
+        assert!(loaded.warning().is_none());
+        assert_eq!(
+            loaded.state(),
+            Some(&ViewState {
+                active_tab: ActiveTab::Session,
+                ..state.clone()
+            })
+        );
+    }
+}
+
+#[test]
+fn 保存tabが文字列でない場合は画面状態全体を復元しない() {
+    let storage = MemoryStorage::default();
+    store_view_state(&storage, &view_state("2026-09-09", Vec::new())).unwrap();
+    let mut saved: serde_json::Value =
+        serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
+    saved["active_tab"] = serde_json::json!(42);
+    *storage.value.borrow_mut() = Some(saved.to_string());
+
+    let loaded = load_view_state(&storage);
+    assert!(loaded.state().is_none());
+    assert!(loaded.warning().is_some());
+}
+
+#[test]
 fn view_state_v3は完了modeと空成功を含むactive_listを復元する() {
     let storage = MemoryStorage::default();
     let state = ViewState {
@@ -214,6 +256,14 @@ fn view_state_v2は予定modeとscheduled_listへ移行する() {
         Some(StoredActiveList::Scheduled { .. })
     ));
     assert!(loaded.warning().is_none());
+
+    let mut saved: serde_json::Value =
+        serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
+    saved["active_tab"] = serde_json::json!("removed_tab");
+    *storage.value.borrow_mut() = Some(saved.to_string());
+    let migrated = load_view_state(&storage);
+    assert_eq!(migrated.state().unwrap().active_tab, ActiveTab::Session);
+    assert_eq!(migrated.state().unwrap().list, state.list);
 }
 
 #[test]

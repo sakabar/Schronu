@@ -72,7 +72,6 @@ impl ClientState {
     ) -> ClientEffect {
         let invocation = ServerActionInvocation::LoadBand;
         if self.load.latest_request_id != Some(request_id) {
-            self.record_stale_response(invocation, result.is_ok());
             return ClientEffect::None;
         }
         self.load.latest_request_id = None;
@@ -81,14 +80,13 @@ impl ClientState {
             Ok(success) => {
                 let observed_at = success.snapshot.observed_at_epoch_ms;
                 if self.apply_snapshot_metadata(success.snapshot).is_none() {
-                    self.record_stale_response(invocation, true);
                     return ClientEffect::None;
                 }
                 self.load.rows = success.data.band_days;
                 self.load.routine_load_report = Some(success.data.routine_load);
                 self.load.observed_at_epoch_ms = Some(observed_at);
                 self.load.error = None;
-                self.record_server(invocation, Outcome::Success, "負荷を更新しました。");
+                self.record_server_success(invocation);
             }
             Err(error) => {
                 self.load.error = Some(match &error {

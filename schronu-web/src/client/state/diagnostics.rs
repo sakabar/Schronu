@@ -115,14 +115,12 @@ pub(super) fn is_read_operation(operation: Operation) -> bool {
 
 pub(super) struct DiagnosticsState {
     pub(super) display_error: Option<DisplayError>,
-    pub(super) history: VecDeque<OperationHistoryEntry>,
 }
 
 impl DiagnosticsState {
     pub(super) fn new() -> Self {
         Self {
             display_error: None,
-            history: VecDeque::new(),
         }
     }
 }
@@ -184,59 +182,18 @@ impl ClientState {
                 task_id: task_id.clone(),
             },
         });
-        self.record_server(invocation, Outcome::Failure, "server操作に失敗しました。");
     }
 
-    pub(super) fn record_server(
-        &mut self,
-        invocation: ServerActionInvocation,
-        outcome: Outcome,
-        summary: &str,
-    ) {
+    pub(super) fn record_server_success(&mut self, invocation: ServerActionInvocation) {
         let operation = invocation.operation();
         let task_id = invocation.task_id();
-        if outcome == Outcome::Success
-            && self
-                .diagnostics
-                .display_error
-                .as_ref()
-                .is_some_and(|error| error.is_resolved_by_server_success(operation, task_id))
+        if self
+            .diagnostics
+            .display_error
+            .as_ref()
+            .is_some_and(|error| error.is_resolved_by_server_success(operation, task_id))
         {
             self.diagnostics.display_error = None;
         }
-        self.record_history(invocation, outcome, summary);
-    }
-
-    pub(super) fn record_stale_response(
-        &mut self,
-        invocation: ServerActionInvocation,
-        succeeded: bool,
-    ) {
-        self.record_history(
-            invocation,
-            if succeeded {
-                Outcome::Success
-            } else {
-                Outcome::Failure
-            },
-            "古い応答を表示へ適用せず受信しました。",
-        );
-    }
-
-    fn record_history(
-        &mut self,
-        invocation: ServerActionInvocation,
-        outcome: Outcome,
-        summary: &str,
-    ) {
-        super::super::history::push_history(
-            &mut self.diagnostics.history,
-            OperationHistoryEntry {
-                occurred_at_epoch_ms: self.tick_now_epoch_ms,
-                invocation,
-                outcome,
-                summary: summary.to_owned(),
-            },
-        );
     }
 }

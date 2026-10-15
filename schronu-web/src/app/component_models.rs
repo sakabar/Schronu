@@ -1,10 +1,7 @@
 use super::carry_lock_view::CarryLockViewModel;
 use super::component_runtime::project_date_button_models;
-use super::history_view::HistoryEntryViewModel;
 use super::list_view::DateButtonViewModel;
-use crate::client::state::{
-    ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection, Outcome,
-};
+use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::view_projection::{
     project_list_rows_for_browser, project_session_cards_for_browser,
     project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
@@ -31,7 +28,6 @@ pub(crate) struct BrowserPageModel {
     pub all_tasks_failure: Option<String>,
     pub active_task_ids: Vec<String>,
     pub dates: Vec<DateButtonViewModel>,
-    pub history: Vec<HistoryEntryViewModel>,
     pub warnings: Vec<String>,
     pub safety_warning: Option<&'static str>,
     pub display_error: Option<String>,
@@ -100,7 +96,6 @@ impl BrowserPageModel {
                 .map(|session| session.task_id.clone())
                 .collect(),
             dates: project_date_button_models(state),
-            history: history_view_models(state),
             warnings: state.all_storage_warnings(),
             safety_warning: state.mutation_safety_warning(),
             display_error: state
@@ -133,37 +128,4 @@ pub(crate) fn browser_monotonic_now_ms() -> u64 {
         .and_then(|window| window.performance())
         .map(|performance| performance.now() as u64)
         .expect("browser Performance API must be available")
-}
-
-fn history_view_models(state: &ClientState) -> Vec<HistoryEntryViewModel> {
-    state
-        .history()
-        .iter()
-        .rev()
-        .map(|entry| HistoryEntryViewModel {
-            occurred_at_hh_mm_ss: browser_hh_mm_ss(entry.occurred_at_epoch_ms),
-            invocation: entry.invocation.to_string(),
-            outcome: match entry.outcome {
-                Outcome::Success => "success",
-                Outcome::Failure => "failure",
-            }
-            .to_owned(),
-            summary: entry.summary.clone(),
-            failed: entry.outcome == Outcome::Failure,
-        })
-        .collect()
-}
-
-fn browser_hh_mm_ss(epoch_ms: i64) -> String {
-    let date = js_sys::Date::new_0();
-    date.set_time(epoch_ms as f64);
-    if !date.get_time().is_finite() {
-        return "--:--:--".to_owned();
-    }
-    format!(
-        "{:02}:{:02}:{:02}",
-        date.get_hours(),
-        date.get_minutes(),
-        date.get_seconds()
-    )
 }

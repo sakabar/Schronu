@@ -27,9 +27,6 @@ mod effect_dispatcher;
 mod effect_dispatcher_tests;
 #[cfg(feature = "server")]
 mod environment_web_operations;
-pub(crate) mod history_view;
-#[cfg(test)]
-mod history_view_tests;
 pub(crate) mod list_view;
 #[cfg(test)]
 mod list_view_tests;

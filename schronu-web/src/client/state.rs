@@ -7,7 +7,7 @@ mod session_state;
 use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
-pub use super::history::{Operation, OperationHistoryEntry, Outcome, ServerActionInvocation};
+pub use super::invocation::{Operation, ServerActionInvocation};
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::{buffer_timing_with_sessions, session_timing};
 use super::view_state::ViewState;
@@ -20,18 +20,29 @@ pub use all_tasks::{AllTasksStatus, ListSelection};
 use diagnostics::DiagnosticsState;
 pub use diagnostics::DisplayError;
 use read_state::ReadState;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use session_state::SessionState;
-use std::collections::VecDeque;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActiveTab {
     Session,
     List,
     Create,
     Load,
-    History,
+}
+
+impl<'de> Deserialize<'de> for ActiveTab {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let tab = String::deserialize(deserializer)?;
+        Ok(match tab.as_str() {
+            "session" => Self::Session,
+            "list" => Self::List,
+            "create" => Self::Create,
+            "load" => Self::Load,
+            _ => Self::Session,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -241,10 +252,6 @@ impl ClientState {
 
     pub fn display_error(&self) -> Option<&DisplayError> {
         self.diagnostics.display_error.as_ref()
-    }
-
-    pub fn history(&self) -> &VecDeque<OperationHistoryEntry> {
-        &self.diagnostics.history
     }
 
     pub fn tick_now_epoch_ms(&self) -> i64 {

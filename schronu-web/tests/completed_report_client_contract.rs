@@ -70,7 +70,7 @@ fn list_modeは予定をdefaultにして切替先endpointを1回選ぶ() {
 
 #[test]
 fn 別tabから一覧へ戻ると選択日を維持して予定modeを取得する() {
-    for other_tab in [ActiveTab::Session, ActiveTab::Load, ActiveTab::History] {
+    for other_tab in [ActiveTab::Session, ActiveTab::Load, ActiveTab::Create] {
         let storage = FakeStorage::default();
         let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
         let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -203,7 +203,7 @@ fn 完了modeではmutation成功後も完了一覧を再取得する() {
 }
 
 #[test]
-fn 完了一覧errorは既存rowを保持して履歴へ記録する() {
+fn 完了一覧errorは既存rowを保持して再試行可能とする() {
     let storage = FakeStorage::default();
     let mut state = schronu_web::client::state::load_client_state(&storage, 0).unwrap();
     let bootstrap_id = bootstrap_effect(state.request_bootstrap());
@@ -227,13 +227,6 @@ fn 完了一覧errorは既存rowを保持して履歴へ記録する() {
     assert_eq!(state.completed_rows()[0].task_name, "保持");
     assert!(state.has_completed_list());
     assert!(state.display_error().unwrap().retryable());
-    assert!(state
-        .history()
-        .back()
-        .unwrap()
-        .invocation
-        .to_string()
-        .contains("list_completed_tasks(logical_date: \"2026-09-16\")"));
 }
 
 #[test]

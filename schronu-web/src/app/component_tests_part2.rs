@@ -18,7 +18,6 @@ fn component_actionはrank非0の手動session追加を拒否する() {
     );
 
     assert!(state.sessions().is_empty());
-    assert!(state.history().is_empty());
 }
 
 #[test]
@@ -235,7 +234,7 @@ fn 背景更新中の完了modeから一覧への復帰は再取得を発行し�
                 available_seconds: 600,
                 recorded_percentage: Some(20),
             }),
-            active_tab: ActiveTab::History,
+            active_tab: ActiveTab::Session,
             task_name_filter: String::new(),
             date_input_text: String::new(),
         },
@@ -256,7 +255,7 @@ fn 背景更新中の完了modeから一覧への復帰は再取得を発行し�
         ),
         ClientEffect::None
     );
-    assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::Session);
     assert_eq!(
         orchestrator.state().unwrap().list_mode(),
         crate::client::state::ListMode::Completed
@@ -398,13 +397,43 @@ fn local画面変更はview_stateへ保存して次のmountで復元する() {
     orchestrator.action(
         &storage,
         2_000,
-        ComponentAction::SwitchTab(ActiveTab::History),
+        ComponentAction::SwitchTab(ActiveTab::Session),
     );
 
     let mut restored = ComponentOrchestrator::new();
     restored.mount(&storage, 3_000);
-    assert_eq!(restored.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(restored.state().unwrap().active_tab(), ActiveTab::Session);
     assert_eq!(restored.task_name_filter(), "実装");
+    assert_eq!(restored.date_input().text(), "9/20");
+}
+
+#[test]
+fn 存在しない保存tabからmountしても入力を維持する() {
+    let storage = MemoryStorage::default();
+    let mut original = mounted_orchestrator(&storage);
+    original.edit_task_name_filter(&storage, "契約タスク".to_owned());
+    original.edit_date_input(&storage, "9/20".to_owned());
+    let mut saved: serde_json::Value = serde_json::from_str(
+        storage
+            .values
+            .borrow()
+            .get(crate::client::view_state::VIEW_STATE_STORAGE_KEY)
+            .unwrap(),
+    )
+    .unwrap();
+    saved["active_tab"] = serde_json::json!("removed_tab");
+    storage.values.borrow_mut().insert(
+        crate::client::view_state::VIEW_STATE_STORAGE_KEY.to_owned(),
+        saved.to_string(),
+    );
+
+    let mut restored = ComponentOrchestrator::new();
+    assert!(matches!(
+        restored.mount(&storage, 3_000),
+        ClientEffect::Bootstrap { .. }
+    ));
+    assert_eq!(restored.state().unwrap().active_tab(), ActiveTab::Session);
+    assert_eq!(restored.task_name_filter(), "契約タスク");
     assert_eq!(restored.date_input().text(), "9/20");
 }
 
@@ -793,7 +822,7 @@ fn 共通chromeはsessionだけに表示する() {
     for (active_tab, visible) in [
         (ActiveTab::Session, true),
         (ActiveTab::List, false),
-        (ActiveTab::History, false),
+        (ActiveTab::Create, false),
     ] {
         let mut dom = VirtualDom::new_with_props(chrome_root, active_tab);
         dom.rebuild_in_place();
@@ -929,14 +958,14 @@ fn 最後のsessionを即時削除した時だけsessionから一覧tabへ移る
     other.action(
         &other_storage,
         2_000,
-        ComponentAction::SwitchTab(ActiveTab::History),
+        ComponentAction::SwitchTab(ActiveTab::Create),
     );
     other.action(
         &other_storage,
         2_001,
         ComponentAction::DiscardSession(RECORD_ID.to_owned()),
     );
-    assert_eq!(other.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(other.state().unwrap().active_tab(), ActiveTab::Create);
 }
 
 #[test]
@@ -1257,7 +1286,7 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
     other.action(
         &other_storage,
         2_001,
-        ComponentAction::SwitchTab(ActiveTab::History),
+        ComponentAction::SwitchTab(ActiveTab::Create),
     );
     assert!(matches!(
         other.apply_response(
@@ -1270,7 +1299,7 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
         ClientEffect::ListTasks { .. }
     ));
     assert!(other.state().unwrap().sessions().is_empty());
-    assert_eq!(other.state().unwrap().active_tab(), ActiveTab::History);
+    assert_eq!(other.state().unwrap().active_tab(), ActiveTab::Create);
 }
 
 fn mounted_orchestrator(storage: &MemoryStorage) -> ComponentOrchestrator {

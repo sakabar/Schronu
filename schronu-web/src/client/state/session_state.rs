@@ -489,7 +489,6 @@ impl ClientState {
                         current_actual_work_seconds,
                     );
                     self.clear_superseded_completion_error(&task_id);
-                    self.record_server(invocation, Outcome::Failure, "server操作に失敗しました。");
                 } else {
                     self.sessions.completion_conflicts.remove(&task_id);
                     self.finish_failed_mutation(&task_id, invocation, error);
@@ -700,7 +699,7 @@ impl ClientState {
         invocation: ServerActionInvocation,
         actual_work_seconds: Option<i64>,
     ) {
-        self.record_server(invocation, Outcome::Success, "server操作が完了しました。");
+        self.record_server_success(invocation);
         if self
             .sessions
             .mutation_safety
