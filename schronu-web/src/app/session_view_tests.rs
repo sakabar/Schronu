@@ -23,9 +23,15 @@ fn test_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
     let open_events = Arc::clone(&props.events);
+    let linkable_task_ids = props
+        .sessions
+        .iter()
+        .map(|session| session.task_id.clone())
+        .collect();
     rsx! {
         SessionView {
             sessions: props.sessions,
+            linkable_task_ids,
             global_blocked: props.global_blocked,
             mutations_locked: false,
             on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
@@ -47,6 +53,45 @@ fn sessionのtask名はlink操作を対象idで通知する() {
     assert!(html.contains("aria-label=\"コピーをせん: 開\""), "{html}");
     dispatch_click(&dom, ids[0]);
     assert_eq!(*events.lock().unwrap(), ["open:task-link"]);
+}
+
+#[test]
+fn url未確認または存在しないtask名は操作できない通常の文字になる() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        no_link_root,
+        RootProps {
+            sessions: vec![card("without-link")],
+            global_blocked: false,
+            events: Arc::clone(&events),
+        },
+    );
+    let ids = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("コピーをせん"), "{html}");
+    assert!(!html.contains("session-task-link"), "{html}");
+    assert!(!html.contains("コピーをせん ↗"), "{html}");
+    for id in ids {
+        dispatch_click(&dom, id);
+    }
+    assert!(!events
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|event| event.starts_with("open:")));
+}
+
+fn no_link_root(props: RootProps) -> Element {
+    let events = Arc::clone(&props.events);
+    rsx! {
+        SessionView {
+            sessions: props.sessions,
+            global_blocked: props.global_blocked,
+            on_auto_session: move |_| {},
+            on_action: move |_: SessionAction| {},
+            on_open_link: move |task_id: String| events.lock().unwrap().push(format!("open:{task_id}")),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -106,9 +151,15 @@ fn locked_root(props: RootProps) -> Element {
     let auto_events = Arc::clone(&props.events);
     let action_events = Arc::clone(&props.events);
     let open_events = Arc::clone(&props.events);
+    let linkable_task_ids = props
+        .sessions
+        .iter()
+        .map(|session| session.task_id.clone())
+        .collect();
     rsx! {
         SessionView {
             sessions: props.sessions,
+            linkable_task_ids,
             global_blocked: props.global_blocked,
             mutations_locked: true,
             on_auto_session: move |_| auto_events.lock().unwrap().push("auto".to_owned()),
@@ -175,6 +226,13 @@ fn build_dom(
     global_blocked: bool,
     events: Arc<Mutex<Vec<String>>>,
 ) -> (VirtualDom, Vec<ElementId>) {
+    let card_listener_count = sessions.first().map(|session| {
+        if session.completion_conflict.is_some() {
+            3
+        } else {
+            7
+        }
+    });
     let mut dom = VirtualDom::new_with_props(
         test_root,
         RootProps {
@@ -183,7 +241,13 @@ fn build_dom(
             events,
         },
     );
-    let listener_ids = rebuild_with_click_listeners(&mut dom);
+    let mut listener_ids = rebuild_with_click_listeners(&mut dom);
+    if let Some(card_listener_count) = card_listener_count {
+        // Conditional task-name buttons are emitted after each card's static action buttons.
+        for card_ids in listener_ids.chunks_mut(card_listener_count) {
+            card_ids.rotate_right(1);
+        }
+    }
     (dom, listener_ids)
 }
 

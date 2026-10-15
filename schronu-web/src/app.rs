@@ -46,6 +46,8 @@ mod projection_boundary_tests;
 mod routine_load_view;
 #[cfg(test)]
 mod routine_load_view_tests;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod session_links;
 pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;
