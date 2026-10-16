@@ -154,14 +154,14 @@ pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<Acti
                 onclick: move |_| on_switch.call(ActiveTab::List),
             }
             TabButton {
-                label: "作成",
-                selected: active_tab == ActiveTab::Create,
-                onclick: move |_| on_switch.call(ActiveTab::Create),
-            }
-            TabButton {
                 label: "負荷",
                 selected: active_tab == ActiveTab::Load,
                 onclick: move |_| on_switch.call(ActiveTab::Load),
+            }
+            TabButton {
+                label: "作成",
+                selected: active_tab == ActiveTab::Create,
+                onclick: move |_| on_switch.call(ActiveTab::Create),
             }
         }
     }

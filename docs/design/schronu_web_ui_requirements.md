@@ -11,7 +11,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ## 2. 対象範囲
 
 - 現行`schronu-web`の画面、component構造、CSS、`today_text`表示、60秒更新は全面的に置換してよい。
-- Web UIは「セッション」「一覧」「作成」「負荷」の4画面を提供する。
+- Web UIは「セッション」「一覧」「負荷」「作成」の4画面を提供する。
 - taskの取得・更新にはSchronuのapplication層とrepository transactionを使用する。
 - CLIおよびMCPの外部契約は、REQ-COMPAT-002で明示するCLI`働`の変更を除いて維持する。
 - 認証、外部公開、端末間同期、別browser tab間の即時同期は対象外とする。
@@ -34,7 +34,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 ### 4.1 共通画面
 
-- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「作成」「負荷」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
+- **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「負荷」「作成」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
 - **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし「負荷」へ入る時は最新の負荷を取得し、完了modeから別tabを経て「一覧」へ戻る時と作成成功後に「一覧」へ入る時は選択日の予定一覧を取得すること。tab barは通信中overlayより背面に配置すること。
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 
@@ -222,7 +222,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 | ID | 受入条件 |
 | --- | --- |
-| AC-001 | viewport下端に「セッション」「一覧」「作成」「負荷」の固定tabが表示され、desktopで44px以上、46rem以下で40px以上の均等幅button、safe area、本文との非重複、選択indicatorと`aria-pressed`を維持し、利用者向け文言に「フォーカス」が残っていない。 |
+| AC-001 | viewport下端に「セッション」「一覧」「負荷」「作成」の固定tabが表示され、desktopで44px以上、46rem以下で40px以上の均等幅button、safe area、本文との非重複、選択indicatorと`aria-pressed`を維持し、利用者向け文言に「フォーカス」が残っていない。 |
 | AC-002 | 2件以上のセッションが同時に1秒ごとに進み、reload後も元の開始時刻から復元される。server buffer表示は各セッションの未送信進捗秒を個別に加算し、終了操作中の加算は補正後の完了予定時刻と終了click時刻の早い方で打ち切る。 |
 | AC-003 | 15分見積、開始時実績5分のtaskはセッション開始直後に33%となり、100%および133%で指定どおりのbarを表示する。30分見積、開始時実績40分のtaskは開始直後から133%かつ残り20分となる。いずれの進捗でもtrack全幅の3分の2に100%境界線を表示する。 |
 | AC-004 | 残り・超過`MM:SS`がtiming領域の主表示となり、開始`HH:MM`、完了予定`HH:MM`、開始時実績`MM:SS`が補助情報として表示され、320px幅でもcardが横へ超過しない。各値をassistive technologyが識別でき、見積0のtaskは`--%`と赤い超過時間を表示し、長時間の分表示は59を超えても欠落しない。 |

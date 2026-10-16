@@ -95,9 +95,12 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
 
     assert!(html.contains("<nav class=\"tabs\""), "{html}");
     assert_eq!(html.matches("class=\"tab-button").count(), 4, "{html}");
-    for label in ["セッション", "一覧", "作成", "負荷"] {
+    for label in ["セッション", "一覧", "負荷", "作成"] {
         assert!(html.contains(label), "missing {label}: {html}");
     }
+    let tab_positions = ["セッション", "一覧", "負荷", "作成"]
+        .map(|label| html.find(label).expect("tab label is rendered"));
+    assert!(tab_positions.windows(2).all(|positions| positions[0] < positions[1]), "{html}");
     assert!(
         html.contains(
             "class=\"tab-button is-selected\" type=\"button\" aria-pressed=true>負荷"
@@ -111,8 +114,8 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     assert_eq!(
         *events.lock().unwrap(),
         [
-            ActiveTab::Load,
             ActiveTab::Create,
+            ActiveTab::Load,
             ActiveTab::List,
             ActiveTab::Session
         ]
