@@ -469,10 +469,15 @@ impl ClientState {
             Ok(snapshot) => {
                 self.sessions.completion_conflicts.remove(&task_id);
                 self.clear_superseded_completion_error(&task_id);
+                self.load.refresh_pending = true;
                 let follow_up = self.apply_mutation_snapshot_and_request_list(snapshot);
                 self.finish_committed_mutation(storage, &task_id, invocation, None);
                 let _ = self.finish_mutation_safety(storage, false);
-                return follow_up;
+                return if follow_up == ClientEffect::None {
+                    self.request_deferred_load_band()
+                } else {
+                    follow_up
+                };
             }
             Err(error) => {
                 let keep_safety = keeps_safety_marker(&error);

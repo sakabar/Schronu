@@ -8,7 +8,7 @@ pub(super) struct LoadState {
     pub(super) loading: bool,
     pub(super) error: Option<String>,
     pub(super) latest_request_id: Option<u64>,
-    pub(super) after_bootstrap: bool,
+    pub(super) refresh_pending: bool,
 }
 
 impl LoadState {
@@ -20,15 +20,15 @@ impl LoadState {
             loading: false,
             error: None,
             latest_request_id: None,
-            after_bootstrap: false,
+            refresh_pending: false,
         }
     }
 }
 
 impl ClientState {
     pub(super) fn request_deferred_load_band(&mut self) -> ClientEffect {
-        if self.load.after_bootstrap {
-            self.load.after_bootstrap = false;
+        if self.load.refresh_pending {
+            self.load.refresh_pending = false;
             self.request_load_band()
         } else {
             ClientEffect::None

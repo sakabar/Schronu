@@ -249,6 +249,8 @@ RoutineLoadRow {
 
 初期の全体表は「間隔 / 28日合計 / 発生日数 / 1日平均 / プロジェクト・繰返」を維持する。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
+負荷は手動の「更新」、reloadによる負荷tab復元、task完了成功後に取得する。負荷tab復元はbootstrapと保存一覧の更新後に取得する。完了成功後は表示tabにかかわらず既存のactive mode一覧取得が終了してから`load_band`を1回送る。一覧取得失敗時も負荷取得を続行し、記録あり・記録なし・競合解消後の完了を同じ経路で処理する。完了失敗、未解消の競合、重複応答、記録して解除、作業区間完了、先送りでは追加の負荷取得を行わない。負荷取得失敗時は直前のdataと更新時刻を保持し、inline errorと手動更新による再試行を提供する。
+
 7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 
 `segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。`display_task_name`はapplication層がCLIと同じ共通関数で生成し、`total_work_seconds > scheduled_work_seconds`の場合だけ、両秒数を個別に分へ切り上げた`<segment分/total分>`を正規task名へ直結する。日付別・全件のclientはこの表示名を再計算・再整形せず共通`ListRowViewModel`へ投影し、task名cellとそのARIA labelだけに使用する。検索、セッション保存、先送り確認、操作labelはprefixを含まない`task.task_name`を使用する。旧保存payloadで`display_task_name`が欠落する場合だけ正規task名へfallbackし、clientで分割表示を再生成しない。保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
@@ -781,9 +783,9 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 計測を破棄して解除 | session削除成功後にactive mode一覧取得 | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後にactive mode一覧取得 | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
-| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得 | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得 | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後にactive mode一覧取得 | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得、終了後に`load_band` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後にactive mode一覧取得、終了後に`load_band` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
 | 完了実績競合の計測再開 | なし | なし | 確認待ちを除いた開始時刻と最新実績でsessionを原子的に置換 | なし | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
 | 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
@@ -905,6 +907,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 
 - 固定された「セッション」「一覧」「負荷」「作成」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、分母0の日付cellが差分と`--`表示かつ超過色になること、差分の正負と一致、今日の残り容量差分、曜日見出しと日付表の0容量表示、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅の3行表示と横はみ出しなし、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
+- 負荷tabの初回進入・再進入・再選択は通信せず、手動更新とreloadでの復元時に取得することを確認する。task完了成功後は表示tabと一覧modeにかかわらず一覧取得終了後に負荷を1回取得し、一覧失敗時も続行すること、完了失敗・競合・重複応答で追加取得せず、負荷取得失敗時は直前表示と再試行を維持することをcomponentの製品応答経路で検証する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・作成・負荷でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
