@@ -987,7 +987,7 @@ fn logical_date変更snapshotへも未送信進捗を足す() {
 }
 
 #[test]
-fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加requestもしない() {
+fn snapshotとlistはlogical_date反転時にstale一覧を消して負荷だけ追加取得する() {
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 10).unwrap();
     let bootstrap_request_id = bootstrap_effect(state.request_bootstrap());
@@ -1014,7 +1014,7 @@ fn snapshotとlistはlogical_date反転時にstale一覧を保持せず追加req
         }),
     );
 
-    assert_eq!(effect, ClientEffect::None);
+    assert!(matches!(effect, ClientEffect::LoadBand { .. }));
     assert_eq!(state.date_buttons()[0].logical_date, "2026-09-06");
     assert_eq!(state.selected_logical_date(), None);
     assert!(state.scheduled_rows().is_empty());

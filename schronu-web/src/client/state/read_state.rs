@@ -310,7 +310,7 @@ impl ClientState {
                     .then(|| self.read.selected_logical_date.clone())
                     .flatten();
                 if self.apply_snapshot_metadata(snapshot).is_none() {
-                    return ClientEffect::None;
+                    return self.request_load_band();
                 }
                 self.record_server_success(ServerActionInvocation::Bootstrap);
                 if let Some(logical_date) = cached_logical_date {
@@ -320,11 +320,11 @@ impl ClientState {
                     self.refresh_list_after_bootstrap = false;
                     return self.request_active_list(&current_logical_date);
                 }
-                self.request_deferred_load_band()
+                self.request_load_band()
             }
             Err(error) => {
                 self.record_server_failure(ServerActionInvocation::Bootstrap, error);
-                ClientEffect::None
+                self.request_load_band()
             }
         }
     }
@@ -389,7 +389,7 @@ impl ClientState {
             }
             Err(error) => self.record_server_failure(invocation, error),
         }
-        self.request_deferred_load_band()
+        self.request_load_band()
     }
 
     pub fn apply_completed_list_result(
@@ -451,7 +451,7 @@ impl ClientState {
             }
             Err(error) => self.record_server_failure(invocation, error),
         }
-        self.request_deferred_load_band()
+        self.request_load_band()
     }
 
     pub fn apply_auto_session_result<S: KeyValueStorage>(
@@ -475,7 +475,7 @@ impl ClientState {
             }
             Err(error) => self.record_server_failure(ServerActionInvocation::AutoSession, error),
         }
-        ClientEffect::None
+        self.request_load_band()
     }
 
     pub(super) fn apply_snapshot(&mut self, snapshot: ServerSnapshot) -> Option<bool> {

@@ -1184,7 +1184,7 @@ fn 復元した負荷tabはbootstrap後に負荷を取得する() {
 }
 
 #[test]
-fn 復元した負荷tabはbootstrap失敗時に負荷を取得しない() {
+fn 復元した負荷tabはbootstrap失敗時も負荷を取得する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     state.restore_view_state(&ViewState {
@@ -1201,7 +1201,7 @@ fn 復元した負荷tabはbootstrap失敗時に負荷を取得しない() {
         Err(ServerFailure::Transport("offline".to_owned())),
     );
 
-    assert_eq!(effect, ClientEffect::None);
+    assert!(matches!(effect, ClientEffect::LoadBand { .. }));
 }
 
 fn load_snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
