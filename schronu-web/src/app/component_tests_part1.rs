@@ -988,7 +988,7 @@ fn component_actionは仕様の六操作だけをserver_effectへ変換する() 
 }
 
 #[test]
-fn 負荷tab進入と更新はload_bandを要求する() {
+fn 負荷tab切替は通信せず更新だけがload_bandを要求する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
 
@@ -998,7 +998,7 @@ fn 負荷tab進入と更新はload_bandを要求する() {
         1_000,
         ComponentAction::SwitchTab(ActiveTab::Load),
     );
-    assert!(matches!(entered, ClientEffect::LoadBand { .. }));
+    assert_eq!(entered, ClientEffect::None);
     assert!(!ComponentOrchestrator::new().effect_is_background(&entered));
 
     assert_eq!(
@@ -1022,6 +1022,20 @@ fn 負荷tab進入と更新はload_bandを要求する() {
         ClientEffect::None
     );
 
+    for tab in [
+        ActiveTab::Load,
+        ActiveTab::Load,
+        ActiveTab::Session,
+        ActiveTab::Load,
+    ] {
+        assert_eq!(
+            reduce_component_action_at(
+                &mut state, &storage, 1_000, ComponentAction::SwitchTab(tab),
+            ),
+            ClientEffect::None
+        );
+    }
+
     let refreshed = reduce_component_action_at(
         &mut state,
         &storage,
@@ -1029,6 +1043,22 @@ fn 負荷tab進入と更新はload_bandを要求する() {
         ComponentAction::RefreshLoad,
     );
     assert!(matches!(refreshed, ClientEffect::LoadBand { .. }));
+    let ClientEffect::LoadBand { request_id } = refreshed else {
+        unreachable!()
+    };
+    state.apply_load_band_result(
+        request_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_100),
+            data: load_data(vec![band_day("2026-09-27", 2)]),
+        }),
+    );
+    for tab in [ActiveTab::Session, ActiveTab::Load, ActiveTab::Load] {
+        assert_eq!(state.switch_tab(tab), ClientEffect::None);
+        assert_eq!(state.band_rows()[0].durations.unavailable_seconds, 2);
+        assert_eq!(state.band_observed_at_epoch_ms(), Some(1_100));
+    }
+
 }
 
 #[test]
