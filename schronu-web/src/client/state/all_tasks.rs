@@ -149,7 +149,7 @@ impl ClientState {
                 self.record_server_success(invocation);
                 let Some(next_cursor) = success.data.next_cursor else {
                     self.all_tasks.load = AllTasksLoadState::Loaded(loading.rows);
-                    return ClientEffect::None;
+                    return self.request_load_band();
                 };
                 let Some(next_request_id) = self.allocate_read_request_id() else {
                     self.all_tasks.load = AllTasksLoadState::Failed(ServerFailure::Transport(
@@ -172,7 +172,7 @@ impl ClientState {
             }
             Err(error) => {
                 self.all_tasks.load = AllTasksLoadState::Failed(error);
-                ClientEffect::None
+                self.request_load_band()
             }
         }
     }

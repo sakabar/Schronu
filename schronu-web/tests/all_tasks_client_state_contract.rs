@@ -78,10 +78,10 @@ fn all一覧は全page成功まで行を公開せず順序どおりatomicに公�
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Loading);
     assert_eq!(state.all_task_rows(), None);
 
-    assert_eq!(
-        state.apply_all_tasks_result(second_id, second_request, Ok(page(vec![all_row(2)], None)),),
-        ClientEffect::None
-    );
+    assert!(matches!(
+        state.apply_all_tasks_result(second_id, second_request, Ok(page(vec![all_row(2)], None))),
+        ClientEffect::LoadBand { .. }
+    ));
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Loaded);
     assert_eq!(
         state
@@ -210,7 +210,10 @@ fn mutation成功は取得中allを無効化して遅延responseを適用しな�
     state.apply_defer_task_result(&storage, defer_id, Ok(snapshot("2026-09-05", 2)));
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
 
-    state.apply_all_tasks_result(request_id, request, Ok(page(vec![all_row(0)], None)));
+    assert_eq!(
+        state.apply_all_tasks_result(request_id, request, Ok(page(vec![all_row(0)], None))),
+        ClientEffect::None
+    );
     assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
     assert_eq!(state.all_task_rows(), None);
 

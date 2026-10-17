@@ -513,12 +513,12 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
 
     assert!(matches!(
         orchestrator.action(&storage, 1_000, ComponentAction::RetryRefresh),
-        ClientEffect::Bootstrap { request_id: 3 }
+        ClientEffect::Bootstrap { request_id: 4 }
     ));
     let list_effect = orchestrator.apply_response(
         &storage,
         ClientResponse::Bootstrap {
-            request_id: 3,
+            request_id: 4,
             result: Ok(ServerSnapshot {
                 observed_at_epoch_ms: 1_789_200_000_000,
                 logical_date: "2026-09-11".to_owned(),
@@ -526,7 +526,7 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
             }),
         },
     );
-    assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 4, .. }));
+    assert!(matches!(list_effect, ClientEffect::ListTasks { request_id: 5, .. }));
     let refreshed_row = ScheduledTaskRow {
         task: task(COMPLETE_ID).into(),
         display_task_name: None,
@@ -549,7 +549,7 @@ fn bootstrap後は保存日付を再取得し成功時だけ一覧をatomic置�
     orchestrator.apply_response(
         &storage,
         ClientResponse::ListTasks {
-            request_id: 4,
+            request_id: 5,
             requested_date: "2026-09-12".to_owned(),
             result: Ok(WebSuccess {
                 snapshot: ServerSnapshot {
@@ -625,7 +625,7 @@ fn bootstrap失敗でも前回一覧を維持し再試行を提供する() {
     assert!(orchestrator.refresh_failed());
     assert!(matches!(
         orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
-        ClientEffect::Bootstrap { request_id: 2 }
+        ClientEffect::Bootstrap { request_id: 3 }
     ));
     assert!(orchestrator.background_refreshing());
 }
@@ -645,7 +645,7 @@ fn background再試行は一度だけ発行し古いresponseで完了しない()
 
     assert!(matches!(
         orchestrator.action(&storage, 2_000, ComponentAction::RetryRefresh),
-        ClientEffect::Bootstrap { request_id: 2 }
+        ClientEffect::Bootstrap { request_id: 3 }
     ));
     assert_eq!(
         orchestrator.action(&storage, 2_001, ComponentAction::RetryRefresh),
@@ -664,7 +664,7 @@ fn background再試行は一度だけ発行し古いresponseで完了しない()
     orchestrator.apply_response(
         &storage,
         ClientResponse::Bootstrap {
-            request_id: 2,
+            request_id: 3,
             result: Ok(snapshot(2_001)),
         },
     );
@@ -1048,7 +1048,7 @@ fn 一時許可中のauto_sessionで最初のsessionが追加されると即時�
         effect => panic!("auto_session effectを期待しました: {effect:?}"),
     };
 
-    assert_eq!(
+    assert!(matches!(
         orchestrator.apply_response(
             &storage,
             ClientResponse::AutoSession {
@@ -1059,8 +1059,8 @@ fn 一時許可中のauto_sessionで最初のsessionが追加されると即時�
                 }),
             },
         ),
-        ClientEffect::None
-    );
+        ClientEffect::LoadBand { .. }
+    ));
 
     let state = orchestrator.state().unwrap();
     assert_eq!(state.sessions().len(), 1);

@@ -8,7 +8,6 @@ pub(super) struct LoadState {
     pub(super) loading: bool,
     pub(super) error: Option<String>,
     pub(super) latest_request_id: Option<u64>,
-    pub(super) refresh_pending: bool,
 }
 
 impl LoadState {
@@ -20,21 +19,11 @@ impl LoadState {
             loading: false,
             error: None,
             latest_request_id: None,
-            refresh_pending: false,
         }
     }
 }
 
 impl ClientState {
-    pub(super) fn request_deferred_load_band(&mut self) -> ClientEffect {
-        if self.load.refresh_pending {
-            self.load.refresh_pending = false;
-            self.request_load_band()
-        } else {
-            ClientEffect::None
-        }
-    }
-
     pub fn band_rows(&self) -> &[BandDay] {
         &self.load.rows
     }
@@ -95,7 +84,20 @@ impl ClientState {
                         "負荷を取得できませんでした。再試行してください。".to_owned()
                     }
                 });
-                self.record_server_failure(invocation, error);
+                if self.diagnostics.display_error.as_ref().is_none_or(|error| {
+                    matches!(
+                        error,
+                        DisplayError::Operation {
+                            operation: Operation::LoadBand,
+                            ..
+                        } | DisplayError::Transport {
+                            operation: Operation::LoadBand,
+                            ..
+                        }
+                    )
+                }) {
+                    self.record_server_failure(invocation, error);
+                }
             }
         }
         ClientEffect::None

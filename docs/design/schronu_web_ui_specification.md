@@ -249,7 +249,7 @@ RoutineLoadRow {
 
 初期の全体表は「間隔 / 28日合計 / 発生日数 / 1日平均 / プロジェクト・繰返」を維持する。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
-負荷は手動の「更新」、reloadによる負荷tab復元、task完了成功後に取得する。負荷tab復元はbootstrapと保存一覧の更新後に取得する。完了成功後は表示tabにかかわらず既存のactive mode一覧取得が終了してから`load_band`を1回送る。一覧取得失敗時も負荷取得を続行し、記録あり・記録なし・競合解消後の完了を同じ経路で処理する。完了失敗、未解消の競合、重複応答、記録して解除、作業区間完了、先送りでは追加の負荷取得を行わない。負荷取得失敗時は直前のdataと更新時刻を保持し、inline errorと手動更新による再試行を提供する。
+負荷は手動の「更新」と、初回表示・reload・背景更新の再試行のbootstrap、自動セッション(通常・分数指定)、予定・完了一覧、「全て」の取得終了に連動して、表示tabにかかわらず1回取得する。bootstrap後に一覧取得が続く場合は一覧取得終了後だけ、「全て」は全page取得終了または途中失敗時だけ取得する。元の取得が失敗した場合や自動セッションの候補がない場合も負荷取得を行い、元のerrorと再試行状態は維持する。mutationは後続の一覧取得を通して連動し、mutation失敗だけでは取得しない。古い・無効化済み・重複応答、tab切替だけ、local操作、負荷内の表示・範囲切替では取得せず、定期pollingもしない。負荷取得失敗時は直前のdataと更新時刻を保持し、inline errorと手動更新で再試行できる。
 
 7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 
@@ -672,7 +672,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 
-reload直後の`bootstrap`と、その成功後に続く保存日付のactive mode一覧取得は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。
+reload直後の`bootstrap`と、その成功後に続く保存日付のactive mode一覧取得は背景更新として実行中通信数へ加えず、通常shellを`inert`にしない。保存一覧があれば「前回の表示です。最新状態を確認中…」、なければ「最新状態を確認中…」を表示する。背景更新statusは選択tabにかかわらず、bottom navigation直上へsafe areaを含めて固定したsnackbarとして中央配置する。本文のdocument flowへ含めず、成功時は追加の完了表示やtimerを設けず即座に消去しても本文位置を変えない。snackbarの`z-index`はbottom navigationより上、利用者起点通信の全面overlayより下とする。失敗時は直前の一覧を維持し、同じsnackbarに「最新状態を確認できませんでした。」と再試行buttonを表示する。再試行も同じ背景更新経路を通す。これらに連動する負荷取得も実行中通信数へ加えず、負荷画面内の取得状態で示す。背景更新statusと再試行状態はbootstrap・一覧の結果で確定し、後続の負荷取得成功・失敗で変更しない。「全て」の取得後に連動する負荷取得も全面overlayを出さない。
 
 SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元shellと「画面を復元しています…」を描画する。どちらにも全面overlay、`inert`、blockingな`aria-busy`を含めず、browser側がlocalStorageを復元した後に通常shellへ置換する。
 
@@ -762,26 +762,26 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 | 操作 | server通信 | task保存 | localStorage変更 | 表示中一覧 | current task変更 |
 | --- | --- | --- | --- | --- | --- |
-| 初回表示 | `bootstrap` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
-| reload背景更新 | `bootstrap`後、保存一覧があれば保存日付のactive mode endpoint、view stateを破棄した場合は現在logical dateの`list_tasks` | なし | 成功snapshotとtagged一覧をversion 3のview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
-| 一覧mode切替 | 予定は`list_tasks`、完了は`list_completed_tasks` | なし | modeをview stateへ保存 | response全体でactive一覧を置換 | なし |
-| 完了modeから別tabを経た一覧への再進入 | 選択日の`list_tasks` | なし | modeを予定としてview stateへ保存 | response全体で予定一覧を置換 | なし |
+| 初回表示 | `bootstrap`。読込終了後に`load_band` | なし | 各独立keyを読み、復元時に元keyを書き換えない | 保存済み1日分を復元 | なし |
+| reload背景更新 | `bootstrap`後、保存一覧があれば保存日付のactive mode endpoint、view stateを破棄した場合は現在logical dateの`list_tasks`。読込終了後に`load_band` | なし | 成功snapshotとtagged一覧をversion 3のview stateへ保存 | 成功時だけ一覧全体を置換。失敗時は前回一覧を維持 | なし |
+| 一覧mode切替 | 予定は`list_tasks`、完了は`list_completed_tasks`。読込終了後に`load_band` | なし | modeをview stateへ保存 | response全体でactive一覧を置換 | なし |
+| 完了modeから別tabを経た一覧への再進入 | 選択日の`list_tasks`。読込終了後に`load_band` | なし | modeを予定としてview stateへ保存 | response全体で予定一覧を置換 | なし |
 | 負荷以外へのtab切替(一覧再取得が必要な場合を除く) | なし | なし | view stateを保存 | なし | なし |
 | 負荷tabへの切替 | なし | なし | view stateだけを保存し、負荷dataは保存しない | 未取得表示または直前の負荷dataを維持 | なし |
 | 負荷内の表示切替 | なし | なし | なし | 取得済みの7日帯と28日繰返負荷をclient内で切替 | なし |
 | 負荷の「更新」 | `load_band` | なし | なし | 直前の負荷dataを維持し、成功時に7日帯と28日繰返負荷を同時置換 | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
 | 共有検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
-| 日付button・日付入力 | active modeに応じて`list_tasks`または`list_completed_tasks` | なし | 入力文字列をview stateへ保存 | responseのrowへ置換 | なし |
-| 「全て」button | `list_all_tasks(cursor: None)`と全継続page | なし | なし | 全page成功時だけ一時bufferから置換。途中失敗は非公開 | なし |
-| 全件取得の再試行・更新 | `list_all_tasks(cursor: None)`から再開 | なし | なし | 成功時だけ置換。全件検索は維持 | なし |
+| 日付button・日付入力 | active modeに応じて`list_tasks`または`list_completed_tasks`。読込終了後に`load_band` | なし | 入力文字列をview stateへ保存 | responseのrowへ置換 | なし |
+| 「全て」button | `list_all_tasks(cursor: None)`と全継続page。全page終了または途中失敗後に`load_band` | なし | なし | 全page成功時だけ一時bufferから置換。途中失敗は非公開 | なし |
+| 全件取得の再試行・更新 | `list_all_tasks(cursor: None)`から再開。全page終了または途中失敗後に`load_band` | なし | なし | 成功時だけ置換。全件検索は維持 | なし |
 | 全件検索・「さらに表示」 | なし | なし | 検索編集でview stateを保存 | client内の絞り込みと500行単位の描画上限だけを変更 | なし |
-| 自動セッション | `auto_session` | なし | session追加 | なし | なし |
+| 自動セッション | `auto_session`。読込終了後に`load_band` | なし | session追加 | なし | なし |
 | 一覧の「セッション」 | なし | なし | session追加 | 追加成功後にセッションtabへ切替 | なし |
-| 一覧の「先送り」 | `Normal`は即時、`DeadlineLimited`と`RoutinePeriod`は行内確認後に表示日・期待plan全体付きで`safety marker`を保存して`defer_task`。成功または`defer_plan_changed`後に`list_tasks` | 表示日と現在日の遅い方の翌日06:00を希望先とし、期限余裕に応じて通常延期、期限上限への短縮、次周期移動を選択 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。plan変更時は除去せず再取得。検索と日付入力を維持 | なし |
+| 一覧の「先送り」 | `Normal`は即時、`DeadlineLimited`と`RoutinePeriod`は行内確認後に表示日・期待plan全体付きで`safety marker`を保存して`defer_task`。成功または`defer_plan_changed`後に`list_tasks`。読込終了後に`load_band` | 表示日と現在日の遅い方の翌日06:00を希望先とし、期限余裕に応じて通常延期、期限上限への短縮、次周期移動を選択 | 確認表示とキャンセルは一時UI stateだけを変更。送信前marker設定、確定応答後marker解除 | 成功応答時に同一taskの全segmentを除去して保存し、選択日の一覧を再取得。plan変更時は除去せず再取得。検索と日付入力を維持 | なし |
 | 計測を破棄して再開 | なし | なし | sessionの開始時刻だけをclick時刻へ置換 | なし | なし |
-| 計測を破棄して解除 | session削除成功後にactive mode一覧取得 | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
-| 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後にactive mode一覧取得 | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して解除 | session削除成功後にactive mode一覧取得、終了後に`load_band` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
+| 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
 | 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得、終了後に`load_band` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
@@ -907,7 +907,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 
 - 固定された「セッション」「一覧」「負荷」「作成」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、分母0の日付cellが差分と`--`表示かつ超過色になること、差分の正負と一致、今日の残り容量差分、曜日見出しと日付表の0容量表示、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅の3行表示と横はみ出しなし、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
-- 負荷tabの初回進入・再進入・再選択は通信せず、手動更新とreloadでの復元時に取得することを確認する。task完了成功後は表示tabと一覧modeにかかわらず一覧取得終了後に負荷を1回取得し、一覧失敗時も続行すること、完了失敗・競合・重複応答で追加取得せず、負荷取得失敗時は直前表示と再試行を維持することをcomponentの製品応答経路で検証する。
+- 負荷tabの初回進入・再進入・再選択だけでは通信せず、初回表示・全tabからのreload・背景再試行・自動セッション・予定/完了/全件一覧の取得終了後に負荷を1回取得することをcomponentの製品応答経路で検証する。元の取得失敗・候補なしでも連動し、bootstrapと一覧の連続取得や全件の複数pageでは重複させず、古い・無効化済み・重複応答は無視する。背景通信のoverlay非表示、元のerrorと再試行状態、負荷取得失敗時の直前表示・手動再試行も確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・作成・負荷でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。

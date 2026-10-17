@@ -145,6 +145,7 @@ pub(crate) struct ComponentOrchestrator {
     mounted: bool,
     pending_server_effects: usize,
     refresh_state: RefreshState,
+    background_load_request_id: Option<u64>,
     date_input: DateInputState,
     task_name_filter: String,
     all_tasks_visible_limit: usize,
@@ -170,6 +171,7 @@ impl ComponentOrchestrator {
             mounted: false,
             pending_server_effects: 0,
             refresh_state: RefreshState::Bootstrap(0),
+            background_load_request_id: None,
             date_input: DateInputState::default(),
             task_name_filter: String::new(),
             all_tasks_visible_limit: 500,
@@ -451,6 +453,13 @@ impl ComponentOrchestrator {
             ) if expected == request_id => Some(result.is_ok()),
             _ => None,
         };
+        let background_load =
+            refresh_result.is_some() || matches!(&response, ClientResponse::ListAllTasks { .. });
+        if matches!(&response, ClientResponse::LoadBand { request_id, .. }
+            if self.background_load_request_id == Some(*request_id))
+        {
+            self.background_load_request_id = None;
+        }
         let background_list = matches!(
             (&self.refresh_state, &response),
             (
@@ -471,6 +480,11 @@ impl ComponentOrchestrator {
             switch_to_list_after_last_session_removed(state, previous_session_count);
             effect
         });
+        if background_load {
+            if let ClientEffect::LoadBand { request_id } = &effect {
+                self.background_load_request_id = Some(*request_id);
+            }
+        }
         if let Some(name) = created_name {
             self.create_name.clear();
             self.create_minutes.clear();
@@ -497,7 +511,9 @@ impl ComponentOrchestrator {
     }
 
     pub fn effect_is_background(&self, effect: &ClientEffect) -> bool {
-        matches!(effect, ClientEffect::ListAllTasks { .. })
+        matches!(effect, ClientEffect::LoadBand { request_id }
+            if self.background_load_request_id == Some(*request_id))
+            || matches!(effect, ClientEffect::ListAllTasks { .. })
             || matches!(
                 (self.refresh_state, effect),
                 (RefreshState::Bootstrap(expected), ClientEffect::Bootstrap { request_id })

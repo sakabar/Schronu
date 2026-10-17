@@ -2,9 +2,20 @@ use super::*;
 use crate::app::effect_dispatcher::apply_response;
 use crate::client::state::{ClientState, ListMode};
 
-fn session_state(storage: &MemoryStorage) -> ClientState {
+pub(super) fn session_state(storage: &MemoryStorage) -> ClientState {
     let (mut state, _) = initialize_client(storage, 1_000);
-    state.apply_bootstrap_result(1, Ok(load_snapshot(1_000)));
+    let ClientEffect::LoadBand { request_id } =
+        state.apply_bootstrap_result(1, Ok(load_snapshot(1_000)))
+    else {
+        panic!("expected initial load")
+    };
+    state.apply_load_band_result(
+        request_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_000),
+            data: load_data(Vec::new()),
+        }),
+    );
     reduce_component_action_at(
         &mut state,
         storage,
@@ -17,7 +28,7 @@ fn session_state(storage: &MemoryStorage) -> ClientState {
     state
 }
 
-fn list_response(effect: ClientEffect, fail: bool) -> ClientResponse {
+pub(super) fn list_response(effect: ClientEffect, fail: bool) -> ClientResponse {
     match effect {
         ClientEffect::ListTasks {
             request_id,
@@ -158,14 +169,20 @@ fn 完了失敗では負荷を取得せず競合再送が成功した時だけ�
             ClientEffect::None
         );
         let unrelated_list = state.request_list("2026-09-27");
-        assert_eq!(
-            apply_response(
-                &mut state,
-                &storage,
-                list_response(unrelated_list, false),
-                false
-            ),
-            ClientEffect::None
+        let ClientEffect::LoadBand { request_id } = apply_response(
+            &mut state,
+            &storage,
+            list_response(unrelated_list, false),
+            false,
+        ) else {
+            panic!("expected list-linked load")
+        };
+        state.apply_load_band_result(
+            request_id,
+            Ok(WebSuccess {
+                snapshot: load_snapshot(1_200),
+                data: load_data(Vec::new()),
+            }),
         );
         if conflict {
             let ClientEffect::CompleteSession { request_id, .. } =
@@ -191,7 +208,7 @@ fn 完了失敗では負荷を取得せず競合再送が成功した時だけ�
 }
 
 #[test]
-fn 記録解除と作業区間完了は一覧だけを再取得する() {
+fn 記録解除と作業区間完了は一覧に続けて負荷を取得する() {
     for work_slice in [false, true] {
         let storage = MemoryStorage::default();
         let mut state = session_state(&storage);
@@ -216,49 +233,92 @@ fn 記録解除と作業区間完了は一覧だけを再取得する() {
             other => panic!("expected recording request: {other:?}"),
         };
         let list = apply_response(&mut state, &storage, response, false);
-        assert_eq!(
+        assert!(matches!(
             apply_response(&mut state, &storage, list_response(list, false), false),
-            ClientEffect::None
-        );
+            ClientEffect::LoadBand { .. }
+        ));
     }
 }
 
 #[test]
-fn 負荷tab復元はbootstrapと保存一覧の更新後に一度取得する() {
-    for fail_list in [false, true] {
-        let storage = MemoryStorage::default();
-        store_view_state(
-            &storage,
-            &ViewState {
-                snapshot: load_snapshot(900),
-                list_mode: ListMode::Scheduled,
-                list: Some(StoredActiveList::Scheduled {
-                    logical_date: "2026-09-28".to_owned(),
-                    rows: Vec::new(),
-                }),
-                active_tab: ActiveTab::Load,
-                task_name_filter: String::new(),
-                date_input_text: String::new(),
-            },
-        )
-        .unwrap();
-        let mut client = ComponentOrchestrator::new();
-        let ClientEffect::Bootstrap { request_id } = client.mount(&storage, 1_000) else {
-            panic!("expected bootstrap")
-        };
-        let list = client.apply_response(
-            &storage,
-            ClientResponse::Bootstrap {
-                request_id,
-                result: Ok(load_snapshot(1_000)),
-            },
-        );
-        assert!(
-            matches!(&list, ClientEffect::ListTasks { request, .. } if request.logical_date == "2026-09-28")
-        );
-        assert!(!client.state().unwrap().band_loading());
-        let load = client.apply_response(&storage, list_response(list, fail_list));
-        assert!(matches!(load, ClientEffect::LoadBand { .. }));
+fn 全tabの復元でbootstrapと保存一覧の更新後に一度だけ負荷を背景取得する() {
+    for tab in [
+        ActiveTab::Session,
+        ActiveTab::List,
+        ActiveTab::Load,
+        ActiveTab::Create,
+    ] {
+        for mode in [ListMode::Scheduled, ListMode::Completed] {
+            for has_list in [false, true] {
+                for fail_list in [false, true] {
+                    let storage = MemoryStorage::default();
+                    let list = has_list.then(|| match mode {
+                        ListMode::Scheduled => StoredActiveList::Scheduled {
+                            logical_date: "2026-09-28".to_owned(),
+                            rows: Vec::new(),
+                        },
+                        ListMode::Completed => StoredActiveList::Completed {
+                            logical_date: "2026-09-28".to_owned(),
+                            rows: Vec::new(),
+                            in_progress_actual_work_seconds: None,
+                            total_actual_work_seconds: 0,
+                            available_seconds: 0,
+                            recorded_percentage: None,
+                        },
+                    });
+                    store_view_state(
+                        &storage,
+                        &ViewState {
+                            snapshot: load_snapshot(900),
+                            list_mode: mode,
+                            list,
+                            active_tab: tab,
+                            task_name_filter: String::new(),
+                            date_input_text: String::new(),
+                        },
+                    )
+                    .unwrap();
+                    let mut client = ComponentOrchestrator::new();
+                    let ClientEffect::Bootstrap { request_id } = client.mount(&storage, 1_000)
+                    else {
+                        panic!("expected bootstrap")
+                    };
+                    let mut effect = client.apply_response(
+                        &storage,
+                        ClientResponse::Bootstrap {
+                            request_id,
+                            result: Ok(load_snapshot(1_000)),
+                        },
+                    );
+                    assert_eq!(client.state().unwrap().active_tab(), tab);
+                    if has_list {
+                        assert!(!client.state().unwrap().band_loading());
+                        assert!(client.effect_is_background(&effect));
+                        effect = client.apply_response(&storage, list_response(effect, fail_list));
+                    }
+                    assert!(matches!(effect, ClientEffect::LoadBand { .. }));
+                    assert!(client.effect_is_background(&effect));
+                    assert_eq!(client.refresh_failed(), has_list && fail_list);
+                    let ClientEffect::LoadBand { request_id } = effect else {
+                        unreachable!()
+                    };
+                    assert_eq!(
+                        client.apply_response(
+                            &storage,
+                            ClientResponse::LoadBand {
+                                request_id,
+                                result: Ok(WebSuccess {
+                                    snapshot: load_snapshot(1_300),
+                                    data: load_data(Vec::new())
+                                })
+                            }
+                        ),
+                        ClientEffect::None
+                    );
+                    assert_eq!(client.refresh_failed(), has_list && fail_list);
+                }
+            }
+        }
     }
 }
 
@@ -315,10 +375,21 @@ fn 完了後の負荷取得失敗は表示を維持し手動更新で再試行�
 }
 
 #[test]
-fn 先送り成功は一覧だけを再取得する() {
+fn 先送り成功は一覧に続けて負荷を取得する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
-    state.apply_bootstrap_result(1, Ok(load_snapshot(1_000)));
+    let ClientEffect::LoadBand { request_id } =
+        state.apply_bootstrap_result(1, Ok(load_snapshot(1_000)))
+    else {
+        panic!("expected initial load")
+    };
+    state.apply_load_band_result(
+        request_id,
+        Ok(WebSuccess {
+            snapshot: load_snapshot(1_000),
+            data: load_data(Vec::new()),
+        }),
+    );
     let ClientEffect::DeferTask { request_id, .. } = state.request_defer_task(
         &storage,
         RECORD_ID,
@@ -341,8 +412,8 @@ fn 先送り成功は一覧だけを再取得する() {
         },
         false,
     );
-    assert_eq!(
+    assert!(matches!(
         apply_response(&mut state, &storage, list_response(list, false), false),
-        ClientEffect::None
-    );
+        ClientEffect::LoadBand { .. }
+    ));
 }
