@@ -202,7 +202,7 @@ impl ClientState {
     #[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
     pub(crate) fn restore_view_state(&mut self, view_state: &ViewState) {
         self.active_tab = view_state.active_tab;
-        self.load.after_bootstrap = view_state.active_tab == ActiveTab::Load;
+        self.load.refresh_pending = view_state.active_tab == ActiveTab::Load;
         self.read.list_mode = view_state.list_mode;
         self.read.date_buttons = super::date_buttons::logical_date_buttons_for_mode(
             &view_state.snapshot.logical_date,
@@ -382,12 +382,9 @@ impl ClientState {
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {
-        let entering_load = self.active_tab != ActiveTab::Load && tab == ActiveTab::Load;
         let entering_list = self.active_tab != ActiveTab::List && tab == ActiveTab::List;
         self.active_tab = tab;
-        if entering_load {
-            self.request_load_band()
-        } else if entering_list && self.read.list_mode == ListMode::Completed {
+        if entering_list && self.read.list_mode == ListMode::Completed {
             self.read.list_stale_after_create = false;
             self.switch_list_mode(ListMode::Scheduled)
         } else if entering_list && self.read.list_stale_after_create {
