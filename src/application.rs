@@ -5,6 +5,7 @@ pub mod completed_task_report;
 pub mod daily_capacity;
 pub mod flatten_use_case;
 pub mod interface;
+pub(crate) mod obsidian_search;
 pub mod pack_use_case;
 mod projected_recurrence;
 pub mod repository_transaction;
