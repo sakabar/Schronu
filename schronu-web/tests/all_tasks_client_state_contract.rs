@@ -146,6 +146,7 @@ fn 日付選択中もall取得を継続し古いresponseは無視する() {
     assert_eq!(state.list_selection(), ListSelection::Date);
     assert_eq!(state.select_all_tasks(), ClientEffect::None);
 
+    state.select_logical_date("2026-09-06");
     let defer = state.request_defer_task(
         &storage,
         TASK_ID,
@@ -161,7 +162,20 @@ fn 日付選択中もall取得を継続し古いresponseは無視する() {
         ClientEffect::DeferTask { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
     };
-    state.apply_defer_task_result(&storage, defer_id, Ok(snapshot("2026-09-05", 2)));
+    let follow_up =
+        state.apply_defer_task_result(&storage, defer_id, Ok(snapshot("2026-09-05", 2)));
+    let (list_id, list_request) = client_state_support::list_effect(follow_up);
+    assert!(matches!(
+        state.apply_list_result(
+            list_id,
+            &list_request.logical_date,
+            Ok(WebSuccess {
+                snapshot: snapshot("2026-09-05", 3),
+                data: Vec::new(),
+            })
+        ),
+        ClientEffect::LoadBand { .. }
+    ));
     state.apply_all_tasks_result(
         request_id,
         request.clone(),
@@ -219,4 +233,122 @@ fn mutation成功は取得中allを無効化して遅延responseを適用しな�
 
     let (_, retry) = all_effect(state.select_all_tasks());
     assert_eq!(retry.cursor, None);
+}
+
+#[test]
+fn mutation後は日付別取得の成否にかかわらず選択中allを自動再取得する() {
+    use client_state_support::{
+        complete_effect, defer_effect, list_effect, record_effect, state_with_sessions,
+    };
+    use schronu_web::client::state::{ActiveTab, DisplayError, Operation};
+    use schronu_web::RecordSessionResult;
+
+    for operation in ["record", "complete", "complete_without_recording", "defer"] {
+        for fail_list in [false, true] {
+            let storage = FakeStorage::default();
+            let mut state = if operation == "defer" {
+                load_client_state(&storage, 0).unwrap()
+            } else {
+                state_with_sessions(&storage, &[TASK_ID])
+            };
+            let (old_id, old_request) = all_effect(state.select_all_tasks());
+            state.apply_all_tasks_result(
+                old_id,
+                old_request.clone(),
+                Ok(page(vec![all_row(0)], None)),
+            );
+            state.switch_tab(ActiveTab::Session);
+            let follow_up = match operation {
+                "record" => {
+                    let (id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
+                    state.apply_record_result(
+                        &storage,
+                        id,
+                        Ok(WebSuccess {
+                            snapshot: snapshot("2026-09-05", 2),
+                            data: RecordSessionResult {
+                                actual_work_seconds: 100,
+                            },
+                        }),
+                    )
+                }
+                "defer" => {
+                    let (id, _) = defer_effect(state.request_defer_task(
+                        &storage,
+                        TASK_ID,
+                        "2026-09-05",
+                        DeferPlan {
+                            mode: DeferMode::Normal,
+                            requested_pending_until_epoch_ms: 1_000,
+                            effective_pending_until_epoch_ms: None,
+                            repetition_interval_days: None,
+                        },
+                    ));
+                    state.apply_defer_task_result(&storage, id, Ok(snapshot("2026-09-05", 2)))
+                }
+                _ => {
+                    let effect = if operation == "complete" {
+                        state.begin_complete_session(&storage, TASK_ID)
+                    } else {
+                        state.begin_complete_session_without_recording(&storage, TASK_ID)
+                    };
+                    let (id, _) = complete_effect(effect);
+                    state.apply_complete_result(&storage, id, Ok(snapshot("2026-09-05", 2)))
+                }
+            };
+            assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
+            let (list_id, list_request) = list_effect(follow_up);
+            let result = if fail_list {
+                Err(ServerFailure::Transport("offline".to_owned()))
+            } else {
+                Ok(WebSuccess {
+                    snapshot: snapshot("2026-09-05", 3),
+                    data: Vec::new(),
+                })
+            };
+            let (first_id, first_request) =
+                all_effect(state.apply_list_result(list_id, &list_request.logical_date, result));
+            assert_eq!(first_request.cursor, None);
+            assert_eq!(state.active_tab(), ActiveTab::Session);
+            assert_eq!(state.all_tasks_status(), AllTasksStatus::Loading);
+            assert_eq!(
+                state.apply_list_result(
+                    list_id,
+                    &list_request.logical_date,
+                    Err(ServerFailure::Transport("duplicate".to_owned()))
+                ),
+                ClientEffect::None
+            );
+            assert_eq!(
+                state.apply_all_tasks_result(old_id, old_request, Ok(page(vec![all_row(9)], None))),
+                ClientEffect::None
+            );
+            let (second_id, second_request) = all_effect(state.apply_all_tasks_result(
+                first_id,
+                first_request,
+                Ok(page(vec![all_row(1)], Some("new:1"))),
+            ));
+            assert_eq!(state.all_task_rows(), None);
+            assert!(matches!(
+                state.apply_all_tasks_result(
+                    second_id,
+                    second_request,
+                    Ok(page(vec![all_row(2)], None))
+                ),
+                ClientEffect::LoadBand { .. }
+            ));
+            assert_eq!(state.all_task_rows().unwrap(), [all_row(1), all_row(2)]);
+            assert_eq!(state.list_selection(), ListSelection::All);
+            assert_eq!(state.display_error().is_some(), fail_list);
+            if fail_list {
+                assert!(matches!(
+                    state.display_error(),
+                    Some(DisplayError::Transport {
+                        operation: Operation::ListTasks,
+                        ..
+                    })
+                ));
+            }
+        }
+    }
 }

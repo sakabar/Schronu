@@ -125,6 +125,16 @@ impl ClientState {
         }
     }
 
+    pub(super) fn request_invalidated_all_tasks_or_load_band(&mut self) -> ClientEffect {
+        if self.all_tasks.selection == ListSelection::All
+            && matches!(self.all_tasks.load, AllTasksLoadState::Invalidated)
+        {
+            self.start_all_tasks_request()
+        } else {
+            self.request_load_band()
+        }
+    }
+
     pub fn apply_all_tasks_result(
         &mut self,
         request_id: u64,

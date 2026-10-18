@@ -545,3 +545,143 @@ fn all生rowは検索後に表示上限までだけprojectionする() {
     assert_eq!(projected.rows[0].row_key, "all:task-0:2026-09-06:0");
     assert_eq!(projected.rows[499].row_key, "all:task-998:2026-09-06:998");
 }
+
+#[test]
+fn 全件自動再取得は背景通信で入力を保持し失敗後の再試行は先頭から始まる() {
+    use crate::client::state::{DisplayError, Operation, ServerFailure};
+    let storage = MemoryStorage::default();
+    let mut client = ComponentOrchestrator::new();
+    let ClientEffect::Bootstrap { request_id } = client.mount(&storage, 0) else {
+        panic!("expected bootstrap")
+    };
+    client.apply_response(
+        &storage,
+        ClientResponse::Bootstrap {
+            request_id,
+            result: Ok(snapshot(1)),
+        },
+    );
+    let ClientEffect::ListAllTasks {
+        request_id,
+        request,
+    } = client.action(&storage, 0, ComponentAction::SelectAllTasks)
+    else {
+        panic!("expected all tasks")
+    };
+    client.apply_response(
+        &storage,
+        ClientResponse::ListAllTasks {
+            request_id,
+            request,
+            result: Ok(WebSuccess {
+                snapshot: snapshot(1),
+                data: AllTaskPage {
+                    rows: Vec::new(),
+                    next_cursor: None,
+                },
+            }),
+        },
+    );
+    let task = SessionTask {
+        task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+        task_name: "task".to_owned(),
+        estimated_work_seconds: 900,
+        actual_work_seconds: 0,
+    };
+    client.action(
+        &storage,
+        0,
+        ComponentAction::AddSession {
+            task: task.clone(),
+            is_leaf: true,
+        },
+    );
+    client.edit_task_name_filter(&storage, "filter".to_owned());
+    client.edit_date_input(&storage, "9/6".to_owned());
+    client.action(&storage, 0, ComponentAction::DisableCarryLock);
+    let ClientEffect::RecordSession { request_id, .. } =
+        client.action(&storage, 0, ComponentAction::RecordSession(task.task_id))
+    else {
+        panic!("expected record")
+    };
+    let list = client.apply_response(
+        &storage,
+        ClientResponse::RecordSession {
+            request_id,
+            result: Ok(WebSuccess {
+                snapshot: snapshot(2),
+                data: crate::RecordSessionResult {
+                    actual_work_seconds: 100,
+                },
+            }),
+        },
+    );
+    let ClientEffect::ListTasks {
+        request_id,
+        request,
+    } = list
+    else {
+        panic!("expected date list")
+    };
+    let all = client.apply_response(
+        &storage,
+        ClientResponse::ListTasks {
+            request_id,
+            requested_date: request.logical_date,
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+    assert!(client.effect_is_background(&all));
+    assert!(!client.server_effect_in_flight());
+    assert_eq!(client.task_name_filter(), "filter");
+    assert_eq!(client.date_input().text(), "9/6");
+    let ClientEffect::ListAllTasks {
+        request_id,
+        request,
+    } = all
+    else {
+        panic!("expected automatic all tasks")
+    };
+    assert_eq!(request.cursor, None);
+    client.action(&storage, 0, ComponentAction::SwitchTab(ActiveTab::Load));
+    let load = client.apply_response(
+        &storage,
+        ClientResponse::ListAllTasks {
+            request_id,
+            request: request.clone(),
+            result: Err(ServerFailure::Transport("offline".to_owned())),
+        },
+    );
+    assert!(matches!(load, ClientEffect::LoadBand { .. }));
+    assert!(client.effect_is_background(&load));
+    assert_eq!(
+        client.state().unwrap().all_tasks_status(),
+        AllTasksStatus::Failed
+    );
+    assert!(matches!(
+        client.state().unwrap().display_error(),
+        Some(DisplayError::Transport {
+            operation: Operation::ListTasks,
+            ..
+        })
+    ));
+    assert_eq!(
+        client.apply_response(
+            &storage,
+            ClientResponse::ListAllTasks {
+                request_id,
+                request,
+                result: Err(ServerFailure::Transport("duplicate".to_owned()))
+            }
+        ),
+        ClientEffect::None
+    );
+    let ClientEffect::ListAllTasks { request, .. } =
+        client.action(&storage, 0, ComponentAction::RetryAllTasks)
+    else {
+        panic!("expected retry")
+    };
+    assert_eq!(request.cursor, None);
+    assert_eq!(client.task_name_filter(), "filter");
+    assert_eq!(client.date_input().text(), "9/6");
+}

@@ -514,9 +514,9 @@ page_error: Option<DisplayError>
 tick_now_epoch_ms: i64
 ```
 
-`list_selection`は日付別選択と全件選択を分離する。「全て」の初回選択または`Invalidated`の再選択で`cursor: None`のrequestを開始し、以後はresponseの`next_cursor`を使って自動継続する。各pageは`Loading.buffered_rows`へ連結し、最終page成功時だけ`Loaded`へ原子的に公開する。途中失敗ではbufferを破棄して`Failed`とし、retryは新しいrequest IDと`cursor: None`から開始する。期待request IDまたはcursorと一致しないresponseはstaleとして表示状態へ適用しない。
+`list_selection`は日付別選択と全件選択を分離する。「全て」の初回選択、`Invalidated`の再選択、または「全て」選択中の無効化後に日付別一覧取得が終了した時に`cursor: None`のrequestを開始し、以後はresponseの`next_cursor`を使って自動継続する。各pageは`Loading.buffered_rows`へ連結し、最終page成功時だけ`Loaded`へ原子的に公開する。途中失敗ではbufferを破棄して`Failed`とし、retryは新しいrequest IDと`cursor: None`から開始する。期待request IDまたはcursorと一致しないresponseはstaleとして表示状態へ適用しない。
 
-`record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
+`record_session`、`complete_session`、`defer_task`の成功時は`Loading`、`Loaded`、`Failed`を`Invalidated`へ遷移させ、無効化前に送信済みのresponseも適用しない。「全て」選択中なら、後続の日付別一覧取得が成功・失敗のいずれでも先頭pageから自動再取得する。表示tabには依存せず、日付別選択中なら再選択まで無効状態を維持する。日付別取得のerrorは全件取得成功でも消去しない。負荷は全件の最終page成功または途中失敗後だけ1回取得する。localのセッション追加、破棄、再開では全件状態を無効化しない。取得中に日付別選択や別tabへ移っても`Loading`とpage継続effectを維持し、完了後に「全て」へ戻った時は`Loaded`を再利用する。
 
 `list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。`Completed`の一覧から別の上位tabへ移動した後に一覧tabへ再進入した場合は、選択日を維持して`Scheduled`へ切り替え、`list_tasks`を1回生成する。一覧tabを表示中の再選択と、一覧tabを表示したまま復元したview stateではmodeを維持する。
 
@@ -701,7 +701,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 - 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayの対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。完了modeからセッション、負荷を経て一覧へ戻る場合は選択日を維持して予定modeへ戻し、予定一覧を1回取得する。一覧tabの再選択と一覧tab表示中のreloadではmodeを維持する。
 - 曜日button群の先頭に「全て」を置く。日付別buttonは従来の8日分を維持し、「全て」と選択中の日付を`aria-pressed`で区別する。
-- 「全て」を初めて選択した時と無効化後の再選択時にだけ全件取得を開始する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。」と「更新」を表示する。検索とtableは`Loaded`の時だけ表示する。
+- 「全て」を初めて選択した時と無効化後の再選択時に全件取得を開始する。「全て」選択中のmutation成功後は日付別取得終了から自動再取得を連鎖する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。自動再取得を待っています。」を表示し、「更新」buttonは置かない。失敗時の自動再試行は行わない。検索とtableは`Loaded`の時だけ表示する。
 - 全件取得は全面overlayを出さない。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得とpage連結を継続する。取得完了後に戻った場合はmemory上の結果を描画する。
 - 日付button click時と4種類のセッション終了成功後にactive modeの一覧endpointを送る。
 - 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
@@ -918,7 +918,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 分割task表示はapplication層の共通関数で分割判定、秒から分への切り上げ、`<segment分/total分>task名`の生成を固定する。日付別・全件のserver rowが生成済み表示名を運び、clientが無加工で表示すること、旧payloadは正規task名へfallbackすること、検索・セッション・先送り操作は正規task名を維持することをcontract testで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
 - storage version 3でactive modeとtaggedな予定・完了一覧、空成功、選択tab、共有検索文字列、日付入力がround-tripすることを確認する。version 2は予定modeへ移行し、version 1・未知version・破損値を復元しないこと、保存済み完了modeがbootstrap後に同じ日を`list_completed_tasks`で背景更新することを確認する。「全て」の行・cursor・選択は復元しない。
-- 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化と更新、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
+- 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化後の自動再取得待ちと自動再取得、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
