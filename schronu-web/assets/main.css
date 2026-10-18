@@ -537,22 +537,11 @@ button:disabled {
     font: inherit;
 }
 
-.session-task-heading {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    align-items: center;
-    gap: 0.4rem;
-}
-
-.session-task-heading h2 {
-    min-width: 0;
-}
-
 .session-obsidian-shortcut {
     display: inline-flex;
     flex: 0 0 auto;
     align-items: center;
+    align-self: center;
     justify-content: center;
     width: 28px;
     height: 28px;

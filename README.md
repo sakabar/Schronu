@@ -82,7 +82,7 @@ rm -rf target/dx/schronu-web
 
 セッションの操作は次のとおりです。
 
-閲覧端末がMacの場合だけ、セッションcardのtask名の右隣にObsidianの黒曜石風iconを表示します。押すとCLIの「黒」と同じく、そのtaskの最上位rootのUUIDを`obsidian_vault_name`で指定したvault(既定`Obsidian-Work`)で検索します。Mac側にObsidianと同名vaultが必要です。ノートの存在確認や作成は行いません。task名の「開」操作とは独立し、持ち歩きロック中・背景更新中も利用できます。通常通信の全面overlay中は利用できません。
+閲覧端末がMacの場合だけ、セッションcardの時計iconの右隣にObsidianの黒曜石風iconを表示し、「残り時間 → 時計 → Obsidian」の順に並べます。押すとCLIの「黒」と同じく、そのtaskの最上位rootのUUIDを`obsidian_vault_name`で指定したvault(既定`Obsidian-Work`)で検索します。Mac側にObsidianと同名vaultが必要です。ノートの存在確認や作成は行いません。task名の「開」操作とは独立し、持ち歩きロック中・背景更新中も利用できます。通常通信の全面overlay中は利用できません。
 
 Mac判定は閲覧browserの`navigator.platform.startsWith("Mac") && navigator.maxTouchPoints <= 1`を使い、Macとして識別されるiPadも除外します。取得不能・初期化前・Mac以外ではiconを生成せず、検索先も取得しません。browser申告情報による推定のため、偽装や将来の端末仕様による誤判定の限界があります。serverのOSは判定に使わず、端末情報は保存・送信しません。
 

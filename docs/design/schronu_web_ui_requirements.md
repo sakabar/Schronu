@@ -85,7 +85,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-CARD-016**: 時計click時は現在のセッションとclick時刻から共通の残り時間計算で正の整数秒を求め、固定の`TimerForSchronu`を`shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}`で同期的に開くこと。残り0秒・超過、持ち歩きロック、通常通信、対象の終了処理・競合・手動確認待ちではbuttonとhandlerの双方で拒否し、端末判定も再確認すること。背景更新中は利用可能とすること。
 - **REQ-CARD-017**: 通常の起動要求では案内を表示せず、取得できた同期errorだけを対象card内へ一時表示し、再clickを許可すること。再click・セッション再開・削除時に表示を消去すること。Webの計測は継続し、server通信・localStorage保存・実績更新、reload時の自動起動、Web操作による端末タイマーの停止・更新を行わないこと。
 
-- **REQ-CARD-018**: 閲覧browserが`navigator.platform.startsWith("Mac") && navigator.maxTouchPoints <= 1`を満たす場合だけtask名の右隣へObsidianの黒曜石風icon buttonを生成すること。取得不能・初期化前・Mac以外とMac互換識別のiPadではbutton・click listener・検索先取得を行わないこと。server OSを使わず端末情報を保存・送信しないこと。iconは18px、操作領域は通常28px、coarse pointerで44pxとし、tooltipは「Obsidianでルートタスクを検索」、ARIA名はtask名を含めること。既存の名前リンク、進捗、時計、6操作を維持すること。
+- **REQ-CARD-018**: 閲覧browserが`navigator.platform.startsWith("Mac") && navigator.maxTouchPoints <= 1`を満たす場合だけ時計iconの右隣へObsidianの黒曜石風icon buttonを生成し、「残り時間 → 時計 → Obsidian」の順に並べること。取得不能・初期化前・Mac以外とMac互換識別のiPadではbutton・click listener・検索先取得を行わないこと。server OSを使わず端末情報を保存・送信しないこと。iconは18px、操作領域は通常28px、coarse pointerで44pxとし、tooltipは「Obsidianでルートタスクを検索」、ARIA名はtask名を含めること。既存の名前リンク、進捗、時計、6操作を維持すること。
 - **REQ-CARD-019**: Macではセッションtabへの進入・card追加時にCLI「黒」と共通のroot UUIDと設定vaultから検索URIを先行取得し、取得中・失敗時はbuttonを無効化すること。HTTP(S)リンクとは独立した一時stateで要求IDを照合し、削除済み・旧要求の応答を無視すること。失敗はcard内に理由とtab再進入による再試行方法を示すこと。
 - **REQ-CARD-020**: Obsidian click時にも端末・通常通信・対象sessionの存在・取得済みURIを確認し、同期的に閲覧端末でURIを開くこと。持ち歩きロック中・背景更新中も許可すること。同期起動errorだけをcard内へ表示し、再click・再開・削除で消去すること。起動時のserver通信・localStorage保存・実績更新・計測停止、ノート作成・存在確認、起動成功通知を行わないこと。
 

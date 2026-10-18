@@ -188,6 +188,7 @@ struct Context {
     storage: Rc<Storage>,
     links: Rc<RefCell<SessionLinks>>,
     supported: bool,
+    timer_supported: bool,
     fail: Rc<Cell<bool>>,
     urls: Rc<RefCell<Vec<String>>>,
 }
@@ -209,6 +210,7 @@ fn context(supported: bool, ready: bool, locked: bool) -> Context {
         storage,
         links: Rc::new(RefCell::new(links)),
         supported,
+        timer_supported: false,
         fail: Rc::default(),
         urls: Rc::default(),
     }
@@ -230,6 +232,8 @@ fn root(ctx: Context) -> Element {
         obsidian_ready_task_ids: ctx.links.borrow().linkable_task_ids(),
         obsidian_lookup_errors: ctx.links.borrow().error_messages(),
         obsidian_server_busy: busy,
+        timer_shortcut_supported: ctx.timer_supported,
+        timer_server_busy: busy,
         on_auto_session: |_| {},
         on_action: move |action: SessionAction| {
             for action in super::component_runtime::component_actions_from_session_action(action, START + 1_000) {
@@ -245,6 +249,27 @@ fn root(ctx: Context) -> Element {
             })
         },
     } }
+}
+
+#[test]
+fn obsidianはtask名から独立して残り時間と時計の後に並ぶ() {
+    let mut ctx = context(true, true, false);
+    ctx.timer_supported = true;
+    let mut dom = VirtualDom::new_with_props(root, ctx);
+    rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    let heading = html.find("class=\"session-card-heading\"").unwrap();
+    let countdown = html.find("class=\"session-countdown\"").unwrap();
+    let remaining = html.find("class=\"session-remaining\"").unwrap();
+    let timer = html.find("class=\"session-timer-shortcut\"").unwrap();
+    let obsidian = html.find("class=\"session-obsidian-shortcut\"").unwrap();
+    let metadata = html.find("class=\"session-timing-meta\"").unwrap();
+    assert!(heading < countdown && countdown < remaining);
+    assert!(
+        remaining < timer && timer < obsidian && obsidian < metadata,
+        "{html}"
+    );
+    assert!(!html[heading..countdown].contains("session-obsidian-shortcut"));
 }
 
 #[test]

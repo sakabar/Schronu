@@ -253,47 +253,22 @@ fn SessionCard(
     rsx! {
         article { class: "session-card",
             div { class: "session-card-heading",
-                div { class: "session-task-heading",
-                    h2 {
-                        if linkable {
-                            button {
-                                class: "session-task-link",
-                                r#type: "button",
-                                aria_label: open_task_label,
-                                disabled: server_actions_blocked,
-                                onclick: move |_| {
-                                    if !server_actions_blocked {
-                                        on_open_link.call(open_task_id.clone());
-                                    }
-                                },
-                                "{session.task_name} ↗"
-                            }
-                        } else {
-                            "{session.task_name}"
-                        }
-                    }
-                    if obsidian_supported {
+                h2 {
+                    if linkable {
                         button {
-                            class: "session-obsidian-shortcut",
+                            class: "session-task-link",
                             r#type: "button",
-                            title: "Obsidianでルートタスクを検索",
-                            aria_label: obsidian_label,
-                            disabled: !obsidian_enabled,
+                            aria_label: open_task_label,
+                            disabled: server_actions_blocked,
                             onclick: move |_| {
-                                obsidian_result.set(None);
-                                if obsidian_enabled {
-                                    obsidian_result.set(on_open_obsidian.call(obsidian_task_id.clone()));
+                                if !server_actions_blocked {
+                                    on_open_link.call(open_task_id.clone());
                                 }
                             },
-                            svg {
-                                width: "18", height: "18", view_box: "0 0 24 24",
-                                fill: "none", stroke: "currentColor", stroke_width: "2",
-                                stroke_linecap: "round", stroke_linejoin: "round",
-                                "aria-hidden": "true", "focusable": "false",
-                                path { d: "M9 3h6l6 6-9 12L3 9z" }
-                                path { d: "M3 9h18M9 3l3 6 3-6M12 9v12" }
-                            }
+                            "{session.task_name} ↗"
                         }
+                    } else {
+                        "{session.task_name}"
                     }
                 }
                 span { class: "session-progress-label", "{progress}" }
@@ -322,6 +297,29 @@ fn SessionCard(
                                 "aria-hidden": "true", "focusable": "false",
                                 circle { cx: "12", cy: "12", r: "9" }
                                 path { d: "M12 7v5l3 2" }
+                            }
+                        }
+                    }
+                    if obsidian_supported {
+                        button {
+                            class: "session-obsidian-shortcut",
+                            r#type: "button",
+                            title: "Obsidianでルートタスクを検索",
+                            aria_label: obsidian_label,
+                            disabled: !obsidian_enabled,
+                            onclick: move |_| {
+                                obsidian_result.set(None);
+                                if obsidian_enabled {
+                                    obsidian_result.set(on_open_obsidian.call(obsidian_task_id.clone()));
+                                }
+                            },
+                            svg {
+                                width: "18", height: "18", view_box: "0 0 24 24",
+                                fill: "none", stroke: "currentColor", stroke_width: "2",
+                                stroke_linecap: "round", stroke_linejoin: "round",
+                                "aria-hidden": "true", "focusable": "false",
+                                path { d: "M9 3h6l6 6-9 12L3 9z" }
+                                path { d: "M3 9h18M9 3l3 6 3-6M12 9v12" }
                             }
                         }
                     }

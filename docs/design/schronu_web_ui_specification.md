@@ -703,7 +703,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - handlerはclick時刻と現在のsessionを`session_timing`へ渡した正の整数秒を`shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}`へ埋め込み、click処理内で同期的に`window.location.assign`を呼ぶ。新規tab、非同期通信、CLIの残り時間計算は使用しない。`TimerForSchronu`は閲覧端末(Mac・iPad・iPhone)に登録済みで、秒数のテキスト入力を受け取ることを前提とする。
 - 通常の起動要求では案内を追加せず、同期errorを取得できた場合だけcard内へ`role=alert`で理由を表示する。ブラウザ確認のキャンセル、未登録、実行結果は検知できない。再clickは許可し、再click・再開・削除時に一時表示を消去する。server APIと保存形式は変更せず、起動操作によるserver通信、localStorage保存、実績更新、Web計測の停止を行わない。reload時の再起動とWeb終了・解除・再開による端末タイマーの停止・更新も行わない。
 
-- Macの閲覧browserだけtask名の右隣へ18pxの黒曜石風Obsidian iconを持つ28px四方のbuttonを置く。coarse pointerは44px四方とする。名前は折り返し、iconは縮めず、進捗率と既存操作を維持する。tooltipは「Obsidianでルートタスクを検索」、ARIA labelはtask名と操作を含む。
+- Macの閲覧browserだけ時計iconの右隣へ18pxの黒曜石風Obsidian iconを持つ28px四方のbuttonを置き、「残り時間 → 時計 → Obsidian」の順に並べる。coarse pointerは44px四方とする。task名の見出しからは独立させ、iconは縮めず、進捗率と既存操作を維持する。tooltipは「Obsidianでルートタスクを検索」、ARIA labelはtask名と操作を含む。
 - 判定は`navigator.platform.startsWith("Mac") && navigator.maxTouchPoints <= 1`とし、Mac互換識別のiPad、判定不能・初期化前・Mac以外ではbuttonとlistenerを生成せず先行取得も行わない。server OSは使用せず端末情報は保存・送信しない。browser申告による推定の限界をREADMEへ記載する。
 - `resolve_obsidian_search_uri(task_id: String)`は`WebOperationResult<String>`を返す読取endpointとし、workerとWebServiceを経てUUIDとtask存在を検証する。CLI「黒」とapplication層で共通化したroot UUID・percent encode規則を用い、設定`obsidian_vault_name`で`obsidian://search?vault=...&query=...`を返す。実repositoryの保存・current taskの変更は行わない。
 - Macでセッションtabへ進入した時とcard追加時だけ先行取得する。HTTP(S)と独立したmemory cacheを持ち、取得中・失敗時は無効化する。要求IDを照合し、削除時に破棄し、再進入で再取得する。取得失敗はcard内の`role=alert`で理由と「セッションタブを開き直してください。」を表示する。
