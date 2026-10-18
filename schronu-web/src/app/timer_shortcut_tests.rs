@@ -289,7 +289,7 @@ fn root(ctx: Context) -> Element {
 }
 
 #[test]
-fn 時計clickから起動し再クリックで最新秒数を渡し保存と通信を増やさない() {
+fn 時計clickは通常表示を追加せず最新秒数を渡し保存と通信を増やさない() {
     let ctx = context(true);
     let mut dom = VirtualDom::new_with_props(root, ctx.clone());
     let mut ids = rebuild_with_click_listeners(&mut dom);
@@ -305,7 +305,7 @@ fn 時計clickから起動し再クリックで最新秒数を渡し保存と通
     dispatch_click(&dom, ids[0]);
     dom.render_immediate_to_vec();
     assert!(
-        dioxus::ssr::render(&dom).contains("起動を要求しました。実行結果は確認できません。"),
+        !dioxus::ssr::render(&dom).contains("session-timer-message"),
         "urls={:?}, html={}",
         ctx.urls.borrow(),
         dioxus::ssr::render(&dom)
@@ -373,12 +373,16 @@ fn 同期エラーから再試行でき再開操作でメッセージを消去�
     dom.render_immediate_to_vec();
     let html = dioxus::ssr::render(&dom);
     assert!(!html.contains("起動要求の検証エラー"));
-    assert!(html.contains("起動を要求しました。"));
+    assert!(!html.contains("session-timer-message"));
+    ctx.fail.set(true);
+    dispatch_click(&dom, ids[0]);
+    dom.render_immediate_to_vec();
+    assert!(dioxus::ssr::render(&dom).contains("起動要求の検証エラー"));
     // 子componentのlistenerはDOM順の逆順に生成される。
     ctx.now.set(START + 1_000);
     dispatch_click(&dom, ids[4]);
     dom.render_immediate_to_vec();
-    assert!(!dioxus::ssr::render(&dom).contains("起動を要求しました。"));
+    assert!(!dioxus::ssr::render(&dom).contains("session-timer-message"));
     assert_eq!(
         ctx.client.borrow().state().unwrap().sessions()[0].started_at_epoch_ms,
         START + 1_000

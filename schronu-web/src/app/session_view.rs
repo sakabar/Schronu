@@ -293,11 +293,8 @@ fn SessionCard(
                         "開始時実績 {actual_at_start}"
                     }
                 }
-                if let Some(result) = timer_result.read().as_ref() {
-                    match result {
-                        Ok(()) => rsx! { span { class: "session-timer-message", role: "status", "起動を要求しました。実行結果は確認できません。" } },
-                        Err(message) => rsx! { span { class: "session-timer-message error", role: "alert", "{message}" } },
-                    }
+                if let Some(Err(message)) = timer_result.read().as_ref() {
+                    span { class: "session-timer-message error", role: "alert", "{message}" }
                 }
             }
             div {

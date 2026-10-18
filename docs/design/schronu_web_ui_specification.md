@@ -701,7 +701,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 端末判定はbrowser内で`navigator.platform.startsWith("Mac") || navigator.platform === "iPad"`とし、Macとして識別されるiPadも許可する。iPhoneとその他の端末は対象外とする。取得不能・初期化前は非表示とし、OS情報は保存・送信しない。serverのOSは判定に使わず、申告情報による誤判定の限界をREADMEへ記載する。
 - 時計操作はtask IDをbrowser handlerへ渡し、端末、通常通信、持ち歩きロックの単調時計期限、対象sessionの終了処理・競合・手動確認待ちと残り時間を再確認する。残り0秒・超過は拒否し、背景更新中は許可する。一時許可中は他の封印対象操作と同様に無操作期限を更新する。
 - handlerはclick時刻と現在のsessionを`session_timing`へ渡した正の整数秒を`shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}`へ埋め込み、click処理内で同期的に`window.location.assign`を呼ぶ。新規tab、非同期通信、CLIの残り時間計算は使用しない。`TimerForSchronu`は閲覧端末(MacまたはiPad)に登録済みで、秒数のテキスト入力を受け取ることを前提とする。
-- 呼び出しが戻った場合はcard内へ`role=status`で「起動を要求しました。実行結果は確認できません。」、同期errorの場合は`role=alert`で理由を表示する。ブラウザ確認のキャンセル、未登録、実行結果は検知できない。再clickは許可し、再click・再開・削除時に一時表示を消去する。server APIと保存形式は変更せず、起動操作によるserver通信、localStorage保存、実績更新、Web計測の停止を行わない。reload時の再起動とWeb終了・解除・再開による端末タイマーの停止・更新も行わない。
+- 通常の起動要求では案内を追加せず、同期errorを取得できた場合だけcard内へ`role=alert`で理由を表示する。ブラウザ確認のキャンセル、未登録、実行結果は検知できない。再clickは許可し、再click・再開・削除時に一時表示を消去する。server APIと保存形式は変更せず、起動操作によるserver通信、localStorage保存、実績更新、Web計測の停止を行わない。reload時の再起動とWeb終了・解除・再開による端末タイマーの停止・更新も行わない。
 
 ### 7.3 一覧画面
 

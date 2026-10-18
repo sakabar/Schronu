@@ -83,7 +83,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-CARD-014**: 閲覧browserがMacまたはiPadと判定された場合だけ残り時間の右隣へ時計iconを表示すること。iconは18px、buttonは枠と常設テキストなしの28px四方とし、coarse pointerでは操作領域を44px四方にすること。tooltipは「残り時間でタイマーを開く」、ARIA labelは対象task名と操作を含むこと。既存6操作の配置を維持すること。
 - **REQ-CARD-015**: `navigator.platform`が`Mac`で始まるか`iPad`の場合だけ時計をDOMへ生成し、Macとして識別されるiPadも許可すること。iPhone、それ以外の端末、判定不能、初期化前を除外すること。端末情報は保存・送信せず、browser申告による判定の限界をREADMEへ記載すること。
 - **REQ-CARD-016**: 時計click時は現在のセッションとclick時刻から共通の残り時間計算で正の整数秒を求め、固定の`TimerForSchronu`を`shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}`で同期的に開くこと。残り0秒・超過、持ち歩きロック、通常通信、対象の終了処理・競合・手動確認待ちではbuttonとhandlerの双方で拒否し、端末判定も再確認すること。背景更新中は利用可能とすること。
-- **REQ-CARD-017**: 起動要求と同期errorを対象card内へ一時表示し、成功や実行中とは断定せず、再clickを許可すること。再click・セッション再開・削除時に表示を消去すること。Webの計測は継続し、server通信・localStorage保存・実績更新、reload時の自動起動、Web操作による端末タイマーの停止・更新を行わないこと。
+- **REQ-CARD-017**: 通常の起動要求では案内を表示せず、取得できた同期errorだけを対象card内へ一時表示し、再clickを許可すること。再click・セッション再開・削除時に表示を消去すること。Webの計測は継続し、server通信・localStorage保存・実績更新、reload時の自動起動、Web操作による端末タイマーの停止・更新を行わないこと。
 
 ### 4.5 セッション操作
 
