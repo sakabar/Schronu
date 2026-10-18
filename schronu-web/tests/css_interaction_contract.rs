@@ -535,3 +535,22 @@ fn numeric_property(block: &str, property: &str) -> i32 {
         })
         .unwrap_or_else(|| panic!("missing numeric property `{property}`"))
 }
+
+#[test]
+fn obsidian操作領域は折り返すtask名と共存しtouch時に拡大する() {
+    let heading = block_body(MAIN_CSS, ".session-task-heading {");
+    assert!(heading.contains("display: flex;"));
+    assert!(heading.contains("min-width: 0;"));
+    let icon = block_body(MAIN_CSS, ".session-obsidian-shortcut {");
+    assert!(icon.contains("flex: 0 0 auto;"));
+    assert!(icon.contains("width: 28px;"));
+    assert!(icon.contains("height: 28px;"));
+    assert!(icon.contains("border: 0;"));
+    let svg = block_body(MAIN_CSS, ".session-obsidian-shortcut svg {");
+    assert!(svg.contains("width: 18px;"));
+    assert!(svg.contains("height: 18px;"));
+    let coarse = block_body(MAIN_CSS, "@media (pointer: coarse)");
+    let touch = block_body(coarse, ".session-obsidian-shortcut {");
+    assert!(touch.contains("width: 44px;"));
+    assert!(touch.contains("height: 44px;"));
+}

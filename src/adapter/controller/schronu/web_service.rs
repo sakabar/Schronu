@@ -67,6 +67,22 @@ pub struct WebService {
 }
 
 impl WebService {
+    pub fn resolve_obsidian_search_uri_at(
+        &mut self,
+        operation_now: DateTime<Local>,
+        task_id: Uuid,
+    ) -> Result<String, WebReadError> {
+        let vault_name = self.config.obsidian_vault_name.clone();
+        self.run_at(operation_now, |repository, _, _| {
+            crate::application::obsidian_search::resolve_obsidian_search_uri(
+                repository,
+                task_id,
+                &vault_name,
+            )
+            .map_err(WebReadCoreError::Application)
+        })
+    }
+
     pub fn resolve_task_link_at(
         &mut self,
         operation_now: DateTime<Local>,

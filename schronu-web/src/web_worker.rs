@@ -18,6 +18,9 @@ pub trait WebOperations: 'static {
     ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
         unreachable!("create_task is not implemented by this test operation")
     }
+    fn resolve_obsidian_search_uri(&mut self, _task_id: String) -> Result<String, WebError> {
+        unreachable!("resolve_obsidian_search_uri is not implemented by this test operation")
+    }
     fn bootstrap(&mut self) -> Result<ServerSnapshot, WebError>;
     fn resolve_task_link(&mut self, _task_id: String) -> Result<Option<String>, WebError> {
         unreachable!("resolve_task_link is not implemented by this test operation")
@@ -70,6 +73,10 @@ enum WebWorkerCommand {
     },
     Bootstrap {
         response: oneshot::Sender<Result<ServerSnapshot, WebError>>,
+    },
+    ResolveObsidianSearchUri {
+        task_id: String,
+        response: oneshot::Sender<Result<String, WebError>>,
     },
     ResolveTaskLink {
         task_id: String,
@@ -142,6 +149,14 @@ impl WebWorkerHandle {
         let (response, receiver) = oneshot::channel();
         self.commands
             .send(WebWorkerCommand::Bootstrap { response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
+    pub async fn resolve_obsidian_search_uri(&self, task_id: String) -> Result<String, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::ResolveObsidianSearchUri { task_id, response })
             .map_err(|_| unavailable_error())?;
         receiver.await.map_err(|_| unavailable_error())?
     }
@@ -259,6 +274,9 @@ fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebW
             }
             WebWorkerCommand::Bootstrap { response } => {
                 let _ = response.send(operations.bootstrap());
+            }
+            WebWorkerCommand::ResolveObsidianSearchUri { task_id, response } => {
+                let _ = response.send(operations.resolve_obsidian_search_uri(task_id));
             }
             WebWorkerCommand::ResolveTaskLink { task_id, response } => {
                 let _ = response.send(operations.resolve_task_link(task_id));

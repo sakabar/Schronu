@@ -1,6 +1,8 @@
+use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::TaskHandle;
 use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
+use uuid::Uuid;
 
 const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
 const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
@@ -25,4 +27,16 @@ pub(crate) fn make_obsidian_root_task_search_url_with_vault(
         &root_task_id.hyphenated().to_string(),
         vault_name,
     ))
+}
+
+pub(crate) fn resolve_obsidian_search_uri(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    vault_name: &str,
+) -> Result<String, ApplicationError> {
+    let task = repository
+        .get_by_id(task_id)
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::TaskNotFound(task_id))?;
+    make_obsidian_root_task_search_url_with_vault(&task, vault_name)
 }

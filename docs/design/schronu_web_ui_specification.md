@@ -703,6 +703,12 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - handlerはclick時刻と現在のsessionを`session_timing`へ渡した正の整数秒を`shortcuts://run-shortcut?name=TimerForSchronu&input=text&text={seconds}`へ埋め込み、click処理内で同期的に`window.location.assign`を呼ぶ。新規tab、非同期通信、CLIの残り時間計算は使用しない。`TimerForSchronu`は閲覧端末(Mac・iPad・iPhone)に登録済みで、秒数のテキスト入力を受け取ることを前提とする。
 - 通常の起動要求では案内を追加せず、同期errorを取得できた場合だけcard内へ`role=alert`で理由を表示する。ブラウザ確認のキャンセル、未登録、実行結果は検知できない。再clickは許可し、再click・再開・削除時に一時表示を消去する。server APIと保存形式は変更せず、起動操作によるserver通信、localStorage保存、実績更新、Web計測の停止を行わない。reload時の再起動とWeb終了・解除・再開による端末タイマーの停止・更新も行わない。
 
+- Macの閲覧browserだけtask名の右隣へ18pxの黒曜石風Obsidian iconを持つ28px四方のbuttonを置く。coarse pointerは44px四方とする。名前は折り返し、iconは縮めず、進捗率と既存操作を維持する。tooltipは「Obsidianでルートタスクを検索」、ARIA labelはtask名と操作を含む。
+- 判定は`navigator.platform.startsWith("Mac") && navigator.maxTouchPoints <= 1`とし、Mac互換識別のiPad、判定不能・初期化前・Mac以外ではbuttonとlistenerを生成せず先行取得も行わない。server OSは使用せず端末情報は保存・送信しない。browser申告による推定の限界をREADMEへ記載する。
+- `resolve_obsidian_search_uri(task_id: String)`は`WebOperationResult<String>`を返す読取endpointとし、workerとWebServiceを経てUUIDとtask存在を検証する。CLI「黒」とapplication層で共通化したroot UUID・percent encode規則を用い、設定`obsidian_vault_name`で`obsidian://search?vault=...&query=...`を返す。実repositoryの保存・current taskの変更は行わない。
+- Macでセッションtabへ進入した時とcard追加時だけ先行取得する。HTTP(S)と独立したmemory cacheを持ち、取得中・失敗時は無効化する。要求IDを照合し、削除時に破棄し、再進入で再取得する。取得失敗はcard内の`role=alert`で理由と「セッションタブを開き直してください。」を表示する。
+- click handlerもMac判定・通常通信・active tab・対象sessionの存在・取得済みURIを再確認し、同期的に`window.location.assign`を呼ぶ。持ち歩きロックと背景更新だけでは拒否しない。同期errorはcard内へ一時表示し、再click・再開・削除で消去する。成功通知は出さず、未導入・browser確認キャンセル・実行結果は検知できない。起動に伴うserver通信・localStorage保存・実績更新・計測停止を行わない。
+
 ### 7.3 一覧画面
 
 - 一覧上部に「予定」「完了」の均等幅segmented controlを置き、`aria-selected`と`aria-pressed`を付ける。初期値は予定とする。mode切替は利用者起点readとして全面overlayの対象にし、選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけsnapshotの現在logical dateへ戻す。完了modeからセッション、負荷を経て一覧へ戻る場合は選択日を維持して予定modeへ戻し、予定一覧を1回取得する。一覧tabの再選択と一覧tab表示中のreloadではmodeを維持する。
@@ -949,6 +955,14 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - server featureのtest・clippy、wasm32 check、Dioxus web buildを実行する。
 - rootで`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を実行する。
 
+### 11.6 Obsidian操作の回帰検証
+
+- Macだけで表示・先行取得・起動し、Mac互換識別のiPad、iPhone、Windows、Linux、判定不能では全て行わないことを確認する。
+- endpointから実serviceまで、不正UUIDと不存在を区別し、root・子・孫で同じUUIDと設定vaultを使い、特殊文字をencodeし、保存しないことを確認する。
+- 取得中・失敗・再取得、削除後と旧要求の遅延応答、ロック中・背景更新中の起動、通常通信中の拒否、同期errorの消去を製品handlerとcardのclick経路で確認する。
+- 320px幅、390×844px、desktop、長いtask名、複数sessionで非重複と既存6操作の表示を確認する。実Macで外部起動と復帰後の計測継続を確認する。
+
+
 ## 12. 現行UIの置換対象
 
 次は互換性を維持せず、削除または置換してよい。
@@ -968,7 +982,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 | 2、3、4、8 | REQ-NFR-001..007、REQ-NET-001、REQ-APP-001 |
 | 3.4、6.1、7.2 | REQ-SESSION-001..007、REQ-AUTO-001..004 |
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
-| 6.2、6.3、7.2 | REQ-CARD-001..012 |
+| 6.2、6.3、7.2、11.6 | REQ-CARD-001..020 |
 | 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
 | 6.4 | REQ-BUFFER-001..010 |
 | 3.3、3.4、4.2..4.4、6.1、6.5、7.3、7.4、8、11.5 | REQ-LIST-001..034 |

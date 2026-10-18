@@ -1,5 +1,5 @@
 use dioxus::prelude::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::client::time_model::{format_hh_mm_ss, format_mm_ss};
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
@@ -51,6 +51,11 @@ pub fn SessionView(
     on_auto_session: EventHandler<Option<i64>>,
     on_action: EventHandler<SessionAction>,
     #[props(default)] on_open_link: EventHandler<String>,
+    #[props(default)] obsidian_supported: bool,
+    #[props(default)] obsidian_ready_task_ids: HashSet<String>,
+    #[props(default)] obsidian_lookup_errors: HashMap<String, String>,
+    #[props(default)] obsidian_server_busy: bool,
+    #[props(default)] on_open_obsidian: Callback<String, Option<Result<(), String>>>,
     #[props(default)] timer_shortcut_supported: bool,
     #[props(default)] timer_server_busy: bool,
     #[props(default)] on_open_timer: Callback<String, Option<Result<(), String>>>,
@@ -106,6 +111,11 @@ pub fn SessionView(
                 SessionCard {
                     key: "{session.task_id}",
                     linkable: linkable_task_ids.contains(&session.task_id),
+                    obsidian_ready: obsidian_ready_task_ids.contains(&session.task_id),
+                    obsidian_lookup_error: obsidian_lookup_errors.get(&session.task_id).cloned(),
+                    obsidian_supported,
+                    obsidian_server_busy,
+                    on_open_obsidian,
                     session,
                     global_blocked,
                     mutations_locked,
@@ -125,6 +135,11 @@ pub fn SessionView(
 fn SessionCard(
     session: SessionCardViewModel,
     linkable: bool,
+    obsidian_supported: bool,
+    obsidian_ready: bool,
+    obsidian_lookup_error: Option<String>,
+    obsidian_server_busy: bool,
+    on_open_obsidian: Callback<String, Option<Result<(), String>>>,
     global_blocked: bool,
     mutations_locked: bool,
     server_actions_blocked: bool,
@@ -134,6 +149,10 @@ fn SessionCard(
     timer_server_busy: bool,
     on_open_timer: Callback<String, Option<Result<(), String>>>,
 ) -> Element {
+    let mut obsidian_result = use_signal(|| None::<Result<(), String>>);
+    let obsidian_task_id = session.task_id.clone();
+    let obsidian_label = format!("{}: Obsidianでルートタスクを検索", session.task_name);
+    let obsidian_enabled = obsidian_ready && !obsidian_server_busy;
     let mut timer_result = use_signal(|| None::<Result<(), String>>);
     let timer_enabled = super::timer_shortcut::timer_enabled(
         &session,
@@ -150,6 +169,7 @@ fn SessionCard(
                 | SessionActionKind::ResumeCompletionConflict
         ) {
             timer_result.set(None);
+            obsidian_result.set(None);
         }
         on_action.call(action);
     });
@@ -233,22 +253,47 @@ fn SessionCard(
     rsx! {
         article { class: "session-card",
             div { class: "session-card-heading",
-                h2 {
-                    if linkable {
+                div { class: "session-task-heading",
+                    h2 {
+                        if linkable {
+                            button {
+                                class: "session-task-link",
+                                r#type: "button",
+                                aria_label: open_task_label,
+                                disabled: server_actions_blocked,
+                                onclick: move |_| {
+                                    if !server_actions_blocked {
+                                        on_open_link.call(open_task_id.clone());
+                                    }
+                                },
+                                "{session.task_name} ↗"
+                            }
+                        } else {
+                            "{session.task_name}"
+                        }
+                    }
+                    if obsidian_supported {
                         button {
-                            class: "session-task-link",
+                            class: "session-obsidian-shortcut",
                             r#type: "button",
-                            aria_label: open_task_label,
-                            disabled: server_actions_blocked,
+                            title: "Obsidianでルートタスクを検索",
+                            aria_label: obsidian_label,
+                            disabled: !obsidian_enabled,
                             onclick: move |_| {
-                                if !server_actions_blocked {
-                                    on_open_link.call(open_task_id.clone());
+                                obsidian_result.set(None);
+                                if obsidian_enabled {
+                                    obsidian_result.set(on_open_obsidian.call(obsidian_task_id.clone()));
                                 }
                             },
-                            "{session.task_name} ↗"
+                            svg {
+                                width: "18", height: "18", view_box: "0 0 24 24",
+                                fill: "none", stroke: "currentColor", stroke_width: "2",
+                                stroke_linecap: "round", stroke_linejoin: "round",
+                                "aria-hidden": "true", "focusable": "false",
+                                path { d: "M9 3h6l6 6-9 12L3 9z" }
+                                path { d: "M3 9h18M9 3l3 6 3-6M12 9v12" }
+                            }
                         }
-                    } else {
-                        "{session.task_name}"
                     }
                 }
                 span { class: "session-progress-label", "{progress}" }
@@ -291,6 +336,15 @@ fn SessionCard(
                         class: "session-start-actual",
                         aria_label: actual_at_start_label,
                         "開始時実績 {actual_at_start}"
+                    }
+                }
+                if obsidian_supported {
+                    if let Some(message) = obsidian_lookup_error {
+                        p { class: "session-obsidian-message error", role: "alert",
+                            "Obsidianの検索先を取得できませんでした: {message} セッションタブを開き直してください。"
+                        }
+                    } else if let Some(Err(message)) = obsidian_result.read().as_ref() {
+                        p { class: "session-obsidian-message error", role: "alert", "{message}" }
                     }
                 }
                 if let Some(Err(message)) = timer_result.read().as_ref() {

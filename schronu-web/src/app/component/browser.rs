@@ -29,6 +29,8 @@ pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
     let open_link_error = use_signal(|| None::<String>);
     let mut session_links = use_signal(SessionLinks::default);
+    let mut session_obsidian = use_signal(SessionLinks::obsidian);
+    let obsidian_supported = use_signal(super::super::obsidian::browser_supports_obsidian);
     let timer_shortcut_supported =
         use_signal(super::super::timer_shortcut::browser_supports_timer_shortcut);
     let long_press_scheduler =
@@ -82,6 +84,29 @@ pub(super) fn BrowserApp() -> Element {
                     Err(_) => Err("リンクを取得できませんでした。再試行してください。".to_owned()),
                 };
                 session_links
+                    .write()
+                    .apply_result(&task_id, request_id, result);
+            });
+        }
+    });
+
+    use_effect(move || {
+        let requests = super::super::obsidian::refresh_requests(
+            &mut session_obsidian.write(),
+            client.read().state(),
+            obsidian_supported(),
+        );
+        for (task_id, request_id) in requests {
+            spawn(async move {
+                let result =
+                    match super::super::web_endpoint::resolve_obsidian_search_uri(task_id.clone())
+                        .await
+                    {
+                        Ok(Ok(uri)) => Ok(Some(uri)),
+                        Ok(Err(error)) => Err(error.message),
+                        Err(_) => Err("サーバーへ接続できませんでした。".to_owned()),
+                    };
+                session_obsidian
                     .write()
                     .apply_result(&task_id, request_id, result);
             });
@@ -243,6 +268,24 @@ pub(super) fn BrowserApp() -> Element {
                     mutations_locked,
                     auto_session_in_flight,
                     server_actions_blocked,
+                    obsidian_supported: obsidian_supported(),
+                    obsidian_ready_task_ids: session_obsidian.read().linkable_task_ids(),
+                    obsidian_lookup_errors: session_obsidian.read().error_messages(),
+                    obsidian_server_busy: client.read().server_effect_in_flight(),
+                    on_open_obsidian: move |task_id: String| {
+                        let client = client.read();
+                        super::super::obsidian::open_obsidian(
+                            client.state()?,
+                            &session_obsidian.read(),
+                            super::super::obsidian::browser_supports_obsidian(),
+                            client.server_effect_in_flight(),
+                            &task_id,
+                            |uri| {
+                                let browser = web_sys::window().ok_or_else(|| "browserを利用できません。".to_owned())?;
+                                browser.location().assign(uri).map_err(|_| "Obsidianを開けませんでした。ブラウザの設定を確認して再試行してください。".to_owned())
+                            },
+                        )
+                    },
                     timer_shortcut_supported: timer_shortcut_supported(),
                     timer_server_busy: client.read().server_effect_in_flight(),
                     on_auto_session: move |max_minutes: Option<i64>| {

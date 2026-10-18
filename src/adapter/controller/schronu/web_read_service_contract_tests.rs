@@ -75,6 +75,58 @@ fn resolve_task_linkは子から親へ最初のurlを探し保存しない() {
     ));
 }
 
+#[test]
+fn obsidian検索はrootと子孫のuuidと設定vaultを解決し保存しない() {
+    let fixture = WebReadServiceFixture::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let ids = [Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)];
+    let root = TaskHandle::with_identity("root search contract", ids[0], now).unwrap();
+    let child = root
+        .create_child(TaskAttr::with_identity(
+            "child search contract",
+            ids[1],
+            now,
+        ))
+        .unwrap();
+    child
+        .create_child(TaskAttr::with_identity(
+            "descendant search contract",
+            ids[2],
+            now,
+        ))
+        .unwrap();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.start_new_project(root).unwrap();
+    repository.save().unwrap();
+    let before = fixture.persisted_bytes();
+    for (vault, encoded) in [
+        ("Obsidian-Work", "Obsidian-Work"),
+        (
+            "検証 & Work=Notes",
+            "%E6%A4%9C%E8%A8%BC%20%26%20Work%3DNotes",
+        ),
+    ] {
+        let mut config = fixture.config();
+        config.obsidian_vault_name = vault.into();
+        let mut service = WebService::new(fixture.storage.clone(), config);
+        for id in ids {
+            assert_eq!(
+                service.resolve_obsidian_search_uri_at(now, id).unwrap(),
+                format!("obsidian://search?vault={encoded}&query={}", ids[0])
+            );
+        }
+        assert!(matches!(
+            service.resolve_obsidian_search_uri_at(now, Uuid::from_u128(4)),
+            Err(WebReadError::Application(
+                crate::application::task_use_case::ApplicationError::TaskNotFound(_)
+            ))
+        ));
+    }
+    assert_eq!(fixture.persisted_bytes(), before);
+}
+
 impl WebReadServiceFixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
