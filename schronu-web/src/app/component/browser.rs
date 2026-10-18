@@ -29,6 +29,8 @@ pub(super) fn BrowserApp() -> Element {
     let mut client = use_signal(ComponentOrchestrator::new);
     let open_link_error = use_signal(|| None::<String>);
     let mut session_links = use_signal(SessionLinks::default);
+    let timer_shortcut_supported =
+        use_signal(super::super::timer_shortcut::browser_supports_timer_shortcut);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
 
@@ -241,6 +243,8 @@ pub(super) fn BrowserApp() -> Element {
                     mutations_locked,
                     auto_session_in_flight,
                     server_actions_blocked,
+                    timer_shortcut_supported: timer_shortcut_supported(),
+                    timer_server_busy: client.read().server_effect_in_flight(),
                     on_auto_session: move |max_minutes: Option<i64>| {
                         let action = max_minutes.map_or(
                             ComponentAction::AutoSession,
@@ -251,6 +255,18 @@ pub(super) fn BrowserApp() -> Element {
                     on_action: move |action| dispatch_session_action(client, action),
                     on_open_link: move |task_id| {
                         open_session_link(client, open_link_error, session_links, task_id);
+                    },
+                    on_open_timer: move |task_id: String| {
+                        client.write().open_timer_shortcut(
+                            &task_id,
+                            super::super::timer_shortcut::browser_supports_timer_shortcut(),
+                            browser_now_epoch_ms(),
+                            browser_monotonic_now_ms(),
+                            |url| {
+                                let browser = web_sys::window().ok_or_else(|| "browserを利用できません。".to_owned())?;
+                                browser.location().assign(url).map_err(|_| "タイマーを開けませんでした。ブラウザの設定を確認して再試行してください。".to_owned())
+                            },
+                        )
                     },
                 }
             } else if active_tab == ActiveTab::List {

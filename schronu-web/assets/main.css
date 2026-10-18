@@ -564,6 +564,48 @@ button:disabled {
     min-width: 0;
     align-items: baseline;
     gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.session-timer-shortcut {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    align-self: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--muted);
+    padding: 0;
+}
+
+.session-timer-shortcut svg {
+    width: 18px;
+    height: 18px;
+}
+
+.session-timer-message {
+    color: var(--muted);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+}
+
+.session-timer-message.error {
+    color: var(--red-dark);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
+@media (pointer: coarse) {
+    .session-timer-shortcut {
+        width: 44px;
+        height: 44px;
+    }
 }
 
 .session-countdown-label {

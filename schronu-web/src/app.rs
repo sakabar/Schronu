@@ -50,6 +50,9 @@ pub(crate) mod session_view;
 mod session_view_tests;
 #[cfg(all(test, feature = "server"))]
 mod timed_auto_session_tests;
+mod timer_shortcut;
+#[cfg(all(test, feature = "server"))]
+mod timer_shortcut_tests;
 #[cfg(test)]
 mod view_test_support;
 mod web_endpoint;

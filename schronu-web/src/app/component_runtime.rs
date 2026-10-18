@@ -186,6 +186,26 @@ impl ComponentOrchestrator {
         self.state.as_ref()
     }
 
+    pub fn open_timer_shortcut(
+        &mut self,
+        task_id: &str,
+        supported: bool,
+        now_epoch_ms: i64,
+        monotonic_now_ms: u64,
+        open: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Option<Result<(), String>> {
+        let busy = self.server_effect_in_flight();
+        super::timer_shortcut::open_timer_shortcut(
+            self.state.as_mut()?,
+            supported,
+            busy,
+            task_id,
+            now_epoch_ms,
+            monotonic_now_ms,
+            open,
+        )
+    }
+
     pub fn server_effect_in_flight(&self) -> bool {
         self.pending_server_effects > 0
     }

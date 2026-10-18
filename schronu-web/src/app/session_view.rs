@@ -51,6 +51,9 @@ pub fn SessionView(
     on_auto_session: EventHandler<Option<i64>>,
     on_action: EventHandler<SessionAction>,
     #[props(default)] on_open_link: EventHandler<String>,
+    #[props(default)] timer_shortcut_supported: bool,
+    #[props(default)] timer_server_busy: bool,
+    #[props(default)] on_open_timer: Callback<String, Option<Result<(), String>>>,
 ) -> Element {
     let mut minutes_input = use_signal(String::new);
     let mut input_error = use_signal(|| None::<&'static str>);
@@ -109,6 +112,9 @@ pub fn SessionView(
                     server_actions_blocked,
                     on_action,
                     on_open_link,
+                    timer_shortcut_supported,
+                    timer_server_busy,
+                    on_open_timer,
                 }
             }
         }
@@ -124,7 +130,29 @@ fn SessionCard(
     server_actions_blocked: bool,
     on_action: EventHandler<SessionAction>,
     on_open_link: EventHandler<String>,
+    timer_shortcut_supported: bool,
+    timer_server_busy: bool,
+    on_open_timer: Callback<String, Option<Result<(), String>>>,
 ) -> Element {
+    let mut timer_result = use_signal(|| None::<Result<(), String>>);
+    let timer_enabled = super::timer_shortcut::timer_enabled(
+        &session,
+        global_blocked,
+        mutations_locked,
+        timer_server_busy,
+    );
+    let timer_task_id = session.task_id.clone();
+    let timer_label = format!("{}: 残り時間でタイマーを開く", session.task_name);
+    let on_action = EventHandler::new(move |action: SessionAction| {
+        if matches!(
+            action.kind,
+            SessionActionKind::RestartWithoutRecording
+                | SessionActionKind::ResumeCompletionConflict
+        ) {
+            timer_result.set(None);
+        }
+        on_action.call(action);
+    });
     let mut confirming_discard_completion = use_signal(|| false);
     use_effect(use_reactive(
         (&mutations_locked,),
@@ -229,6 +257,29 @@ fn SessionCard(
                 span { class: "session-countdown",
                     span { class: "session-countdown-label", aria_hidden: "true", "{remaining_kind}" }
                     strong { class: remaining_class, aria_label: remaining_label, "{remaining}" }
+                    if timer_shortcut_supported {
+                        button {
+                            class: "session-timer-shortcut",
+                            r#type: "button",
+                            title: "残り時間でタイマーを開く",
+                            aria_label: timer_label,
+                            disabled: !timer_enabled,
+                            onclick: move |_| {
+                                timer_result.set(None);
+                                if timer_enabled {
+                                    timer_result.set(on_open_timer.call(timer_task_id.clone()));
+                                }
+                            },
+                            svg {
+                                width: "18", height: "18", view_box: "0 0 24 24",
+                                fill: "none", stroke: "currentColor", stroke_width: "2",
+                                stroke_linecap: "round", stroke_linejoin: "round",
+                                "aria-hidden": "true", "focusable": "false",
+                                circle { cx: "12", cy: "12", r: "9" }
+                                path { d: "M12 7v5l3 2" }
+                            }
+                        }
+                    }
                 }
                 span { class: "session-timing-meta",
                     span { class: "session-time-range",
@@ -240,6 +291,12 @@ fn SessionCard(
                         class: "session-start-actual",
                         aria_label: actual_at_start_label,
                         "開始時実績 {actual_at_start}"
+                    }
+                }
+                if let Some(result) = timer_result.read().as_ref() {
+                    match result {
+                        Ok(()) => rsx! { span { class: "session-timer-message", role: "status", "起動を要求しました。実行結果は確認できません。" } },
+                        Err(message) => rsx! { span { class: "session-timer-message error", role: "alert", "{message}" } },
                     }
                 }
             }
