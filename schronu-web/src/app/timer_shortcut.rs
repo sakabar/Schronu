@@ -6,7 +6,9 @@ use crate::client::{state::ClientState, time_model::session_timing};
     allow(dead_code)
 )]
 pub(super) fn supports_timer_shortcut(platform: Option<&str>) -> bool {
-    platform.is_some_and(|platform| platform.starts_with("Mac") || platform == "iPad")
+    platform.is_some_and(|platform| {
+        platform.starts_with("Mac") || matches!(platform, "iPad" | "iPhone")
+    })
 }
 
 #[cfg(all(feature = "web", target_arch = "wasm32"))]

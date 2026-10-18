@@ -50,12 +50,12 @@ fn storage(estimated: i64, actual: i64) -> Storage {
 }
 
 #[test]
-fn 端末判定はmacとipadを許可しiphoneと不明な端末を除外する() {
+fn 端末判定はmacとipadとiphoneを許可し不明な端末を除外する() {
     for (platform, expected) in [
         (Some("MacIntel"), true),
         (Some("MacPPC"), true),
         (Some("iPad"), true),
-        (Some("iPhone"), false),
+        (Some("iPhone"), true),
         (Some("iPod"), false),
         (Some("Win32"), false),
         (Some("Linux armv8l"), false),
@@ -350,6 +350,23 @@ fn ipadはどちらのplatform表現でも時計clickから起動できる() {
             ["shortcuts://run-shortcut?name=TimerForSchronu&input=text&text=600"]
         );
     }
+}
+
+#[test]
+fn iphoneは時計click時点の残り秒数で起動できる() {
+    let ctx = context(supports_timer_shortcut(Some("iPhone")));
+    let mut dom = VirtualDom::new_with_props(root, ctx.clone());
+    let ids = rebuild_with_click_listeners(&mut dom);
+    assert!(dioxus::ssr::render(&dom).contains("session-timer-shortcut"));
+    ctx.now.set(START + 4_999);
+    // 条件付き時計buttonのlistenerは既存の静的操作buttonの後に生成される。
+    dispatch_click(&dom, *ids.last().unwrap());
+    assert_eq!(
+        *ctx.urls.borrow(),
+        ["shortcuts://run-shortcut?name=TimerForSchronu&input=text&text=596"]
+    );
+    dom.render_immediate_to_vec();
+    assert!(!dioxus::ssr::render(&dom).contains("session-timer-message"));
 }
 
 #[test]
