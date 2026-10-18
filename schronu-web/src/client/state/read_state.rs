@@ -389,7 +389,7 @@ impl ClientState {
             }
             Err(error) => self.record_server_failure(invocation, error),
         }
-        self.request_load_band()
+        self.request_invalidated_all_tasks_or_load_band()
     }
 
     pub fn apply_completed_list_result(

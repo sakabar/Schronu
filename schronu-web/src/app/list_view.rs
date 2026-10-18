@@ -182,8 +182,7 @@ pub fn ListView(
                     },
                     AllTasksViewStatus::Invalidated => rsx! {
                         div { class: "all-tasks-status", role: "status",
-                            p { "タスクが更新されました。" }
-                            button { r#type: "button", onclick: move |_| on_select_all_tasks.call(()), "更新" }
+                            p { "タスクが更新されました。自動再取得を待っています。" }
                         }
                     },
                     AllTasksViewStatus::Loaded => rsx! {},

@@ -639,7 +639,7 @@ fn all一覧は先頭buttonとinline状態を表示する() {
 }
 
 #[test]
-fn all取得失敗と無効化はinlineから再試行できる() {
+fn all取得失敗は再試行でき無効化時は自動再取得待ちを表示する() {
     use super::list_view::AllTasksViewStatus;
 
     #[derive(Clone)]
@@ -701,15 +701,16 @@ fn all取得失敗と無効化はinlineから再試行できる() {
     let invalidated_ids = rebuild_with_click_listeners(&mut invalidated);
     let invalidated_html = dioxus::ssr::render(&invalidated);
     assert!(
-        invalidated_html.contains("タスクが更新されました。"),
+        invalidated_html.contains("タスクが更新されました。自動再取得を待っています。"),
         "{invalidated_html}"
     );
     assert!(
         !invalidated_html.contains("class=\"task-heading-count\""),
         "{invalidated_html}"
     );
-    dispatch_click(&invalidated, *invalidated_ids.last().unwrap());
-    assert_eq!(*invalidated_events.lock().unwrap(), ["refresh"]);
+    assert!(!invalidated_html.contains(">更新<"), "{invalidated_html}");
+    assert_eq!(invalidated_ids.len(), failed_ids.len() - 1);
+    assert!(invalidated_events.lock().unwrap().is_empty());
 }
 
 #[test]
