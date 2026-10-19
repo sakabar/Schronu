@@ -671,6 +671,23 @@ fn test_make_obsidian_root_task_search_url_子タスクからrootのtask_idをqu
 }
 
 #[test]
+fn obsidian検索はrootと孫でも同じuuidと設定vaultを使う() {
+    let root = TaskHandle::with_identity(
+        "root search contract",
+        Uuid::from_u128(1),
+        Local::now(),
+    ).unwrap();
+    let child = root.create_as_last_child(new_test_task_attr("child search contract"));
+    let grandchild = child.create_as_last_child(new_test_task_attr("grandchild search contract"));
+    for task in [&root, &child, &grandchild] {
+        assert_eq!(
+            make_obsidian_root_task_search_url_with_vault(task, "検証 & Work=Notes").unwrap(),
+            "obsidian://search?vault=%E6%A4%9C%E8%A8%BC%20%26%20Work%3DNotes&query=00000000-0000-0000-0000-000000000001"
+        );
+    }
+}
+
+#[test]
 fn test_split_amount_and_unit() {
     let input = "暦";
     let actual = split_amount_and_unit(input);

@@ -37,6 +37,9 @@ use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::daily_capacity::{calculate_daily_band_durations, try_logical_date_start};
 use crate::application::interface::{BusyTimeSlotLoadError, FreeTimeManagerTrait};
 use crate::application::interface::{TaskRepositoryError, TaskRepositoryTrait};
+use crate::application::obsidian_search::make_obsidian_root_task_search_url_with_vault;
+#[cfg(test)]
+use crate::application::obsidian_search::make_obsidian_search_url_with_vault;
 #[cfg(test)]
 use crate::application::pack_use_case::pack_tasks_with_end_of_day_offset_minutes;
 use crate::application::repository_transaction::{
@@ -52,7 +55,6 @@ use crate::entity::task::{Status, TaskHandle};
 #[cfg(test)]
 use chrono::NaiveTime;
 use chrono::{DateTime, Duration, Local};
-use percent_encoding::{percent_encode, AsciiSet, CONTROLS};
 #[cfg(test)]
 use regex::Regex;
 #[cfg(test)]
@@ -90,10 +92,6 @@ static ACTIVE_CONFIG: OnceLock<SchronuConfig> = OnceLock::new();
 pub(super) fn active_config() -> &'static SchronuConfig {
     ACTIVE_CONFIG.get_or_init(SchronuConfig::default)
 }
-
-// パーセントエンコーディングする対象にスペースを追加する
-const MY_ASCII_SET: &AsciiSet = &CONTROLS.add(b' ');
-const OBSIDIAN_VAULT_ASCII_SET: &AsciiSet = &MY_ASCII_SET.add(b'&').add(b'=');
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum FocusSelectionMode {
@@ -504,28 +502,6 @@ fn resolve_external_request(
 fn execute_open_link(url: &str) -> Result<(), CommandError> {
     webbrowser::open(url).map_err(|source| external_open_error("browser", source))?;
     Ok(())
-}
-
-fn make_obsidian_search_url_with_vault(query: &str, vault_name: &str) -> String {
-    format!(
-        "obsidian://search?vault={}&query={}",
-        percent_encode(vault_name.as_bytes(), OBSIDIAN_VAULT_ASCII_SET),
-        percent_encode(query.as_bytes(), MY_ASCII_SET)
-    )
-}
-
-fn make_obsidian_root_task_search_url_with_vault(
-    focused_task: &TaskHandle,
-    vault_name: &str,
-) -> Result<String, ApplicationError> {
-    let root_task_id = focused_task
-        .root()
-        .and_then(|root| root.get_id())
-        .map_err(ApplicationError::TaskTree)?;
-    Ok(make_obsidian_search_url_with_vault(
-        &root_task_id.hyphenated().to_string(),
-        vault_name,
-    ))
 }
 
 fn open_obsidian_url(url: &str) -> Result<(), String> {

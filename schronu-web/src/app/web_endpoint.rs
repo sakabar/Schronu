@@ -35,6 +35,21 @@ pub async fn bootstrap() -> Result<WebOperationResult<ServerSnapshot>, ServerFnE
     unreachable!("server function body only runs on the server")
 }
 
+#[server(endpoint = "web_resolve_obsidian_search_uri")]
+pub async fn resolve_obsidian_search_uri(
+    task_id: String,
+) -> Result<WebOperationResult<String>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker()
+            .await?
+            .resolve_obsidian_search_uri(task_id)
+            .await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
 #[server(endpoint = "web_resolve_task_link")]
 pub async fn resolve_task_link(
     task_id: String,
@@ -270,6 +285,39 @@ mod tests {
     }
 
     #[test]
+    fn obsidian_endpointはworkerへ対象を1回送りuriとerrorを保つ() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let worker_calls = Arc::clone(&calls);
+        let worker = WebWorkerHandle::spawn(move || CountingOperations {
+            calls: worker_calls,
+            bootstrap_error: None,
+            all_task_cursors: Arc::new(Mutex::new(Vec::new())),
+        });
+        let mut request = Request::builder().body(()).unwrap();
+        request.extensions_mut().insert(worker);
+        let context = FullstackContext::new(request.into_parts().0);
+        assert_eq!(
+            futures::executor::block_on(
+                context
+                    .clone()
+                    .scope(super::resolve_obsidian_search_uri("obsidian-task".into()))
+            )
+            .unwrap(),
+            Ok("obsidian://search?vault=Work&query=root".into())
+        );
+        assert_eq!(
+            futures::executor::block_on(
+                context
+                    .clone()
+                    .scope(super::resolve_obsidian_search_uri("missing".into()))
+            )
+            .unwrap(),
+            Err(operation_error())
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn 九endpoint境界はworkerへ各1回dispatchしてoperation_errorを内側に保つ() {
         let calls = Arc::new(AtomicUsize::new(0));
         let worker_calls = Arc::clone(&calls);
@@ -377,6 +425,15 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    fn operation_error() -> WebError {
+        WebError {
+            code: "task_not_found".into(),
+            message: "検索対象が存在しません。".into(),
+            retry_advice: RetryAdvice::Retry,
+            current_actual_work_seconds: None,
+        }
+    }
+
     struct CountingOperations {
         calls: Arc<AtomicUsize>,
         bootstrap_error: Option<WebError>,
@@ -390,6 +447,15 @@ mod tests {
     }
 
     impl WebOperations for CountingOperations {
+        fn resolve_obsidian_search_uri(&mut self, task_id: String) -> Result<String, WebError> {
+            self.count();
+            if task_id == "obsidian-task" {
+                Ok("obsidian://search?vault=Work&query=root".into())
+            } else {
+                Err(operation_error())
+            }
+        }
+
         fn resolve_task_link(&mut self, task_id: String) -> Result<Option<String>, WebError> {
             self.count();
             Ok((task_id == "task-link").then(|| "https://example.com/link".to_owned()))

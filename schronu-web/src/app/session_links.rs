@@ -9,13 +9,38 @@ enum LinkStatus {
 }
 
 #[derive(Default)]
+enum LinkTarget {
+    #[default]
+    Web,
+    Obsidian,
+}
+
+#[derive(Default)]
 pub(super) struct SessionLinks {
+    target: LinkTarget,
     statuses: HashMap<String, LinkStatus>,
     next_request_id: u64,
     was_active: bool,
 }
 
 impl SessionLinks {
+    pub(super) fn obsidian() -> Self {
+        Self {
+            target: LinkTarget::Obsidian,
+            ..Self::default()
+        }
+    }
+
+    pub(super) fn error_messages(&self) -> HashMap<String, String> {
+        self.statuses
+            .iter()
+            .filter_map(|(id, status)| match status {
+                LinkStatus::Failed(message) => Some((id.clone(), message.clone())),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub(super) fn reconcile(&mut self, active: bool, task_ids: &[String]) -> Vec<(String, u64)> {
         let visible: HashSet<&str> = task_ids.iter().map(String::as_str).collect();
         self.statuses
@@ -54,8 +79,16 @@ impl SessionLinks {
             return;
         }
         let status = match result {
-            Ok(Some(url)) if url.starts_with("https://") || url.starts_with("http://") => {
+            Ok(Some(url))
+                if match self.target {
+                    LinkTarget::Web => url.starts_with("https://") || url.starts_with("http://"),
+                    LinkTarget::Obsidian => url.starts_with("obsidian://search?vault="),
+                } =>
+            {
                 LinkStatus::Available(url)
+            }
+            Ok(_) if matches!(self.target, LinkTarget::Obsidian) => {
+                LinkStatus::Failed("Obsidianの検索先が不正です。".into())
             }
             Ok(Some(_)) | Ok(None) => LinkStatus::Missing,
             Err(message) => LinkStatus::Failed(message),

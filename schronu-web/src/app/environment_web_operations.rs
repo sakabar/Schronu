@@ -110,6 +110,17 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
             .map_err(Into::into)
     }
 
+    fn resolve_obsidian_search_uri(&mut self, task_id: String) -> Result<String, WebError> {
+        let task_id = Uuid::parse_str(&task_id).map_err(|_| WebError {
+            message: "task_idはUUID形式で指定してください。".to_owned(),
+            ..invalid_input_error()
+        })?;
+        let operation_now = self.clock.now();
+        self.service()?
+            .resolve_obsidian_search_uri_at(operation_now, task_id)
+            .map_err(Into::into)
+    }
+
     fn resolve_task_link(&mut self, task_id: String) -> Result<Option<String>, WebError> {
         let task_id = Uuid::parse_str(&task_id).map_err(|_| invalid_input_error())?;
         let operation_now = self.clock.now();
@@ -572,6 +583,50 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn obsidian_endpointは実serviceで設定vaultを解決し不正uuidと不存在を区別する() {
+        use dioxus::fullstack::{axum::http::Request, FullstackContext};
+        let fixture = Fixture::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+        let task_id = fixture.seed_task(now);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let clock_calls = Arc::clone(&calls);
+        let config = fixture.config.clone();
+        let storage = fixture.storage.clone();
+        let worker = crate::WebWorkerHandle::spawn(move || {
+            EnvironmentWebOperations::with_environment_and_clock(
+                Some(config.into_os_string()),
+                Some(storage.into_os_string()),
+                CountingClock {
+                    now,
+                    calls: clock_calls,
+                },
+            )
+        });
+        let mut request = Request::builder().body(()).unwrap();
+        request.extensions_mut().insert(worker);
+        let context = FullstackContext::new(request.into_parts().0);
+        let resolve = |id: String| {
+            futures::executor::block_on(
+                context
+                    .clone()
+                    .scope(super::super::web_endpoint::resolve_obsidian_search_uri(id)),
+            )
+            .unwrap()
+        };
+        let error = resolve("invalid uuid".into()).unwrap_err();
+        assert_eq!(error.code, web_error_codes::INVALID_INPUT);
+        assert_eq!(error.message, "task_idはUUID形式で指定してください。");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            resolve(task_id.to_string()).unwrap(),
+            format!("obsidian://search?vault=Obsidian-Work&query={task_id}")
+        );
+        let error = resolve(uuid::Uuid::nil().to_string()).unwrap_err();
+        assert_eq!(error.code, web_error_codes::TASK_NOT_FOUND);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
 
     #[test]
     fn 七操作は現在時刻を各1回だけ取得して同じ値をserviceとwireへ渡す() {

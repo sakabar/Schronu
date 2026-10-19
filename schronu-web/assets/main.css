@@ -537,6 +537,36 @@ button:disabled {
     font: inherit;
 }
 
+.session-obsidian-shortcut {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    align-self: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    border-radius: 0.25rem;
+    background: transparent;
+    color: var(--muted);
+    padding: 0;
+}
+
+.session-obsidian-shortcut svg {
+    width: 18px;
+    height: 18px;
+}
+
+.session-obsidian-message.error {
+    color: var(--red-dark);
+    font-size: 0.8rem;
+    overflow-wrap: anywhere;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+}
+
 .session-task-link {
     border: 0;
     border-radius: 0;
@@ -602,6 +632,11 @@ button:disabled {
 }
 
 @media (pointer: coarse) {
+    .session-obsidian-shortcut {
+        width: 44px;
+        height: 44px;
+    }
+
     .session-timer-shortcut {
         width: 44px;
         height: 44px;
