@@ -1,6 +1,6 @@
 /// Formats a name only at the rendering boundary; stored names remain intact.
 pub(super) fn display_task_name(name: &str) -> String {
-    let stripped = schronu_task_name::remove_url_suffix(name);
+    let stripped = schronu_core::task_name::remove_url_suffix(name);
     if stripped == name {
         return name.to_owned();
     }

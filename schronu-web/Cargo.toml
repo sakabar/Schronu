@@ -21,8 +21,7 @@ server = [
 ]
 
 [dependencies]
-schronu-task-name = { path = "../schronu-task-name" }
-schronu-work-time = { path = "../schronu-work-time" }
+schronu-core = { path = "../schronu-core" }
 dioxus = { version = "=0.7.10", features = ["fullstack"], optional = true }
 gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 js-sys = { version = "0.3", optional = true }

@@ -182,7 +182,8 @@ fn open_project_file(
 
 fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> String {
     // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
-    let project_name_for_dir = schronu_task_name::remove_url_suffix(project_name).replace('/', "-");
+    let project_name_for_dir =
+        schronu_core::task_name::remove_url_suffix(project_name).replace('/', "-");
     let prefix = format!("{date}-");
     let identity_suffix = format!("-{project_id}");
     let max_name_bytes =

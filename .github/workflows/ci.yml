@@ -37,11 +37,11 @@ jobs:
       - name: Run tests
         run: cargo test --locked
 
-      - name: Test shared task name rules
-        run: cargo test --locked -p schronu-task-name
+      - name: Test shared core rules
+        run: cargo test --locked -p schronu-core
 
-      - name: Lint shared task name rules
-        run: cargo clippy --locked -p schronu-task-name --all-targets -- -D warnings
+      - name: Lint shared core rules
+        run: cargo clippy --locked -p schronu-core --all-targets -- -D warnings
 
       - name: Check scheduling operation limits
         run: cargo test --locked --features benchmarking --test scheduling_benchmark_contract
