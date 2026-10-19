@@ -3126,7 +3126,7 @@ dependencies = [
  "percent-encoding",
  "regex",
  "schemars",
- "schronu-core",
+ "schronu-shared",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -3141,7 +3141,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "schronu-core"
+name = "schronu-shared"
 version = "0.1.0"
 
 [[package]]
@@ -3155,7 +3155,7 @@ dependencies = [
  "gloo-timers",
  "js-sys",
  "schronu",
- "schronu-core",
+ "schronu-shared",
  "serde",
  "serde_json",
  "tokio",

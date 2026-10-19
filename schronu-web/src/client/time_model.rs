@@ -27,7 +27,7 @@ pub fn session_timing(
     let estimated = i128::from(estimated_work_seconds_at_start);
     let actual = i128::from(actual_work_seconds_at_start);
     let elapsed = i128::from(elapsed_seconds);
-    let remaining_at_start_seconds = schronu_core::work_time::remaining_work_seconds(
+    let remaining_at_start_seconds = schronu_shared::work_time::remaining_work_seconds(
         estimated_work_seconds_at_start,
         actual_work_seconds_at_start,
     );

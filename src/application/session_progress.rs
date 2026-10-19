@@ -41,7 +41,7 @@ pub fn calculate_session_progress(
         Some(total_work_seconds * 100 / i128::from(estimated_work_seconds))
     };
     let remaining_work_seconds_at_start =
-        i64::try_from(schronu_core::work_time::remaining_work_seconds(
+        i64::try_from(schronu_shared::work_time::remaining_work_seconds(
             estimated_work_seconds,
             actual_work_seconds_at_start,
         ))

@@ -14,15 +14,15 @@ Rust toolchainは[`rust-toolchain.toml`](rust-toolchain.toml)で1.97.1に固定�
 
 ```shell
 cargo test --locked
-cargo test --locked -p schronu-core
+cargo test --locked -p schronu-shared
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
-cargo clippy --locked -p schronu-core --all-targets -- -D warnings
+cargo clippy --locked -p schronu-shared --all-targets -- -D warnings
 ```
 
 Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml`と`Cargo.lock`を同じ専用PRで更新し、上記の全検証を通してください。
 
-CLIとWebで共有する副作用のない処理は、外部crateへ依存しない`schronu-core`に置きます。作業時間の計算は`work_time`、名前のURL除去は`task_name` moduleで分け、ファイル操作やWeb専用の表示処理は利用側に置きます。
+CLIとWebで共有する副作用のない処理は、外部crateへ依存しない`schronu-shared`に置きます。作業時間の計算は`work_time`、名前のURL除去は`task_name` moduleで分け、ファイル操作やWeb専用の表示処理は利用側に置きます。
 
 ### schronu-web
 
