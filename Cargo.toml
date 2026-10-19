@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [workspace]
-members = [".", "schronu-web", "schronu-work-time"]
+members = [".", "schronu-web", "schronu-work-time", "schronu-task-name"]
 default-members = ["."]
 resolver = "2"
 
@@ -14,6 +14,7 @@ benchmarking = []
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+schronu-task-name = { path = "schronu-task-name" }
 schronu-work-time = { path = "schronu-work-time" }
 chrono = { version = "0.4.24", features = ["serde"] }
 dendron = "0.1.5"

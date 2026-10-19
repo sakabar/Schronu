@@ -513,19 +513,42 @@ fn test_save_load_url除去後に同名となるprojectを別directoryへ保存�
 
     repository.save().unwrap();
 
-    for id in [first_id, second_id] {
+    for (id, name) in [
+        (first_id, "project http://example.com/one"),
+        (second_id, "project https://example.com/two"),
+    ] {
         assert!(storage_dir
             .path
             .join(format!("20260904-project -{id}"))
             .join("project.yaml")
             .is_file());
+        assert!(fs::read_to_string(
+            storage_dir
+                .path
+                .join(format!("20260904-project -{id}"))
+                .join("project.yaml")
+        )
+        .unwrap()
+        .contains(name));
     }
     let mut loaded_repository = TaskRepository::new(storage_dir.path_str());
     loaded_repository.sync_clock(now).unwrap();
     loaded_repository.load().unwrap();
     assert_eq!(loaded_repository.get_all_projects().len(), 2);
-    assert!(loaded_repository.get_by_id(first_id).unwrap().is_some());
-    assert!(loaded_repository.get_by_id(second_id).unwrap().is_some());
+    for (id, name) in [
+        (first_id, "project http://example.com/one"),
+        (second_id, "project https://example.com/two"),
+    ] {
+        assert_eq!(
+            loaded_repository
+                .get_by_id(id)
+                .unwrap()
+                .unwrap()
+                .get_name()
+                .unwrap(),
+            name
+        );
+    }
 }
 
 #[test]
