@@ -647,3 +647,43 @@ fn 完了reportの日次集計契約をdocumentationへ明記する() {
     }
     assert!(readme.contains("実績が0秒の場合は見積時間"));
 }
+
+#[test]
+fn url_suffix_is_hidden_in_completed_task_and_project_names() {
+    fn root() -> Element {
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows: vec![CompletedTaskRow {
+                        task_id: "completed-url".to_owned(),
+                        task_name: "completed task http://example.com/task".to_owned(),
+                        project_name: "project https://example.com/project".to_owned(),
+                        completed_at_epoch_ms: 1_789_551_723_000,
+                        actual_work_seconds: 60,
+                        estimated_work_seconds: 60,
+                        task_display_kind: Default::default(),
+                    }],
+                    in_progress_actual_work_seconds: None,
+                    total_actual_work_seconds: 60,
+                    available_seconds: 60,
+                    recorded_percentage: Some(100),
+                }),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: "example.com/task".to_owned(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(!html.contains("http://example.com"), "{html}");
+    assert!(!html.contains("https://example.com"), "{html}");
+    assert!(html.contains("completed task; Project: project"), "{html}");
+}

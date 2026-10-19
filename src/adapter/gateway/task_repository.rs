@@ -12,7 +12,6 @@ use crate::entity::task::extract_leaf_tasks_from_project_with_pending;
 use crate::entity::task::{Status, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Local};
 use linked_hash_map::LinkedHashMap;
-use regex::Regex;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
@@ -183,8 +182,8 @@ fn open_project_file(
 
 fn project_directory_name(date: &str, project_name: &str, project_id: Uuid) -> String {
     // ディレクトリ名からはURLを除く (ディレクトリの区切りに使われうる "/" が入らないようにするため)
-    let http_pattern = Regex::new(r"http.*").expect("project name URL regex must be valid");
-    let project_name_for_dir = http_pattern.replace(project_name, "").replace('/', "-");
+    let project_name_for_dir =
+        schronu_shared::task_name::remove_url_suffix(project_name).replace('/', "-");
     let prefix = format!("{date}-");
     let identity_suffix = format!("-{project_id}");
     let max_name_bytes =

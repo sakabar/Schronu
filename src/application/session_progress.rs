@@ -40,11 +40,12 @@ pub fn calculate_session_progress(
     } else {
         Some(total_work_seconds * 100 / i128::from(estimated_work_seconds))
     };
-    let remaining_work_seconds_at_start = i64::try_from(schronu_work_time::remaining_work_seconds(
-        estimated_work_seconds,
-        actual_work_seconds_at_start,
-    ))
-    .expect("non-negative i64 work values have an i64 remaining duration");
+    let remaining_work_seconds_at_start =
+        i64::try_from(schronu_shared::work_time::remaining_work_seconds(
+            estimated_work_seconds,
+            actual_work_seconds_at_start,
+        ))
+        .expect("non-negative i64 work values have an i64 remaining duration");
     let remaining_work_seconds = remaining_work_seconds_at_start - elapsed_seconds;
 
     Ok(SessionProgress {

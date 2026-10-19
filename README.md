@@ -14,15 +14,21 @@ Rust toolchainは[`rust-toolchain.toml`](rust-toolchain.toml)で1.97.1に固定�
 
 ```shell
 cargo test --locked
+cargo test --locked -p schronu-shared
 cargo fmt --check
 cargo clippy --locked --all-targets -- -D warnings
+cargo clippy --locked -p schronu-shared --all-targets -- -D warnings
 ```
 
 Rust versionまたは依存関係を更新する場合は、`rust-toolchain.toml`と`Cargo.lock`を同じ専用PRで更新し、上記の全検証を通してください。
 
+CLIとWebで共有する副作用のない処理は、外部crateへ依存しない`schronu-shared`に置きます。作業時間の計算は`work_time`、名前のURL除去は`task_name` moduleで分け、ファイル操作やWeb専用の表示処理は利用側に置きます。
+
 ### schronu-web
 
 `schronu-web`は、複数の作業セッション、予定・完了を切り替える8 logical dates分の一覧、全schedule segmentのオンデマンド一覧、今日から7日間の負荷帯と今日から27日後までの繰返負荷集計を扱うDioxus fullstack applicationです。Web UIのセッションはSchronu本体のcurrent taskとは独立しており、複数taskのtimerを同時に進められます。セッションと1日のbufferはbrowser内で1秒ごとに再計算し、このtickだけではserver通信を行いません。
+
+Webのタスク名・プロジェクト名・繰返名は、CLIの保存先directory名生成と共有する規則で、小文字の最初の`http`から行末までを表示時に除去する。除去した場合だけ末尾の空白を整え、空白だけになる場合は「(タスク名なし)」を表示する。確認文とARIA labelも同じ表示名を使う。保存名、入力値、検索・並び順、通信payload、リンク先は元の名前を保持する。
 
 開発環境にはDioxus CLI 0.7.10とWASM targetが必要です。
 

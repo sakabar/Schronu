@@ -192,7 +192,7 @@ pub fn select_scheduled_task_within_minutes(
     let mut selected = None;
     let mut longest_seconds = 0;
     for (index, segment) in schedule.iter().enumerate() {
-        let seconds = schronu_work_time::remaining_work_seconds(
+        let seconds = schronu_shared::work_time::remaining_work_seconds(
             segment.task.estimated_work_seconds,
             segment.task.actual_work_seconds,
         );
@@ -569,7 +569,7 @@ fn calculate_remaining_work_seconds(
     let actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    i64::try_from(schronu_work_time::remaining_work_seconds(
+    i64::try_from(schronu_shared::work_time::remaining_work_seconds(
         estimated_work_seconds,
         actual_work_seconds,
     ))

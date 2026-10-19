@@ -45,6 +45,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
 - **REQ-COMMON-007**: 34rem以下ではbuffer領域を圧縮すること。一覧画面では全幅で日付buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持すること。
 - **REQ-COMMON-008**: 全buttonのhover配色はhover可能なfine pointerでだけ適用し、タッチ操作後に残留させないこと。desktopで選択済み日付buttonへhoverした場合は、緑背景と白文字を維持すること。`:active`と`:focus-visible`の操作feedbackはpointer種別によらず維持すること。
+- **REQ-COMMON-009**: Webのタスク名・プロジェクト名・繰返名は、CLIの保存先directory名生成と共有する規則で、小文字の最初の`http`から行末までを表示時に除去する。除去した場合だけ末尾の空白を整え、空白だけになる場合は「(タスク名なし)」を表示する。確認文とARIA labelも同じ表示名を使う。保存名、入力値、検索・並び順、通信payload、リンク先は元の名前を保持する。
 
 ### 4.2 セッション状態
 
