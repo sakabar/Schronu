@@ -878,3 +878,25 @@ fn auto_session_is_disabled_only_while_its_own_request_is_in_flight() {
         assert_eq!(*events.lock().unwrap(), expected);
     }
 }
+
+#[test]
+fn url_suffix_is_hidden_in_session_text_and_labels_without_changing_open_target() {
+    for (name, expected) in [
+        ("session task https://example.com/session", "session task"),
+        ("https://example.com/session", "(タスク名なし)"),
+    ] {
+        let mut session = card("url-task");
+        session.task_name = name.to_owned();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (dom, ids) = build_dom(vec![session], false, Arc::clone(&events));
+        let html = dioxus::ssr::render(&dom);
+        assert!(!html.contains("https://example.com"), "{html}");
+        assert!(
+            html.contains(&format!("aria-label=\"{expected}: 開\"")),
+            "{html}"
+        );
+        assert!(html.contains(&format!("{expected} ↗")), "{html}");
+        dispatch_click(&dom, ids[0]);
+        assert_eq!(*events.lock().unwrap(), ["open:url-task"]);
+    }
+}

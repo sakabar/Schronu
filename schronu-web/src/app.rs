@@ -51,6 +51,7 @@ mod session_links;
 pub(crate) mod session_view;
 #[cfg(test)]
 mod session_view_tests;
+mod task_name;
 #[cfg(all(test, feature = "server"))]
 mod timed_auto_session_tests;
 mod timer_shortcut;

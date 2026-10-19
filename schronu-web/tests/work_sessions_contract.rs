@@ -72,7 +72,10 @@ fn missing_key_loads_an_empty_writable_state_without_warnings() {
 fn sessions_roundtrip_in_a_versioned_top_level_object() {
     let storage = FakeStorage::default();
     let mut state = load_work_sessions(&storage).unwrap();
-    let expected = vec![session("550e8400-e29b-41d4-a716-446655440000", "設計")];
+    let expected = vec![session(
+        "550e8400-e29b-41d4-a716-446655440000",
+        "session task https://example.com/session",
+    )];
 
     state.replace_sessions(&storage, expected.clone()).unwrap();
 

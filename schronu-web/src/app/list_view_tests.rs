@@ -1865,3 +1865,76 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
     assert!(!cleared_html.contains("検索文字列をクリア"));
     assert!(events.borrow().is_empty());
 }
+
+#[test]
+fn url_suffix_is_hidden_in_list_but_search_and_session_action_keep_original_name() {
+    for (name, expected) in [
+        ("list task https://example.com/search-token", "list task"),
+        ("https://example.com/search-token", "(タスク名なし)"),
+    ] {
+        let mut task_row = named_row("url-task", name, false, true);
+        task_row.display_task_name = format!("<3/6>{name}");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let (dom, ids) = build(RootProps {
+            dates: Vec::new(),
+            rows: vec![task_row],
+            active_task_ids: Vec::new(),
+            filter_text: "search-token".to_owned(),
+            events: Arc::clone(&events),
+        });
+        let html = dioxus::ssr::render(&dom);
+        assert!(!html.contains("https://example.com"), "{html}");
+        assert!(html.contains(&format!("&#60;3/6&#62;{expected}")), "{html}");
+        assert!(
+            html.contains(&format!("aria-label=\"{expected}: セッションに追加\"")),
+            "{html}"
+        );
+        dispatch_click(&dom, ids[1]);
+        assert!(events
+            .lock()
+            .unwrap()
+            .contains(&format!("task:url-task:{name}:true")));
+    }
+}
+
+#[test]
+fn url_suffix_is_hidden_in_all_tasks_and_defer_confirmation() {
+    fn root() -> Element {
+        let mut task_row = confirmation_row("url-task", DeferConfirmationKind::DeadlineLimited);
+        task_row.task.task_name = "all task https://example.com/all".to_owned();
+        task_row.display_task_name = task_row.task.task_name.clone();
+        rsx! {
+            ListView {
+                dates: Vec::new(),
+                rows: vec![task_row],
+                active_task_ids: Vec::new(),
+                all_tasks_status: Some(super::list_view::AllTasksViewStatus::Loaded),
+                date_input_text: String::new(),
+                date_input_error: None,
+                filter_text: String::new(),
+                on_select_date: move |_| {},
+                on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {},
+                on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("all task: 先送り"), "{html}");
+    assert!(!html.contains("https://example.com"), "{html}");
+    dispatch_click(&dom, ids[2]);
+    render_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(
+        html.contains("all taskは締切までの余裕がありません(9/12 05:59)。先送りしますか?"),
+        "{html}"
+    );
+    assert!(
+        html.contains("aria-label=\"all task: 先送りの確認\""),
+        "{html}"
+    );
+    assert!(!html.contains("https://example.com"), "{html}");
+}

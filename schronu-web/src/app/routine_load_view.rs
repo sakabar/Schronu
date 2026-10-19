@@ -251,6 +251,8 @@ fn ScopedRoutineLoadTable(
                 tbody {
                     for display_row in rows {
                         {
+                            let project_name = super::task_name::display_task_name(&display_row.routine.project_name);
+                            let routine_name = super::task_name::display_task_name(&display_row.routine.routine_name);
                             let routine_id = display_row.routine.routine_task_id.clone();
                             let is_selected = selected_routine_id.as_deref() == Some(&routine_id);
                             rsx! {
@@ -278,10 +280,10 @@ fn ScopedRoutineLoadTable(
                                             class: "routine-load-subject-button",
                                             r#type: "button",
                                             aria_pressed: is_selected,
-                                            aria_label: "{display_row.routine.project_name} / {display_row.routine.routine_name}を強調",
+                                            aria_label: "{project_name} / {routine_name}を強調",
                                             onclick: move |_| on_select.call(routine_id.clone()),
-                                            strong { class: "routine-load-name task-kind-repetitive", "{display_row.routine.routine_name}" }
-                                            span { class: "routine-load-project", "{display_row.routine.project_name}" }
+                                            strong { class: "routine-load-name task-kind-repetitive", "{routine_name}" }
+                                            span { class: "routine-load-project", "{project_name}" }
                                         }
                                     }
                                 }
@@ -331,6 +333,8 @@ fn LegacyRoutineLoadTable(report: RoutineLoadReport) -> Element {
 
 #[component]
 fn LegacyRoutineLoadTableRow(row: RoutineLoadRow) -> Element {
+    let project_name = super::task_name::display_task_name(&row.project_name);
+    let routine_name = super::task_name::display_task_name(&row.routine_name);
     rsx! {
         tr {
             td { class: "routine-load-interval", "{row.repetition_interval_days}日" }
@@ -345,8 +349,8 @@ fn LegacyRoutineLoadTableRow(row: RoutineLoadRow) -> Element {
             }
             th { class: "routine-load-subject", scope: "row",
                 div { class: "routine-load-subject-scroll", tabindex: 0,
-                    strong { class: "routine-load-name task-kind-repetitive", "{row.routine_name}" }
-                    span { class: "routine-load-project", "{row.project_name}" }
+                    strong { class: "routine-load-name task-kind-repetitive", "{routine_name}" }
+                    span { class: "routine-load-project", "{project_name}" }
                 }
             }
         }

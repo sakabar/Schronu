@@ -517,6 +517,8 @@ fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
 
 #[component]
 fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
+    let task_name = super::task_name::display_task_name(&row.task_name);
+    let project_name = super::task_name::display_task_name(&row.project_name);
     let completed_at = Local
         .timestamp_millis_opt(row.completed_at_epoch_ms)
         .single();
@@ -555,13 +557,13 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
             th {
                 class: "completed-subject",
                 scope: "row",
-                aria_label: format!("{task_kind_label}: {}; Project: {}", row.task_name, row.project_name),
+                aria_label: format!("{task_kind_label}: {}; Project: {}", task_name, project_name),
                 div { class: "completed-subject-scroll", tabindex: 0,
                     strong {
                         class: task_class,
-                        "{row.task_name}"
+                        "{task_name}"
                     }
-                    span { class: "completed-project", "{row.project_name}" }
+                    span { class: "completed-project", "{project_name}" }
                 }
             }
         }
@@ -606,6 +608,13 @@ fn TaskRow(
     on_start_session: EventHandler<(SessionTask, bool)>,
     on_defer_task: EventHandler<(String, DeferPlan)>,
 ) -> Element {
+    let task_name = super::task_name::display_task_name(&row.task.task_name);
+    let display_task_name =
+        if let Some(prefix) = row.display_task_name.strip_suffix(&row.task.task_name) {
+            format!("{prefix}{task_name}")
+        } else {
+            super::task_name::display_task_name(&row.display_task_name)
+        };
     let mut confirming_defer = use_signal(|| false);
     let deadline_class = match row.deadline_display_kind {
         DeadlineDisplayKind::None => "deadline",
@@ -627,9 +636,9 @@ fn TaskRow(
     };
     let deadline = &row.deadline_label;
     let button_label = if active {
-        format!("{}: セッション追加済み", row.task.task_name)
+        format!("{}: セッション追加済み", task_name)
     } else {
-        format!("{}: セッションに追加", row.task.task_name)
+        format!("{}: セッションに追加", task_name)
     };
     let button_text = if active { "✓" } else { "＋" };
     let task = row.task.actionable_task();
@@ -645,7 +654,7 @@ fn TaskRow(
         };
         format!(
             "{}は{}({})。先送りしますか?",
-            row.task.task_name, status, confirmation.detail_label
+            task_name, status, confirmation.detail_label
         )
     });
     let is_leaf = row.is_leaf;
@@ -699,7 +708,7 @@ fn TaskRow(
                         button {
                             class: "task-defer",
                             r#type: "button",
-                            aria_label: format!("{}: 先送り", row.task.task_name),
+                            aria_label: format!("{}: 先送り", task_name),
                             disabled: active || mutations_locked || mutation_globally_blocked || server_actions_blocked,
                             onclick: move |_| {
                                 if !active && !mutations_locked && !mutation_globally_blocked && !server_actions_blocked {
@@ -738,14 +747,14 @@ fn TaskRow(
                 }
             }
             td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
-            td { class: task_class, aria_label: format!("{task_kind_label}: {}", row.display_task_name),
+            td { class: task_class, aria_label: format!("{task_kind_label}: {}", display_task_name),
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,
                     if is_projected {
                         span { class: "projected-task-badge", "見込み" }
                     }
-                    "{row.display_task_name}"
+                    "{display_task_name}"
                     if let Some(source_task_id) = source_task_id.as_deref() {
                         span {
                             class: "projected-task-source",
@@ -764,7 +773,7 @@ fn TaskRow(
                         role: "group",
                         tabindex: "-1",
                         aria_live: "assertive",
-                        aria_label: format!("{}: 先送りの確認", row.task.task_name),
+                        aria_label: format!("{}: 先送りの確認", task_name),
                         onmounted: move |element| async move {
                             let _ = element.data().set_focus(true).await;
                         },

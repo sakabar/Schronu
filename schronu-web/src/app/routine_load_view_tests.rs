@@ -721,3 +721,34 @@ fn 行選択後の全体曜日日付切替は日付強調を解除する() {
         assert!(!dioxus::ssr::render(&dom).contains("routine-load-day is-emphasized"));
     }
 }
+
+#[test]
+fn url_suffix_is_hidden_in_routine_and_project_names() {
+    fn root(legacy: bool) -> Element {
+        let mut report = report(vec![row(
+            "project https://example.com/project",
+            "routine http://example.com/routine",
+            "routine-url",
+            &[("2026-10-03", 3_600)],
+        )]);
+        if legacy {
+            report.full_day_available_seconds_by_date.clear();
+        }
+        rsx! { RoutineLoadTable { report: Some(report), loading: false } }
+    }
+    for legacy in [false, true] {
+        let mut dom = VirtualDom::new_with_props(root, legacy);
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        assert!(!html.contains("http://example.com"), "{html}");
+        assert!(!html.contains("https://example.com"), "{html}");
+        assert!(html.contains(">routine</strong>"), "{html}");
+        assert!(html.contains(">project</span>"), "{html}");
+        if !legacy {
+            assert!(
+                html.contains("aria-label=\"project / routineを強調\""),
+                "{html}"
+            );
+        }
+    }
+}

@@ -1300,11 +1300,11 @@ fn 作成formは成功時だけ入力を消して作成tabに留まる() {
         result: Ok(initial),
     });
     orchestrator.action(&storage, 1_000, ComponentAction::SwitchTab(ActiveTab::Create));
-    orchestrator.edit_create_name("contract task".to_owned());
+    orchestrator.edit_create_name("contract task https://example.com/created".to_owned());
     orchestrator.edit_create_minutes("25".to_owned());
     let request_id = match orchestrator.submit_create_task(&storage, 1_000) {
         ClientEffect::CreateTask { request_id, request } => {
-            assert_eq!(request.name, "contract task");
+            assert_eq!(request.name, "contract task https://example.com/created");
             assert_eq!(request.estimated_work_minutes, Some(25));
             request_id
         }
@@ -1326,7 +1326,8 @@ fn 作成formは成功時だけ入力を消して作成tabに留まる() {
     });
     assert_eq!(orchestrator.create_name(), "");
     assert_eq!(orchestrator.create_minutes(), "");
-    assert!(orchestrator.create_success().unwrap().contains("contract task"));
+    assert!(orchestrator.create_success().unwrap().contains("「contract task」を作成しました。"));
+    assert!(!orchestrator.create_success().unwrap().contains("https://example.com"));
     assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::Create);
 
     orchestrator.edit_create_name("second contract task".to_owned());

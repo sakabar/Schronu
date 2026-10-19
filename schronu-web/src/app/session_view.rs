@@ -149,9 +149,10 @@ fn SessionCard(
     timer_server_busy: bool,
     on_open_timer: Callback<String, Option<Result<(), String>>>,
 ) -> Element {
+    let task_name = super::task_name::display_task_name(&session.task_name);
     let mut obsidian_result = use_signal(|| None::<Result<(), String>>);
     let obsidian_task_id = session.task_id.clone();
-    let obsidian_label = format!("{}: Obsidianでルートタスクを検索", session.task_name);
+    let obsidian_label = format!("{}: Obsidianでルートタスクを検索", task_name);
     let obsidian_enabled = obsidian_ready && !obsidian_server_busy;
     let mut timer_result = use_signal(|| None::<Result<(), String>>);
     let timer_enabled = super::timer_shortcut::timer_enabled(
@@ -161,7 +162,7 @@ fn SessionCard(
         timer_server_busy,
     );
     let timer_task_id = session.task_id.clone();
-    let timer_label = format!("{}: 残り時間でタイマーを開く", session.task_name);
+    let timer_label = format!("{}: 残り時間でタイマーを開く", task_name);
     let on_action = EventHandler::new(move |action: SessionAction| {
         if matches!(
             action.kind,
@@ -209,7 +210,7 @@ fn SessionCard(
     let progress_now = session
         .progress_percent
         .map(|percent| percent.clamp(0, 100).to_string());
-    let progress_label = format!("{}の進捗", session.task_name);
+    let progress_label = format!("{}の進捗", task_name);
     let remaining_class = if session.remaining_seconds < 0 {
         "session-remaining is-overrun"
     } else {
@@ -248,7 +249,7 @@ fn SessionCard(
         }
     });
     let open_task_id = session.task_id.clone();
-    let open_task_label = format!("{}: 開", session.task_name);
+    let open_task_label = format!("{}: 開", task_name);
 
     rsx! {
         article { class: "session-card",
@@ -265,10 +266,10 @@ fn SessionCard(
                                     on_open_link.call(open_task_id.clone());
                                 }
                             },
-                            "{session.task_name} ↗"
+                            "{task_name} ↗"
                         }
                     } else {
-                        "{session.task_name}"
+                        "{task_name}"
                     }
                 }
                 span { class: "session-progress-label", "{progress}" }
@@ -367,13 +368,13 @@ fn SessionCard(
                 div {
                     class: "session-discard-completion-confirmation",
                     role: "group",
-                    aria_label: "{session.task_name}: 実績時間の競合確認",
+                    aria_label: "{task_name}: 実績時間の競合確認",
                     p { "{conflict_message.as_deref().unwrap_or_default()}" }
                     div { class: "session-confirmation-actions",
                         SessionActionButton {
                             class: "session-action-resume-conflict",
                             label: "計測を再開",
-                            task_name: session.task_name.clone(),
+                            task_name: task_name.clone(),
                             task_id: session.task_id.clone(),
                             kind: SessionActionKind::ResumeCompletionConflict,
                             disabled: resume_disabled,
@@ -382,7 +383,7 @@ fn SessionCard(
                         SessionActionButton {
                             class: "session-action-confirm-conflict",
                             label: conflict_confirm_label,
-                            task_name: session.task_name.clone(),
+                            task_name: task_name.clone(),
                             task_id: session.task_id.clone(),
                             kind: SessionActionKind::ConfirmCompletionConflict,
                             disabled: mutation_disabled,
@@ -394,7 +395,7 @@ fn SessionCard(
                 div {
                     class: "session-discard-completion-confirmation",
                     role: "group",
-                    aria_label: "{session.task_name}: 計測を破棄して完了の確認",
+                    aria_label: "{task_name}: 計測を破棄して完了の確認",
                     p { "このセッションの計測時間は記録されません。タスクを完了しますか?" }
                     div { class: "session-confirmation-actions",
                         button {
@@ -408,7 +409,7 @@ fn SessionCard(
                             class: "session-action-complete-without-recording",
                             r#type: "button",
                             disabled: mutation_disabled,
-                            aria_label: "{session.task_name}: 計測を破棄して完了を確定",
+                            aria_label: "{task_name}: 計測を破棄して完了を確定",
                             onclick: move |_| {
                                 if !mutation_disabled {
                                     on_action.call(SessionAction {
@@ -426,7 +427,7 @@ fn SessionCard(
                     SessionActionButton {
                         class: "session-action-discard",
                         label: "計測を破棄して解除",
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Discard,
                         disabled: discard_disabled,
@@ -435,7 +436,7 @@ fn SessionCard(
                     SessionActionButton {
                         class: "session-action-record",
                         label: "記録して解除",
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Record,
                         disabled: mutation_disabled,
@@ -444,7 +445,7 @@ fn SessionCard(
                     SessionActionButton {
                         class: "session-action-restart",
                         label: "計測を破棄して再開",
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::RestartWithoutRecording,
                         disabled: restart_disabled,
@@ -453,21 +454,21 @@ fn SessionCard(
                     SessionActionButton {
                         class: "session-action-work-slice",
                         label: "記録して分割",
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::WorkSlice,
                         disabled: mutation_disabled,
                         on_action,
                     }
                     SessionDiscardCompletionButton {
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         disabled: mutation_disabled,
                         on_confirm: move |_| confirming_discard_completion.set(true),
                     }
                     SessionActionButton {
                         class: "session-action-complete",
                         label: "記録して完了",
-                        task_name: session.task_name.clone(),
+                        task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::Complete,
                         disabled: mutation_disabled,

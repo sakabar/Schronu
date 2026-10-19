@@ -506,6 +506,7 @@ impl ComponentOrchestrator {
             }
         }
         if let Some(name) = created_name {
+            let name = super::task_name::display_task_name(&name);
             self.create_name.clear();
             self.create_minutes.clear();
             self.create_success = Some(format!(
