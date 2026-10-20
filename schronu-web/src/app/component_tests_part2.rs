@@ -1014,7 +1014,7 @@ fn server応答で最後のsessionが消えた時だけ一覧tabへ移る() {
         let response = if complete {
             ClientResponse::CompleteSession {
                 request_id,
-                result: Ok(snapshot(2_000)),
+                result: Ok(crate::WebSuccess { snapshot: snapshot(2_000), data: None }),
             }
         } else {
             ClientResponse::RecordSession {
@@ -1293,7 +1293,7 @@ fn session削除失敗と他tabでは一覧へ強制遷移しない() {
             &other_storage,
             ClientResponse::CompleteSession {
                 request_id,
-                result: Ok(snapshot(2_000)),
+                result: Ok(crate::WebSuccess { snapshot: snapshot(2_000), data: None }),
             },
         ),
         ClientEffect::ListTasks { .. }
@@ -1421,5 +1421,39 @@ impl KeyValueStorage for MemoryStorage {
             .borrow_mut()
             .insert(key.to_owned(), value.to_owned());
         Ok(())
+    }
+}
+
+#[test]
+fn complete_response_starts_parent_at_receipt_and_keeps_session_tab() {
+    for record in [true, false] {
+        let storage = MemoryStorage::default();
+        let mut client = mounted_orchestrator(&storage);
+        add_session(&mut client, &storage, RECORD_ID);
+        let action = if record {
+            ComponentAction::CompleteSession(RECORD_ID.to_owned())
+        } else {
+            ComponentAction::CompleteSessionWithoutRecording(RECORD_ID.to_owned())
+        };
+        let request_id = mutation_request_id(&client.action(&storage, 2_000, action));
+        assert!(matches!(
+            client.apply_response_at(
+                &storage,
+                ClientResponse::CompleteSession {
+                    request_id,
+                    result: Ok(WebSuccess {
+                        snapshot: snapshot(3_000),
+                        data: Some(task(COMPLETE_ID)),
+                    }),
+                },
+                9_123,
+            ),
+            ClientEffect::ListTasks { .. }
+        ));
+        let state = client.state().unwrap();
+        assert_eq!(state.active_tab(), ActiveTab::Session);
+        assert_eq!(state.sessions().len(), 1);
+        assert_eq!(state.sessions()[0].task_id, COMPLETE_ID);
+        assert_eq!(state.sessions()[0].started_at_epoch_ms, 9_123);
     }
 }

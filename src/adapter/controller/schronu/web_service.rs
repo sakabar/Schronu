@@ -46,7 +46,7 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, complete_work_slice, create_task, execute_defer_task_plan,
-    CreateTaskInput, TaskFactory,
+    get_task, CreateTaskInput, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -387,21 +387,31 @@ impl WebService {
         &mut self,
         operation_now: DateTime<Local>,
         request: CompleteSessionRequest,
-    ) -> Result<ServerSnapshot, WebReadError> {
+    ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
         let input = prepare_complete_task_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            complete_task(repository, input, &mut factory)
+            let completed = complete_task(repository, input, &mut factory)
                 .map_err(WebReadCoreError::Application)?;
+            let data = completed
+                .next_focus_task_id
+                .map(|task_id| {
+                    get_task(repository, task_id)?.ok_or(
+                        crate::application::task_use_case::ApplicationError::TaskNotFound(task_id),
+                    )
+                })
+                .transpose()
+                .map_err(WebReadCoreError::Application)?
+                .map(read_model::session_task_dto_from_view);
             let snapshot = build_server_snapshot_with_offset(
                 repository,
                 free_time_manager,
                 operation_now,
                 offset,
             )?;
-            Ok((snapshot, true))
+            Ok((WebSuccess { snapshot, data }, true))
         })
     }
 

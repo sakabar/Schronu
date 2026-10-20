@@ -519,7 +519,7 @@ pub(in crate::adapter::controller) fn build_auto_session_dto_with_minutes(
         .map(|task| task.flatten().map(session_task_dto_from_view))
 }
 
-fn session_task_dto_from_view(task: TaskView) -> SessionTaskDto {
+pub(super) fn session_task_dto_from_view(task: TaskView) -> SessionTaskDto {
     session_task_dto(
         task.id.hyphenated().to_string(),
         task.name,

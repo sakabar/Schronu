@@ -77,7 +77,14 @@ fn 四つのsession終了操作成功後は選択中の日付を再取得する(
         };
         let (request_id, _) = complete_effect(effect);
         assert_list_effect(
-            state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2))),
+            state.apply_complete_result(
+                &storage,
+                request_id,
+                Ok(schronu_web::WebSuccess {
+                    snapshot: snapshot("2026-09-05", 2),
+                    data: None,
+                }),
+            ),
             selected_date,
         );
     }
@@ -100,7 +107,10 @@ fn mutation成功後は一覧を推測更新せず再取得結果で全置換す
         let (list_request_id, request) = list_effect(state.apply_complete_result(
             &storage,
             request_id,
-            Ok(snapshot("2026-09-05", 2)),
+            Ok(schronu_web::WebSuccess {
+                snapshot: snapshot("2026-09-05", 2),
+                data: None,
+            }),
         ));
 
         assert_eq!(state.scheduled_rows(), initial_rows);
@@ -125,7 +135,14 @@ fn 日付境界のmutation成功は新snapshotと選択日を両立して選択�
     apply_list_rows(&mut state, "2026-09-05", 1, initial_rows.clone());
     let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
 
-    let effect = state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-06", 2)));
+    let effect = state.apply_complete_result(
+        &storage,
+        request_id,
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-06", 2),
+            data: None,
+        }),
+    );
 
     assert_list_effect(effect, "2026-09-05");
     assert_eq!(state.snapshot().unwrap().logical_date, "2026-09-06");
@@ -217,7 +234,14 @@ fn server完了後のlocal_session削除失敗でも安全状態を維持して�
     let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
 
     storage.fail_work_session_writes.set(true);
-    let effect = state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2)));
+    let effect = state.apply_complete_result(
+        &storage,
+        request_id,
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-05", 2),
+            data: None,
+        }),
+    );
 
     assert_list_effect(effect, "2026-09-05");
     assert!(state.is_session_committed_blocked(TASK_ID));
@@ -235,7 +259,10 @@ fn mutation前のlist応答は無視して後続再取得応答だけを適用�
     let (refresh_request_id, refresh_request) = list_effect(state.apply_complete_result(
         &storage,
         complete_request_id,
-        Ok(snapshot("2026-09-05", 3)),
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-05", 3),
+            data: None,
+        }),
     ));
 
     state.apply_list_result(

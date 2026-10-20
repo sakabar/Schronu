@@ -47,9 +47,11 @@ pub(crate) fn dispatch_action_effect(
         let Some(response) = response else {
             return;
         };
-        let follow_up = client
-            .write()
-            .apply_response(&BrowserLocalStorage, response);
+        let follow_up = client.write().apply_response_at(
+            &BrowserLocalStorage,
+            response,
+            browser_now_epoch_ms(),
+        );
         dispatch_action_effect(client, follow_up);
     });
 }

@@ -293,7 +293,14 @@ fn mutation後は日付別取得の成否にかかわらず選択中allを自動
                         state.begin_complete_session_without_recording(&storage, TASK_ID)
                     };
                     let (id, _) = complete_effect(effect);
-                    state.apply_complete_result(&storage, id, Ok(snapshot("2026-09-05", 2)))
+                    state.apply_complete_result(
+                        &storage,
+                        id,
+                        Ok(schronu_web::WebSuccess {
+                            snapshot: snapshot("2026-09-05", 2),
+                            data: None,
+                        }),
+                    )
                 }
             };
             assert_eq!(state.all_tasks_status(), AllTasksStatus::Invalidated);
