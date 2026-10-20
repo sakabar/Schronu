@@ -95,7 +95,10 @@ fn 完了成功後は表示tabと一覧modeにかかわらず一覧に続けて�
                     };
                     let response = || ClientResponse::CompleteSession {
                         request_id,
-                        result: Ok(load_snapshot(1_100)),
+                        result: Ok(crate::WebSuccess {
+                            snapshot: load_snapshot(1_100),
+                            data: None,
+                        }),
                     };
                     let list = apply_response(&mut state, &storage, response(), false);
                     assert_eq!(state.active_tab(), tab);
@@ -195,7 +198,10 @@ fn 完了失敗では負荷を取得せず競合再送が成功した時だけ�
                 &storage,
                 ClientResponse::CompleteSession {
                     request_id,
-                    result: Ok(load_snapshot(1_300)),
+                    result: Ok(crate::WebSuccess {
+                        snapshot: load_snapshot(1_300),
+                        data: None,
+                    }),
                 },
                 false,
             );
@@ -346,7 +352,10 @@ fn 完了後の負荷取得失敗は表示を維持し手動更新で再試行�
         &storage,
         ClientResponse::CompleteSession {
             request_id,
-            result: Ok(load_snapshot(1_100)),
+            result: Ok(crate::WebSuccess {
+                snapshot: load_snapshot(1_100),
+                data: None,
+            }),
         },
         false,
     );

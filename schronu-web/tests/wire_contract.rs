@@ -182,7 +182,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
     assert_json_round_trip(
         &WebSuccess {
             snapshot: snapshot.clone(),
-            data: Some(task),
+            data: Some(task.clone()),
         },
         json!({
             "snapshot": {
@@ -247,13 +247,40 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         }),
     );
 
-    let complete_response: CompleteSessionResponse = snapshot;
+    let parent_response: CompleteSessionResponse = WebSuccess {
+        snapshot: snapshot.clone(),
+        data: Some(task),
+    };
+    assert_json_round_trip(
+        &parent_response,
+        json!({
+            "snapshot": {
+                "observed_at_epoch_ms": 1_788_565_500_123_i64,
+                "logical_date": "2026-09-05",
+                "buffer_seconds": -61
+            },
+            "data": {
+                "task_id": "00000000-0000-0000-0000-000000000001",
+                "task_name": "wire task",
+                "estimated_work_seconds": 900,
+                "actual_work_seconds": 300
+            }
+        }),
+    );
+
+    let complete_response: CompleteSessionResponse = WebSuccess {
+        snapshot,
+        data: None,
+    };
     assert_json_round_trip(
         &complete_response,
         json!({
-            "observed_at_epoch_ms": 1_788_565_500_123_i64,
-            "logical_date": "2026-09-05",
-            "buffer_seconds": -61
+            "snapshot": {
+                "observed_at_epoch_ms": 1_788_565_500_123_i64,
+                "logical_date": "2026-09-05",
+                "buffer_seconds": -61
+            },
+            "data": null
         }),
     );
 }

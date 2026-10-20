@@ -388,7 +388,13 @@ mod tests {
                 dispatch_record_session(worker.clone(), request.clone()).await;
             let completed: WebOperationResult<CompleteSessionResponse> =
                 dispatch_complete_session(worker, complete_request).await;
-            assert_eq!(completed, Ok(snapshot()));
+            assert_eq!(
+                completed,
+                Ok(WebSuccess {
+                    snapshot: snapshot(),
+                    data: None
+                })
+            );
         });
 
         assert_eq!(calls.load(Ordering::SeqCst), 9);
@@ -563,7 +569,10 @@ mod tests {
             _request: CompleteSessionRequest,
         ) -> Result<CompleteSessionResponse, WebError> {
             self.count();
-            Ok(snapshot())
+            Ok(crate::WebSuccess {
+                snapshot: snapshot(),
+                data: None,
+            })
         }
     }
 

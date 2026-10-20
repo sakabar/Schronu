@@ -445,6 +445,20 @@ impl ComponentOrchestrator {
         effect
     }
 
+    pub fn apply_response_at<S: KeyValueStorage>(
+        &mut self,
+        storage: &S,
+        response: ClientResponse,
+        received_at_epoch_ms: i64,
+    ) -> ClientEffect {
+        if matches!(&response, ClientResponse::CompleteSession { .. }) {
+            if let Some(state) = self.state.as_mut() {
+                state.tick(received_at_epoch_ms);
+            }
+        }
+        self.apply_response(storage, response)
+    }
+
     pub fn apply_response<S: KeyValueStorage>(
         &mut self,
         storage: &S,

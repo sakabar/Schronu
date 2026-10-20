@@ -221,7 +221,7 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
         let operation_now = self.clock.now();
         self.service()?
             .complete_session_at(operation_now, request.into())
-            .map(Into::into)
+            .map(convert_success)
             .map_err(Into::into)
     }
 }

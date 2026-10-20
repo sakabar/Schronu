@@ -1424,7 +1424,79 @@ fn record_sessionは未知taskと完了済みtaskと競合と加算overflowで�
 }
 
 #[test]
-fn complete_sessionは経過秒加算と完了を1回の保存で反映してsnapshotだけを返す() {
+fn complete_session_returns_cli_parent_handoff() {
+    for record_elapsed_seconds in [true, false] {
+        for (parent_status, future_start, sibling_status, returns_parent) in [
+            (Status::Todo, false, None, true),
+            (Status::Pending, false, None, true),
+            (Status::Todo, true, None, true),
+            (Status::Todo, false, Some(Status::Done), true),
+            (Status::Todo, false, Some(Status::Todo), false),
+            (Status::Todo, false, Some(Status::Pending), false),
+        ] {
+            let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+            let fixture = WebReadServiceFixture::new();
+            let parent_id = Uuid::new_v4();
+            let parent = TaskHandle::with_identity("handoff parent", parent_id, now).unwrap();
+            parent.set_estimated_work_seconds(600).unwrap();
+            parent.set_actual_work_seconds(120).unwrap();
+            parent.set_orig_status(parent_status).unwrap();
+            if parent_status == Status::Pending {
+                parent.set_pending_until(now + Duration::hours(1)).unwrap();
+            }
+            if future_start {
+                parent.set_start_time(now + Duration::hours(1)).unwrap();
+            }
+            let child_id = Uuid::new_v4();
+            parent
+                .create_child(TaskAttr::with_identity("completed child", child_id, now))
+                .unwrap();
+            if let Some(status) = sibling_status {
+                let sibling = parent
+                    .create_child(TaskAttr::with_identity(
+                        "sibling contract",
+                        Uuid::new_v4(),
+                        now,
+                    ))
+                    .unwrap();
+                sibling.set_orig_status(status).unwrap();
+                if status == Status::Pending {
+                    sibling.set_pending_until(now + Duration::hours(1)).unwrap();
+                }
+            }
+            let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+            repository.sync_clock(now).unwrap();
+            repository.load().unwrap();
+            repository.start_new_project(parent).unwrap();
+            repository.save().unwrap();
+            let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+            let response = service
+                .complete_session_at(
+                    now,
+                    CompleteSessionRequest {
+                        task_id: child_id.to_string(),
+                        started_at_epoch_ms: now.timestamp_millis() - 60_000,
+                        ended_at_epoch_ms: None,
+                        expected_actual_work_seconds: 0,
+                        record_elapsed_seconds,
+                    },
+                )
+                .unwrap();
+            let value = serde_json::to_value(response).unwrap();
+            if returns_parent {
+                assert_eq!(value["data"]["task_id"], parent_id.to_string());
+                assert_eq!(value["data"]["task_name"], "handoff parent");
+                assert_eq!(value["data"]["estimated_work_seconds"], 600);
+                assert_eq!(value["data"]["actual_work_seconds"], 120);
+            } else {
+                assert!(value["data"].is_null());
+            }
+        }
+    }
+}
+
+#[test]
+fn complete_sessionは経過秒加算と完了を1回の保存で反映して親なしでは移行先を返さない() {
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now =
         Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap() + Duration::milliseconds(999);
@@ -1448,10 +1520,11 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映してsna
         .unwrap();
 
     assert_eq!(
-        response.observed_at_epoch_ms,
+        response.snapshot.observed_at_epoch_ms,
         operation_now.timestamp_millis()
     );
-    assert_eq!(response.logical_date, "2026-09-05");
+    assert_eq!(response.snapshot.logical_date, "2026-09-05");
+    assert_eq!(response.data, None);
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
@@ -1610,7 +1683,7 @@ fn complete_sessionは記録方針にかかわらず反復task生成と元task�
             fixture.seed_repetition_task(operation_now - Duration::hours(1));
         let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
-        service
+        let response = service
             .complete_session_at(
                 operation_now,
                 CompleteSessionRequest {
@@ -1623,6 +1696,7 @@ fn complete_sessionは記録方針にかかわらず反復task生成と元task�
             )
             .unwrap();
 
+        assert_eq!(response.data, None);
         let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
         repository.reload_if_changed(operation_now).unwrap();
         let parent = repository.get_by_id(parent_id).unwrap().unwrap();

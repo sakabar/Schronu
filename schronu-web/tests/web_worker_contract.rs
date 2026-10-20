@@ -119,7 +119,10 @@ fn workerは10操作を送信順に専用threadで実行してpayloadを保持�
         );
         assert_eq!(
             worker.complete_session(complete_request).await,
-            Ok(snapshot(5))
+            Ok(WebSuccess {
+                snapshot: snapshot(5),
+                data: None
+            })
         );
         assert_eq!(
             worker
@@ -465,7 +468,10 @@ impl WebOperations for RecordingOperations {
             request.expected_actual_work_seconds,
             request.record_elapsed_seconds,
         ));
-        Ok(snapshot(5))
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot(5),
+            data: None,
+        })
     }
 }
 

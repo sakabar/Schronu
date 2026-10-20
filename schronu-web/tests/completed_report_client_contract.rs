@@ -197,7 +197,10 @@ fn 完了modeではmutation成功後も完了一覧を再取得する() {
     let (_, request) = completed_effect(state.apply_complete_result(
         &storage,
         request_id,
-        Ok(snapshot("2026-09-16", 2)),
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-16", 2),
+            data: None,
+        }),
     ));
     assert_eq!(request.logical_date, "2026-09-16");
 }

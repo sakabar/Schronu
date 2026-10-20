@@ -110,6 +110,9 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-ACTION-015**: 競合確認の「計測を再開」は、確認待ちを除外しつつ初回clickまでの計測millisecondを保持するよう開始時刻を現在時刻から補正し、最新実績を開始時実績として`WorkSession`全体をstorage-firstで置換すること。保存成功時だけ競合とerrorを解除し、失敗時は保存済みsessionと停止中の競合確認を維持してlocalStorage errorを表示すること。
 - **REQ-ACTION-016**: 通常操作の「計測を破棄して再開」は、task UUID、task名、開始時見積秒、開始時実績秒を維持し、開始時刻だけをclick時刻へstorage-firstで更新すること。成功時は対象の旧経過秒をbufferから除外してセッションtabに留まり、task更新、server通信を行わないこと。保存失敗時はmemory上のsessionとbufferを維持すること。in-flight、server commit済み、global・manual safety block、完了競合中は拒否すること。
 
+- **REQ-ACTION-017**: 2種類の完了と実績競合解消後の完了が成功した場合、CLIと共通の完了判定で直接の親が返れば、成功応答受信時のbrowser時刻から親sessionを開始すること。未完了の兄弟がある、親がない、反復の次回taskを生成する場合は開始しないこと。親のPending状態や未来の開始時刻は追加制限としないこと。
+- **REQ-ACTION-018**: 子session削除と親session追加はlocalStorageへの1回の保存で行い、保存成功後だけmemoryへ反映すること。既存の親sessionと他sessionは維持すること。commit済みmarkerまたはsession保存の失敗時は親を開始せず、commit済み保護とerror表示で再完了を防ぐこと。失敗・古い・重複応答では開始しないこと。
+
 ### 4.6 buffer
 
 - **REQ-BUFFER-001**: bufferを`現在logical dateの符号付き残り容量 - 同日のschedule segmentごとのscheduled_work_seconds合計`としてserver側で算出すること。server観測時刻が日次終端より前なら、符号付き残り容量は観測時刻から日次終端までの毎週固定`busy_time_slot`控除後の空き秒とする。日次終端以後なら、符号付き残り容量は`日次終端 - server観測時刻`の0以下の秒数とし、日次終端後の全壁時計超過時間を反映する。同一taskの複数segment、進行中segment、同じlogical date内の過去segmentをそれぞれ1回ずつ全量で集計すること。

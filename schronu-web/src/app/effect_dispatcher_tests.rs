@@ -455,7 +455,10 @@ impl WebGateway for FakeGateway {
             "complete:{}:{}",
             request.task_id, request.record_elapsed_seconds
         ));
-        Ok(Ok(snapshot()))
+        Ok(Ok(WebSuccess {
+            snapshot: snapshot(),
+            data: None,
+        }))
     }
 }
 

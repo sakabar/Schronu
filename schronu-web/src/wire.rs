@@ -75,7 +75,7 @@ pub struct LoadData {
     pub routine_load: RoutineLoadReport,
 }
 
-pub type CompleteSessionResponse = ServerSnapshot;
+pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {

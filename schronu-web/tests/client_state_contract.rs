@@ -1172,7 +1172,10 @@ fn 完了effectは計測の記録方針を保持する() {
     discard_state.apply_complete_result(
         &discard_storage,
         request_id,
-        Ok(snapshot("2026-09-05", 1)),
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: None,
+        }),
     );
     assert!(discard_state.sessions().is_empty());
 
@@ -1256,7 +1259,10 @@ fn 完了実績競合は初回clickの計測を保持して最新実績で再送
         state.apply_complete_result(
             &storage,
             final_request_id,
-            Ok(snapshot("2026-09-05", 21_000)),
+            Ok(schronu_web::WebSuccess {
+                snapshot: snapshot("2026-09-05", 21_000),
+                data: None,
+            }),
         );
         assert!(state.sessions().is_empty());
         assert!(state.display_error().is_none());
@@ -1618,7 +1624,10 @@ fn 計測破棄完了は多重送信と不確実な再送を防ぐ() {
     committed_state.apply_complete_result(
         &committed_storage,
         committed_request_id,
-        Ok(snapshot("2026-09-05", 1)),
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-05", 1),
+            data: None,
+        }),
     );
     assert_eq!(committed_state.sessions().len(), 1);
     assert!(committed_state.is_session_committed_blocked(TASK_ID));
@@ -1651,7 +1660,14 @@ fn mutation成功時だけsessionを消す() {
     let mut complete_state = state_with_sessions(&storage, &[OTHER_TASK_ID]);
     let (request_id, _) =
         complete_effect(complete_state.begin_complete_session(&storage, OTHER_TASK_ID));
-    complete_state.apply_complete_result(&storage, request_id, Ok(snapshot("2026-09-05", 2)));
+    complete_state.apply_complete_result(
+        &storage,
+        request_id,
+        Ok(schronu_web::WebSuccess {
+            snapshot: snapshot("2026-09-05", 2),
+            data: None,
+        }),
+    );
     assert!(complete_state.sessions().is_empty());
 }
 

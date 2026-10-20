@@ -1,8 +1,8 @@
 use super::diagnostics::is_read_operation;
 use super::*;
 use crate::{
-    CompleteSessionRequest, RecordSessionRequest, RecordSessionResult, RetryAdvice, SessionTask,
-    WebSuccess,
+    CompleteSessionRequest, CompleteSessionResponse, RecordSessionRequest, RecordSessionResult,
+    RetryAdvice, SessionTask, WebSuccess,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -273,13 +273,7 @@ impl ClientState {
             return;
         }
         let mut candidate = self.sessions().to_vec();
-        candidate.push(WorkSession {
-            task_id: task.task_id.clone(),
-            task_name: task.task_name.clone(),
-            started_at_epoch_ms: self.tick_now_epoch_ms,
-            estimated_work_seconds_at_start: task.estimated_work_seconds,
-            actual_work_seconds_at_start: task.actual_work_seconds,
-        });
+        candidate.push(session_from_task(task, self.tick_now_epoch_ms));
         let result = self
             .sessions
             .work_sessions
@@ -429,6 +423,7 @@ impl ClientState {
                     &task_id,
                     invocation,
                     Some(success.data.actual_work_seconds),
+                    None,
                 );
                 let _ = self.finish_mutation_safety(storage, false);
                 return follow_up;
@@ -451,7 +446,7 @@ impl ClientState {
         &mut self,
         storage: &S,
         request_id: u64,
-        result: Result<ServerSnapshot, ServerFailure>,
+        result: Result<CompleteSessionResponse, ServerFailure>,
     ) -> ClientEffect {
         let Some(pending) = self.take_pending_completion(request_id) else {
             return ClientEffect::None;
@@ -466,11 +461,17 @@ impl ClientState {
             .to_owned();
         self.sessions.in_flight_task_ids.remove(&task_id);
         match result {
-            Ok(snapshot) => {
+            Ok(success) => {
                 self.sessions.completion_conflicts.remove(&task_id);
                 self.clear_superseded_completion_error(&task_id);
-                let follow_up = self.apply_mutation_snapshot_and_request_list(snapshot);
-                self.finish_committed_mutation(storage, &task_id, invocation, None);
+                let follow_up = self.apply_mutation_snapshot_and_request_list(success.snapshot);
+                self.finish_committed_mutation(
+                    storage,
+                    &task_id,
+                    invocation,
+                    None,
+                    success.data.as_ref(),
+                );
                 let _ = self.finish_mutation_safety(storage, false);
                 return follow_up;
             }
@@ -698,6 +699,7 @@ impl ClientState {
         task_id: &str,
         invocation: ServerActionInvocation,
         actual_work_seconds: Option<i64>,
+        next_task: Option<&SessionTask>,
     ) {
         self.record_server_success(invocation);
         if self
@@ -709,12 +711,20 @@ impl ClientState {
             self.keep_committed_session(task_id, actual_work_seconds);
             return;
         }
-        let candidate = self
+        let mut candidate: Vec<_> = self
             .sessions()
             .iter()
             .filter(|session| session.task_id != task_id)
             .cloned()
             .collect();
+        if let Some(task) = next_task {
+            if !candidate
+                .iter()
+                .any(|session| session.task_id == task.task_id)
+            {
+                candidate.push(session_from_task(task, self.tick_now_epoch_ms));
+            }
+        }
         match self
             .sessions
             .work_sessions
@@ -746,6 +756,16 @@ impl ClientState {
             committed_on_server: true,
             task_id: Some(task_id.to_owned()),
         });
+    }
+}
+
+fn session_from_task(task: &SessionTask, started_at_epoch_ms: i64) -> WorkSession {
+    WorkSession {
+        task_id: task.task_id.clone(),
+        task_name: task.task_name.clone(),
+        started_at_epoch_ms,
+        estimated_work_seconds_at_start: task.estimated_work_seconds,
+        actual_work_seconds_at_start: task.actual_work_seconds,
     }
 }
 

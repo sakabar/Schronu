@@ -53,7 +53,7 @@ ServerSnapshot {
 
 `observed_at_epoch_ms`、`logical_date`、`buffer_seconds`は同じserver操作時刻を基準に算出する。clientはresponse受信時刻ではなく`observed_at_epoch_ms`を表示計算の基準とする。
 
-`complete_session`の成功responseは`ServerSnapshot`だけとする。既存`complete_task`が返す次task情報はwireへ含めない。
+`complete_session`の成功responseは`WebSuccess<Option<SessionTask>>`とする。`data`は共通`complete_task`が返す直接の親task情報とし、移行先がなければ`null`とする。
 
 payloadを持つ成功responseは次の形とする。
 
@@ -71,7 +71,7 @@ WebSuccess<T> {
 - `auto_session`: `WebSuccess<Option<SessionTask>>`
 - `create_task`: `WebSuccess<CreateTaskResult>`。作成したUUIDと翌論理日開始のepoch millisecondsを返す。
 - `record_session`: `WebSuccess<RecordSessionResult>`
-- `complete_session`: `CompleteSessionResponse` (`ServerSnapshot`のtype alias)
+- `complete_session`: `CompleteSessionResponse` (`WebSuccess<Option<SessionTask>>`のtype alias)
 
 error responseは成功型とは別の次の形とし、snapshotまたは部分的な成功payloadを含めない。
 
@@ -418,7 +418,9 @@ CompleteSessionRequest {
 5. applicationは期待実績検証、実績加算、完了、終了時刻更新、反復task生成を1つの操作として準備する。
 6. repository transactionは全変更を1回で保存する。repository同期とresponse snapshot生成は`operation_now`を維持し、click後の通信待ちを未作業時間として反映する。
 
-`record_elapsed_seconds`の値にかかわらず期待実績競合、未完了child、反復task生成、保存、安全停止は同じ完了経路で処理する。成功時は`ServerSnapshot`だけを返す。既存`complete_task`が返す次task情報はWebへ返さず、次taskをSchronu本体のcurrent taskへ設定せず、sessionも自動追加しない。失敗時は他のoperationと同じ`WebError`を返す。
+`record_elapsed_seconds`の値にかかわらず期待実績競合、未完了child、反復task生成、保存、安全停止は同じ完了経路で処理する。成功時は`WebSuccess<Option<SessionTask>>`を返し、`snapshot`へ完了後の状態、`data`へ`complete_task`の`next_focus_task_id`が示す直接の親task情報を格納する。親がない、未完了の兄弟がある、反復の次回taskを生成した場合は`data: null`とする。CLIと同じ判定を使い、親のPending状態や未来の開始時刻による追加制限は設けない。親情報の取得とsnapshot生成は完了transaction内で行い、保存成功後だけ応答する。Schronu本体のcurrent taskは変更しない。応答形式の変更時はWeb clientとserverを同時更新し、browserをreloadする。
+
+clientは有効な成功応答の受信時にbrowser現在時刻を取得し、子sessionの削除と親sessionの末尾追加を同じ候補配列としてlocalStorageへ1回で保存する。memory更新は保存成功後だけとする。親の開始時刻は応答受信時刻、開始時の名前・見積・実績は応答の値を使う。すでに親sessionがあれば開始時刻と計測内容を維持し、重複追加しない。他のsessionも維持する。commit済みmarkerを先に保存し、markerまたはsession配列の保存失敗時は既存のcommit済み保護とlocalStorage errorを適用し、親を開始せず完了の再送を禁止する。競合確認後の再完了にも同じ処理を適用する。失敗・古い・重複応答では親を開始しない。失敗時は他のoperationと同じ`WebError`を返す。
 
 ## 5. Application contracts
 
@@ -797,9 +799,9 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 計測を破棄して解除 | session削除成功後にactive mode一覧取得、終了後に`load_band` | なし | session削除。成功後にbuffer再計算 | 一覧再取得responseで置換 | なし |
 | 記録して解除 | click時刻付きでsafety marker保存後に`record_session`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの実績保存1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
 | 計測を破棄して完了の確認・キャンセル | なし | なし | card内の一時的な確認状態だけを変更 | なし | なし |
-| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得、終了後に`load_band` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後session削除 | 一覧再取得responseで置換 | なし |
-| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後にactive mode一覧取得、終了後に`load_band` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後session削除 | 一覧再取得responseで置換 | なし |
+| 計測を破棄して完了の確定 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: false)`。成功後にactive mode一覧取得、終了後に`load_band` | 追加実績0、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後に子session削除と親session追加を1回で保存 | 一覧再取得responseで置換 | なし |
+| 記録して完了 | click時刻付きでsafety marker保存後に`complete_session(record_elapsed_seconds: true)`。成功後にactive mode一覧取得、終了後に`load_band` | clickまでの経過秒を加算し、click時刻で完了するtransaction 1回 | 送信前marker設定とtimer停止。確定応答後marker解除。成功後に子session削除と親session追加を1回で保存 | 一覧再取得responseで置換 | なし |
+| 完了実績競合の再完了 | 元requestの期待実績だけを最新値へ変更し、safety marker保存後に`complete_session`。成功後にactive mode一覧取得、終了後に`load_band` | 最新実績とのCAS成功時だけ元の記録方針で完了 | 初回click時刻の停止を維持。再競合は最新値を更新し、成功後に子session削除と親session追加を1回で保存 | 一覧再取得responseで置換 | なし |
 | 完了実績競合の計測再開 | なし | なし | 確認待ちを除いた開始時刻と最新実績でsessionを原子的に置換 | なし | なし |
 | repository手動確認済み | なし | なし | commit済みで削除失敗したsessionを先に削除し、safety marker解除 | なし | なし |
 | 持ち歩きロック有効化 | なし | なし | `enabled: true`を保存。失敗時もmemory上はロック | なし | なし |
@@ -863,7 +865,8 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 共通実績加算: 正常加算、0秒、未知UUID、完了済みtask、負数、期待値一致・不一致、加算overflow、失敗時無変更。
 - `complete_task`: 期待値一致、競合、負の追加秒、overflow、未完了の子、完了済み、反復task生成、各失敗時の全状態不変。
 - `record_session`と`complete_session`: 注入した開始0秒、click 60秒、server操作65秒で、記録実績とtask終了時刻がclick時点に固定されることを待機なしで検証する。終了時刻省略、開始前、epoch範囲外も検証する。browser時計がserver時計より進む場合はbrowser内の開始・終了差を実績へ反映し、完了時刻をserver操作時刻で上限化することも検証する。
-- `complete_session`: 記録ありではclickまでの経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0でclick時刻に完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseが`ServerSnapshot`だけで次task情報を含まないこと。
+- `complete_session`: 記録ありではclickまでの経過整数秒を加算し、記録なしでは開始時刻を使用せず追加実績0でclick時刻に完了すること。どちらも期待実績競合、反復task、未完了child、保存失敗の契約を維持し、成功responseがsnapshotとCLI判定による親情報を返すこと。親なし・未完了兄弟・反復生成では移行先なしとなり、Pending・未来開始の親もCLIと同じ判定になること。
+- 完了後の親session引き継ぎ: 応答受信時刻、既存親と他sessionの維持、storageへの1回の保存とreload、marker・session保存失敗時の原子性と再送禁止、重複・古い応答の無視を確認する。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
 - 睡眠時間表示: buffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。
@@ -985,7 +988,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 | 3.4、6.1、7.2 | REQ-SESSION-001..007、REQ-AUTO-001..004 |
 | 5 | REQ-APP-001..004、REQ-COMPAT-001..005 |
 | 6.2、6.3、7.2、11.6 | REQ-CARD-001..020 |
-| 4.4、4.5、7.4、9 | REQ-ACTION-001..009 |
+| 4.4、4.5、4.8、7.4、9、11 | REQ-ACTION-001..018 |
 | 6.4 | REQ-BUFFER-001..010 |
 | 3.3、3.4、4.2..4.4、6.1、6.5、7.3、7.4、8、11.5 | REQ-LIST-001..034 |
 | 6.1、7.1、8、11.4、11.5 | REQ-COMMON-001..007、REQ-NET-001、002、008、010 |
