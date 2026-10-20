@@ -1328,7 +1328,7 @@ button:disabled {
 }
 
 .session-cell .task-defer {
-    margin-left: 0;
+    margin-left: auto;
 }
 
 .task-defer-confirmation-row {

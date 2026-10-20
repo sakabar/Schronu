@@ -103,7 +103,7 @@ fn mutation_safety全体停止は先送りbuttonを無効化する() {
         globally_blocked_root,
         RootProps {
             dates: Vec::new(),
-            rows: vec![row("task-id", false, true)],
+            rows: vec![row("task-id", false, true), row("parent", false, false)],
             active_task_ids: Vec::new(),
             filter_text: String::new(),
             events: Arc::clone(&events),
@@ -114,7 +114,10 @@ fn mutation_safety全体停止は先送りbuttonを無効化する() {
     assert!(!html.contains("class=\"session-start\" disabled"), "{html}");
     assert!(html.contains("先送り\" disabled=true"), "{html}");
 
-    dispatch_click(&dom, listeners[1]);
+    assert!(html.contains("task parent: 先送り\" disabled=true"));
+    for id in listeners {
+        dispatch_click(&dom, id);
+    }
     assert!(events.lock().unwrap().is_empty());
 }
 
@@ -129,7 +132,7 @@ fn carry_lockはsession追加と先送りを無効化し日付選択は維持す
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", false, true)],
+            rows: vec![row("task-id", false, true), row("parent", false, false)],
             active_task_ids: Vec::new(),
             filter_text: String::new(),
             events: Arc::clone(&events),
@@ -176,7 +179,7 @@ fn carry_lockはsession追加と先送りを無効化し日付選択は維持す
                 label: "土".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("task-id", false, true)],
+            rows: vec![row("task-id", false, true), row("parent", false, false)],
             active_task_ids: Vec::new(),
             filter_text: String::new(),
             events: Arc::clone(&events),
@@ -1297,7 +1300,7 @@ fn row差替えで先送り確認stateを別taskへ継承しない() {
 }
 
 #[test]
-fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
+fn rank非0のtaskはsession追加なしで先送りをdispatchする() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, listeners) = build(RootProps {
         dates: Vec::new(),
@@ -1307,13 +1310,15 @@ fn rank非0のtaskは開始buttonとclick_listenerを持たない() {
         events: Arc::clone(&events),
     });
 
-    assert_eq!(listeners.len(), 1, "全てbuttonだけがclick listenerを持つ");
+    assert_eq!(listeners.len(), 2, "全てと先送りだけがclick listenerを持つ");
     assert!(!dioxus::ssr::render(&dom).contains("session-start"));
     assert!(
-        dioxus::ssr::render(&dom).contains("class=\"session-cell\"></td>"),
-        "rank非0でも列揃え用cellは維持する"
+        dioxus::ssr::render(&dom).contains("aria-label=\"task non-leaf: 先送り\""),
+        "rank非0でも先送りを表示する"
     );
     assert!(events.lock().unwrap().is_empty());
+    dispatch_click(&dom, listeners[1]);
+    assert_eq!(*events.lock().unwrap(), ["defer:non-leaf"]);
 }
 
 #[test]
@@ -1733,7 +1738,7 @@ fn BackgroundBlockedDateHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
                 label: "木".to_owned(),
                 selected: false,
             }],
-            rows: vec![row("defer", false, true)],
+            rows: vec![row("defer", false, true), row("parent", false, false)],
             active_task_ids: Vec::new(),
             date_input_text: "9/17".to_owned(),
             date_input_error: None,
@@ -1760,7 +1765,14 @@ fn background更新中は日付buttonとenter送信をuiで拒否する() {
     );
     let listeners = rebuild_with_named_event_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
-    assert_eq!(html.matches("disabled").count(), 3, "{html}");
+    assert_eq!(html.matches("disabled").count(), 4, "{html}");
+    assert!(html.contains("task parent: 先送り\" disabled=true"));
+    for (name, id) in &listeners {
+        if name == "click" {
+            dispatch_click(&dom, *id);
+        }
+    }
+    assert!(events.borrow().is_empty());
 
     let submit_id = listeners
         .iter()
@@ -1856,7 +1868,7 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
     assert!(events.borrow().is_empty());
 
     assert_eq!(clear_ids.len(), 1);
-    assert_eq!(restored_clear_ids.len(), 2);
+    assert_eq!(restored_clear_ids.len(), 3);
     dispatch_click(&dom, *restored_clear_ids.last().unwrap());
     render_with_click_listeners(&mut dom);
     let cleared_html = dioxus::ssr::render(&dom);
@@ -1937,4 +1949,45 @@ fn url_suffix_is_hidden_in_all_tasks_and_defer_confirmation() {
         "{html}"
     );
     assert!(!html.contains("https://example.com"), "{html}");
+}
+
+#[test]
+fn 親taskの先送りは期限と周期の確認後だけdispatchする() {
+    for kind in [
+        DeferConfirmationKind::DeadlineLimited,
+        DeferConfirmationKind::RoutinePeriod,
+    ] {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let mut parent = confirmation_row("parent", kind);
+        parent.is_leaf = false;
+        let (mut dom, ids) = build(RootProps {
+            dates: Vec::new(),
+            rows: vec![parent],
+            active_task_ids: Vec::new(),
+            filter_text: String::new(),
+            events: Arc::clone(&events),
+        });
+        assert_eq!(ids.len(), 2);
+        dispatch_click(&dom, ids[1]);
+        let confirmation_ids = render_with_click_listeners(&mut dom);
+        assert!(events.lock().unwrap().is_empty());
+        assert!(dioxus::ssr::render(&dom).contains("先送りしますか?"));
+        dispatch_click(&dom, confirmation_ids[1]);
+        assert_eq!(*events.lock().unwrap(), ["defer:parent"]);
+    }
+}
+
+#[test]
+fn session中の親taskは先送りをdispatchしない() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let (dom, ids) = build(RootProps {
+        dates: Vec::new(),
+        rows: vec![row("parent", false, false)],
+        active_task_ids: vec!["parent".to_owned()],
+        filter_text: String::new(),
+        events: Arc::clone(&events),
+    });
+    assert!(dioxus::ssr::render(&dom).contains("先送り\" disabled=true"));
+    dispatch_click(&dom, ids[1]);
+    assert!(events.lock().unwrap().is_empty());
 }
