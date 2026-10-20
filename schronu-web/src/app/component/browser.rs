@@ -15,7 +15,7 @@ use super::super::session_links::SessionLinks;
 use super::super::session_view::SessionView;
 use super::{
     BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
-    RestoringShell, SessionChrome, UnavailableBufferPanel,
+    RestoringShell, SessionChrome, TIME_DISPLAY_MODE,
 };
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
@@ -215,11 +215,7 @@ pub(super) fn BrowserApp() -> Element {
                     on_relock: move |_| dispatch_action(client, ComponentAction::RelockCarryLock),
                     on_disable: move |_| dispatch_action(client, ComponentAction::DisableCarryLock),
                 }
-                if let Some(buffer) = buffer {
-                    BufferPanel { value: buffer }
-                } else {
-                    UnavailableBufferPanel {}
-                }
+                BufferPanel { value: buffer, mode: TIME_DISPLAY_MODE }
             }
             NavigationTabs {
                 active_tab,

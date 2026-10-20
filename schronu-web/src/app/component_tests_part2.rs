@@ -697,7 +697,7 @@ fn native_ssrはbrowser_storageへ触れず非blockingな復元shellを描画す
 fn ready_buffer() -> Element {
     rsx! {
         InteractiveShell { blocked: false,
-            BufferPanel { value: 3_661 }
+            BufferPanel { value: Some(3_661), mode: TimeDisplayMode::Sleep }
         }
     }
 }
@@ -717,19 +717,19 @@ fn bufferは基準睡眠時間を加えた睡眠時間としてready_shellへ表
 }
 
 fn negative_buffer() -> Element {
-    rsx! { BufferPanel { value: -60 } }
+    rsx! { BufferPanel { value: Some(-60), mode: TimeDisplayMode::Sleep } }
 }
 
 fn exhausted_sleep_buffer() -> Element {
-    rsx! { BufferPanel { value: -(7 * 60 * 60) } }
+    rsx! { BufferPanel { value: Some(-(7 * 60 * 60)), mode: TimeDisplayMode::Sleep } }
 }
 
 fn negative_sleep_buffer() -> Element {
-    rsx! { BufferPanel { value: -(7 * 60 * 60) - 1 } }
+    rsx! { BufferPanel { value: Some(-(7 * 60 * 60) - 1), mode: TimeDisplayMode::Sleep } }
 }
 
 fn unavailable_buffer() -> Element {
-    rsx! { UnavailableBufferPanel {} }
+    rsx! { BufferPanel { value: None, mode: TimeDisplayMode::Sleep } }
 }
 
 #[test]
@@ -790,7 +790,7 @@ fn 未取得bufferも睡眠時間labelを表示する() {
 fn ready_buffer_during_follow_up_load() -> Element {
     rsx! {
         InteractiveShell { blocked: true,
-            BufferPanel { value: 60 }
+            BufferPanel { value: Some(60), mode: TimeDisplayMode::Sleep }
         }
         LoadingOverlay {}
     }

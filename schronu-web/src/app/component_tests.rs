@@ -8,3 +8,6 @@ mod load_refresh_tests;
 
 #[path = "read_load_refresh_tests.rs"]
 mod read_load_refresh_tests;
+
+#[path = "time_display_tests.rs"]
+mod time_display_tests;

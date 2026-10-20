@@ -1,6 +1,6 @@
 use super::component::{
     app, BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
-    SessionChrome, UnavailableBufferPanel,
+    SessionChrome, TimeDisplayMode,
 };
 #[cfg(feature = "web")]
 use super::component_models::{project_active_completed_report, BrowserPageModel};
