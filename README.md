@@ -129,6 +129,8 @@ browser時計がserver時計より進んでいる場合も、開始・終了clic
 
 セッションtabで終了操作またはrepository確認によって最後のセッションが正常に削除されると、一覧tabへ自動的に移ります。セッションが残る場合、serverまたはlocalStorageの処理に失敗した場合、一覧・作成・負荷tabを表示している場合は強制遷移しません。このtab切替自体はserver通信を発生させません。
 
+時間表示は`schronu-web/src/app/component.rs`の`TIME_DISPLAY_MODE`でbuild単位に選択します。初期値の`TimeDisplayMode::Sleep`は従来どおり「睡眠時間」(基準420分 + buffer)、`TimeDisplayMode::Buffer`は「余裕時間」(bufferそのもの)、`TimeDisplayMode::Hidden`は時間領域を非表示にします。余裕時間は正値に`+`、負値に`-`を付け、0は`00:00:00`とし、負値だけ赤色で表示します。未取得時は選択した表示名と「未取得」を示し、非表示ではどちらも描画しません。切り替えUIやlocalStorage設定はなく、定数の変更後は下記の`dx build`で再buildし、配信中のWebアプリをreloadしてください。buffer計算やセッション計測には影響しません。
+
 Web側だけを検証するcommandは次のとおりです。
 
 ```shell

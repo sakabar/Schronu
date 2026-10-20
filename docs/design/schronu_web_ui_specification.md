@@ -634,6 +634,11 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 - 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。2件が10分ずつ同時計測された場合は20分を加算する。
 - 「計測を破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
+- `schronu-web/src/app/component.rs`の内部enum `TimeDisplayMode { Sleep, Buffer, Hidden }`とcompile-time定数`TIME_DISPLAY_MODE`で表示方法を選ぶ。初期値は`Sleep`。変更後は再buildしてbrowserをreloadする。切り替えUI、localStorage設定、server APIは追加しない。
+- 取得済み・未取得を扱う同じcomponentへmodeと`Option<i128>`のbufferを渡し、製品経路では定数を渡す。以下の睡眠時間の仕様は`Sleep`時に適用する。
+- `Buffer`では基準睡眠時間を加えず「余裕時間」を表示する。正値は`+HH:MM:SS`、0は`00:00:00`、負値は`-HH:MM:SS`とし、負値だけ赤色にする。ARIA labelは「余裕時間 {表示値}」とする。
+- 未取得時は選択した表示名と「未取得」を表示し、ARIA labelは表示名とする。`schronu-buffer-ready`は取得済みの表示にだけ付ける。
+- `Hidden`では時間パネル自体を描画せず、専用余白、時間情報のARIA labelやtitleを残さない。表示modeはbuffer計算、server通信、セッション計測に影響しない。
 - `BASE_SLEEP_MINUTES`はWeb表示component付近へ定義するcompile-time定数とし、420分とする。0分へ変更した場合は従来のbufferと同じ表示値になる。
 - `display_buffer >= 0`: `display_sleep`を通常色の`HH:MM:SS`で表示する。
 - `display_buffer < 0`: `display_sleep`を赤色で表示する。`display_sleep`が負の場合は`-HH:MM:SS`とし、0以上の場合も赤色を維持する。可視ラベルは「睡眠時間」に固定し、sectionのARIA labelを「睡眠時間 {display_sleep}、基準より{abs(display_buffer)}不足」として、色以外でも表示値と不足量を識別可能にする。
@@ -667,7 +672,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 ### 7.1 初期化とtab
 
 1. localStorageを読み、`work_sessions`と`schronu_web.view_state.v1`を復元する。view stateには最後に成功したsnapshot、active mode、taggedな1日分の予定または完了一覧、選択tab、共有検索文字列、日付入力文字列を保持する。「全て」の選択と取得結果は復元しない。
-2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ睡眠時間と一覧だけを未取得として表示する。
+2. 保存済みの一覧と入力を通常shellへ即時表示し、`bootstrap`を背景で1回送る。保存一覧がなければ選択した時間表示modeに従って時間領域と一覧だけを未取得として表示する。`Hidden`では時間領域を描画しない。
 3. `bootstrap`成功後、保存一覧があれば保存されていたlogical dateをactive modeのendpointで再取得する。日跨ぎでsnapshotのlogical dateが変わっても保存一覧を消さず、一覧取得成功時だけ全rowを置換する。空一覧の成功も有効な置換とする。
 4. 保存tabがなければ初期tabを「セッション」とする。
 5. viewport下端へ「セッション」「一覧」「負荷」「作成」の4tabを固定し、選択中だけ上端の緑indicatorと`aria-pressed: true`を付ける。各buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とする。
@@ -870,7 +875,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 完了後の親session引き継ぎ: 応答受信時刻、既存親と他sessionの維持、storageへの1回の保存とreload、marker・session保存失敗時の原子性と再送禁止、重複・古い応答の無視を確認する。
 - 進捗計算: 開始時33%、100%、133%、見積0、長時間、乗算overflow回避。
 - buffer: 正、0、負、06:00前後、日次終端前の固定`busy_time_slot`控除、隣接logical dateの除外を検証する。日次終端10分前で予定作業なしなら`+00:10:00`、日次終端ちょうどで予定作業なしなら`00:00:00`、日次終端40分後で予定作業なしなら`-00:40:00`、日次終端40分後で予定残作業62分なら`-01:42:00`となることを検証する。
-- 睡眠時間表示: buffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。
+- 時間表示: `Sleep`ではbuffer `+01:01:01`で`08:01:01`の通常色、`-00:01:00`で`06:59:00`の赤色、`-07:00:00`で`00:00:00`の赤色、`-07:00:01`で`-00:00:01`の赤色になることをcomponent testで検証する。 `Buffer`の符号・赤色・ARIA label、両表示の未取得、`Hidden`で取得状態にかかわらずパネルがないこと、および製品経路の定数接続も検証する。
 - buffer segment集計: 単一segment、同一taskの複数segment、複数task、進行中segment全量、同一logical date内の過去segment、`scheduled_work_seconds`合計overflowを検証する。
 - buffer更新: 実績変更後のschedule再生成と、日次終端の前後を問わず補正後の完了予定前のセッションが1件以上存在する間はbufferを停止し、セッション0件または全セッションが時間超過した間は実時間と同速で減算することを検証する。
 - read model: 指定日、開始時刻順、複数segment、schedule rank 0判定(task tree上の子の有無に非依存)、締切、候補なしの自動選定。

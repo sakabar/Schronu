@@ -56,43 +56,65 @@ fn AppBody() -> Element {
     rsx! { RestoringShell {} }
 }
 
+// All variants remain available for build-time configuration.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TimeDisplayMode {
+    Sleep,
+    Buffer,
+    Hidden,
+}
+
+pub(super) const TIME_DISPLAY_MODE: TimeDisplayMode = TimeDisplayMode::Sleep;
+
 #[component]
-pub(super) fn BufferPanel(value: i128) -> Element {
+pub(super) fn BufferPanel(
+    value: Option<i128>,
+    #[props(default = TIME_DISPLAY_MODE)] mode: TimeDisplayMode,
+) -> Element {
     const BASE_SLEEP_MINUTES: i128 = 420;
 
+    let display_name = match mode {
+        TimeDisplayMode::Sleep => "睡眠時間",
+        TimeDisplayMode::Buffer => "余裕時間",
+        TimeDisplayMode::Hidden => return rsx! {},
+    };
+    let Some(value) = value else {
+        return rsx! {
+            section { class: "buffer-panel", aria_label: display_name,
+                span { class: "buffer-label", "{display_name}" }
+                strong { "未取得" }
+            }
+        };
+    };
     let class = if value < 0 {
         "buffer-value is-negative"
     } else {
         "buffer-value"
     };
-    let sleep_seconds = value + BASE_SLEEP_MINUTES * 60;
-    let label = format_hh_mm_ss(sleep_seconds);
-    let panel_label = if value < 0 {
-        let deficit = format_hh_mm_ss(value);
-        format!(
-            "睡眠時間 {label}、基準より{}不足",
-            deficit.trim_start_matches('-')
-        )
-    } else {
-        "睡眠時間".to_owned()
+    let label = match mode {
+        TimeDisplayMode::Sleep => format_hh_mm_ss(value + BASE_SLEEP_MINUTES * 60),
+        _ if value > 0 => format!("+{}", format_hh_mm_ss(value)),
+        _ => format_hh_mm_ss(value),
+    };
+    let panel_label = match mode {
+        TimeDisplayMode::Sleep if value < 0 => {
+            let deficit = format_hh_mm_ss(value);
+            format!(
+                "睡眠時間 {label}、基準より{}不足",
+                deficit.trim_start_matches('-')
+            )
+        }
+        TimeDisplayMode::Sleep => display_name.to_owned(),
+        _ => format!("{display_name} {label}"),
     };
     rsx! {
         section {
             id: "schronu-buffer-ready",
             class: "buffer-panel",
             aria_label: panel_label,
-            span { class: "buffer-label", "睡眠時間" }
+            span { class: "buffer-label", "{display_name}" }
             strong { class, "{label}" }
-        }
-    }
-}
-
-#[component]
-pub(super) fn UnavailableBufferPanel() -> Element {
-    rsx! {
-        section { class: "buffer-panel", aria_label: "睡眠時間",
-            span { class: "buffer-label", "睡眠時間" }
-            strong { "未取得" }
         }
     }
 }
