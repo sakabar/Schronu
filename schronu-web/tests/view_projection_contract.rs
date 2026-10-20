@@ -15,6 +15,50 @@ const START_EPOCH_MS: i64 = 1_788_568_200_000; // 2026-09-05 00:30 UTC
 const JST_OFFSET_MINUTES: i32 = 9 * 60;
 
 #[test]
+fn zero_remaining_session_bars_stay_full_after_manual_or_auto_start_and_reload() {
+    for (estimated, actual) in [(0, 0), (60, 60), (60, 120), (60, 180)] {
+        for automatic in [false, true] {
+            let storage = FakeStorage::default();
+            let mut state = load_client_state(&storage, START_EPOCH_MS).unwrap();
+            let mut row = session_row();
+            row.task.estimated_work_seconds = estimated;
+            row.task.actual_work_seconds = actual;
+            if automatic {
+                let request_id = auto_effect(state.request_auto_session());
+                state.apply_auto_session_result(
+                    &storage,
+                    request_id,
+                    Ok(WebSuccess {
+                        snapshot: snapshot("2026-09-05", START_EPOCH_MS),
+                        data: Some(row.task.actionable_task().unwrap()),
+                    }),
+                );
+            } else {
+                state.add_session_from_row(&storage, &row);
+            }
+
+            for elapsed in [0, 90] {
+                let now = START_EPOCH_MS + elapsed * 1_000;
+                state.tick(now);
+                let restored = load_client_state(&storage, now).unwrap();
+                for current in [&state, &restored] {
+                    let cards = project_session_cards(current, JST_OFFSET_MINUTES);
+                    assert_eq!(cards.len(), 1);
+                    assert_eq!(cards[0].normal_bar_percent, 100);
+                    assert_eq!(cards[0].overrun_bar_percent, 50);
+                    assert_eq!(
+                        cards[0].progress_percent,
+                        (estimated > 0)
+                            .then(|| i128::from(actual + elapsed) * 100 / i128::from(estimated))
+                    );
+                    assert_eq!(cards[0].remaining_seconds, -i128::from(elapsed));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn 見積超過taskは自動追加と一覧追加の両方で補正後の残り時間を示す() {
     let expected_completion = "09:40";
     let task_row = session_row();
