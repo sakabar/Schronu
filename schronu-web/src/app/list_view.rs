@@ -688,8 +688,8 @@ fn TaskRow(
         }
         tr { class: row_class,
             td { class: "session-cell",
-                if is_leaf && !is_projected {
-                    if let Some(task) = task {
+                if !is_projected {
+                    if let (true, Some(task)) = (is_leaf, task) {
                     button {
                         class: "session-start",
                         r#type: "button",

@@ -1863,3 +1863,51 @@ fn record_sessionはcommit後save失敗で後続mutationを拒否する() {
         Err(WebReadError::RepositoryPoisoned)
     ));
 }
+
+#[test]
+fn defer_taskは未完了の子を持つ親の一覧planで先送りを保存する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 6, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (parent_id, child_id, _) = fixture.seed_parent_child_and_pending_leaf(now);
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let date = NaiveDate::from_ymd_opt(2026, 9, 5).unwrap();
+    let rows = service.list_tasks_at(now, date).unwrap().data;
+    let parent = rows
+        .iter()
+        .find(|row| row.task.task_id == Some(parent_id.to_string()))
+        .unwrap();
+    assert!(!parent.is_leaf);
+    let plan = parent.defer_plan.as_ref().unwrap();
+    let expected_until = Local.with_ymd_and_hms(2026, 9, 6, 6, 0, 0).unwrap();
+    assert_eq!(
+        plan.requested_pending_until_epoch_ms,
+        expected_until.timestamp_millis()
+    );
+    let revision_before = fs::read(fixture.storage.join(".revision")).unwrap();
+    service
+        .defer_task_at(
+            now,
+            DeferTaskRequest {
+                task_id: parent_id.to_string(),
+                selected_logical_date: date.to_string(),
+                expected_plan: DeferPlanRequest {
+                    mode: DeferMode::Normal,
+                    requested_pending_until_epoch_ms: plan.requested_pending_until_epoch_ms,
+                    effective_pending_until_epoch_ms: plan.effective_pending_until_epoch_ms,
+                    repetition_interval_days: plan.repetition_interval_days,
+                },
+            },
+        )
+        .unwrap();
+    assert_ne!(
+        fs::read(fixture.storage.join(".revision")).unwrap(),
+        revision_before
+    );
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(now).unwrap();
+    let parent = repository.get_by_id(parent_id).unwrap().unwrap();
+    assert_eq!(parent.get_orig_status().unwrap(), Status::Pending);
+    assert_eq!(parent.get_pending_until().unwrap(), expected_until);
+    let child = repository.get_by_id(child_id).unwrap().unwrap();
+    assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
+}

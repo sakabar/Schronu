@@ -166,7 +166,7 @@ CompletedTaskReport {
 
 `DeferPlan`は`mode: Normal | DeadlineLimited | RoutinePeriod`と希望延期epoch millisecondsを必ず持つ。`DeadlineLimited`だけが実効延期epoch millisecondsを、`RoutinePeriod`だけが反復日数を持つ。planはserverが一覧生成時に算出し、clientは再計算しない。
 
-`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。操作可否は`is_leaf`と`occurrence == Actual`の両方で判定し、予測行では常に操作を描画・dispatchしない。
+`is_leaf`はwire互換のため名称を維持するが、task tree上の`child_ids`の空否ではなく、schedule計算結果の`ScheduledTaskView.rank == 0`を表す。rank 0は未完了の子を持たないtaskである。セッション追加可否は`is_leaf`と実taskであることの両方で判定する。日付別の先送りは`is_leaf`にかかわらずtask UUIDと`defer_plan`を持つ実taskに許可し、予測行では常に操作を描画・dispatchしない。
 
 同じoccurrenceが複数segmentに分かれる場合、actualは同じ`task_id`、projectedは同じ`occurrence_key`を持つrowを複数返してよい。serverは`get_schedule`の結果を開始時刻昇順に安定sortする。
 
@@ -257,7 +257,7 @@ RoutineLoadRow {
 
 `segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。`display_task_name`はapplication層がCLIと同じ共通関数で生成し、`total_work_seconds > scheduled_work_seconds`の場合だけ、両秒数を個別に分へ切り上げた`<segment分/total分>`を正規task名へ直結する。日付別・全件のclientはこの表示名を再計算・再整形せず共通`ListRowViewModel`へ投影し、task名cellとそのARIA labelだけに使用する。検索、セッション保存、先送り確認、操作labelはprefixを含まない`task.task_name`を使用する。旧保存payloadで`display_task_name`が欠落する場合だけ正規task名へfallbackし、clientで分割表示を再生成しない。保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
 
-日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`見込み`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskの操作可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
+日付別、全件、完了は同じtask分類class契約を使う。task名は固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返`#0069c2`、単発`#a44a00`とし、締切は超過`#c33d43`、当日`#9a5a00`、将来`#196846`とする。serverは実task IDから固定、継承した繰返、単発の優先順で共通分類し、予測行はrepository検索を行わず繰返として扱い、clientは再分類しない。完了一覧のadditiveな`task_display_kind`がない旧payloadは`NonRepetitive`へfallbackする。予測行はtask名の前に`見込み`badge、後ろに`元: <source_task_id>`を表示し、actionableなtask IDを持たず操作をdispatchしない。`is_leaf`は予定・全件の太字と実taskのセッション追加可否だけを担い、予測行の操作可否には使わず、親rowにもtask分類色を付ける。CLIのicon・諦め候補色、セッションcardのtask名、dark modeはこの契約の対象外とする。
 
 ### 3.4 localStorage schema
 
@@ -734,7 +734,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
-- `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではbuttonとclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
+- `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではセッションbuttonとそのclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信は行わない。
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
@@ -747,7 +747,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
 - 全幅でheaderとrowを操作、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。table全体の横スクロールを解除し、viewport幅にかかわらず`88px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
 - 全件一覧は`all-task-table` modifierを付け、viewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`の4列gridにする。320px、360px、46rem、1024pxの各幅でこの列幅と日付別の既存列幅を維持する。
-- rowは全幅で32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0で幅44px・高さ32pxの「＋/✓」と「→」を並べ、rank非0で空cellとする。
+- rowは全幅で32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0の実taskで幅44px・高さ32pxの「＋/✓」と「→」を並べる。日付別のrank非0の実taskでは左44pxを空け、右に先送りplanがあれば「→」を置く。全件のrank非0と予測行は空cellとする。
 - 空き時間行は4列を結合した32px以上の非操作rowとし、muted背景と中央寄せ文言だけを持たせる。task操作、締切、予定、task名、event listenerは生成しない。
 - 締切と予定は小さい等幅数字の固定列として折り返さず、日付別予定の3桁を超える分数と全件一覧の日付を省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
@@ -927,7 +927,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、分母0の日付cellが差分と`--`表示かつ超過色になること、差分の正負と一致、今日の残り容量差分、曜日見出しと日付表の0容量表示、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅の3行表示と横はみ出しなし、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
 - 負荷tabの初回進入・再進入・再選択だけでは通信せず、初回表示・全tabからのreload・背景再試行・自動セッション・予定/完了/全件一覧の取得終了後に負荷を1回取得することをcomponentの製品応答経路で検証する。元の取得失敗・候補なしでも連動し、bootstrapと一覧の連続取得や全件の複数pageでは重複させず、古い・無効化済み・重複応答は無視する。背景通信のoverlay非表示、元のerrorと再試行状態、負荷取得失敗時の直前表示・手動再試行も確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・作成・負荷でも持ち歩きロックのmutation guardが有効であることを確認する。
-- rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはどちらもないことを確認する。
+- rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはセッションbuttonとそのclick listenerがないことを確認する。日付別の親taskには先送りbuttonとclick listenerがあり、通常は即時、期限制限・次周期移動は確認後だけ送信することを確認する。
 - 日付parserは同日、未来、過去、年境界、完全日付、前後空白、不正形式、不正calendar日付、範囲overflowをcontract testで確認する。component testでは日付入力と検索のDOM順、入力・submit callback、正規化値の保持、曜日buttonでのclear、inline errorとARIA関連付けを確認する。
 - 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
 - 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差と赤・青・muted色、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
@@ -939,7 +939,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化後の自動再取得待ちと自動再取得、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
-- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、rank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
+- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、日付別のrank非0の実taskでは左44pxを空けた右側の先送りと全件のrank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
 - 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。「表示」の文字がbutton内で上下左右の中央に揃うこと、日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
