@@ -35,7 +35,7 @@ fn session_progress_and_bars_cover_33_100_and_133_percent() {
     let complete = session_timing(0, 900, 900, 0);
     assert_eq!(complete.progress_percent, Some(100));
     assert_eq!(complete.normal_bar_percent, 100);
-    assert_eq!(complete.overrun_bar_percent, 0);
+    assert_eq!(complete.overrun_bar_percent, 50);
 
     let overrun = session_timing(0, 900, 1_200, 0);
     assert_eq!(overrun.progress_percent, Some(133));
@@ -49,13 +49,43 @@ fn session_progress_and_bars_cover_33_100_and_133_percent() {
 fn session_timing_handles_zero_estimate_and_signed_remaining_time() {
     let zero_estimate = session_timing(10_000, 0, 0, 11_000);
     assert_eq!(zero_estimate.progress_percent, None);
-    assert_eq!(zero_estimate.normal_bar_percent, 0);
-    assert_eq!(zero_estimate.overrun_bar_percent, 0);
+    assert_eq!(zero_estimate.normal_bar_percent, 100);
+    assert_eq!(zero_estimate.overrun_bar_percent, 50);
     assert_eq!(zero_estimate.remaining_seconds, -1);
 
     let overrun = session_timing(10_000, 60, 0, 71_999);
     assert_eq!(overrun.remaining_seconds, -1);
     assert_eq!(format_mm_ss(overrun.remaining_seconds), "00:01");
+}
+
+#[test]
+fn session_bars_stay_at_150_percent_when_starting_without_remaining_work() {
+    for (estimated, actual) in [(0, 0), (0, 60), (60, 60), (60, 120), (60, 180)] {
+        for elapsed in [0, 1, 90] {
+            let timing = session_timing(10_000, estimated, actual, 10_000 + elapsed * 1_000);
+            assert_eq!(timing.remaining_at_start_seconds, 0);
+            assert_eq!(timing.normal_bar_percent, 100);
+            assert_eq!(timing.overrun_bar_percent, 50);
+            assert_eq!(
+                timing.progress_percent,
+                (estimated > 0).then(|| i128::from(actual + elapsed) * 100 / i128::from(estimated))
+            );
+            assert_eq!(timing.worked_seconds, i128::from(actual + elapsed));
+            assert_eq!(timing.remaining_seconds, -i128::from(elapsed));
+            assert_eq!(timing.estimated_completion_epoch_ms, Some(10_000));
+        }
+    }
+}
+
+#[test]
+fn session_bars_keep_tracking_progress_when_remaining_work_reaches_zero() {
+    for (elapsed, progress, overrun) in [(60, 100, 0), (90, 150, 50), (120, 200, 100)] {
+        let timing = session_timing(0, 60, 0, elapsed * 1_000);
+        assert_eq!(timing.remaining_at_start_seconds, 60);
+        assert_eq!(timing.progress_percent, Some(progress));
+        assert_eq!(timing.normal_bar_percent, 100);
+        assert_eq!(timing.overrun_bar_percent, overrun);
+    }
 }
 
 #[test]

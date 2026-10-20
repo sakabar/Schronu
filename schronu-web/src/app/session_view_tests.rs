@@ -378,6 +378,49 @@ fn session_progress_barは150_percentで全幅になり超過後も右へ伸び�
 }
 
 #[test]
+fn zero_remaining_session_bar_is_full_while_numeric_and_aria_progress_are_preserved() {
+    use crate::client::time_model::session_timing;
+
+    for (estimated, actual) in [(0, 0), (60, 60), (60, 120)] {
+        for elapsed in [0, 90] {
+            let timing = session_timing(0, estimated, actual, elapsed * 1_000);
+            let mut session = card("zero-remaining");
+            session.task_name = "zero remaining task".to_owned();
+            session.progress_percent = timing.progress_percent;
+            session.normal_bar_percent = timing.normal_bar_percent;
+            session.overrun_bar_percent = timing.overrun_bar_percent;
+            let (html, _) = render(vec![session], false);
+
+            assert!(
+                html.contains("class=\"session-progress-normal\" style=\"width:calc(100% / 1.5)\""),
+                "{html}"
+            );
+            assert!(
+                html.contains("class=\"session-progress-overrun\" style=\"width:calc(50% / 1.5)\""),
+                "{html}"
+            );
+            let progress_text = timing
+                .progress_percent
+                .map_or_else(|| "--%".to_owned(), |value| format!("{value}%"));
+            assert!(html.contains(&format!(">{progress_text}<")), "{html}");
+            let aria_text = timing.progress_percent.map_or_else(
+                || "進捗を計算できません".to_owned(),
+                |value| format!("{value}%"),
+            );
+            assert!(
+                html.contains(&format!("aria-valuetext=\"{aria_text}\"")),
+                "{html}"
+            );
+            if timing.progress_percent.is_some() {
+                assert!(html.contains("aria-valuenow=\"100\""), "{html}");
+            } else {
+                assert!(!html.contains("aria-valuenow"), "{html}");
+            }
+        }
+    }
+}
+
+#[test]
 fn session_cardは残り超過を主表示にして時刻と開始時実績を補助表示する() {
     let mut active = card("active");
     active.started_at_hh_mm = "12:43".to_owned();

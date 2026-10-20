@@ -34,9 +34,13 @@ pub fn session_timing(
     let worked_seconds = actual + elapsed;
     let progress_percent = (estimated > 0).then(|| worked_seconds * 100 / estimated);
     let remaining_seconds = remaining_at_start_seconds - elapsed;
-    let (normal_bar_percent, overrun_bar_percent) = progress_percent.map_or((0, 0), |progress| {
-        (progress.clamp(0, 100), (progress - 100).max(0))
-    });
+    let (normal_bar_percent, overrun_bar_percent) = if remaining_at_start_seconds == 0 {
+        (100, 50)
+    } else {
+        progress_percent.map_or((0, 0), |progress| {
+            (progress.clamp(0, 100), (progress - 100).max(0))
+        })
+    };
 
     SessionTiming {
         elapsed_seconds,
