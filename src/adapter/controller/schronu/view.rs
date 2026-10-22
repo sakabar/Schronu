@@ -28,6 +28,7 @@ use crate::application::routine_load::build_routine_load_report;
 use crate::application::schedule_use_case::{
     format_scheduled_task_display_name, get_schedule, scheduled_end_by_occurrence,
     scheduled_logical_dates, select_scheduled_task_within_minutes, ScheduleOccurrenceKey,
+    ScheduledTaskView,
 };
 use crate::application::task_use_case::ApplicationError;
 use crate::entity::task::{
@@ -111,35 +112,28 @@ pub(super) fn task_list_search_text(row: &TaskListTaskRow) -> String {
     format_task_list_columns(&task_list_columns(row, TaskListIconMode::Original))
 }
 
-#[cfg(test)]
-pub(super) fn get_adjustable_prefix_label(
-    task: &TaskHandle,
-    dt: DateTime<Local>,
-    is_leaf: bool,
+fn get_schedule_adjustable_prefix_label(
+    scheduled_task: &ScheduledTaskView,
     last_synced_time: DateTime<Local>,
 ) -> Result<String, ApplicationError> {
-    let is_on_other_side = task
-        .get_is_on_other_side()
-        .map_err(ApplicationError::TaskTree)?;
-    let first_available_time = max(
-        task.get_start_time().map_err(ApplicationError::TaskTree)?,
-        last_synced_time,
-    );
-    get_schedule_adjustable_prefix_label(is_on_other_side, is_leaf, first_available_time, dt)
-}
-
-fn get_schedule_adjustable_prefix_label(
-    is_on_other_side: bool,
-    is_leaf: bool,
-    first_available_time: DateTime<Local>,
-    scheduled_start: DateTime<Local>,
-) -> Result<String, ApplicationError> {
-    if !is_leaf || is_on_other_side {
+    if !scheduled_task.is_leaf() || scheduled_task.task.is_on_other_side {
         return Ok("".to_string());
     }
 
-    let planned_date = try_logical_date(scheduled_start)?;
-    let available_date = try_logical_date(first_available_time)?;
+    let (available_time, planned_time) = if scheduled_task.is_projected() {
+        (
+            scheduled_task.first_available_time,
+            scheduled_task.scheduled_start,
+        )
+    } else {
+        // 実taskは保留解除による前倒しだけを数え、混雑による配置の遅延は含めない。
+        (
+            max(scheduled_task.task.start_time, last_synced_time),
+            scheduled_task.first_available_time,
+        )
+    };
+    let planned_date = try_logical_date(planned_time)?;
+    let available_date = try_logical_date(available_time)?;
     let advance_days = (planned_date - available_date).num_days();
 
     if advance_days > 0 {
@@ -983,12 +977,8 @@ pub(super) fn build_show_all_tasks_display_with_config(
                 .or_insert(estimated_work_seconds);
         }
 
-        let adjustable_prefix_label = get_schedule_adjustable_prefix_label(
-            scheduled_task.task.is_on_other_side,
-            scheduled_task.is_leaf(),
-            scheduled_task.first_available_time,
-            *scheduled_start,
-        )?;
+        let adjustable_prefix_label =
+            get_schedule_adjustable_prefix_label(scheduled_task, last_synced_time)?;
         if !adjustable_prefix_label.is_empty() {
             if adjustable_occurrences_by_date
                 .insert((logical_naive_date, scheduled_task.occurrence))
