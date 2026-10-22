@@ -5364,6 +5364,147 @@ fn projected回の後の空き時間はprojected回の終了から数える() {
 }
 
 #[test]
+fn 実taskの前倒し表示と負荷は保留解除で早められる論理日数を使う() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    for (case, start_days, pending_minutes, other_side, is_leaf, blocker_day, expected) in [
+        ("翌日まで保留", 0, Some(1440), false, true, None, "【前1】"),
+        ("未来の開始日", 1, Some(4320), false, true, None, "【前2】"),
+        ("過去の開始日", -3, Some(4320), false, true, None, "【前3】"),
+        ("今日で下限", -3, None, false, true, None, ""),
+        ("同日の保留", 0, Some(120), false, true, None, ""),
+        ("06時の直前", 0, Some(1439), false, true, None, ""),
+        ("相手待ち", 0, Some(1440), true, true, None, ""),
+        ("非leaf", 0, Some(1440), false, false, None, ""),
+        ("混雑だけの遅延", 0, None, false, true, Some(0), ""),
+        (
+            "保留後の混雑",
+            0,
+            Some(1440),
+            false,
+            true,
+            Some(1),
+            "【前1】",
+        ),
+    ] {
+        let root = new_test_task_handle("前倒し判定fixture").unwrap();
+        root.set_start_time(now).unwrap();
+        root.set_estimated_work_seconds(0).unwrap();
+        // 暦は最初の予定日の前倒し負荷を0にするため、当日の予定を確保する。
+        if blocker_day != Some(0) {
+            let anchor = add_scheduled_child_for_test(&root, "当日の固定予定", now, 1);
+            anchor.set_fixed_start(true).unwrap();
+        }
+        let task = root.create_as_last_child(new_test_task_attr("判定対象"));
+        let task_id = task.get_id().unwrap();
+        let start = now + Duration::days(start_days);
+        task.set_start_time(start).unwrap();
+        task.set_estimated_work_seconds(60 * 60).unwrap();
+        task.set_is_on_other_side(other_side).unwrap();
+        if let Some(minutes) = pending_minutes {
+            task.set_pending_until(now + Duration::minutes(minutes))
+                .unwrap();
+            task.set_orig_status(Status::Pending).unwrap();
+        }
+        if !is_leaf {
+            let child = task.create_as_last_child(new_test_task_attr("依存先"));
+            child.set_start_time(now).unwrap();
+            child.set_estimated_work_seconds(0).unwrap();
+        }
+        if let Some(day) = blocker_day {
+            let blocker = add_scheduled_child_for_test(
+                &root,
+                "翌日へ送る固定予定",
+                now + Duration::days(day),
+                24 * 60,
+            );
+            blocker.set_fixed_start(true).unwrap();
+        }
+
+        let mut repository = TestTaskRepository::new(root, now);
+        let schedule = crate::application::schedule_use_case::get_schedule(&repository).unwrap();
+        let scheduled = schedule
+            .iter()
+            .find(|row| row.actual_task_id() == Some(task_id))
+            .unwrap();
+        let available = std::cmp::max(
+            std::cmp::max(start, now),
+            now + Duration::minutes(pending_minutes.unwrap_or(0)),
+        );
+        assert_eq!(scheduled.first_available_time, available, "{case}");
+        assert_eq!(scheduled.is_leaf(), is_leaf, "{case}");
+        if blocker_day.is_some() {
+            assert_eq!(
+                scheduled.scheduled_start,
+                available + Duration::days(1),
+                "{case}"
+            );
+        }
+        let scheduled_date =
+            crate::application::daily_capacity::try_logical_date(scheduled.scheduled_start)
+                .unwrap();
+        let mut free_time_manager = TestFreeTimeManager::with_free_minutes(24 * 60);
+        let mut focused_task_id_opt = None;
+        let mut next_id = || Uuid::nil();
+        let mut task_factory = TaskFactory::new(now, &mut next_id);
+        let config = SchronuConfig::default();
+        let mut context = RuntimeTaskTreeCommandContext {
+            task_repository: &mut repository,
+            free_time_manager: &mut free_time_manager,
+            focused_task_id_opt: &mut focused_task_id_opt,
+            task_factory: &mut task_factory,
+            config: &config,
+        };
+        for pattern in [None, Some("暦")] {
+            let display = context
+                .show_task_list(pattern, TaskListOrder::ScheduledStartDesc, false)
+                .unwrap();
+            let DisplayModel::Sequence(models) = display else {
+                panic!("expected sequence, got {display:?}");
+            };
+            if pattern.is_none() {
+                let task_list = models
+                    .iter()
+                    .find_map(|model| match model {
+                        DisplayModel::TaskList(list) => Some(list),
+                        _ => None,
+                    })
+                    .expect("task list");
+                let row = task_list
+                    .rows
+                    .iter()
+                    .find_map(|row| match row {
+                        super::renderer::TaskListRow::Task(row) if row.task_id == task_id => {
+                            Some(row)
+                        }
+                        _ => None,
+                    })
+                    .expect("actual task row");
+                let waiting = if other_side { "【待ち】" } else { "" };
+                assert_eq!(row.task_name, format!("{expected}{waiting}判定対象"), "{case}");
+            } else {
+                let calendar = models
+                    .iter()
+                    .find_map(|model| match model {
+                        DisplayModel::Calendar(calendar) => Some(calendar),
+                        _ => None,
+                    })
+                    .expect("calendar");
+                let row = calendar
+                    .rows
+                    .iter()
+                    .find(|row| row.date == scheduled_date)
+                    .expect("scheduled date");
+                assert_eq!(
+                    row.adjustable_work_seconds,
+                    if expected.is_empty() { 0 } else { 60 * 60 },
+                    "{case}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn 開始可能日より後ろへ配置されたprojected回は調整可能負荷に数える() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let projected_available_at = now + Duration::days(3);
