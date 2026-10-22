@@ -99,6 +99,7 @@ fn all_task_rows(count: usize) -> Vec<AllTaskRow> {
             }
             .into(),
             display_task_name: None,
+            advanceable_days: 0,
             occurrence: crate::ScheduleOccurrence::Actual {
                 task_id: format!("00000000-0000-4000-8000-{index:012x}"),
             },

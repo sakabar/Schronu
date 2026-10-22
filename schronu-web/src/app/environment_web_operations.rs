@@ -309,6 +309,7 @@ impl From<ScheduledTaskRowDto> for ScheduledTaskRow {
         Self {
             task: row.task.into(),
             display_task_name: Some(row.display_task_name),
+            advanceable_days: row.advanceable_days,
             occurrence: row.occurrence.into(),
             schedule_start_epoch_ms: row.schedule_start_epoch_ms,
             schedule_end_epoch_ms: row.schedule_end_epoch_ms,
@@ -337,6 +338,7 @@ impl From<AllTaskRowDto> for AllTaskRow {
         Self {
             task: row.task.into(),
             display_task_name: Some(row.display_task_name),
+            advanceable_days: row.advanceable_days,
             occurrence: row.occurrence.into(),
             segment_index: row.segment_index,
             schedule_date: row.schedule_date,
@@ -960,5 +962,25 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+    #[test]
+    fn 前倒し日数は日付別と全件のdtoからwireへ保持する() {
+        use super::{AllTaskRow, AllTaskRowDto, ScheduledTaskRow, ScheduledTaskRowDto};
+        let value = serde_json::json!({
+            "task": {"task_id": "00000000-0000-4000-8000-000000000001", "task_name": "contract task", "estimated_work_seconds": 600, "actual_work_seconds": 0},
+            "display_task_name": "contract task", "advanceable_days": 3,
+            "schedule_start_epoch_ms": 1788568200000_i64,
+            "schedule_end_epoch_ms": 1788568800000_i64,
+            "schedule_date": "2026-09-05", "segment_index": 0,
+            "deadline_epoch_ms": null, "deadline_label": "", "misses_deadline": false, "is_leaf": true
+        });
+        let daily: ScheduledTaskRow = serde_json::from_value::<ScheduledTaskRowDto>(value.clone())
+            .unwrap()
+            .into();
+        let all: AllTaskRow = serde_json::from_value::<AllTaskRowDto>(value)
+            .unwrap()
+            .into();
+        assert_eq!(daily.advanceable_days, 3);
+        assert_eq!(all.advanceable_days, 3);
     }
 }

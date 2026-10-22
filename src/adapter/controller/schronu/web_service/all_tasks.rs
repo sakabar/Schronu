@@ -116,6 +116,7 @@ mod tests {
                 actual_work_seconds: 0,
             },
             display_task_name: "name".to_owned(),
+            advanceable_days: 0,
             occurrence: super::super::model::ScheduleOccurrenceDto::Actual {
                 task_id: "task".to_owned(),
             },

@@ -669,3 +669,85 @@ fn auto_sessionは候補なしを正常なnoneとして返す() {
 
     assert_eq!(build_auto_session_dto(&mut repository), Ok(None));
 }
+
+#[test]
+fn 一覧の前倒し日数は保留解除と予測回の論理日差を使う() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(902);
+    let task = TaskHandle::with_identity("advance contract", task_id, now).unwrap();
+    let repository = TestTaskRepository::new(vec![task], now);
+    for (projected, rank, other_side, start_offset, available_offset, scheduled_offset, expected) in [
+        (false, 0, false, 0, 3, 7, 3),
+        (false, 0, false, 1, 3, 7, 2),
+        (false, 0, false, -3, 3, 7, 3),
+        (false, 0, false, 0, 0, 7, 0),
+        (false, 1, false, 0, 3, 7, 0),
+        (false, 0, true, 0, 3, 7, 0),
+        (true, 0, false, 0, 1, 3, 2),
+        (true, 0, false, 0, 3, 1, 0),
+    ] {
+        let mut payload = crate::application::schedule_use_case::ScheduledTaskPayload::from(
+            get_task(&repository, task_id).unwrap().unwrap(),
+        );
+        payload.start_time = now + Duration::days(start_offset);
+        payload.is_on_other_side = other_side;
+        let segment = ScheduledTaskView {
+            occurrence: if projected {
+                ScheduleOccurrenceKey::Projected {
+                    source_task_id: task_id,
+                    deadline: now + Duration::days(10),
+                }
+            } else {
+                ScheduleOccurrenceKey::Actual { task_id }
+            },
+            task: payload,
+            first_available_time: now + Duration::days(available_offset),
+            scheduled_start: now + Duration::days(scheduled_offset),
+            scheduled_end: now + Duration::days(scheduled_offset) + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 600,
+            rank,
+        };
+        let schedule = [segment];
+        let date = schedule[0].scheduled_start.date_naive();
+        let daily = build_scheduled_task_rows(&repository, &schedule, date, now).unwrap();
+        let all = build_all_task_rows(&repository, &schedule, now).unwrap();
+        for value in [
+            serde_json::to_value(&daily[0]).unwrap(),
+            serde_json::to_value(&all[0]).unwrap(),
+        ] {
+            assert_eq!(value["advanceable_days"], expected);
+        }
+    }
+}
+
+#[test]
+fn 一覧の前倒し日数は午前6時を日付境界にする() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
+    let task_id = Uuid::from_u128(903);
+    let task = TaskHandle::with_identity("logical boundary contract", task_id, now).unwrap();
+    let repository = TestTaskRepository::new(vec![task], now);
+    for (minute, expected) in [(59, 0), (60, 1)] {
+        let segment = ScheduledTaskView {
+            occurrence: ScheduleOccurrenceKey::Actual { task_id },
+            task: get_task(&repository, task_id).unwrap().unwrap().into(),
+            first_available_time: now + Duration::hours(22) + Duration::minutes(minute),
+            scheduled_start: now + Duration::days(2),
+            scheduled_end: now + Duration::days(2) + Duration::minutes(10),
+            scheduled_work_seconds: 600,
+            total_work_seconds: 600,
+            rank: 0,
+        };
+        let schedule = [segment];
+        let daily = build_scheduled_task_rows(
+            &repository,
+            &schedule,
+            schedule[0].scheduled_start.date_naive(),
+            now,
+        )
+        .unwrap();
+        let all = build_all_task_rows(&repository, &schedule, now).unwrap();
+        assert_eq!(daily[0].advanceable_days, expected);
+        assert_eq!(all[0].advanceable_days, expected);
+    }
+}

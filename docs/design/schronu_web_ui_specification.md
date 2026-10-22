@@ -126,6 +126,7 @@ ScheduleOccurrence =
 ScheduledTaskRow {
     task: ScheduledTask,
     display_task_name: String,
+    advanceable_days: i64,
     occurrence: ScheduleOccurrence,
     schedule_start_epoch_ms: i64,
     schedule_end_epoch_ms: i64,
@@ -138,6 +139,10 @@ ScheduledTaskRow {
     defer_plan: Option<DeferPlan>,
 }
 ```
+
+`advanceable_days`はserverでCLIと共通計算し、leafかつ相手待ちでない行だけを対象とする。実taskは`first_available_time`のlogical dateから`max(start_time, last_synced_time)`のlogical dateを引き、予測回は`scheduled_start`のlogical dateから`first_available_time`のlogical dateを引く。06:00区切りで計算し、非正値と対象外は0とする。混雑による実taskの配置遅延は含めない。Web clientは欠落fieldを0として読み、保存versionは変更しない。再取得で最新値へ更新する。
+
+日付別と全件一覧のタスク名横scroll領域で、正の日数だけ「前N」バッジを表示する。予測行は「見込み」「前N」「タスク名」の順とし、列・操作を追加しない。背景`#f1f5f9`、枠`#cbd5e1`、文字`#475569`で種類色・締切警告色から独立させる。バッジとタスク名cellのaccessible labelで「N日前倒し可能」を伝える。完了一覧・セッションcard・負荷集計は変更しない。
 
 実task行は`Actual`、`task_id: Some`、`defer_plan: Some`を持つ。繰り返し予測行は`Projected`、`task_id: None`、`defer_plan: None`とし、`occurrence_key`は繰り返し元UUIDと基準deadline epoch millisecondsから安定生成する。
 
@@ -176,6 +181,7 @@ CompletedTaskReport {
 AllTaskRow {
     task: ScheduledTask,
     display_task_name: String,
+    advanceable_days: i64,
     occurrence: ScheduleOccurrence,
     segment_index: usize,
     schedule_date: YYYY-MM-DD,

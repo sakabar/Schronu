@@ -195,6 +195,7 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     let row = ScheduledTaskRow {
         task: session_row().task,
         display_task_name: Some("<10/15>task".to_owned()),
+        advanceable_days: 3,
         occurrence: ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },
@@ -232,6 +233,7 @@ fn listはserverが生成したdeadline表示と予定超過を無変換で保�
     );
     assert_eq!(rows[0].deadline_label, "server deadline label");
     assert_eq!(rows[0].display_task_name, "<10/15>task");
+    assert_eq!(rows[0].advanceable_days, 3);
     assert!(rows[0].misses_deadline);
     assert_eq!(rows[0].task_display_kind, TaskDisplayKind::NonRepetitive);
     assert_eq!(rows[0].deadline_display_kind, DeadlineDisplayKind::Overrun);
@@ -465,6 +467,7 @@ fn session_row() -> ScheduledTaskRow {
         }
         .into(),
         display_task_name: None,
+        advanceable_days: 0,
         occurrence: ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },

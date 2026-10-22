@@ -1291,7 +1291,8 @@ button:disabled {
     touch-action: pan-x pan-y pinch-zoom;
 }
 
-.projected-task-badge {
+.projected-task-badge,
+.advanceable-task-badge {
     display: inline-block;
     margin-right: 0.4rem;
     padding: 0.05rem 0.3rem;
@@ -1299,6 +1300,13 @@ button:disabled {
     border-radius: 0.25rem;
     font-size: 0.75rem;
     line-height: 1.2;
+}
+
+.advanceable-task-badge {
+    color: #475569;
+    background: #f1f5f9;
+    border-color: #cbd5e1;
+    font-weight: 400;
 }
 
 .projected-task-source {

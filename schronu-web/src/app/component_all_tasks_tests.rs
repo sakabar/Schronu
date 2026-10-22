@@ -39,6 +39,7 @@ fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) 
         }
         .into(),
         display_task_name: None,
+        advanceable_days: 0,
         occurrence: crate::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },

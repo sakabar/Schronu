@@ -116,25 +116,7 @@ fn get_schedule_adjustable_prefix_label(
     scheduled_task: &ScheduledTaskView,
     last_synced_time: DateTime<Local>,
 ) -> Result<String, ApplicationError> {
-    if !scheduled_task.is_leaf() || scheduled_task.task.is_on_other_side {
-        return Ok("".to_string());
-    }
-
-    let (available_time, planned_time) = if scheduled_task.is_projected() {
-        (
-            scheduled_task.first_available_time,
-            scheduled_task.scheduled_start,
-        )
-    } else {
-        // 実taskは保留解除による前倒しだけを数え、混雑による配置の遅延は含めない。
-        (
-            max(scheduled_task.task.start_time, last_synced_time),
-            scheduled_task.first_available_time,
-        )
-    };
-    let planned_date = try_logical_date(planned_time)?;
-    let available_date = try_logical_date(available_time)?;
-    let advance_days = (planned_date - available_date).num_days();
+    let advance_days = scheduled_task.advanceable_days(last_synced_time)?;
 
     if advance_days > 0 {
         Ok(format!("【前{}】", advance_days))

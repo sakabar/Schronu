@@ -713,6 +713,7 @@ fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
         }
         .into(),
         display_task_name: None,
+        advanceable_days: 0,
         occurrence: schronu_web::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
@@ -775,4 +776,29 @@ fn projected_v2_raw(
         "date_input_text": "2026/9/12"
     })
     .to_string()
+}
+
+#[test]
+fn 前倒し日数を持たない旧保存一覧は同じversionで復元する() {
+    let storage = MemoryStorage::default();
+    let mut task_row = row("00000000-0000-4000-8000-000000000001", "契約タスク");
+    task_row.advanceable_days = 3;
+    let state = view_state("2026-09-09", vec![task_row]);
+    store_view_state(&storage, &state).unwrap();
+    assert_eq!(load_view_state(&storage).state(), Some(&state));
+    let mut saved: serde_json::Value =
+        serde_json::from_str(storage.value.borrow().as_deref().unwrap()).unwrap();
+    assert_eq!(saved["version"], 3);
+    saved["list"]["rows"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("advanceable_days");
+    *storage.value.borrow_mut() = Some(saved.to_string());
+    let mut expected = state;
+    if let Some(StoredActiveList::Scheduled { rows, .. }) = &mut expected.list {
+        rows[0].advanceable_days = 0;
+    }
+    let loaded = load_view_state(&storage);
+    assert!(loaded.warning().is_none());
+    assert_eq!(loaded.state(), Some(&expected));
 }

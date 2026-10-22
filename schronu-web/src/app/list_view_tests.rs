@@ -232,6 +232,7 @@ fn named_row(
         row_key: format!("row:{task_id}"),
         task: task(task_id, task_name).into(),
         display_task_name: task_name.to_owned(),
+        advanceable_days: 0,
         occurrence: crate::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
@@ -1990,4 +1991,66 @@ fn session中の親taskは先送りをdispatchしない() {
     assert!(dioxus::ssr::render(&dom).contains("先送り\" disabled=true"));
     dispatch_click(&dom, ids[1]);
     assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
+fn 前倒しバッジは日付別と全件で正の日数だけを見込みの後に表示する() {
+    #[component]
+    fn BadgeHarness(rows: Vec<ListRowViewModel>, all: bool) -> Element {
+        rsx! {
+            ListView {
+                dates: Vec::new(), rows, active_task_ids: Vec::new(),
+                date_input_text: String::new(), date_input_error: None,
+                filter_text: String::new(),
+                all_tasks_status: if all { Some(super::list_view::AllTasksViewStatus::Loaded) } else { None },
+                on_select_date: move |_| {}, on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {}, on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+    for all in [false, true] {
+        for days in [0, 3] {
+            for projected in [false, true] {
+                let mut task_row = named_row("advance", "契約タスク", false, true);
+                task_row.advanceable_days = days;
+                if all {
+                    task_row.schedule_display = ScheduleDisplayViewModel::AllTasksDate {
+                        label: "9/5(土)".to_owned(),
+                    };
+                }
+                if projected {
+                    task_row.task.task_id = None;
+                    task_row.occurrence = crate::ScheduleOccurrence::Projected {
+                        occurrence_key: "source:1788568200000".to_owned(),
+                        source_task_id: "source".to_owned(),
+                    };
+                    task_row.defer_plan = None;
+                }
+                let mut dom = VirtualDom::new_with_props(
+                    BadgeHarness,
+                    BadgeHarnessProps {
+                        rows: vec![task_row],
+                        all,
+                    },
+                );
+                dom.rebuild_in_place();
+                let html = dioxus::ssr::render(&dom);
+                assert_eq!(html.contains("advanceable-task-badge"), days > 0, "{html}");
+                if days > 0 {
+                    assert!(html.contains("aria-label=\"3日前倒し可能\""), "{html}");
+                    assert!(html.contains(">前3</span>"), "{html}");
+                    let badge_index = html.find("advanceable-task-badge").unwrap();
+                    assert!(badge_index < html.rfind("契約タスク").unwrap(), "{html}");
+                    if projected {
+                        assert!(html.find("projected-task-badge").unwrap() < badge_index);
+                    }
+                }
+                assert!(
+                    html.contains("class=\"task-name-scroll\" tabindex=0"),
+                    "{html}"
+                );
+            }
+        }
+    }
 }

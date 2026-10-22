@@ -86,6 +86,28 @@ impl ScheduledTaskView {
         self.rank == 0
     }
 
+    /// CLIとWebで共有する、06:00区切りの前倒し可能日数。
+    pub(crate) fn advanceable_days(
+        &self,
+        last_synced_time: DateTime<Local>,
+    ) -> Result<i64, ApplicationError> {
+        if !self.is_leaf() || self.task.is_on_other_side {
+            return Ok(0);
+        }
+        let (available_time, planned_time) = if self.is_projected() {
+            (self.first_available_time, self.scheduled_start)
+        } else {
+            // 実taskは保留解除による前倒しだけを数え、混雑による配置の遅延は含めない。
+            (
+                max(self.task.start_time, last_synced_time),
+                self.first_available_time,
+            )
+        };
+        let planned_date = try_logical_date(planned_time)?;
+        let available_date = try_logical_date(available_time)?;
+        Ok((planned_date - available_date).num_days().max(0))
+    }
+
     pub fn actual_task_id(&self) -> Option<Uuid> {
         match self.occurrence {
             ScheduleOccurrenceKey::Actual { task_id } => Some(task_id),
