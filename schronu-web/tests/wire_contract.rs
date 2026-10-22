@@ -26,6 +26,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
     let row = ScheduledTaskRow {
         task: task.clone().into(),
         display_task_name: Some("<10/15>wire task".to_owned()),
+        advanceable_days: 0,
         occurrence: ScheduleOccurrence::Actual {
             task_id: task.task_id.clone(),
         },
@@ -93,6 +94,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                 rows: vec![AllTaskRow {
                     task: task.clone().into(),
                     display_task_name: Some("<10/15>wire task".to_owned()),
+                    advanceable_days: 0,
                     occurrence: ScheduleOccurrence::Actual {
                         task_id: task.task_id.clone(),
                     },
@@ -123,6 +125,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                         "actual_work_seconds": 300
                     },
                     "display_task_name": "<10/15>wire task",
+                    "advanceable_days": 0,
                     "occurrence": {
                         "kind": "actual",
                         "task_id": "00000000-0000-0000-0000-000000000001"
@@ -159,6 +162,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
                     "actual_work_seconds": 300
                 },
                 "display_task_name": "<10/15>wire task",
+                "advanceable_days": 0,
                 "occurrence": {
                     "kind": "actual",
                     "task_id": "00000000-0000-0000-0000-000000000001"
@@ -693,4 +697,29 @@ where
     assert_eq!(encoded, expected_json);
     let decoded = serde_json::from_value(encoded).unwrap();
     assert_eq!(*value, decoded);
+}
+
+#[test]
+fn 前倒し日数のない旧wireは日付別と全件とも0で復元する() {
+    let task_id = "00000000-0000-4000-8000-000000000001";
+    let legacy = json!({
+        "task": {"task_id": task_id, "task_name": "contract task", "estimated_work_seconds": 600, "actual_work_seconds": 0},
+        "occurrence": {"kind": "actual", "task_id": task_id},
+        "schedule_start_epoch_ms": 1788568200000_i64,
+        "schedule_end_epoch_ms": 1788568800000_i64,
+        "schedule_date": "2026-09-05", "segment_index": 0,
+        "deadline_epoch_ms": null, "deadline_label": "", "misses_deadline": false, "is_leaf": true
+    });
+    assert_eq!(
+        serde_json::from_value::<ScheduledTaskRow>(legacy.clone())
+            .unwrap()
+            .advanceable_days,
+        0
+    );
+    assert_eq!(
+        serde_json::from_value::<AllTaskRow>(legacy)
+            .unwrap()
+            .advanceable_days,
+        0
+    );
 }

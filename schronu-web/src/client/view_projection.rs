@@ -38,6 +38,7 @@ pub struct ListRowViewModel {
     pub row_key: String,
     pub task: ScheduledTask,
     pub display_task_name: String,
+    pub advanceable_days: i64,
     pub occurrence: ScheduleOccurrence,
     pub deadline_label: String,
     pub schedule_display: ScheduleDisplayViewModel,
@@ -185,6 +186,7 @@ fn project_all_task_row(
             .display_task_name
             .clone()
             .unwrap_or_else(|| row.task.task_name.clone()),
+        advanceable_days: row.advanceable_days,
         occurrence: row.occurrence.clone(),
         deadline_label: row.deadline_label.clone(),
         schedule_display: ScheduleDisplayViewModel::AllTasksDate {
@@ -350,6 +352,7 @@ fn project_list_rows_with(
                     .display_task_name
                     .clone()
                     .unwrap_or_else(|| row.task.task_name.clone()),
+                advanceable_days: row.advanceable_days,
                 occurrence: row.occurrence.clone(),
                 deadline_label: row.deadline_label.clone(),
                 schedule_display: ScheduleDisplayViewModel::Daily {

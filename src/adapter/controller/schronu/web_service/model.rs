@@ -92,6 +92,8 @@ pub struct ScheduledTaskRowDto {
     pub task: ScheduledTaskDto,
     pub display_task_name: String,
     #[serde(default)]
+    pub advanceable_days: i64,
+    #[serde(default)]
     pub occurrence: ScheduleOccurrenceDto,
     pub schedule_start_epoch_ms: i64,
     pub schedule_end_epoch_ms: i64,
@@ -133,6 +135,8 @@ pub struct CompletedTaskReportDto {
 pub struct AllTaskRowDto {
     pub task: ScheduledTaskDto,
     pub display_task_name: String,
+    #[serde(default)]
+    pub advanceable_days: i64,
     #[serde(default)]
     pub occurrence: ScheduleOccurrenceDto,
     pub segment_index: usize,

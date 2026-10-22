@@ -137,6 +137,9 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                     segment.scheduled_work_seconds,
                     segment.total_work_seconds,
                 ),
+                advanceable_days: segment
+                    .advanceable_days(last_synced_time)
+                    .map_err(WebReadCoreError::Application)?,
                 occurrence: occurrence_dto(segment),
                 segment_index,
                 schedule_date: logical_date.format("%Y-%m-%d").to_string(),
@@ -383,6 +386,9 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                     segment.scheduled_work_seconds,
                     segment.total_work_seconds,
                 ),
+                advanceable_days: segment
+                    .advanceable_days(last_synced_time)
+                    .map_err(WebReadCoreError::Application)?,
                 occurrence: occurrence_dto(segment),
                 schedule_start_epoch_ms: segment.scheduled_start.timestamp_millis(),
                 schedule_end_epoch_ms: segment.scheduled_end.timestamp_millis(),

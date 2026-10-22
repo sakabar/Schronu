@@ -634,6 +634,11 @@ fn TaskRow(
     } else {
         format!("task-name {task_kind_class}")
     };
+    let advanceable_label = if row.advanceable_days > 0 {
+        format!("、{}日前倒し可能", row.advanceable_days)
+    } else {
+        String::new()
+    };
     let deadline = &row.deadline_label;
     let button_label = if active {
         format!("{}: セッション追加済み", task_name)
@@ -747,12 +752,19 @@ fn TaskRow(
                 }
             }
             td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
-            td { class: task_class, aria_label: format!("{task_kind_label}: {}", display_task_name),
+            td { class: task_class, aria_label: format!("{task_kind_label}: {}{advanceable_label}", display_task_name),
                 div {
                     class: "task-name-scroll",
                     tabindex: 0,
                     if is_projected {
                         span { class: "projected-task-badge", "見込み" }
+                    }
+                    if row.advanceable_days > 0 {
+                        span {
+                            class: "advanceable-task-badge",
+                            aria_label: format!("{}日前倒し可能", row.advanceable_days),
+                            "前{row.advanceable_days}"
+                        }
                     }
                     "{display_task_name}"
                     if let Some(source_task_id) = source_task_id.as_deref() {

@@ -199,6 +199,8 @@ pub struct ScheduledTaskRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_task_name: Option<String>,
     #[serde(default)]
+    pub advanceable_days: i64,
+    #[serde(default)]
     pub occurrence: ScheduleOccurrence,
     pub schedule_start_epoch_ms: i64,
     pub schedule_end_epoch_ms: i64,
@@ -241,6 +243,8 @@ pub struct AllTaskRow {
     pub task: ScheduledTask,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_task_name: Option<String>,
+    #[serde(default)]
+    pub advanceable_days: i64,
     #[serde(default)]
     pub occurrence: ScheduleOccurrence,
     pub segment_index: usize,
@@ -337,6 +341,7 @@ mod all_task_contract_tests {
             }
             .into(),
             display_task_name: None,
+            advanceable_days: 0,
             occurrence: ScheduleOccurrence::Actual {
                 task_id: "task".to_owned(),
             },

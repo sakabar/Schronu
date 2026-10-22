@@ -18,6 +18,7 @@ fn all_row(segment_index: usize) -> AllTaskRow {
         }
         .into(),
         display_task_name: None,
+        advanceable_days: 3,
         occurrence: schronu_web::ScheduleOccurrence::Actual {
             task_id: TASK_ID.to_owned(),
         },
@@ -92,6 +93,9 @@ fn all一覧は全page成功まで行を公開せず順序どおりatomicに公�
             .collect::<Vec<_>>(),
         [0, 1, 2]
     );
+    let projected =
+        schronu_web::client::view_projection::project_all_task_rows(state.all_task_rows().unwrap());
+    assert!(projected.iter().all(|row| row.advanceable_days == 3));
     assert_eq!(state.select_all_tasks(), ClientEffect::None);
 }
 
