@@ -54,6 +54,91 @@ fn projected_segment(
 }
 
 #[test]
+fn routine_load_estimate_difference_uses_occurrence_estimate_not_progress_or_segments() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(10_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 10_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine.set_estimated_work_seconds(1_800).unwrap();
+    let shorter = child(&routine, "shorter occurrence", 10_003, at(3));
+    shorter.set_estimated_work_seconds(900).unwrap();
+    shorter.set_actual_work_seconds(600).unwrap();
+    let descendant = child(&shorter, "occurrence segment", 10_004, at(3));
+    descendant.set_estimated_work_seconds(120).unwrap();
+    let equal = child(&routine, "equal occurrence", 10_005, at(3));
+    equal.set_estimated_work_seconds(1_800).unwrap();
+    let longer = child(&routine, "longer occurrence", 10_006, at(3));
+    longer.set_estimated_work_seconds(2_700).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let schedule = vec![
+        segment(&shorter, at(3), 60),
+        segment(&shorter, at(3) + Duration::hours(1), 60),
+        segment(&descendant, at(3), 120),
+        segment(&descendant, at(4), 60),
+        segment(&equal, at(5), 300),
+        segment(&longer, at(6), 300),
+        projected_segment(&routine, at(7), at(7), 1_800),
+    ];
+    let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
+    assert_eq!(
+        report.rows[0].estimate_difference_seconds_by_date,
+        BTreeMap::from([
+            (at(3).date_naive(), -900),
+            (at(4).date_naive(), -900),
+            (at(5).date_naive(), 0),
+            (at(6).date_naive(), 900),
+        ])
+    );
+    shorter.set_actual_work_seconds(800).unwrap();
+    let updated = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
+    assert_eq!(updated.rows[0], report.rows[0]);
+}
+
+#[test]
+fn routine_load_estimate_difference_omits_ambiguous_and_projected_dates_in_any_order() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(11_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 11_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    let first = child(&routine, "first occurrence", 11_003, at(3));
+    let second = child(&routine, "second occurrence", 11_004, at(3));
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let mut schedule = vec![
+        segment(&first, at(3), 60),
+        segment(&second, at(3), 60),
+        segment(&first, at(4), 60),
+        projected_segment(&routine, at(4), at(4), 60),
+        projected_segment(&routine, at(5), at(5), 60),
+    ];
+    for _ in 0..2 {
+        let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
+        assert!(report.rows[0]
+            .estimate_difference_seconds_by_date
+            .is_empty());
+        schedule.reverse();
+    }
+}
+
+#[test]
+fn routine_load_estimate_difference_reports_subtraction_overflow() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(12_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 12_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine.set_estimated_work_seconds(i64::MIN).unwrap();
+    let occurrence = child(&routine, "occurrence", 12_003, at(3));
+    occurrence.set_estimated_work_seconds(i64::MAX).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let error = build_routine_load_report(
+        &repository,
+        &[segment(&occurrence, at(3), 60)],
+        at(3).date_naive(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        super::task_use_case::ApplicationError::RoutineLoadCalculationOverflow { .. }
+    ));
+}
+
+#[test]
 fn routine_loadは今日から27日後までを最寄りの繰返親ごとに集計する() {
     let today = NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();
     let project = TaskHandle::with_identity("生活", Uuid::from_u128(1), at(3)).unwrap();

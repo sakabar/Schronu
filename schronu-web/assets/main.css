@@ -1686,6 +1686,21 @@ button.routine-load-day.is-at-capacity {
     font-variant-numeric: tabular-nums;
 }
 
+.routine-load-table .routine-load-difference {
+    width: 5rem;
+    min-width: 5rem;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.routine-load-difference.is-positive {
+    color: var(--red);
+}
+
+.routine-load-difference.is-negative {
+    color: var(--blue);
+}
+
 .routine-load-table .routine-load-subject {
     min-width: 0;
     overflow: hidden;
@@ -2018,8 +2033,13 @@ button.routine-load-day.is-at-capacity {
         min-width: 0;
     }
 
+    .routine-load-table .routine-load-difference {
+        width: 13%;
+        min-width: 0;
+    }
+
     .routine-load-table .routine-load-subject {
-        width: 45%;
+        width: 32%;
         min-width: 0;
     }
 

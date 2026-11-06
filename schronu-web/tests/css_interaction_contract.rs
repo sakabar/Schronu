@@ -143,6 +143,7 @@ fn routine_load_table_scrolls_only_the_subject_column() {
         (".routine-load-total", "6.5rem"),
         (".routine-load-occurrences", "6.5rem"),
         (".routine-load-average", "6.5rem"),
+        (".routine-load-difference", "5rem"),
     ] {
         let column = block_body(MAIN_CSS, selector);
         assert!(
@@ -189,7 +190,8 @@ fn routine_load_table_scrolls_only_the_subject_column() {
         (".routine-load-total", "15%"),
         (".routine-load-occurrences", "14%"),
         (".routine-load-average", "15%"),
-        (".routine-load-subject", "45%"),
+        (".routine-load-difference", "13%"),
+        (".routine-load-subject", "32%"),
     ] {
         let column = block_body(narrow, selector);
         assert!(
@@ -538,4 +540,16 @@ fn obsidian操作領域は時計の隣で縮まずtouch時に拡大する() {
     let touch = block_body(coarse, ".session-obsidian-shortcut {");
     assert!(touch.contains("width: 44px;"));
     assert!(touch.contains("height: 44px;"));
+}
+
+#[test]
+fn routine_estimate_difference_colors_follow_displayed_sign() {
+    assert!(
+        block_body(MAIN_CSS, ".routine-load-difference.is-positive").contains("color: var(--red);")
+    );
+    assert!(block_body(MAIN_CSS, ".routine-load-difference.is-negative")
+        .contains("color: var(--blue);"));
+    assert!(
+        !block_body(MAIN_CSS, ".routine-load-table .routine-load-difference {").contains("color:")
+    );
 }

@@ -260,6 +260,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                             average_work_seconds: Some(2 * 60 * 60),
                             peak_date: "2026-10-03".to_owned(),
                             peak_work_seconds: 2 * 60 * 60,
+                            estimate_difference_seconds_by_date: Default::default(),
                             work_seconds_by_date: Default::default(),
                         },
                         RoutineLoadRow {
@@ -273,6 +274,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                             average_work_seconds: Some(4 * 60),
                             peak_date: "2026-10-03".to_owned(),
                             peak_work_seconds: 3 * 60 + 40,
+                            estimate_difference_seconds_by_date: Default::default(),
                             work_seconds_by_date: Default::default(),
                         },
                     ],
@@ -320,6 +322,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     for (class, heading) in [
         ("routine-load-interval", "間隔"),
         ("routine-load-total", "28日合計"),
+        ("routine-load-difference", "通常比"),
         ("routine-load-occurrences", "発生日数"),
         ("routine-load-average", "1日平均"),
         ("routine-load-subject", "プロジェクト / 繰返"),
@@ -336,6 +339,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let heading_positions = [
         "間隔",
         "28日合計",
+        "通常比",
         "発生日数",
         "1日平均",
         "プロジェクト / 繰返",
@@ -1134,6 +1138,7 @@ fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
                         average_work_seconds: Some(900),
                         peak_date: "2026-10-03".to_owned(),
                         peak_work_seconds: 900,
+                        estimate_difference_seconds_by_date: Default::default(),
                         work_seconds_by_date: Default::default(),
                     }],
                 },

@@ -32,6 +32,7 @@ pub struct RoutineLoadRow {
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
     pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    pub estimate_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
 impl RoutineLoadRow {
@@ -47,11 +48,13 @@ struct RoutineMetadata {
     routine_task_id: Uuid,
     routine_name: String,
     repetition_interval_days: i64,
+    occurrence_estimate_difference: Option<(Uuid, i64)>,
 }
 
 struct RoutineAccumulator {
     metadata: RoutineMetadata,
     work_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    occurrence_estimate_difference_by_date: BTreeMap<NaiveDate, Option<(Uuid, i64)>>,
 }
 
 pub fn build_routine_load_report(
@@ -94,13 +97,24 @@ pub fn build_routine_load_report(
             continue;
         };
         let routine_task_id = metadata.routine_task_id;
+        let occurrence_estimate_difference = metadata.occurrence_estimate_difference;
         let accumulator =
             accumulators
                 .entry(routine_task_id)
                 .or_insert_with(|| RoutineAccumulator {
                     metadata,
                     work_seconds_by_date: BTreeMap::new(),
+                    occurrence_estimate_difference_by_date: BTreeMap::new(),
                 });
+        accumulator
+            .occurrence_estimate_difference_by_date
+            .entry(logical_date)
+            .and_modify(|comparison| {
+                if *comparison != occurrence_estimate_difference {
+                    *comparison = None;
+                }
+            })
+            .or_insert(occurrence_estimate_difference);
         let daily_seconds = accumulator
             .work_seconds_by_date
             .entry(logical_date)
@@ -134,6 +148,7 @@ pub fn build_routine_load_report(
 fn nearest_routine_metadata(
     task: &TaskHandle,
 ) -> Result<Option<RoutineMetadata>, ApplicationError> {
+    let mut occurrence = task.clone();
     let mut current = task.parent().map_err(ApplicationError::TaskTree)?;
     while let Some(parent) = current {
         if let Some(repetition_interval_days) = parent
@@ -141,14 +156,29 @@ fn nearest_routine_metadata(
             .map_err(ApplicationError::TaskTree)?
         {
             let project = parent.root().map_err(ApplicationError::TaskTree)?;
+            let routine_task_id = parent.get_id().map_err(ApplicationError::TaskTree)?;
+            let estimate_difference = occurrence
+                .get_estimated_work_seconds()
+                .map_err(ApplicationError::TaskTree)?
+                .checked_sub(
+                    parent
+                        .get_estimated_work_seconds()
+                        .map_err(ApplicationError::TaskTree)?,
+                )
+                .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
             return Ok(Some(RoutineMetadata {
                 project_task_id: project.get_id().map_err(ApplicationError::TaskTree)?,
                 project_name: project.get_name().map_err(ApplicationError::TaskTree)?,
-                routine_task_id: parent.get_id().map_err(ApplicationError::TaskTree)?,
+                routine_task_id,
                 routine_name: parent.get_name().map_err(ApplicationError::TaskTree)?,
                 repetition_interval_days,
+                occurrence_estimate_difference: Some((
+                    occurrence.get_id().map_err(ApplicationError::TaskTree)?,
+                    estimate_difference,
+                )),
             }));
         }
+        occurrence = parent.clone();
         current = parent.parent().map_err(ApplicationError::TaskTree)?;
     }
     Ok(None)
@@ -170,6 +200,7 @@ fn projected_routine_metadata(
         routine_task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
         routine_name: task.get_name().map_err(ApplicationError::TaskTree)?,
         repetition_interval_days,
+        occurrence_estimate_difference: None,
     }))
 }
 
@@ -209,5 +240,10 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         peak_date,
         peak_work_seconds,
         work_seconds_by_date: accumulator.work_seconds_by_date,
+        estimate_difference_seconds_by_date: accumulator
+            .occurrence_estimate_difference_by_date
+            .into_iter()
+            .filter_map(|(date, comparison)| comparison.map(|(_, difference)| (date, difference)))
+            .collect(),
     })
 }

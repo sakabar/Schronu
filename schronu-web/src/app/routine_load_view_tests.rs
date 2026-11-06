@@ -49,7 +49,156 @@ fn row(
         peak_date: work[0].0.to_owned(),
         peak_work_seconds: work.iter().map(|(_, seconds)| *seconds).max().unwrap(),
         work_seconds_by_date,
+        estimate_difference_seconds_by_date: BTreeMap::new(),
     }
+}
+
+#[test]
+fn estimate_difference_is_transported_only_to_date_scope() {
+    let mut routine = row("project", "routine", "routine-1", &[("2026-10-03", 120)]);
+    routine.estimate_difference_seconds_by_date = BTreeMap::from([("2026-10-03".to_owned(), -900)]);
+    let projection = build_routine_load_projection(&report(vec![routine]), None).unwrap();
+    for scope in [RoutineLoadScope::Overall, RoutineLoadScope::Weekday(5)] {
+        assert_eq!(
+            rows_for_scope(&projection, scope)[0].estimate_difference_seconds,
+            None
+        );
+    }
+    assert_eq!(
+        rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")))[0]
+            .estimate_difference_seconds,
+        Some(-900)
+    );
+}
+
+#[test]
+fn estimate_difference_column_preserves_order_sign_colors_and_scope_switching() {
+    fn root() -> Element {
+        let rows = [
+            Some(900),
+            Some(-900),
+            Some(0),
+            Some(59),
+            Some(-59),
+            None,
+            Some(360_060),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, difference)| {
+            let mut item = row(
+                "project",
+                &format!("routine-{index}"),
+                &format!("id-{index}"),
+                &[("2026-10-03", 120)],
+            );
+            if let Some(difference) = difference {
+                item.estimate_difference_seconds_by_date
+                    .insert("2026-10-03".to_owned(), difference);
+            }
+            item
+        })
+        .collect();
+        rsx! { RoutineLoadTable { report: Some(report(rows)), loading: false } }
+    }
+    fn difference_cells(html: &str) -> Vec<&str> {
+        html.split("<td class=\"routine-load-difference ")
+            .skip(1)
+            .map(|cell| cell.split_once("</td>").unwrap().0)
+            .collect()
+    }
+    fn assert_columns(html: &str, first: &str) {
+        let header = html
+            .split_once("<thead>")
+            .unwrap()
+            .1
+            .split_once("</thead>")
+            .unwrap()
+            .0;
+        assert_eq!(header.matches("scope=\"col\"").count(), 6, "{header}");
+        assert_eq!(difference_cells(html).len(), 7, "{html}");
+        let body = html
+            .split_once("<tbody>")
+            .unwrap()
+            .1
+            .split_once("</tbody>")
+            .unwrap()
+            .0;
+        assert_eq!(body.matches("</td>").count(), 35, "{body}");
+        assert_eq!(body.matches("scope=\"row\"").count(), 7, "{body}");
+        assert!(
+            header.find(first).unwrap() < header.find("通常比").unwrap(),
+            "{header}"
+        );
+        assert_eq!(
+            header[..header.find("通常比").unwrap()]
+                .matches("</th>")
+                .count(),
+            2,
+            "{header}"
+        );
+    }
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_click_listeners(&mut dom);
+    let initial = dioxus::ssr::render(&dom);
+    assert_columns(&initial, "28日合計");
+    assert!(difference_cells(&initial)
+        .iter()
+        .all(|cell| cell.ends_with(">—")));
+
+    let mut found_date = false;
+    let mut found_weekday = false;
+    for index in 0..ids.len() {
+        let mut candidate = VirtualDom::new(root);
+        let clicks = rebuild_with_click_listeners(&mut candidate);
+        dispatch_click(&candidate, clicks[index]);
+        candidate.render_immediate_to_vec();
+        let html = dioxus::ssr::render(&candidate);
+        if html.contains("当日時間") && html.contains(">+0:15</td>") {
+            assert_columns(&html, "当日時間");
+            let cells = difference_cells(&html);
+            assert!(
+                cells
+                    .iter()
+                    .any(|cell| cell.contains("is-positive") && cell.ends_with(">+0:15")),
+                "{html}"
+            );
+            assert!(
+                cells
+                    .iter()
+                    .any(|cell| cell.contains("is-negative") && cell.ends_with(">-0:15")),
+                "{html}"
+            );
+            assert!(
+                cells.iter().any(|cell| cell.ends_with(">+100:01")),
+                "{html}"
+            );
+            let zeroes: Vec<_> = cells
+                .iter()
+                .filter(|cell| cell.ends_with(">0:00"))
+                .collect();
+            assert_eq!(zeroes.len(), 3);
+            assert!(zeroes
+                .iter()
+                .all(|cell| !cell.contains("is-positive") && !cell.contains("is-negative")));
+            assert_eq!(cells.iter().filter(|cell| cell.ends_with(">—")).count(), 1);
+            dispatch_click(&candidate, clicks[0]);
+            candidate.render_immediate_to_vec();
+            let restored = dioxus::ssr::render(&candidate);
+            assert!(difference_cells(&restored)
+                .iter()
+                .all(|cell| cell.ends_with(">—")));
+            found_date = true;
+        }
+        if html.contains("曜日平均") {
+            assert_columns(&html, "曜日平均");
+            assert!(difference_cells(&html)
+                .iter()
+                .all(|cell| cell.ends_with(">—")));
+            found_weekday = true;
+        }
+    }
+    assert!(found_date && found_weekday);
 }
 
 #[test]
