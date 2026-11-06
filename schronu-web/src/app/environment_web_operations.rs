@@ -408,6 +408,11 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
+            estimate_difference_seconds_by_date: row
+                .estimate_difference_seconds_by_date
+                .into_iter()
+                .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
             work_seconds_by_date: row
                 .work_seconds_by_date
                 .into_iter()
@@ -828,6 +833,11 @@ mod tests {
                 average_work_seconds: 7_199,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
                 peak_work_seconds: 7_201,
+                estimate_difference_seconds_by_date: BTreeMap::from([
+                    (NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(), -900),
+                    (NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(), 0),
+                    (NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(), 900),
+                ]),
                 work_seconds_by_date: BTreeMap::from([(
                     NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
                     7_201,
@@ -845,6 +855,14 @@ mod tests {
         );
         let row = &report.rows[0];
         assert_eq!(row.average_work_seconds, Some(7_199));
+        assert_eq!(
+            row.estimate_difference_seconds_by_date,
+            BTreeMap::from([
+                ("2026-10-05".to_owned(), -900),
+                ("2026-10-06".to_owned(), 0),
+                ("2026-10-07".to_owned(), 900),
+            ])
+        );
         assert_eq!(row.peak_date, "2026-10-05");
         assert_eq!(row.peak_work_seconds, 7_201);
         assert_eq!(

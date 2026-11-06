@@ -79,6 +79,7 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
                 peak_date: row.peak_date,
                 peak_work_seconds: row.peak_work_seconds,
                 work_seconds_by_date: row.work_seconds_by_date,
+                estimate_difference_seconds_by_date: row.estimate_difference_seconds_by_date,
             })
             .collect(),
     })
