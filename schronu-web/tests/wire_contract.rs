@@ -441,6 +441,11 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                 average_work_seconds: Some(3_900),
                 peak_date: "2026-10-04".to_owned(),
                 peak_work_seconds: 4_800,
+                estimate_difference_seconds_by_date: BTreeMap::from([
+                    ("2026-10-03".to_owned(), -900),
+                    ("2026-10-04".to_owned(), 0),
+                    ("2026-10-05".to_owned(), 900),
+                ]),
                 work_seconds_by_date: BTreeMap::from([
                     ("2026-10-03".to_owned(), 3_600),
                     ("2026-10-04".to_owned(), 4_800),
@@ -472,6 +477,7 @@ fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
                     "average_work_seconds": 3_900,
                     "peak_date": "2026-10-04",
                     "peak_work_seconds": 4_800,
+                    "estimate_difference_seconds_by_date": {"2026-10-03": -900, "2026-10-04": 0, "2026-10-05": 900},
                     "work_seconds_by_date": {
                         "2026-10-03": 3_600,
                         "2026-10-04": 4_800
@@ -515,6 +521,7 @@ fn 旧8日繰返負荷payloadは追加fieldを補完してdeserializeできる()
     assert_eq!(row.peak_date, "2026-10-04");
     assert_eq!(row.peak_work_seconds, 4_800);
     assert!(row.work_seconds_by_date.is_empty());
+    assert!(row.estimate_difference_seconds_by_date.is_empty());
 }
 
 #[test]

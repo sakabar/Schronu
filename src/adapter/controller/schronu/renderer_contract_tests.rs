@@ -35,6 +35,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 average_work_seconds: 65 * 60,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
                 peak_work_seconds: 80 * 60,
+                estimate_difference_seconds_by_date: Default::default(),
                 work_seconds_by_date: BTreeMap::new(),
             },
             RoutineLoadRow {
@@ -48,6 +49,7 @@ fn routine_load_displayは共通集計値を固定列で描画する() {
                 average_work_seconds: 4 * 60 * 60 + 25 * 60,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
                 peak_work_seconds: 100 * 60 * 60,
+                estimate_difference_seconds_by_date: Default::default(),
                 work_seconds_by_date: BTreeMap::new(),
             },
         ],
@@ -142,6 +144,7 @@ fn routine_load_displayは発生日数zeroの平均をplaceholderにする() {
             average_work_seconds: 0,
             peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             peak_work_seconds: 60,
+            estimate_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: BTreeMap::new(),
         }],
     });
@@ -169,6 +172,7 @@ fn routine_load_displayは1日平均の1分未満を切り捨てる() {
             average_work_seconds: 3 * 60 + 40,
             peak_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             peak_work_seconds: 3 * 60 + 40,
+            estimate_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: BTreeMap::new(),
         }],
     });
