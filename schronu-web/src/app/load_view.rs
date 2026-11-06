@@ -112,13 +112,22 @@ pub(crate) fn LoadView(
                 } else if rows.is_empty() {
                     p { class: "load-status", "負荷は未取得です。" }
                 } else {
-                    div { class: "load-days",
-                        for (index, row) in rows.into_iter().enumerate() {
-                            BandDayRow {
-                                row,
-                                today: index == 0,
-                                disabled: server_actions_blocked,
-                                on_select_date,
+                    div { class: "load-grid",
+                        div { class: "load-column-headings", aria_hidden: "true",
+                            span { "日付" }
+                            span { "余差累" }
+                            span { "空差累" }
+                            span { "超過" }
+                            span { "帯グラフ" }
+                        }
+                        div { class: "load-days",
+                            for (index, row) in rows.into_iter().enumerate() {
+                                BandDayRow {
+                                    row,
+                                    today: index == 0,
+                                    disabled: server_actions_blocked,
+                                    on_select_date,
+                                }
                             }
                         }
                     }
@@ -226,87 +235,74 @@ fn BandDayRow(
                     on_select_date.call(logical_date.clone())
                 }
             },
-            span { class: "load-day-heading",
-                span { class: "load-date", "{date_label}"
-                    if today { span { class: "load-today", "今日" } }
-                }
-                span { class: "load-open-list", "一覧を見る ›" }
-            }
-            if today {
-                span { class: "load-focus-group",
-                    span { class: "load-band-caption load-focus-caption",
-                        span { "残り枠 " small { "利用不可・経過済みを除外" } }
-                        strong { "{format_unsigned(remaining_capacity_seconds)}" }
-                    }
-                    BandStack {
-                        class: "load-focus-stack",
-                        overflow_seconds,
-                        capacity_seconds: remaining_capacity_seconds,
-                        BandSegment {
-                            class: "is-repetitive",
-                            seconds: segments.repetitive_seconds,
-                            capacity_seconds: remaining_capacity_seconds,
-                        }
-                        BandSegment {
-                            class: "is-single",
-                            seconds: segments.non_repetitive_seconds,
-                            capacity_seconds: remaining_capacity_seconds,
-                        }
-                        BandSegment {
-                            class: "is-leeway",
-                            seconds: segments.rho_leeway_seconds,
-                            capacity_seconds: remaining_capacity_seconds,
-                        }
-                        BandSegment {
-                            class: "is-free",
-                            seconds: segments.free_seconds,
-                            capacity_seconds: remaining_capacity_seconds,
-                        }
+            span { class: "load-date",
+                span {
+                    if let Some(date) = date {
+                        "{date.month()}/{date.day()}"
+                    } else {
+                        "{row.logical_date}"
                     }
                 }
-                span { class: "load-band-caption load-overview-caption",
-                    span { "1日全体" }
-                    strong { "24:00" }
+                if let Some(date) = date {
+                    small { "{weekday_jp(date.weekday())}" }
                 }
             }
-            BandStack {
-                class: "load-overview-stack",
-                overflow_seconds,
-                capacity_seconds: SECONDS_PER_DAY,
-                BandSegment { class: "is-unavailable", seconds: segments.unavailable_seconds, capacity_seconds: SECONDS_PER_DAY }
-                BandSegment { class: "is-elapsed", seconds: segments.elapsed_seconds, capacity_seconds: SECONDS_PER_DAY }
-                BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
-                BandSegment { class: "is-single", seconds: segments.non_repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
-                BandSegment { class: "is-leeway", seconds: segments.rho_leeway_seconds, capacity_seconds: SECONDS_PER_DAY }
-                BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: SECONDS_PER_DAY }
+            strong {
+                class: if row.accumulated_rho_diff_seconds > 0 {
+                    "load-metric-value is-over"
+                } else {
+                    "load-metric-value is-within"
+                },
+                "{format_signed(row.accumulated_rho_diff_seconds)}"
             }
-            span { class: "load-day-footer",
-                span { class: "load-metrics",
-                    span { class: "load-metric",
-                        span { "余差累" }
-                        strong {
-                            class: if row.accumulated_rho_diff_seconds > 0 {
-                                "load-metric-value is-over"
-                            } else {
-                                "load-metric-value is-within"
-                            },
-                            "{format_signed(row.accumulated_rho_diff_seconds)}"
-                        }
-                    }
-                    span { class: "load-metric",
-                        span { "空差累" }
-                        strong {
-                            class: if row.accumulated_free_diff_seconds > 0 {
-                                "load-metric-value is-over"
-                            } else {
-                                "load-metric-value is-within"
-                            },
-                            "{format_signed(row.accumulated_free_diff_seconds)}"
-                        }
-                    }
-                }
+            strong {
+                class: if row.accumulated_free_diff_seconds > 0 {
+                    "load-metric-value is-over"
+                } else {
+                    "load-metric-value is-within"
+                },
+                "{format_signed(row.accumulated_free_diff_seconds)}"
+            }
+            strong {
+                class: if overflow_seconds > 0 {
+                    "load-metric-value is-over"
+                } else {
+                    "load-metric-value is-within"
+                },
                 if overflow_seconds > 0 {
-                    span { class: "load-overflow", "超過 {format_unsigned(overflow_seconds)}" }
+                    "{format_unsigned(overflow_seconds)}"
+                } else {
+                    "0:00"
+                }
+            }
+            span { class: "load-bands",
+                if today {
+                    span { class: "load-focus-group",
+                        span { class: "load-band-caption load-focus-caption",
+                            span { "残り" }
+                            strong { "{format_unsigned(remaining_capacity_seconds)}" }
+                        }
+                        BandStack {
+                            class: "load-focus-stack",
+                            overflow_seconds,
+                            capacity_seconds: remaining_capacity_seconds,
+                            BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds, capacity_seconds: remaining_capacity_seconds }
+                            BandSegment { class: "is-single", seconds: segments.non_repetitive_seconds, capacity_seconds: remaining_capacity_seconds }
+                            BandSegment { class: "is-leeway", seconds: segments.rho_leeway_seconds, capacity_seconds: remaining_capacity_seconds }
+                            BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: remaining_capacity_seconds }
+                        }
+                    }
+                }
+                BandStack {
+                    class: "load-overview-stack",
+                    overflow_seconds,
+                    capacity_seconds: SECONDS_PER_DAY,
+                    BandSegment { class: "is-unavailable", seconds: segments.unavailable_seconds, capacity_seconds: SECONDS_PER_DAY }
+                    BandSegment { class: "is-elapsed", seconds: segments.elapsed_seconds, capacity_seconds: SECONDS_PER_DAY }
+                    BandSegment { class: "is-repetitive", seconds: segments.repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
+                    BandSegment { class: "is-single", seconds: segments.non_repetitive_seconds, capacity_seconds: SECONDS_PER_DAY }
+                    BandSegment { class: "is-leeway", seconds: segments.rho_leeway_seconds, capacity_seconds: SECONDS_PER_DAY }
+                    BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: SECONDS_PER_DAY }
                 }
             }
         }
