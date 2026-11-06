@@ -2076,7 +2076,7 @@ button.routine-load-day.is-at-capacity {
     .load-days {
         flex: 1 1 auto;
         min-height: 0;
-        grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));
+        grid-template-rows: minmax(4.25rem, 1.55fr) repeat(7, minmax(2.75rem, 1fr));
     }
 }
 

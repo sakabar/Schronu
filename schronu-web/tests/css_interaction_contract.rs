@@ -267,7 +267,7 @@ fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     assert!(days.contains("flex: 1 1 auto;"));
     assert!(days.contains("min-height: 0;"));
     assert!(days
-        .contains("grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));"));
+        .contains("grid-template-rows: minmax(4.25rem, 1.55fr) repeat(7, minmax(2.75rem, 1fr));"));
 
     let compact = block_body(
         MAIN_CSS,

@@ -488,7 +488,7 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
 
     let rows = build_band_days(&repository, &mut free_time, &schedule, operation_now, 120).unwrap();
 
-    assert_eq!(rows.len(), 7);
+    assert_eq!(rows.len(), 8);
     assert_eq!(rows[0].accumulated_free_diff_seconds, -50 * 60);
     assert_eq!(rows[1].accumulated_free_diff_seconds, -50 * 60);
     assert_eq!(rows[2].accumulated_free_diff_seconds, -80 * 60);

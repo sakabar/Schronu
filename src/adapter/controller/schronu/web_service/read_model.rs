@@ -165,7 +165,7 @@ where
     R: TaskRepositoryTrait,
     F: FreeTimeManagerTrait,
 {
-    const HORIZON_DAYS: i64 = 7;
+    const HORIZON_DAYS: i64 = 8;
     let today = try_logical_date(operation_now).map_err(WebReadCoreError::Application)?;
     let last_synced_time = repository.get_last_synced_time();
     let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;

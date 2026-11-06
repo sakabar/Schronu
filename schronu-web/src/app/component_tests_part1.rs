@@ -197,7 +197,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     let mut dom = VirtualDom::new(root);
     let html = render_band_load_view(&mut dom);
 
-    assert!(html.contains("今日から7日の負荷"), "{html}");
+    assert!(html.contains("今日から8日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
         html.contains("余差累+01:15、空差累-00:45"),
@@ -296,7 +296,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let click_ids = rebuild_with_click_listeners(&mut dom);
     let initial_html = dioxus::ssr::render(&dom);
 
-    assert!(initial_html.contains("今日から7日の負荷"), "{initial_html}");
+    assert!(initial_html.contains("今日から8日の負荷"), "{initial_html}");
     assert!(initial_html.contains("帯の凡例"), "{initial_html}");
     assert!(!initial_html.contains("routine-load-table"), "{initial_html}");
     assert!(
@@ -1105,7 +1105,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
 }
 
 #[test]
-fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
+fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     let request_id = match state.request_load_band() {

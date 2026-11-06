@@ -449,7 +449,7 @@ fn 全件serviceは実repositoryの501segmentをsnapshot固定してpage解放�
 }
 
 #[test]
-fn 負荷serviceは今日から空日を含む7日を返す() {
+fn 負荷serviceは今日から空日を含む8日を返す() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
     fixture.seed_fixed_task(operation_now);
@@ -457,20 +457,34 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
 
     let response = service.load_band_at(operation_now).unwrap();
 
-    assert_eq!(response.data.band_days.len(), 7);
+    assert_eq!(response.data.band_days.len(), 8);
     assert_eq!(
         response.data.band_days[0].logical_date,
         NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
     );
     assert_eq!(
-        response.data.band_days[6].logical_date,
-        NaiveDate::from_ymd_opt(2026, 9, 11).unwrap()
+        response.data.band_days[7].logical_date,
+        NaiveDate::from_ymd_opt(2026, 9, 12).unwrap()
     );
     assert!(response
         .data
         .band_days
         .iter()
         .all(|row| row.durations.unavailable_seconds >= 0));
+    for pair in response.data.band_days.windows(2) {
+        assert_eq!(
+            pair[1].logical_date,
+            pair[0].logical_date + Duration::days(1)
+        );
+        assert_eq!(
+            pair[1].accumulated_rho_diff_seconds,
+            pair[0].accumulated_rho_diff_seconds
+        );
+        assert_eq!(
+            pair[1].accumulated_free_diff_seconds,
+            pair[0].accumulated_free_diff_seconds
+        );
+    }
     assert_eq!(
         response.data.routine_load.start_date,
         NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()
@@ -494,6 +508,43 @@ fn 負荷serviceは今日から空日を含む7日を返す() {
         .full_day_available_seconds_by_date
         .values()
         .all(|seconds| *seconds == 19 * 60 * 60));
+}
+
+#[test]
+fn 負荷serviceは8日目のtaskと累積を含め9日目を除外する() {
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    for offset in [7, 8] {
+        let task = TaskHandle::with_identity("horizon boundary task", Uuid::new_v4(), now).unwrap();
+        task.set_start_time(now + Duration::days(offset)).unwrap();
+        task.set_fixed_start(true).unwrap();
+        task.set_estimated_work_seconds(30 * 60).unwrap();
+        repository.start_new_project(task).unwrap();
+    }
+    repository.save().unwrap();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let response = service.load_band_at(now).unwrap();
+    assert_eq!(response.data.band_days.len(), 8);
+    let preceding = &response.data.band_days[6];
+    let last = &response.data.band_days[7];
+    assert_eq!(last.logical_date, now.date_naive() + Duration::days(7));
+    assert_eq!(last.durations.non_repetitive_seconds, 30 * 60);
+    assert_ne!(
+        last.accumulated_rho_diff_seconds,
+        preceding.accumulated_rho_diff_seconds
+    );
+    assert_ne!(
+        last.accumulated_free_diff_seconds,
+        preceding.accumulated_free_diff_seconds
+    );
+    assert!(response
+        .data
+        .band_days
+        .iter()
+        .all(|day| day.logical_date < now.date_naive() + Duration::days(8)));
 }
 
 #[test]
@@ -537,7 +588,7 @@ fn 負荷serviceは日別負荷と繰返負荷でscheduleを再生成しない()
     let (response, metrics) =
         capture_schedule_metrics(|| service.load_band_at(operation_now).unwrap());
 
-    assert_eq!(response.data.band_days.len(), 7);
+    assert_eq!(response.data.band_days.len(), 8);
     assert_eq!(response.data.routine_load.horizon_day_count, 28);
     assert_eq!(metrics.schedule_rebuild_count, 1);
 }

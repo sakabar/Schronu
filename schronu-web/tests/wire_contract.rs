@@ -419,7 +419,7 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
 }
 
 #[test]
-fn load_dataは7日帯と28日繰返負荷を同じpayloadで保持する() {
+fn load_dataは8日帯と28日繰返負荷を同じpayloadで保持する() {
     let data = LoadData {
         band_days: Vec::new(),
         routine_load: RoutineLoadReport {
