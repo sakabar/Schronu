@@ -487,17 +487,19 @@ fn speculative_completion_event適用後にfrontier全状態を復元する() {
     let change = frontier.begin_speculative_releases(release, &states, &mut instrumentation);
 
     assert!(frontier.completed_nodes[2]);
-    assert!(frontier.completed_nodes[0]);
-    assert!(frontier.ready[1]);
+    assert!(!frontier.completed_nodes[0]);
+    assert!(frontier.ready[0]);
+    assert!(!frontier.ready[1]);
     assert_eq!(frontier.unresolved_dependencies[2], 0);
     assert_eq!(frontier.unresolved_dependencies[0], 0);
-    assert_eq!(frontier.unresolved_dependencies[1], 0);
-    assert_eq!(frontier.incomplete_count, 1);
+    assert_eq!(frontier.unresolved_dependencies[1], 1);
+    assert_eq!(frontier.incomplete_count, 2);
 
     frontier.restore_speculative_releases(change, &states);
 
     assert!(!frontier.completed_nodes[2]);
     assert!(!frontier.completed_nodes[0]);
+    assert!(!frontier.ready[0]);
     assert!(!frontier.ready[1]);
     assert_eq!(frontier.unresolved_dependencies[0], 1);
     assert_eq!(frontier.unresolved_dependencies[1], 1);
@@ -1167,7 +1169,7 @@ fn 同順位で現在taskに勝たないreleaseは境界にしない() {
 }
 
 #[test]
-fn zero_work依存鎖から現れる高priority_taskはrelease境界で切り替える() {
+fn zero_work依存先の高priority_taskは前提taskの選択まで待つ() {
     let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
     let running = candidate("running", now, 50, 2 * 60 * 60);
     let running_id = running.id;
@@ -1180,15 +1182,16 @@ fn zero_work依存鎖から現れる高priority_taskはrelease境界で切り替
     let scheduled = schedule_tasks_by_priority(&[released, running, zero_work], now).unwrap();
     let running_segments = segments_for(&scheduled, running_id);
 
+    assert_eq!(running_segments.len(), 1);
     assert_eq!(running_segments[0].scheduled_start, now);
-    assert_eq!(running_segments[0].scheduled_end, now + Duration::hours(1));
+    assert_eq!(running_segments[0].scheduled_end, now + Duration::hours(2));
     assert_eq!(
         scheduled_start(&scheduled, zero_work_id),
-        now + Duration::hours(1)
+        now + Duration::hours(2)
     );
     assert_eq!(
         scheduled_start(&scheduled, released_id),
-        now + Duration::hours(1)
+        now + Duration::hours(2)
     );
 }
 
@@ -1360,4 +1363,101 @@ fn preemptionとfixed衝突後もtaskごとの作業秒数を保存する() {
             "work seconds changed for {id}"
         );
     }
+}
+
+#[test]
+fn zero_work_tasks_follow_normal_priority_rank_and_uuid_order() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut first = candidate("first", now, 5, 0);
+    first.id = Uuid::from_u128(1);
+    let mut second = candidate("second", now, 5, 0);
+    second.id = Uuid::from_u128(2);
+    let mut third = candidate("third", now, 5, 0);
+    third.rank = 1;
+    let work = candidate("work", now, 4, 90 * 60);
+    let ids = [first.id, second.id, third.id, work.id];
+
+    let scheduled = schedule_tasks_by_priority(&[third, second, work, first], now).unwrap();
+
+    assert_eq!(scheduled.iter().map(|row| row.id).collect::<Vec<_>>(), ids);
+    for row in &scheduled[..3] {
+        assert_eq!(row.scheduled_start, now);
+        assert_eq!(row.scheduled_end, now);
+        assert_eq!(row.scheduled_work_seconds, 0);
+    }
+}
+
+#[test]
+fn high_priority_zero_work_release_preempts_and_unlocks_its_dependent() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let running = candidate("running", now, 50, 2 * 60 * 60);
+    let running_id = running.id;
+    let release = now + Duration::hours(1);
+    let zero_work = candidate("zero", release, 60, 0);
+    let zero_id = zero_work.id;
+    let mut dependent = candidate("dependent", now, 99, 60);
+    dependent.dependency_ids = vec![zero_id];
+    let dependent_id = dependent.id;
+
+    let scheduled = schedule_tasks_by_priority(&[dependent, running, zero_work], now).unwrap();
+
+    let segments = segments_for(&scheduled, running_id);
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].scheduled_end, release);
+    assert_eq!(scheduled_start(&scheduled, zero_id), release);
+    assert_eq!(scheduled_start(&scheduled, dependent_id), release);
+    assert_eq!(segments[1].scheduled_start, release + Duration::minutes(1));
+}
+
+#[test]
+fn zero_work_tasks_observe_critical_deadline_protection() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let mut protected = candidate("protected", now, 1, 90 * 60);
+    let end = now + Duration::minutes(90);
+    protected.deadline_time = Some(end);
+    let zero = candidate("zero", now, 99, 0);
+    let zero_id = zero.id;
+
+    let scheduled = schedule_tasks_by_priority(&[zero, protected], now).unwrap();
+
+    assert_eq!(scheduled_start(&scheduled, zero_id), end);
+    assert_eq!(
+        segments_for(&scheduled, zero_id)[0].scheduled_work_seconds,
+        0
+    );
+}
+
+#[test]
+fn zero_work_tasks_only_advance_time_to_their_release() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let first = candidate("first", now, 1, 0);
+    let first_id = first.id;
+    let release = now + Duration::hours(1);
+    let second = candidate("second", release, 2, 0);
+    let second_id = second.id;
+
+    let scheduled = schedule_tasks_by_priority(&[second, first], now).unwrap();
+
+    assert_eq!(scheduled.len(), 2);
+    assert_eq!(scheduled_start(&scheduled, first_id), now);
+    assert_eq!(scheduled_start(&scheduled, second_id), release);
+    assert!(scheduled
+        .iter()
+        .all(|row| row.scheduled_start == row.scheduled_end));
+}
+
+#[test]
+fn zero_work_task_with_equal_priority_waits_for_earlier_rank() {
+    let now = Local.with_ymd_and_hms(2026, 9, 1, 9, 0, 0).unwrap();
+    let work = candidate("work", now, 5, 90 * 60);
+    let mut zero = candidate("zero", now, 5, 0);
+    zero.rank = 1;
+    let zero_id = zero.id;
+
+    let scheduled = schedule_tasks_by_priority(&[zero, work], now).unwrap();
+
+    assert_eq!(
+        scheduled_start(&scheduled, zero_id),
+        now + Duration::minutes(90)
+    );
 }

@@ -19,6 +19,38 @@ fn fixed_now() -> DateTime<Local> {
 }
 
 #[test]
+fn zero_work_tasks_wait_for_the_preceding_task_without_consuming_time() {
+    let now = fixed_now();
+    let preceding = task_with_schedule("preceding", now, 90 * 60, 3);
+    let zero_first = task_with_schedule("zero-first", now, 600, 2);
+    zero_first.set_actual_work_seconds(600).unwrap();
+    let zero_second = task_with_schedule("zero-second", now, 0, 1);
+    let ids = [&preceding, &zero_first, &zero_second].map(|task| task.get_id().unwrap());
+    let repository = TestTaskRepository::new(vec![preceding, zero_first, zero_second], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert_eq!(schedule.len(), 3);
+    assert_eq!(
+        schedule
+            .iter()
+            .map(|row| row.actual_task_id().unwrap())
+            .collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(schedule[0].scheduled_start, now);
+    let end = now + Duration::minutes(90);
+    assert_eq!(schedule[0].scheduled_end, end);
+    for row in &schedule[1..] {
+        assert_eq!(row.scheduled_start, end);
+        assert_eq!(row.scheduled_end, end);
+        assert_eq!(row.scheduled_work_seconds, 0);
+        assert_eq!(row.total_work_seconds, 0);
+    }
+    assert_eq!(repository.save_count(), 0);
+}
+
+#[test]
 fn 数値選定は分割片ではなくtask全体の残作業を比較し同値では予定順を守る() {
     let now = fixed_now();
     let task = task_with_schedule("候補", now, 90 * 60, 1);
