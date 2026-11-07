@@ -2821,6 +2821,71 @@ fn test_execute_all_絞り込み後の表示taskだけでlogical_date区切り�
 }
 
 #[test]
+fn test_execute_non_repetitive_表示taskのlogical_dateごとに区切る() {
+    let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
+    let root = new_test_task_handle("区切り検証root").unwrap();
+    for (name, day, hour, minute) in [
+        ("単発境界対象 同日", 6, 10, 0),
+        ("単発境界対象 境界前", 7, 5, 59),
+        ("単発境界対象 境界後", 7, 6, 0),
+        ("単発境界対象 空き後", 10, 10, 0),
+    ] {
+        let start = Local
+            .with_ymd_and_hms(2026, 9, day, hour, minute, 0)
+            .unwrap();
+        let task = add_scheduled_child_for_test(&root, name, start, 1);
+        task.set_fixed_start(true).unwrap();
+    }
+    let repetitive = add_scheduled_child_for_test(
+        &root,
+        "除外対象反復task",
+        Local.with_ymd_and_hms(2026, 9, 8, 10, 0, 0).unwrap(),
+        1,
+    );
+    repetitive.set_fixed_start(true).unwrap();
+    repetitive
+        .set_repetition_interval_days_opt(Some(7))
+        .unwrap();
+
+    let boundary = "-".repeat(88);
+    let gap = format!("{}2日間の空き時間{}", "-".repeat(88), "-".repeat(54));
+    for supports_ansi_color in [false, true] {
+        let result = execute_command_with_ansi_color_for_test(
+            root.clone(),
+            now,
+            None,
+            "単",
+            supports_ansi_color,
+        );
+        let all_filtered = execute_command_with_ansi_color_for_test(
+            root.clone(),
+            now,
+            None,
+            "全 単",
+            supports_ansi_color,
+        );
+        assert_eq!(result.output, all_filtered.output);
+        assert!(!result.output.contains("除外対象反復task"));
+        let lines = result
+            .output
+            .lines()
+            .filter(|line| {
+                line.contains("単発境界対象")
+                    || *line == boundary
+                    || line.contains("日間の空き時間")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 6, "{}", result.output);
+        assert!(lines[0].contains("空き後"));
+        assert_eq!(lines[1], gap);
+        assert!(lines[2].contains("境界後"));
+        assert_eq!(lines[3], boundary);
+        assert!(lines[4].contains("境界前"));
+        assert!(lines[5].contains("同日"));
+    }
+}
+
+#[test]
 fn test_execute_all_06時をlogical_date境界として横線を表示する() {
     let now = Local.with_ymd_and_hms(2026, 9, 6, 10, 0, 0).unwrap();
     let root = new_test_task_handle("root").unwrap();
