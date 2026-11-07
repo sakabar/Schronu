@@ -2090,7 +2090,7 @@ button.routine-load-day.is-at-capacity {
 }
 
 @media (max-height: 60rem) {
-    .shell:has(.load-view:not(.is-routine)) {
+    .shell:has(.load-view) {
         padding-block: 8px calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 8px);
     }
 
@@ -2171,7 +2171,7 @@ button.routine-load-day.is-at-capacity {
 }
 
 @media (max-width: 380px) {
-    .shell:has(.load-view:not(.is-routine)) {
+    .shell:has(.load-view) {
         padding-bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 32px);
     }
 

@@ -315,7 +315,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let routine_html = dioxus::ssr::render(&dom);
 
     assert!(
-        routine_html.contains("今日から27日後までの繰返負荷"),
+        routine_html.contains("今日から28日の負荷"),
         "{routine_html}"
     );
     assert!(routine_html.contains("10/3〜10/30"), "{routine_html}");
@@ -460,7 +460,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
     dispatch_click(&empty_dom, empty_click_ids[2]);
     empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
-    assert!(empty_html.contains("今日から2日後までの繰返負荷"), "{empty_html}");
+    assert!(empty_html.contains("今日から3日の負荷"), "{empty_html}");
     assert!(empty_html.contains("10/3〜10/5"), "{empty_html}");
     assert!(
         empty_html.contains("今日から2日後までに発生する繰返負荷はありません。"),

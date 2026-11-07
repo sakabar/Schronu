@@ -49,12 +49,7 @@ pub(crate) fn LoadView(
         .unwrap_or_else(|| "未取得".to_owned());
     let routine_heading = routine_load_report.as_ref().map_or_else(
         || "繰返負荷".to_owned(),
-        |report| {
-            format!(
-                "今日から{}日後までの繰返負荷",
-                report.horizon_day_count.saturating_sub(1)
-            )
-        },
+        |report| format!("今日から{}日の負荷", report.horizon_day_count),
     );
     let weeks = rows
         .chunk_by(|_, next| {

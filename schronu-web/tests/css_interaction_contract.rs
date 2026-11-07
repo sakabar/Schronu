@@ -564,8 +564,9 @@ fn daily_load_compact_layout_retains_zero_and_weekend_colors_and_touch_target() 
 }
 
 #[test]
-fn daily_load_reserves_wrapped_navigation_height_on_narrow_screens() {
-    let selector = ".shell:has(.load-view:not(.is-routine))";
+fn load_views_share_shell_padding_and_reserve_wrapped_navigation_height() {
+    let selector = ".shell:has(.load-view)";
+    assert!(!MAIN_CSS.contains(":not(.is-routine)"));
     let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
     assert!(block_body(compact, selector).contains("+ 8px)"));
     let narrow = MAIN_CSS.rsplit("@media (max-width: 380px)").next().unwrap();
