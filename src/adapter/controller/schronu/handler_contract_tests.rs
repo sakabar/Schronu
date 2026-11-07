@@ -1102,7 +1102,7 @@ fn task_tree表示commandはhandlerがtyped_fieldから表示modelと操作要�
         "list:Some(\"月\"):ScheduledStartDesc:resolve=true",
         "list:Some(\"今\"):LowPriorityTail:resolve=false",
         "list:Some(\"今\"):ScheduledStartDesc:resolve=false",
-        "list:Some(\"単\"):ScheduledStartDesc:resolve=false",
+        "list:Some(\"単\"):ScheduledStartDesc:resolve=true",
         "list:Some(\"暦\"):ScheduledStartDesc:resolve=false",
         "list:Some(\"帯\"):ScheduledStartDesc:resolve=false",
         "list:Some(\"荷\"):ScheduledStartDesc:resolve=false",

@@ -10,6 +10,83 @@ use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
 #[test]
+fn cli_and_web_place_zero_work_tasks_after_preceding_work() {
+    use super::renderer::{DisplayModel, TaskListRow};
+    use super::view::{build_show_all_tasks_display_with_config, TaskListDisplayOrder};
+    use crate::adapter::gateway::schronu_config::SchronuConfig;
+    use crate::application::schedule_use_case::get_schedule;
+
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 9, 0, 0).unwrap();
+    let tasks = [
+        ("preceding", 90 * 60, 0, 3),
+        ("zero-first", 600, 600, 2),
+        ("zero-second", 0, 0, 1),
+    ]
+    .into_iter()
+    .map(|(name, estimate, actual, priority)| {
+        let task = crate::test_support::new_task_handle_at(name, now).unwrap();
+        task.set_start_time(now).unwrap();
+        task.set_estimated_work_seconds(estimate).unwrap();
+        task.set_actual_work_seconds(actual).unwrap();
+        task.set_priority(priority).unwrap();
+        task
+    })
+    .collect::<Vec<_>>();
+    let ids = tasks
+        .iter()
+        .map(|task| task.get_id().unwrap())
+        .collect::<Vec<_>>();
+    let mut repository = TestTaskRepository::new(tasks, now);
+    let schedule = get_schedule(&repository).unwrap();
+    let web_rows =
+        build_scheduled_task_rows(&repository, &schedule, now.date_naive(), now).unwrap();
+    let mut free_time = TestFreeTimeManager::new(600);
+    let cli = build_show_all_tasks_display_with_config(
+        &mut None,
+        &mut repository,
+        &mut free_time,
+        &None,
+        TaskListDisplayOrder::ScheduledStartDesc,
+        &SchronuConfig::default(),
+    )
+    .unwrap();
+    let DisplayModel::Sequence(models) = cli else {
+        panic!("expected CLI sequence")
+    };
+    let DisplayModel::TaskList(list) = &models[0] else {
+        panic!("expected CLI task list")
+    };
+    let cli_rows = list
+        .rows
+        .iter()
+        .filter_map(|row| match row {
+            TaskListRow::Task(task) => Some(task),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(cli_rows.len(), 3);
+    assert_eq!(web_rows.len(), 3);
+    let end = now + Duration::minutes(90);
+    for id in &ids[1..] {
+        let cli_row = cli_rows.iter().find(|row| row.task_id == *id).unwrap();
+        assert_eq!(cli_row.scheduled_start, end);
+        assert_eq!(cli_row.scheduled_end, end);
+        assert_eq!(cli_row.estimated_minutes, 0);
+        let id = id.hyphenated().to_string();
+        let web_row = web_rows
+            .iter()
+            .find(|row| row.task.task_id.as_ref() == Some(&id))
+            .unwrap();
+        assert_eq!(web_row.schedule_start_epoch_ms, end.timestamp_millis());
+        assert_eq!(web_row.schedule_end_epoch_ms, end.timestamp_millis());
+        assert_eq!(
+            web_row.task.estimated_work_seconds,
+            web_row.task.actual_work_seconds
+        );
+    }
+}
+
+#[test]
 fn projected_occurrenceはread_onlyの一覧rowを構築する() {
     let start = Local.with_ymd_and_hms(2026, 9, 5, 7, 0, 0).unwrap();
     let source_task_id = Uuid::from_u128(901);

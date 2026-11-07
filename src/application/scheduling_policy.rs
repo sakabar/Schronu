@@ -317,7 +317,6 @@ impl AtomicReleasePredictionCache {
             instrumentation.record_atomic_release_cache_probe();
             prediction.release > now
                 && states[prediction.preemptor_index].completion_time.is_none()
-                && states[prediction.preemptor_index].remaining_seconds > 0
                 && frontier_generation
                     .is_none_or(|generation| prediction.frontier_generation == generation)
         });
@@ -357,7 +356,6 @@ type ProtectedReadyKey = (DateTime<Local>, Reverse<i64>, usize, Uuid);
 struct SchedulerFrontier {
     normal_ready: BTreeSet<(NormalReadyKey, usize)>,
     protected_ready: BTreeSet<(ProtectedReadyKey, usize)>,
-    zero_ready: BTreeSet<(NormalReadyKey, usize)>,
     release_events: BTreeMap<DateTime<Local>, Vec<DependencyNode>>,
     unresolved_dependencies: Vec<usize>,
     dependency_end: Vec<Option<DateTime<Local>>>,
@@ -1046,7 +1044,6 @@ impl SchedulerFrontier {
         let mut frontier = Self {
             normal_ready: BTreeSet::new(),
             protected_ready: BTreeSet::new(),
-            zero_ready: BTreeSet::new(),
             release_events: BTreeMap::new(),
             unresolved_dependencies,
             dependency_end: vec![None; node_count],
@@ -1117,14 +1114,10 @@ impl SchedulerFrontier {
                         }
                         self.ready[index] = true;
                         let normal_key = normal_selection_key(&states[index]);
-                        if states[index].remaining_seconds == 0 {
-                            self.zero_ready.insert((normal_key, index));
-                        } else {
-                            self.normal_ready.insert((normal_key, index));
-                            if states[index].effective_deadline.is_some() {
-                                self.protected_ready
-                                    .insert((protected_selection_key(&states[index]), index));
-                            }
+                        self.normal_ready.insert((normal_key, index));
+                        if states[index].effective_deadline.is_some() {
+                            self.protected_ready
+                                .insert((protected_selection_key(&states[index]), index));
                         }
                     }
                     DependencyNode::Completion(_) => {
@@ -1188,17 +1181,6 @@ impl SchedulerFrontier {
                 match node {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() || self.ready[index] {
-                            continue;
-                        }
-                        if states[index].remaining_seconds == 0 {
-                            self.complete_node_speculatively(
-                                node,
-                                release,
-                                states,
-                                instrumentation,
-                                &mut derived_releases,
-                                &mut change,
-                            );
                             continue;
                         }
                         self.ready[index] = true;
@@ -1307,8 +1289,6 @@ impl SchedulerFrontier {
                     DependencyNode::Task(index) => {
                         if states[index].completion_time.is_some() {
                             false
-                        } else if states[index].remaining_seconds == 0 {
-                            true
                         } else {
                             released_tasks.push(index);
                             false
@@ -1356,17 +1336,12 @@ impl SchedulerFrontier {
         batches
     }
 
-    fn first_zero(&self) -> Option<usize> {
-        self.zero_ready.first().map(|(_, index)| *index)
-    }
-
     fn remove_ready(&mut self, index: usize, state: &FlexibleState) {
         if !self.ready[index] {
             return;
         }
         self.ready[index] = false;
         let normal_key = normal_selection_key(state);
-        self.zero_ready.remove(&(normal_key, index));
         self.normal_ready.remove(&(normal_key, index));
         if state.effective_deadline.is_some() {
             self.protected_ready
@@ -1494,14 +1469,10 @@ impl SchedulerFrontier {
         }
         self.ready[index] = true;
         let normal_key = normal_selection_key(state);
-        if state.remaining_seconds == 0 {
-            self.zero_ready.insert((normal_key, index));
-        } else {
-            self.normal_ready.insert((normal_key, index));
-            if state.effective_deadline.is_some() {
-                self.protected_ready
-                    .insert((protected_selection_key(state), index));
-            }
+        self.normal_ready.insert((normal_key, index));
+        if state.effective_deadline.is_some() {
+            self.protected_ready
+                .insert((protected_selection_key(state), index));
         }
     }
 
@@ -1673,9 +1644,6 @@ fn next_preempting_release(
         frontier.future_task_release_batches(now, evaluation_end, states, instrumentation)
     {
         for index in released_indices {
-            if states[index].remaining_seconds == 0 {
-                continue;
-            }
             additional_normal.insert((normal_selection_key(&states[index]), index));
             if states[index].effective_deadline.is_some() {
                 additional_protected.insert((protected_selection_key(&states[index]), index));
@@ -2398,23 +2366,6 @@ fn schedule_tasks_by_priority_instrumented(
         if let Some((_, fixed_end)) = fixed_slot_containing(state.now, &state.fixed_slots) {
             state.slack_index.record_fixed_skip(fixed_end);
             state.now = fixed_end;
-            continue;
-        }
-
-        // 本当に作業量が0秒のtaskも、表示とdependency解放の決定的な点を持つ。
-        if let Some(index) = state.frontier.first_zero() {
-            instrumentation.record_segment();
-            state.scheduled_tasks.push(to_scheduled_task(
-                &state.states[index].candidate,
-                state.now,
-                state.now,
-                0,
-                state.states[index].total_work_seconds,
-            ));
-            state.states[index].completion_time = Some(state.now);
-            state
-                .frontier
-                .complete(index, state.now, &state.states, instrumentation);
             continue;
         }
 

@@ -47,6 +47,8 @@ window内で残作業が完了するfixedには、task ID、最早発生時刻�
 
 slackが0以下のgroupがある場合は、最も早いcritical deadline以下のready taskだけを保護対象にします。その中ではeffective deadline昇順、priority降順、rank、UUIDの順です。保護対象がまだreleaseされていない場合は、実行可能なtaskを通常順で進め、releaseまたはslack境界で再選択します。
 
+残作業が0秒の未完了flexible taskも同じ選択規則に従います。選択された時刻に開始・終了が同じ予定を置き、時間を消費せずdependencyを解放します。releaseや先読みだけでは完了扱いにしません。例えば90分のtask Aの後に0秒のtask B、Cが選ばれる場合、B、CはどちらもAの終了時刻に配置します。見積時間・実績時間や残作業秒数は変更しません。
+
 segmentは次の最も早いeventで閉じます。
 
 - 選択taskの完了
