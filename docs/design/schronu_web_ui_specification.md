@@ -2,7 +2,7 @@
 
 ## 1. Summary
 
-`schronu-web`を、localStorageに保持する複数の`work_sessions`と、予定・完了を切り替える一覧、オンデマンド全件のSchronu schedule、今日から7日間の負荷帯、今日から27日後までの繰返負荷集計を表示するDioxus single-page UIへ置換する。
+`schronu-web`を、localStorageに保持する複数の`work_sessions`と、予定・完了を切り替える一覧、オンデマンド全件のSchronu schedule、今日から8日間の負荷帯、今日から27日後までの繰返負荷集計を表示するDioxus single-page UIへ置換する。
 
 WebセッションはSchronu本体のcurrent taskと独立させる。Schronuの`get_focus`は自動選定の内部実装としてだけ利用し、UI上の名称は「セッション」に統一する。
 
@@ -203,7 +203,7 @@ ListAllTasksRequest {
 }
 ```
 
-負荷取得は現在logical dateから6日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
+負荷取得は現在logical dateから7日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
 
 ```text
 BandDay {
@@ -249,11 +249,11 @@ RoutineLoadRow {
 }
 ```
 
-`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、7日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、同一日の複数segmentを`work_seconds_by_date`へ合算する。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。Web read modelは同じscheduleと既存の全日free-time helperを使って28 logical datesを1回走査し、`busy_time_slot`、`end_of_day_offset_minutes`、DSTを反映した`full_day_available_seconds_by_date`を生成する。このmapは今日もlogical date全体を対象とする。今日の日付指標と今日を含む曜日指標は、同じresponseの帯が持つ利用不可と経過済みを24時間から除いた残り可処分秒数を今日の分母にし、曜日指標では他の同曜日日の全日容量と合算する。帯が欠落する旧responseでは全日容量へfallbackする。既存の`peak_date`と`peak_work_seconds`も情報量と旧wire互換性のため保持するが、現行のCLIとWebでは表示しない。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
+`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、8日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、同一日の複数segmentを`work_seconds_by_date`へ合算する。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。Web read modelは同じscheduleと既存の全日free-time helperを使って28 logical datesを1回走査し、`busy_time_slot`、`end_of_day_offset_minutes`、DSTを反映した`full_day_available_seconds_by_date`を生成する。このmapは今日もlogical date全体を対象とする。今日の日付指標と今日を含む曜日指標は、同じresponseの帯が持つ利用不可と経過済みを24時間から除いた残り可処分秒数を今日の分母にし、曜日指標では他の同曜日日の全日容量と合算する。帯が欠落する旧responseでは全日容量へfallbackする。既存の`peak_date`と`peak_work_seconds`も情報量と旧wire互換性のため保持するが、現行のCLIとWebでは表示しない。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
 
 `horizon_day_count`、`average_work_seconds`、2つの日付別mapは追加fieldとする。旧payloadでmapが欠落する場合はserver DTOとclient wireの双方で空mapとして復元し、clientはmapと範囲選択を表示しない。旧8日payloadで既存の追加fieldが欠落する場合、clientは`horizon_day_count`を8として補い、平均秒数を`total_work_seconds / occurrence_day_count`で求める。`peak_date`と`peak_work_seconds`は新payloadから削除しない。
 
-負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から7日の負荷」とする。繰返負荷は月曜始まりの7列mapを全体表の上へ置き、先頭・末尾の範囲外cellを空欄にする。日付cellは日付、`繰返負荷 - 可処分時間`の符号付き差分、`繰返秒数 / 可処分秒数`の最寄り整数%を3行で表示する。超過は`+H:MM`、余裕は`-H:MM`、一致は`0:00`とし、分未満を切り捨てる。今日の分母は帯の`利用不可`と`経過済み`を24時間から除いた残り可処分秒数、未来日は全日可処分秒数とする。濃度だけを100%で飽和させ、日付の100%未満は繰返秒数と可処分秒数から得た未丸めの負荷率rに対するr/(1-r)を0〜100の赤い濃度へ飽和させ、曜日見出しの100%未満は`--surface-muted`の中立背景を維持し、どちらも100%以上は`--red-dark`の濃赤背景と白文字へ切り替える。0容量では差分を表示して割合文字を`--`とするが、日付cellは超過色を適用する。曜日見出しと日付選択後の表は0容量を`--`表示のままとする。曜日見出しは同じ曜日4日分の繰返秒数を、今日を含む場合は今日の残り可処分秒数と他の日の全日可処分秒数の合計、今日を含まない場合は4日分の全日可処分秒数の合計で割る。
+負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から8日の負荷」とする。繰返負荷は月曜始まりの7列mapを全体表の上へ置き、先頭・末尾の範囲外cellを空欄にする。日付cellは日付、`繰返負荷 - 可処分時間`の符号付き差分、`繰返秒数 / 可処分秒数`の最寄り整数%を3行で表示する。超過は`+H:MM`、余裕は`-H:MM`、一致は`0:00`とし、分未満を切り捨てる。今日の分母は帯の`利用不可`と`経過済み`を24時間から除いた残り可処分秒数、未来日は全日可処分秒数とする。濃度だけを100%で飽和させ、日付の100%未満は繰返秒数と可処分秒数から得た未丸めの負荷率rに対するr/(1-r)を0〜100の赤い濃度へ飽和させ、曜日見出しの100%未満は`--surface-muted`の中立背景を維持し、どちらも100%以上は`--red-dark`の濃赤背景と白文字へ切り替える。0容量では差分を表示して割合文字を`--`とするが、日付cellは超過色を適用する。曜日見出しと日付選択後の表は0容量を`--`表示のままとする。曜日見出しは同じ曜日4日分の繰返秒数を、今日を含む場合は今日の残り可処分秒数と他の日の全日可処分秒数の合計、今日を含まない場合は4日分の全日可処分秒数の合計で割る。
 
 初期の全体表は「間隔 / 28日合計 / 通常比 / 発生日数 / 1日平均 / プロジェクト・繰返」の6列とする。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 通常比 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 通常比 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
@@ -263,7 +263,7 @@ RoutineLoadRow {
 
 負荷は手動の「更新」と、初回表示・reload・背景更新の再試行のbootstrap、自動セッション(通常・分数指定)、予定・完了一覧、「全て」の取得終了に連動して、表示tabにかかわらず1回取得する。bootstrap後に一覧取得が続く場合は一覧取得終了後だけ、「全て」は全page取得終了または途中失敗時だけ取得する。元の取得が失敗した場合や自動セッションの候補がない場合も負荷取得を行い、元のerrorと再試行状態は維持する。mutationは後続の一覧取得を通して連動し、mutation失敗だけでは取得しない。古い・無効化済み・重複応答、tab切替だけ、local操作、負荷内の表示・範囲切替では取得せず、定期pollingもしない。負荷取得失敗時は直前のdataと更新時刻を保持し、inline errorと手動更新で再試行できる。
 
-7日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと赤い`HH:MM`で保持する。余差累・空差累は名称と数値をbaselineで揃え、正の値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、当日を最小4.25rem、未来6日を各最小2.75remとして残り高を配分する。35rem以上60rem以下ではtoolbar、4列2段の凡例、rowをcompact化し、1日全体captionを視覚的に省略する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
+8日帯ではserverはCLIと同じくtaskがある日だけ累積計算を進め、表示のために補う空日は直前の累積値を保持する。前倒し可能量にはsegment秒数ではなくCLIと同じtask見積秒数を用いる。clientは上記5区分を順に24時間へclipし、残りを空き、超過分を別の赤い`HH:MM`として表示する。Webの帯色は繰返を明るい青`#60a5fa`、余差を深緑`#166534`、空きを明るい緑`#4ade80`とし、CLIのANSI配色は変更しない。当日だけはclip済みの`24時間 - 利用不可 - 経過済み`を残り容量とし、clip済みの繰返、単発、余差、空きをその容量に対して再正規化した「残り枠」barを1日全体barの上へ表示する。残り容量0では全segment幅を0とする。各bar直下には同じ超過秒数を表す赤いレール領域を常時確保し、超過0では透明の幅0、正値では最小2pxの右寄せ表示とする。1日全体は`min(超過 / 24時間, 1)`、当日の残り枠は残り容量が正なら`min(超過 / 残り容量, 1)`の幅とし、残り容量0かつ超過ありは満幅とする。レールは装飾としてassistive technologyから隠し、正確な超過時間は既存のrow ARIA labelと超過数値列で保持する。共通見出しは「日付 / 余差累 / 空差累 / 超過 / 帯グラフ」とし、rowは日付、数値3列、帯の順に同じgrid列へ配置する。日付は上段に月日、下段に曜日だけを置き、「今日」と「一覧を見る」は表示しない。日付列は40px、380px幅以下では38pxとし、数値列は3桁時間の符号付き値を省略せず表示できる幅を確保する。余差累・空差累は既存の符号付き`HH:MM`、超過は符号なし時間とし、超過なしも`0:00`を表示する。3数値とも丸め前の秒数の正値を赤、0以下を`--green-dark`の緑で表示し、両方の名称と符号付き値、および当日の残り容量と4区分を日付rowのARIA labelにも含める。viewport高が35rem以上の場合は、負荷viewの高さをbottom navigationとshell余白を除いた動的viewport高に固定し、8日へ均等に残り高を配分する。通常のrowは48px以上、35rem以上60rem以下は40px以上とする。当日の帯は上が残り枠、下が1日全体で、両者の間隔は6pxとする。残り枠の「残り」と容量は保持し、1日全体captionと`24:00`は全画面高で表示しない。35rem以上60rem以下ではtoolbar、4列2段の凡例、表示切替、rowをcompact化する。これは取得成功してinline errorがない状態のno-scroll契約とし、35rem未満またはinline error表示中はrowを重ねず通常の縦scrollを許可する。負荷dataはlocalStorageへ保存しない。
 
 `segment_index`は`get_schedule`の実task・予測occurrenceを含む全segmentに対する0始まりの連続indexとし、同一occurrenceの複数segmentと対応順を保持する。`schedule_date`は共有logical date helperがsegmentごとに算出する。`deadline_label`、`misses_deadline`、2種類の表示分類、`is_leaf`は日付別read modelと同じserver helperで確定する。`display_task_name`はapplication層がCLIと同じ共通関数で生成し、`total_work_seconds > scheduled_work_seconds`の場合だけ、両秒数を個別に分へ切り上げた`<segment分/total分>`を正規task名へ直結する。日付別・全件のclientはこの表示名を再計算・再整形せず共通`ListRowViewModel`へ投影し、task名cellとそのARIA labelだけに使用する。検索、セッション保存、先送り確認、操作labelはprefixを含まない`task.task_name`を使用する。旧保存payloadで`display_task_name`が欠落する場合だけ正規task名へfallbackし、clientで分割表示を再生成しない。保存済み日付別viewの旧payload由来で`deadline_display_kind == None`かつ`misses_deadline == true`なら`project_list_rows`だけが`Overrun`として表示する。保存しないlive全件行の`project_all_task_rows`は矛盾値も含めserver分類を無変換で保持する。task分類の欠落は`NonRepetitive`とする。全件行は先送りplanを持たず、clientはcursorをopaqueな文字列として扱う。row keyはactual task IDまたは予測`occurrence_key`にsegment timingまたは`segment_index`を組み合わせる。
 
@@ -800,8 +800,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 | 完了modeから別tabを経た一覧への再進入 | 選択日の`list_tasks`。読込終了後に`load_band` | なし | modeを予定としてview stateへ保存 | response全体で予定一覧を置換 | なし |
 | 負荷以外へのtab切替(一覧再取得が必要な場合を除く) | なし | なし | view stateを保存 | なし | なし |
 | 負荷tabへの切替 | なし | なし | view stateだけを保存し、負荷dataは保存しない | 未取得表示または直前の負荷dataを維持 | なし |
-| 負荷内の表示切替 | なし | なし | なし | 取得済みの7日帯と28日繰返負荷をclient内で切替 | なし |
-| 負荷の「更新」 | `load_band` | なし | なし | 直前の負荷dataを維持し、成功時に7日帯と28日繰返負荷を同時置換 | なし |
+| 負荷内の表示切替 | なし | なし | なし | 取得済みの8日帯と28日繰返負荷をclient内で切替 | なし |
+| 負荷の「更新」 | `load_band` | なし | なし | 直前の負荷dataを維持し、成功時に8日帯と28日繰返負荷を同時置換 | なし |
 | 毎秒tick | なし | なし | なし。client stateからbufferを再計算 | なし | なし |
 | 共有検索・日付入力の編集 | なし | なし | view stateを保存 | 取得済みrowをclient内で絞り込み | なし |
 | 日付button・日付入力 | active modeに応じて`list_tasks`または`list_completed_tasks`。読込終了後に`load_band` | なし | 入力文字列をview stateへ保存 | responseのrowへ置換 | なし |

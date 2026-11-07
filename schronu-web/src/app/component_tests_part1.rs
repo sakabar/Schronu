@@ -197,7 +197,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     let mut dom = VirtualDom::new(root);
     let html = render_band_load_view(&mut dom);
 
-    assert!(html.contains("今日から7日の負荷"), "{html}");
+    assert!(html.contains("今日から8日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
         html.contains("余差累+01:15、空差累-00:45"),
@@ -205,29 +205,29 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     );
     assert!(
         html.contains(
-            "<span>余差累</span><strong class=\"load-metric-value is-over\">+01:15"
+            "<strong class=\"load-metric-value is-over\">+01:15"
         ),
         "{html}"
     );
     assert!(
         html.contains(
-            "<span>空差累</span><strong class=\"load-metric-value is-within\">-00:45"
+            "<strong class=\"load-metric-value is-within\">-00:45"
         ),
         "{html}"
     );
     assert!(
         html.contains(
-            "<span>余差累</span><strong class=\"load-metric-value is-within\">+00:00"
+            "<strong class=\"load-metric-value is-within\">+00:00"
         ),
         "{html}"
     );
     assert!(
         html.contains(
-            "<span>空差累</span><strong class=\"load-metric-value is-over\">+00:30"
+            "<strong class=\"load-metric-value is-over\">+00:30"
         ),
         "{html}"
     );
-    assert!(html.contains("超過 01:30"), "{html}");
+    assert!(html.contains("load-metric-value is-over\">01:30"), "{html}");
     assert!(html.contains("超過0時間0分"), "{html}");
 }
 
@@ -298,7 +298,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let click_ids = rebuild_with_click_listeners(&mut dom);
     let initial_html = dioxus::ssr::render(&dom);
 
-    assert!(initial_html.contains("今日から7日の負荷"), "{initial_html}");
+    assert!(initial_html.contains("今日から8日の負荷"), "{initial_html}");
     assert!(initial_html.contains("帯の凡例"), "{initial_html}");
     assert!(!initial_html.contains("routine-load-table"), "{initial_html}");
     assert!(
@@ -517,15 +517,15 @@ fn 負荷viewは当日だけ残り枠を全体barの上へ表示する() {
     assert_eq!(today_html.matches("class=\"load-band\"").count(), 2, "{html}");
     assert_eq!(future_html.matches("class=\"load-band\"").count(), 1, "{html}");
     assert!(
-        today_html.find("残り枠").unwrap() < today_html.find("1日全体").unwrap(),
+        today_html.find("load-focus-group").unwrap() < today_html.find("load-overview-stack").unwrap(),
         "{html}"
     );
     let focus_start = today_html
         .find("<span class=\"load-focus-group\"")
         .expect("remaining focus group must exist");
     let overview_start = today_html
-        .find("<span class=\"load-band-caption load-overview-caption\"")
-        .expect("full-day overview caption must exist");
+        .find("<span class=\"load-band-stack load-overview-stack\"")
+        .expect("full-day overview stack must exist");
     let focus_html = &today_html[focus_start..overview_start];
     assert!(focus_html.contains("08:00"), "{html}");
     for expected in [
@@ -595,7 +595,7 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
     assert!(today_html.contains("width:16.6667%"), "{html}");
     assert!(future_html.contains("width:0.0000%"), "{html}");
     assert!(future_html.contains("is-zero"), "{html}");
-    assert!(today_html.contains("超過 04:00"), "{html}");
+    assert!(today_html.contains("load-metric-value is-over\">04:00"), "{html}");
     assert!(today_html.contains("超過4時間0分"), "{html}");
 }
 
@@ -631,8 +631,8 @@ fn 負荷viewは残り容量zeroを空barとして表示する() {
         .find("<span class=\"load-focus-group\"")
         .expect("remaining focus group must exist");
     let overview_start = html
-        .find("<span class=\"load-band-caption load-overview-caption\"")
-        .expect("full-day overview caption must exist");
+        .find("<span class=\"load-band-stack load-overview-stack\"")
+        .expect("full-day overview stack must exist");
     let focus_html = &html[focus_start..overview_start];
 
     assert!(html.contains("残り枠0時間0分"), "{html}");
@@ -1109,7 +1109,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
 }
 
 #[test]
-fn 負荷取得は7日帯と28日繰返負荷を同時に置換する() {
+fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     let request_id = match state.request_load_band() {

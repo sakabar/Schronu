@@ -11,3 +11,6 @@ mod read_load_refresh_tests;
 
 #[path = "time_display_tests.rs"]
 mod time_display_tests;
+
+#[path = "load_layout_tests.rs"]
+mod load_layout_tests;

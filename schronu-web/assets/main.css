@@ -1444,9 +1444,7 @@ button:disabled {
     margin-inline: auto;
 }
 
-.load-toolbar,
-.load-day-heading,
-.load-day-footer {
+.load-toolbar {
     display: flex;
     min-width: 0;
     align-items: center;
@@ -1469,7 +1467,6 @@ button:disabled {
 }
 
 .load-updated,
-.load-open-list,
 .load-status {
     color: var(--muted);
     font-size: 0.78rem;
@@ -1780,21 +1777,51 @@ button.routine-load-day.is-at-capacity {
 .is-free { background: var(--band-free); }
 .is-overflow { background: var(--band-overflow); }
 
+.load-grid {
+    --load-columns: 40px 7ch 7ch 6ch minmax(0, 1fr);
+    --load-column-gap: 8px;
+    min-width: 0;
+    font-size: 12px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.load-column-headings {
+    display: grid;
+    grid-template-columns: var(--load-columns);
+    column-gap: var(--load-column-gap);
+    padding: 0 8px 5px;
+    color: var(--muted);
+    font-size: inherit;
+}
+
+.load-column-headings > span:nth-child(n+2):nth-child(-n+4) {
+    text-align: right;
+}
+
 .load-days {
     display: grid;
     width: 100%;
     min-width: 0;
-    gap: 0.45rem;
+    gap: 5px;
 }
 
 .load-day {
+    display: grid;
+    grid-template-columns: var(--load-columns);
+    column-gap: var(--load-column-gap);
+    align-items: center;
     width: 100%;
     min-width: 0;
-    padding: 0.65rem;
-    border-color: transparent;
+    min-height: 48px;
+    padding: 3px 8px;
+    border: 0;
     background: var(--surface);
     box-shadow: 0 0.35rem 1rem rgb(35 65 52 / 6%);
     text-align: left;
+    font-size: inherit;
+    font-weight: inherit;
+    line-height: 1.2;
 }
 
 .load-day.is-today {
@@ -1803,44 +1830,45 @@ button.routine-load-day.is-at-capacity {
 }
 
 .load-date {
+    display: grid;
+    gap: 2px;
     white-space: nowrap;
+    font-size: 12px;
 }
 
-.load-today {
-    margin-left: 0.35rem;
-    color: var(--green-dark);
-    font-size: 0.75rem;
+.load-date small {
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.load-bands {
+    display: grid;
+    min-width: 0;
+    gap: 6px;
 }
 
 .load-band-caption {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: 0.5rem;
-    margin-top: 0.35rem;
-    color: var(--muted);
-    font-size: 0.72rem;
-    font-variant-numeric: tabular-nums;
+    gap: 3px;
+    margin-bottom: 2px;
+    color: var(--green-dark);
+    font-size: 11px;
+    line-height: 12px;
+    white-space: nowrap;
 }
 
 .load-band-caption strong {
     color: var(--ink);
 }
 
-.load-focus-caption {
-    color: var(--green-dark);
-}
-
-.load-focus-caption small {
-    font-size: inherit;
-}
-
 .load-band {
     display: flex;
     width: 100%;
-    height: 0.9rem;
+    height: 6px;
     overflow: hidden;
-    border-radius: 0.3rem;
+    border-radius: 2px;
     background: var(--surface-muted);
 }
 
@@ -1848,24 +1876,16 @@ button.routine-load-day.is-at-capacity {
     display: block;
     width: 100%;
     min-width: 0;
-    margin-block: 0.45rem 0.4rem;
     overflow: hidden;
-}
-
-.load-focus-stack {
-    margin-block: 0.15rem 0;
-}
-
-.load-day.is-today > .load-overview-stack {
-    margin-top: 0.15rem;
 }
 
 .load-overflow-rail {
     display: flex;
     width: 100%;
-    height: 0.2rem;
+    height: 3px;
+    margin-top: 1px;
     overflow: hidden;
-    border-radius: 0.1rem;
+    border-radius: 1px;
     background: transparent;
 }
 
@@ -1888,24 +1908,11 @@ button.routine-load-day.is-at-capacity {
     height: 100%;
 }
 
-.load-metrics {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    gap: 0.25rem 0.75rem;
-}
-
-.load-metric {
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.3rem;
-    color: var(--muted);
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-}
-
 .load-metric-value {
     color: var(--ink);
+    font-weight: inherit;
+    text-align: right;
+    white-space: nowrap;
 }
 
 .load-metric-value.is-over {
@@ -1916,19 +1923,17 @@ button.routine-load-day.is-at-capacity {
     color: var(--green-dark);
 }
 
-.load-overflow,
 .load-error {
     color: var(--red);
-}
-
-.load-overflow {
-    flex: 0 0 auto;
-    font-size: 0.75rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.load-error {
     margin-block: 0 0.75rem;
+}
+
+@media (max-width: 380px) {
+    .load-grid {
+        --load-columns: 38px 7ch 7ch 6ch minmax(0, 1fr);
+        --load-column-gap: 5px;
+        font-size: 11px;
+    }
 }
 
 @media (max-width: 52rem) {
@@ -2093,10 +2098,17 @@ button.routine-load-day.is-at-capacity {
         height: auto;
     }
 
+    .load-grid {
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+    }
+
     .load-days {
         flex: 1 1 auto;
         min-height: 0;
-        grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));
+        grid-template-rows: repeat(8, minmax(40px, 1fr));
     }
 }
 
@@ -2127,60 +2139,40 @@ button.routine-load-day.is-at-capacity {
         font-size: 0.62rem;
     }
 
-    .load-days { gap: 0.2rem; }
-
-    .load-day {
-        min-height: 0;
-        padding: 0.2rem 0.4rem;
-        font-size: 0.72rem;
-        line-height: 1.15;
+    .load-mode-tabs {
+        margin-bottom: 4px;
+        padding: 2px;
     }
 
-    .load-day-heading,
-    .load-day-footer,
-    .load-metrics {
-        flex-wrap: nowrap;
-        gap: 0.35rem;
+    .load-mode-tab {
+        min-height: 30px;
+        padding: 3px 8px;
+        font-size: 12px;
+    }
+
+    .load-column-headings {
+        padding-bottom: 3px;
+        line-height: 14px;
+    }
+
+    .load-days { gap: 2px; }
+
+    .load-day {
+        min-height: 40px;
+        padding-block: 2px;
     }
 
     .load-band {
-        height: 0.425rem;
-    }
-
-    .load-band-stack {
-        margin-block: 0.1rem;
+        height: 5px;
     }
 
     .load-overflow-rail {
-        height: 0.125rem;
+        height: 2px;
     }
 
     .load-band-caption {
-        margin-top: 0.1rem;
-        font-size: 0.64rem;
-    }
-
-    .load-overview-caption {
-        display: none;
-    }
-
-    .load-focus-stack {
-        margin-block: 0.1rem 0;
-    }
-
-    .load-day.is-today > .load-overview-stack {
-        margin-block: 0.2rem 0.1rem;
-    }
-
-    .load-metric {
-        gap: 0.2rem;
-        font-size: 0.64rem;
-    }
-
-    .load-today,
-    .load-open-list,
-    .load-overflow {
-        font-size: 0.64rem;
+        margin-bottom: 1px;
+        line-height: 11px;
     }
 }
 

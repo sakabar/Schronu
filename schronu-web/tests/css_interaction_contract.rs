@@ -108,18 +108,22 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     assert!(row.contains("width: 100%;"));
     assert!(row.contains("min-width: 0;"));
 
-    for selector in [".load-day-heading", ".load-day-footer"] {
-        let shared = block_body(
-            MAIN_CSS,
-            ".load-toolbar,\n.load-day-heading,\n.load-day-footer",
-        );
-        assert!(MAIN_CSS.contains(selector));
-        assert!(shared.contains("min-width: 0;"));
-        assert!(shared.contains("flex-wrap: wrap;"));
+    let grid = block_body(MAIN_CSS, ".load-grid");
+    assert!(grid.contains("--load-columns: 40px 7ch 7ch 6ch minmax(0, 1fr);"));
+    assert!(row.contains("font-weight: inherit;"));
+    let heading = block_body(MAIN_CSS, ".load-column-headings");
+    for block in [heading, row] {
+        assert!(block.contains("grid-template-columns: var(--load-columns);"));
+        assert!(block.contains("column-gap: var(--load-column-gap);"));
     }
-    let metric = block_body(MAIN_CSS, ".load-metric {");
-    assert!(metric.contains("align-items: baseline;"));
-    assert!(MAIN_CSS.contains("@media (max-width: 46rem)"));
+    let narrow = block_body(MAIN_CSS, "@media (max-width: 380px)");
+    assert!(block_body(narrow, ".load-grid")
+        .contains("--load-columns: 38px 7ch 7ch 6ch minmax(0, 1fr);"));
+    assert!(block_body(MAIN_CSS, ".load-bands").contains("gap: 6px;"));
+    assert!(
+        block_body(MAIN_CSS, ".load-metric-value.is-within").contains("color: var(--green-dark);")
+    );
+    assert!(block_body(MAIN_CSS, ".load-metric-value.is-over").contains("color: var(--red);"));
 }
 
 #[test]
@@ -268,44 +272,24 @@ fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
     let days = block_body(no_scroll, ".load-days");
     assert!(days.contains("flex: 1 1 auto;"));
     assert!(days.contains("min-height: 0;"));
-    assert!(days
-        .contains("grid-template-rows: minmax(4.25rem, 1.55fr) repeat(6, minmax(2.75rem, 1fr));"));
-
+    assert!(days.contains("grid-template-rows: repeat(8, minmax(40px, 1fr));"));
     let compact = block_body(
         MAIN_CSS,
         "@media (min-height: 35rem) and (max-height: 60rem)",
     );
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
-    let overview_caption = block_body(compact, ".load-overview-caption");
-    assert!(overview_caption.contains("display: none;"));
-
     let row = block_body(compact, ".load-day {");
-    assert!(row.contains("min-height: 0;"));
-    assert!(row.contains("padding: 0.2rem 0.4rem;"));
-    assert!(row.contains("font-size: 0.72rem;"));
-    assert!(row.contains("line-height: 1.15;"));
-
+    assert!(row.contains("min-height: 40px;"));
     let stack = block_body(MAIN_CSS, ".load-band-stack");
     assert!(stack.contains("min-width: 0;"));
-    assert!(stack.contains("margin-block: 0.45rem 0.4rem;"));
     assert!(stack.contains("overflow: hidden;"));
-    let band = block_body(MAIN_CSS, ".load-band {");
-    assert!(band.contains("height: 0.9rem;"));
-    let rail = block_body(MAIN_CSS, ".load-overflow-rail");
-    assert!(rail.contains("height: 0.2rem;"));
     let fill = block_body(MAIN_CSS, ".load-overflow-fill");
     assert!(fill.contains("min-width: 2px;"));
     assert!(fill.contains("margin-left: auto;"));
-    let zero_fill = block_body(MAIN_CSS, ".load-overflow-fill.is-zero");
-    assert!(zero_fill.contains("min-width: 0;"));
-
-    let compact_stack = block_body(compact, ".load-band-stack");
-    assert!(compact_stack.contains("margin-block: 0.1rem;"));
-    let compact_band = block_body(compact, ".load-band {");
-    assert!(compact_band.contains("height: 0.425rem;"));
-    let compact_rail = block_body(compact, ".load-overflow-rail");
-    assert!(compact_rail.contains("height: 0.125rem;"));
+    assert!(block_body(MAIN_CSS, ".load-overflow-fill.is-zero").contains("min-width: 0;"));
+    assert!(block_body(compact, ".load-band {").contains("height: 5px;"));
+    assert!(block_body(compact, ".load-overflow-rail").contains("height: 2px;"));
 }
 
 #[test]
