@@ -132,6 +132,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
+                    segment.task.start_time.timestamp_millis(),
                 ),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
@@ -381,6 +382,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                     segment.task.name.clone(),
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
+                    segment.task.start_time.timestamp_millis(),
                 ),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
@@ -554,8 +556,10 @@ fn scheduled_task_dto(
     task_name: String,
     estimated_work_seconds: i64,
     actual_work_seconds: i64,
+    start_time_epoch_ms: i64,
 ) -> ScheduledTaskDto {
     ScheduledTaskDto {
+        start_time_epoch_ms: Some(start_time_epoch_ms),
         task_id,
         task_name,
         estimated_work_seconds,
