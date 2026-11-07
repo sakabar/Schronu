@@ -63,7 +63,7 @@ pub(crate) fn LoadView(
                         if mode() == LoadMode::Routine {
                             "{routine_heading}"
                         } else {
-                            "今日から8日の負荷"
+                            "今日から14日の負荷"
                         }
                     }
                     p { class: "load-updated", "{updated}" }

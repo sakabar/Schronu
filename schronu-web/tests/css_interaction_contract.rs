@@ -258,25 +258,18 @@ fn routine_load_capacity_threshold_uses_dark_red_with_white_text() {
 }
 
 #[test]
-fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
-    let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
-    assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
-
-    let view = block_body(no_scroll, ".load-view");
-    assert!(view.contains("height: calc(100dvh"));
-    assert!(view.contains("display: flex;"));
-    assert!(view.contains("flex-direction: column;"));
-    let error_view = block_body(no_scroll, ".load-view.has-error");
-    assert!(error_view.contains("height: auto;"));
-
-    let days = block_body(no_scroll, ".load-days");
-    assert!(days.contains("flex: 1 1 auto;"));
-    assert!(days.contains("min-height: 0;"));
-    assert!(days.contains("grid-template-rows: repeat(8, minmax(40px, 1fr));"));
-    let compact = block_body(
-        MAIN_CSS,
-        "@media (min-height: 35rem) and (max-height: 60rem)",
-    );
+fn load_rows_keep_equal_minimum_heights_with_page_scrolling() {
+    assert!(!MAIN_CSS.contains("@media (min-height: 35rem)"));
+    assert!(!MAIN_CSS.contains("grid-template-rows: repeat(8,"));
+    let days = block_body(MAIN_CSS, ".load-days");
+    assert!(days.contains("grid-auto-rows: minmax(48px, 1fr);"));
+    let row = block_body(MAIN_CSS, ".load-day {");
+    assert!(row.contains("min-height: 48px;"));
+    let view = block_body(MAIN_CSS, ".load-view");
+    assert!(!view.contains("height:"));
+    assert!(!view.contains("overflow:"));
+    let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
+    assert!(block_body(compact, ".load-days").contains("grid-auto-rows: minmax(40px, 1fr);"));
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
     let row = block_body(compact, ".load-day {");

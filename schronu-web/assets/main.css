@@ -1804,6 +1804,7 @@ button.routine-load-day.is-at-capacity {
     width: 100%;
     min-width: 0;
     gap: 5px;
+    grid-auto-rows: minmax(48px, 1fr);
 }
 
 .load-day {
@@ -2082,37 +2083,7 @@ button.routine-load-day.is-at-capacity {
 
 }
 
-@media (min-height: 35rem) {
-    .load-view {
-        display: flex;
-        height: calc(100dvh - var(--bottom-navigation-height) - env(safe-area-inset-bottom) - 3.5rem);
-        min-height: 0;
-        flex-direction: column;
-    }
-
-    .load-view.has-error {
-        height: auto;
-    }
-
-    .load-view.is-routine {
-        height: auto;
-    }
-
-    .load-grid {
-        display: flex;
-        flex: 1 1 auto;
-        min-height: 0;
-        flex-direction: column;
-    }
-
-    .load-days {
-        flex: 1 1 auto;
-        min-height: 0;
-        grid-template-rows: repeat(8, minmax(40px, 1fr));
-    }
-}
-
-@media (min-height: 35rem) and (max-height: 60rem) {
+@media (max-height: 60rem) {
 
     .load-toolbar {
         flex: 0 0 auto;
@@ -2155,7 +2126,10 @@ button.routine-load-day.is-at-capacity {
         line-height: 14px;
     }
 
-    .load-days { gap: 2px; }
+    .load-days {
+        gap: 2px;
+        grid-auto-rows: minmax(40px, 1fr);
+    }
 
     .load-day {
         min-height: 40px;

@@ -419,9 +419,22 @@ fn band_dayは日付と累積差分と区分秒数をjsonで保持する() {
 }
 
 #[test]
-fn load_dataは8日帯と28日繰返負荷を同じpayloadで保持する() {
+fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
     let data = LoadData {
-        band_days: Vec::new(),
+        band_days: (3..17)
+            .map(|day| BandDay {
+                logical_date: format!("2026-10-{day:02}"),
+                accumulated_rho_diff_seconds: day * 60,
+                accumulated_free_diff_seconds: -day * 60,
+                durations: BandDurations {
+                    unavailable_seconds: 8 * 3600,
+                    elapsed_seconds: 0,
+                    repetitive_seconds: 3600,
+                    non_repetitive_seconds: day * 60,
+                    rho_leeway_seconds: 1800,
+                },
+            })
+            .collect(),
         routine_load: RoutineLoadReport {
             start_date: "2026-10-03".to_owned(),
             end_date: "2026-10-30".to_owned(),
@@ -432,9 +445,9 @@ fn load_dataは8日帯と28日繰返負荷を同じpayloadで保持する() {
             ]),
             rows: vec![RoutineLoadRow {
                 project_task_id: "project-id".to_owned(),
-                project_name: "生活".to_owned(),
+                project_name: "集計対象".to_owned(),
                 routine_task_id: "routine-id".to_owned(),
-                routine_name: "週次家事".to_owned(),
+                routine_name: "週次集計".to_owned(),
                 repetition_interval_days: 7,
                 total_work_seconds: 15_600,
                 occurrence_day_count: 4,
@@ -457,7 +470,18 @@ fn load_dataは8日帯と28日繰返負荷を同じpayloadで保持する() {
     assert_json_round_trip(
         &data,
         json!({
-            "band_days": [],
+            "band_days": (3..17).map(|day| json!({
+                "logical_date": format!("2026-10-{day:02}"),
+                "accumulated_rho_diff_seconds": day * 60,
+                "accumulated_free_diff_seconds": -day * 60,
+                "durations": {
+                    "unavailable_seconds": 8 * 3600,
+                    "elapsed_seconds": 0,
+                    "repetitive_seconds": 3600,
+                    "non_repetitive_seconds": day * 60,
+                    "rho_leeway_seconds": 1800
+                }
+            })).collect::<Vec<_>>(),
             "routine_load": {
                 "start_date": "2026-10-03",
                 "end_date": "2026-10-30",
@@ -468,9 +492,9 @@ fn load_dataは8日帯と28日繰返負荷を同じpayloadで保持する() {
                 },
                 "rows": [{
                     "project_task_id": "project-id",
-                    "project_name": "生活",
+                    "project_name": "集計対象",
                     "routine_task_id": "routine-id",
-                    "routine_name": "週次家事",
+                    "routine_name": "週次集計",
                     "repetition_interval_days": 7,
                     "total_work_seconds": 15_600,
                     "occurrence_day_count": 4,

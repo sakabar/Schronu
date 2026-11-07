@@ -141,3 +141,53 @@ fn 日別負荷の各行は対象日の一覧選択を通知する() {
         ["2026-11-07", "2026-11-08", "2026-11-09"]
     );
 }
+
+fn fourteen_day_root(props: Props) -> Element {
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+    let rows = (0..14)
+        .map(|offset| BandDay {
+            logical_date: (start + chrono::Duration::days(offset)).to_string(),
+            accumulated_rho_diff_seconds: 0,
+            accumulated_free_diff_seconds: 0,
+            durations: BandDurations {
+                unavailable_seconds: 8 * 3600,
+                elapsed_seconds: 4 * 3600 * i64::from(offset == 0),
+                repetitive_seconds: 5 * 3600,
+                non_repetitive_seconds: 2 * 3600,
+                rho_leeway_seconds: 3600,
+            },
+        })
+        .collect();
+    rsx! {
+        LoadView {
+            rows,
+            observed_at_epoch_ms: None,
+            loading: false,
+            error: None,
+            on_refresh: move |_| {},
+            on_select_date: move |date| props.selected.lock().unwrap().push(date),
+        }
+    }
+}
+
+#[test]
+fn 日別負荷は月境界を跨ぐ14日を表示し最終日を選択できる() {
+    let selected = Arc::default();
+    let mut dom = VirtualDom::new_with_props(
+        fourteen_day_root,
+        Props {
+            selected: Arc::clone(&selected),
+        },
+    );
+    let listeners = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("今日から14日の負荷"), "{html}");
+    assert_eq!(html.matches("<button class=\"load-day").count(), 14);
+    assert!(html.contains("<span>11/25</span><small>水</small>"));
+    assert!(html.contains("<span>12/8</span><small>火</small>"));
+    assert!(!html.contains("14日間"));
+    assert!(!html.contains('〜'));
+    assert_eq!(listeners.len(), 17);
+    dispatch_click(&dom, *listeners.last().unwrap());
+    assert_eq!(*selected.lock().unwrap(), ["2026-12-08"]);
+}
