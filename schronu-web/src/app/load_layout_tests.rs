@@ -83,7 +83,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
 }
 
 #[test]
-fn 日別負荷の数値は丸め前の正負を維持する() {
+fn 日別負荷は余差累zeroだけを灰色にし丸め前の正負を維持する() {
     let html = render();
     let rows = html
         .split("<button class=\"load-day")
@@ -96,7 +96,7 @@ fn 日別負荷の数値は丸め前の正負を維持する() {
             ("is-over", "00:00"),
         ],
         [
-            ("is-within", "+00:00"),
+            ("is-zero", "+00:00"),
             ("is-within", "+00:00"),
             ("is-within", "0:00"),
         ],

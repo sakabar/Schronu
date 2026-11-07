@@ -553,7 +553,8 @@ fn routine_estimate_difference_colors_follow_displayed_sign() {
 }
 
 #[test]
-fn daily_load_compact_layout_retains_weekend_colors_and_touch_target() {
+fn daily_load_compact_layout_retains_zero_and_weekend_colors_and_touch_target() {
+    assert!(block_body(MAIN_CSS, ".load-metric-value.is-zero").contains("color: var(--load-zero);"));
     assert!(block_body(MAIN_CSS, ".load-weekday.is-saturday").contains("color: var(--blue);"));
     assert!(block_body(MAIN_CSS, ".load-weekday.is-sunday").contains("color: var(--red);"));
     let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");

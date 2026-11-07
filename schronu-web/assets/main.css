@@ -29,6 +29,7 @@
     --band-leeway: #166534;
     --band-free: #4ade80;
     --band-overflow: #ff0000;
+    --load-zero: #9ba59f;
     --shadow: 0 0.75rem 2rem rgb(35 65 52 / 9%);
     --bottom-navigation-height: 3.5rem;
 }
@@ -1845,6 +1846,7 @@ button.routine-load-day.is-at-capacity {
 
 .load-weekday.is-saturday { color: var(--blue); }
 .load-weekday.is-sunday { color: var(--red); }
+.load-metric-value.is-zero { color: var(--load-zero); }
 
 .load-bands {
     display: grid;

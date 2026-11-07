@@ -266,7 +266,9 @@ fn BandDayRow(
                 }
             }
             strong {
-                class: if row.accumulated_rho_diff_seconds > 0 {
+                class: if row.accumulated_rho_diff_seconds == 0 {
+                    "load-metric-value is-zero"
+                } else if row.accumulated_rho_diff_seconds > 0 {
                     "load-metric-value is-over"
                 } else {
                     "load-metric-value is-within"

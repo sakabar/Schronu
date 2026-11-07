@@ -217,7 +217,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     );
     assert!(
         html.contains(
-            "<strong class=\"load-metric-value is-within\">+00:00"
+            "<strong class=\"load-metric-value is-zero\">+00:00"
         ),
         "{html}"
     );
