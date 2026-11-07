@@ -562,3 +562,12 @@ fn daily_load_compact_layout_retains_zero_and_weekend_colors_and_touch_target() 
     assert!(block_body(compact, ".load-refresh {").contains("min-height: 44px;"));
     assert!(block_body(compact, ".load-refresh span").contains("height: 26px;"));
 }
+
+#[test]
+fn daily_load_reserves_wrapped_navigation_height_on_narrow_screens() {
+    let selector = ".shell:has(.load-view:not(.is-routine))";
+    let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
+    assert!(block_body(compact, selector).contains("+ 8px)"));
+    let narrow = MAIN_CSS.rsplit("@media (max-width: 380px)").next().unwrap();
+    assert!(block_body(narrow, selector).contains("+ 32px)"));
+}

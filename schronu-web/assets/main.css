@@ -2171,6 +2171,10 @@ button.routine-load-day.is-at-capacity {
 }
 
 @media (max-width: 380px) {
+    .shell:has(.load-view:not(.is-routine)) {
+        padding-bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 32px);
+    }
+
     .load-date { font-size: 11px; }
     .load-day, .load-column-headings { padding-inline: 5px; }
     .band-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 2px; }
