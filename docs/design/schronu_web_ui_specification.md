@@ -699,7 +699,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 背景更新中は、完了modeから別tabを経た一覧tabへの再進入を除く全tabへの切替、検索編集・clear、日付入力編集、保存一覧からのセッション追加、「計測を破棄して再開」、持ち歩きロック、repository確認済みなどserver effectを生成しない操作を許可する。日付button・日付送信、負荷row・更新、自動セッション、記録、完了、完了競合の再送、およびlocal削除後に一覧取得する「計測を破棄して解除」はdisabled表示とorchestratorの共通guardで拒否する。完了modeから別tabを経た一覧tabへの再進入はorchestrator guardで拒否し、active tabとmodeを変更しない。背景更新が完了した後の再操作で、一覧tabへの再進入を受け付ける。通常の利用者起点server通信では最後の確定表示を維持したまま全面overlayを重ねる。
 
-34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonと日付入力・表示buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。「表示」buttonは共通buttonの上下paddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で文字を中央に配置する。日付入力はtask名検索の上へ積み、320px幅でもviewportを超えないようにする。
+34rem以下ではbuffer領域を圧縮する。一覧画面では全幅で日付buttonを高さ36px、日付領域の上下paddingを`0.125rem`と`0.25rem`へ圧縮し、8日分の横スクロールを維持する。日付入力・内包する移動button・検索は通常高さ36px、coarse pointerでは44pxとする。移動buttonは共通buttonのpaddingを打ち消し、flexの両軸中央揃えと`line-height: 1`で「→」を中央に配置する。日付入力と検索は320px幅でも横並びを維持する。
 
 全buttonの`:hover`装飾は`@media (hover: hover) and (pointer: fine)`内だけに定義し、タッチ主体の端末ではタップ後にhover配色を残さない。`:active`と`:focus-visible`はmedia query外に置き、pointer種別にかかわらず操作feedbackを維持する。hover可能なfine pointerではtab、primary action、session startを含む既存hover表現を維持し、選択済み日付buttonのhover中は緑背景と白文字を上書き規則で維持する。
 
@@ -737,12 +737,12 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 「全て」を初めて選択した時と無効化後の再選択時に全件取得を開始する。「全て」選択中のmutation成功後は日付別取得終了から自動再取得を連鎖する。取得中は一覧内に「全てのタスクを取得中です。」を表示し、失敗時はerror messageと「再試行」、無効化時は「タスクが更新されました。自動再取得を待っています。」を表示し、「更新」buttonは置かない。失敗時の自動再試行は行わない。検索とtableは`Loaded`の時だけ表示する。
 - 全件取得は全面overlayを出さない。取得中もtab、日付button、日付入力を操作でき、日付別へ移動しても取得とpage連結を継続する。取得完了後に戻った場合はmemory上の結果を描画する。
 - 日付button click時と4種類のセッション終了成功後にactive modeの一覧endpointを送る。
-- 日付button直下、task table直上へ日付入力とtask名検索の操作領域を置く。viewport幅にかかわらず日付入力を検索の上に配置する。
-- 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと「表示」のどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
+- 日付button直下、task table直上へ共通の非公開componentによる日付入力とtask名検索の操作領域を置く。全幅で`154px minmax(0, 1fr)`の2列gridとし、間隔は8px、coarse pointerでは左列を162pxにする。日付入力と「→」のsubmit buttonは1pxの外枠を共有し、入力幅116px、button幅は通常36px、coarse pointerでは44pxとする。移動buttonのARIA名は「入力した日付を表示」とする。検索非表示時も日付欄は固定幅で左に置く。日付errorはformの外、検索の後ろへ置き、2列全体にまたがる追加行として表示する。正常時は追加行を生成しない。
+- 日付入力は「全て」選択中も表示する。`M/D`と`YYYY/M/D`を受け、Enterと内包する「→」buttonのどちらでも送信する。空または空白だけなら何もせず、不正入力は`aria-invalid`と説明要素でfieldに関連付けたerrorを表示する。妥当な入力は`YYYY/M/D`へ正規化し、日付buttonを選択した場合は入力とerrorを消去する。編集結果はview stateへ保存してreload後も復元し、妥当な送信だけ既存の日付選択経路へ正規化済み`YYYY-MM-DD`を渡して日付別選択へ切り替える。
 - task名検索文字列は日付別と「全て」で共有してview stateへ保存し、日付・tab切替とreloadで維持する。一覧からセッションをlocalStorageへ追加できた場合だけ共有検索文字列を空へ戻し、選択日と日付入力は維持する。追加の保存失敗、重複、rank非0、持ち歩きロックによる拒否時は検索文字列も維持する。
 - 入力の前後空白を除外して小文字化し、task名を小文字化した文字列への部分一致で取得済みrowを即時に絞り込む。空または空白だけなら全rowを表示し、Unicode正規化と全角・半角変換は行わない。同一occurrenceの複数segmentは一致する全rowを残し、新しい日付のresponseにも保持中の条件を適用する。
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
-- 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。全幅で検索欄を高さ36px、clear buttonを36px四方、曜日・検索・table間を8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
+- 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。検索欄は`min-width: 0`で残り幅へ伸縮させる。高さとclear buttonは通常36px、coarse pointerでは44pxとし、タッチ時の入力文字は16pxにする。clear buttonは検索欄右端へ絶対配置して内包し、入力にはbutton幅の右paddingを常時確保する。曜日・操作領域・table間は8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に現在logical dateの進行中実績、選択日全体の実績合計、利用可能時間、記録率、予実比を`dl`相当のlabel/value構造で表示する。予実比は完了row全体の補正済み実績合計を見積合計で割り、合算後に四捨五入した整数%を100%で制限せず表示する。進行中実績は含めず、見積合計が0秒なら`--`とする。`in_progress_actual_work_seconds`が`None`の過去日と未来日では「進行中」を生成しない。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
 - 完了一覧は`完了、実績、予実差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、予実差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。予実差の正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)とし、色を符号の代替にしない。見積値はrowに保持して予実差と予実比の計算へ使用するが、表へは表示しない。記録率と予実比は整数%を100%で制限せず、それぞれ利用可能時間0秒、見積合計0秒では`--`とする。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の先頭3列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、狭幅のpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
@@ -959,7 +959,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、日付別のrank非0の実taskでは左44pxを空けた右側の先送りと全件のrank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
 - 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
-- 全幅で高さ36pxの日付button、日付入力・表示button、検索欄、36px四方のclear button、圧縮した各section間隔を維持し、viewportを超えないことをCSS contract testとbrowser目視で確認する。「表示」の文字がbutton内で上下左右の中央に揃うこと、日付buttonの横スクロールを維持し、34rem以下ではbufferだけを追加で圧縮することを確認する。
+- 320px、360px、544px、1024px幅で日付欄と検索を1行に配置し、日付欄は通常154px幅、coarse pointerでは162px幅となることをCSS contract testとbrowserで確認する。日付入力・内包する「→」button・検索欄とclear buttonは通常36px、coarse pointerでは44pxとし、`2026/11/07`が読め、検索入力中と日付error時にも重なりやpage横scrollがないことを確認する。検索clearの表示で欄の幅が変わらず、日付errorが入力行の下へ全幅表示されることを確認する。「→」の中央揃え、日付buttonの高さ36pxと横スクロール、34rem以下のbuffer圧縮を維持する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 6操作buttonのlabel、ARIA名、意味別class、全幅で左列1→2→3・右列4→5→6の3段配置を確認する。390×844pxの1セッションでは固定tab barより上に全操作が見えること、320px幅では文字切れと横はみ出しがないことを確認する。
 - 「計測を破棄して再開」で開始時刻だけがclick時刻へ更新され、他のsnapshot、session数・順序、tab、一覧を維持することを確認する。保存失敗と安全停止中の拒否、背景更新中の成功も確認する。
