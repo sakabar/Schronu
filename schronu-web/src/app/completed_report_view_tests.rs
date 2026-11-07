@@ -5,6 +5,99 @@ use crate::client::state::ListMode;
 use crate::{CompletedTaskReport, CompletedTaskRow};
 use chrono::{Local, TimeZone};
 use dioxus::prelude::*;
+use std::{cell::RefCell, rc::Rc};
+
+use super::view_test_support::{
+    dispatch_click, dispatch_platform_event, rebuild_with_named_event_listeners,
+};
+use dioxus::html::SerializedFormData;
+
+#[component]
+fn CompletedControlsHarness(events: Rc<RefCell<Vec<String>>>, blocked: bool) -> Element {
+    let date_events = Rc::clone(&events);
+    let submit_events = Rc::clone(&events);
+    rsx! {
+        CompletedListView {
+            dates: Vec::new(),
+            report: None,
+            selected_logical_date: None,
+            date_input_text: "invalid".to_owned(),
+            date_input_error: Some("有効な日付を入力してください。".to_owned()),
+            filter_text: "検索対象".to_owned(),
+            server_actions_blocked: blocked,
+            on_select_date: move |_| {},
+            on_date_input_change: move |text| date_events.borrow_mut().push(format!("date:{text}")),
+            on_submit_date_input: move |_| submit_events.borrow_mut().push("submit".to_owned()),
+            on_filter_change: move |text| events.borrow_mut().push(format!("filter:{text}")),
+        }
+    }
+}
+
+#[test]
+fn 完了一覧は日付送信と検索を分離して共通操作領域を表示する() {
+    for blocked in [false, true] {
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut dom = VirtualDom::new_with_props(
+            CompletedControlsHarness,
+            CompletedControlsHarnessProps {
+                events: Rc::clone(&events),
+                blocked,
+            },
+        );
+        let listeners = rebuild_with_named_event_listeners(&mut dom);
+        let html = dioxus::ssr::render(&dom);
+        assert!(html.contains("aria-label=\"入力した日付を表示\""), "{html}");
+        assert!(html.contains(">→</button>"), "{html}");
+        assert!(html.contains("aria-invalid=true"), "{html}");
+        assert!(
+            html.contains("aria-describedby=\"date-input-error\""),
+            "{html}"
+        );
+        assert!(html.find("</form>").unwrap() < html.find("id=\"date-input-error\"").unwrap());
+        assert!(
+            html.find("class=\"task-name-filter\"").unwrap()
+                < html.find("id=\"date-input-error\"").unwrap()
+        );
+        assert_eq!(html.contains("disabled=true"), blocked);
+
+        let inputs = listeners
+            .iter()
+            .filter(|(name, _)| name == "input")
+            .map(|(_, id)| *id)
+            .collect::<Vec<_>>();
+        assert_eq!(inputs.len(), 2);
+        for (id, value) in inputs.into_iter().zip(["11/7", "確認"]) {
+            dispatch_platform_event(
+                &dom,
+                "input",
+                id,
+                Box::new(SerializedFormData::new(value.to_owned(), Vec::new())),
+            );
+        }
+        let clear = listeners
+            .iter()
+            .find(|(name, _)| name == "click")
+            .unwrap()
+            .1;
+        dispatch_click(&dom, clear);
+        assert_eq!(*events.borrow(), ["date:11/7", "filter:確認", "filter:"]);
+        let submit = listeners
+            .iter()
+            .find(|(name, _)| name == "submit")
+            .unwrap()
+            .1;
+        dispatch_platform_event(
+            &dom,
+            "submit",
+            submit,
+            Box::new(SerializedFormData::new(String::new(), Vec::new())),
+        );
+        assert_eq!(
+            events.borrow().last().unwrap(),
+            if blocked { "filter:" } else { "submit" }
+        );
+    }
+}
 
 fn completed_root() -> Element {
     rsx! {

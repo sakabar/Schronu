@@ -1064,7 +1064,7 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
 }
 
 #[test]
-fn 一覧操作領域は全幅で36pxに統一する() {
+fn 一覧操作領域は通常36pxで検索clearを内包する() {
     let css = include_str!("../../assets/main.css");
     let (universal_layout, responsive_layout) = css
         .split_once("@media (max-width: 46rem)")
@@ -1079,7 +1079,7 @@ fn 一覧操作領域は全幅で36pxに統一する() {
         ".date-pills {\n    display: flex;\n    gap: 0.5rem;\n    overflow-x: auto;\n    padding: 0.125rem 0.1rem 0.25rem;",
         ".date-pill {\n    flex: 0 0 auto;\n    height: 36px;\n    border-radius: 999px;\n    padding: 0.35rem 0.9rem;",
         ".task-name-filter-input {\n    width: 100%;\n    min-width: 0;\n    height: 36px;\n    min-height: 36px;\n    padding: 0.4rem 0.7rem;",
-        ".task-name-filter-clear {\n    flex: 0 0 auto;\n    width: 36px;\n    height: 36px;\n    min-width: 36px;\n    min-height: 36px;\n    padding: 0.25rem;",
+        ".task-name-filter-clear {\n    position: absolute;\n    inset-block-start: 0;\n    inset-inline-end: 0;\n    width: 36px;\n    height: 36px;\n    min-width: 36px;\n    min-height: 36px;\n    padding: 0.25rem;",
     ] {
         assert!(universal_layout.contains(required), "missing: {required}");
     }
@@ -1091,12 +1091,25 @@ fn 一覧操作領域は全幅で36pxに統一する() {
 }
 
 #[test]
-fn 日付表示ボタンの文字は中央に配置する() {
+fn 日付移動ボタンは入力欄の内側で中央に配置する() {
     let css = include_str!("../../assets/main.css");
-
-    assert!(css.contains(
-        ".date-jump-submit {\n    display: flex;\n    align-items: center;\n    justify-content: center;\n    padding-block: 0;\n    padding-inline: 1rem;\n    line-height: 1;\n}"
-    ));
+    let button = css
+        .split_once(".date-jump-submit {\n    display: flex;")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    for required in [
+        "align-items: center;",
+        "justify-content: center;",
+        "width: 36px;",
+        "padding: 0;",
+        "border: 0;",
+        "border-left: 1px solid var(--line);",
+    ] {
+        assert!(button.contains(required), "missing: {required}");
+    }
 }
 
 #[test]
@@ -1426,7 +1439,8 @@ fn 検索欄は日付buttonの下かつtableの上にあり入力を通知する
     );
     assert!(html.contains("aria-label=\"表示する日付\""), "{html}");
     assert!(html.contains("placeholder=\"例: 6/18\""), "{html}");
-    assert!(html.contains(">表示</button>"), "{html}");
+    assert!(html.contains("aria-label=\"入力した日付を表示\""), "{html}");
+    assert!(html.contains(">→</button>"), "{html}");
     assert!(html.contains("aria-label=\"タスク名を検索\""), "{html}");
     assert!(html.contains("placeholder=\"タスク名を検索\""), "{html}");
     assert_eq!(input_listeners.len(), 2);
@@ -1585,30 +1599,65 @@ fn task_name_filterは全幅でcompactなclear操作を使う() {
 }
 
 #[test]
-fn 日付入力は全幅で検索の上に並ぶ() {
+fn 日付入力と検索は固定幅と可変幅の1行に並ぶ() {
     let css = include_str!("../../assets/main.css");
-    let (universal_layout, responsive_layout) = css
-        .split_once("@media (max-width: 46rem)")
-        .expect("navigation breakpoint must exist");
-    let mobile_only_layout = responsive_layout
-        .split_once("@media (max-width: 34rem)")
-        .expect("narrow viewport rule must exist")
+    let controls = css
+        .split_once(".list-controls {")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
         .0;
-
     for required in [
-        ".list-controls {\n    display: grid;",
-        "grid-template-columns: minmax(0, 1fr);",
-        ".date-jump-controls {\n    display: grid;",
-        "grid-template-columns: minmax(0, 1fr) auto;",
-        ".date-jump-input {\n    width: 100%;",
-        ".date-jump-input,\n.date-jump-submit {\n    height: 36px;",
-        "min-height: 36px;",
+        "display: grid;",
+        "grid-template-columns: 154px minmax(0, 1fr);",
+        "gap: 0.5rem;",
+        "min-width: 0;",
     ] {
-        assert!(universal_layout.contains(required), "missing: {required}");
+        assert!(controls.contains(required), "missing: {required}");
     }
+    let date = css
+        .split_once(".date-jump-controls {")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    for required in [
+        "grid-template-columns: minmax(0, 1fr) 36px;",
+        "border: 1px solid var(--line);",
+        "height: 36px;",
+    ] {
+        assert!(date.contains(required), "missing: {required}");
+    }
+    let error = css
+        .split_once(".date-input-error {")
+        .unwrap()
+        .1
+        .split_once('}')
+        .unwrap()
+        .0;
+    assert!(error.contains("grid-column: 1 / -1;"));
+    assert!(css.contains("padding-inline-end: 36px;"));
+}
 
-    assert!(!mobile_only_layout.contains(".list-controls"));
-    assert!(!mobile_only_layout.contains(".date-jump-input"));
+#[test]
+fn タッチ時の一覧入力は44pxで日付の入力幅を維持する() {
+    let css = include_str!("../../assets/main.css");
+    let coarse = css
+        .split("@media (pointer: coarse)")
+        .find(|block| block.contains("grid-template-columns: 162px minmax(0, 1fr);"))
+        .expect("coarse pointer controls must exist");
+    for required in [
+        "height: 44px;",
+        "min-height: 44px;",
+        "width: 44px;",
+        "grid-template-columns: minmax(0, 1fr) 44px;",
+        "padding-inline-end: 44px;",
+        "font-size: 16px;",
+    ] {
+        assert!(coarse.contains(required), "missing: {required}");
+    }
 }
 
 #[component]

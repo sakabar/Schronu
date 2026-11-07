@@ -56,7 +56,6 @@ pub fn ListView(
     #[props(default)] on_defer_task: EventHandler<(String, DeferPlan)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
-    let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
     let search_available = all_tasks_status
         .as_ref()
         .is_none_or(|status| matches!(status, AllTasksViewStatus::Loaded));
@@ -107,68 +106,15 @@ pub fn ListView(
                     DateButton { date, disabled: server_actions_blocked, on_select_date }
                 }
             }
-            div { class: "list-controls",
-                form {
-                    class: "date-jump-form",
-                    aria_label: "日付へ移動",
-                    onsubmit: move |event| {
-                        event.prevent_default();
-                        if !server_actions_blocked {
-                            on_submit_date_input.call(());
-                        }
-                    },
-                    div { class: "date-jump-controls",
-                        input {
-                            class: "date-jump-input",
-                            r#type: "text",
-                            value: date_input_text.clone(),
-                            aria_label: "表示する日付",
-                            aria_invalid: date_input_error.is_some(),
-                            aria_describedby: date_input_error
-                                .as_ref()
-                                .map(|_| "date-input-error"),
-                            placeholder: "例: 6/18",
-                            autocomplete: "off",
-                            oninput: move |event| on_date_input_change.call(event.value()),
-                        }
-                        button {
-                            class: "date-jump-submit",
-                            r#type: "submit",
-                            disabled: date_input_text.trim().is_empty() || server_actions_blocked,
-                            "表示"
-                        }
-                    }
-                    if let Some(ref error) = date_input_error {
-                        p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
-                    }
-                }
-                if search_available {
-                    div { class: "task-name-filter", role: "search",
-                    input {
-                        class: "task-name-filter-input",
-                        r#type: "text",
-                        value: filter_text.clone(),
-                        aria_label: "タスク名を検索",
-                        placeholder: "タスク名を検索",
-                        onmounted: move |element| filter_input.set(Some(element.data())),
-                        oninput: move |event| on_filter_change.call(event.value()),
-                    }
-                    if !filter_text.is_empty() {
-                        button {
-                            class: "task-name-filter-clear",
-                            r#type: "button",
-                            aria_label: "検索文字列をクリア",
-                            onclick: move |_| async move {
-                                on_filter_change.call(String::new());
-                                if let Some(input) = filter_input.cloned() {
-                                    let _ = input.set_focus(true).await;
-                                }
-                            },
-                            "×"
-                        }
-                    }
-                    }
-                }
+            ListControls {
+                date_input_text,
+                date_input_error,
+                filter_text,
+                search_available,
+                server_actions_blocked,
+                on_date_input_change,
+                on_submit_date_input,
+                on_filter_change,
             }
             if let Some(status) = all_tasks_status.as_ref() {
                 match status {
@@ -271,7 +217,6 @@ pub fn CompletedListView(
     on_submit_date_input: EventHandler<()>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
-    let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
     let summary = report.as_ref().map(|report| CompletedReportSummary {
         in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
         total_actual_work_seconds: report.total_actual_work_seconds,
@@ -292,39 +237,73 @@ pub fn CompletedListView(
                     DateButton { date, disabled: server_actions_blocked, on_select_date }
                 }
             }
-            div { class: "list-controls",
-                form {
-                    class: "date-jump-form",
-                    aria_label: "日付へ移動",
-                    onsubmit: move |event| {
-                        event.prevent_default();
-                        if !server_actions_blocked {
-                            on_submit_date_input.call(());
-                        }
-                    },
-                    div { class: "date-jump-controls",
-                        input {
-                            class: "date-jump-input",
-                            r#type: "text",
-                            value: date_input_text.clone(),
-                            aria_label: "表示する日付",
-                            aria_invalid: date_input_error.is_some(),
-                            aria_describedby: date_input_error.as_ref().map(|_| "date-input-error"),
-                            placeholder: "例: 6/18",
-                            autocomplete: "off",
-                            oninput: move |event| on_date_input_change.call(event.value()),
-                        }
-                        button {
-                            class: "date-jump-submit",
-                            r#type: "submit",
-                            disabled: date_input_text.trim().is_empty() || server_actions_blocked,
-                            "表示"
-                        }
+            ListControls {
+                date_input_text,
+                date_input_error,
+                filter_text,
+                search_available: true,
+                server_actions_blocked,
+                on_date_input_change,
+                on_submit_date_input,
+                on_filter_change,
+            }
+            CompletedTaskTable {
+                logical_date: selected_logical_date,
+                rows: matching_rows,
+                summary,
+                empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
+            }
+        }
+    }
+}
+
+#[component]
+fn ListControls(
+    date_input_text: String,
+    date_input_error: Option<String>,
+    filter_text: String,
+    search_available: bool,
+    server_actions_blocked: bool,
+    on_date_input_change: EventHandler<String>,
+    on_submit_date_input: EventHandler<()>,
+    on_filter_change: EventHandler<String>,
+) -> Element {
+    let mut filter_input = use_signal(|| None::<Rc<MountedData>>);
+    rsx! {
+        div { class: "list-controls",
+            form {
+                class: "date-jump-form",
+                aria_label: "日付へ移動",
+                onsubmit: move |event| {
+                    event.prevent_default();
+                    if !server_actions_blocked {
+                        on_submit_date_input.call(());
                     }
-                    if let Some(ref error) = date_input_error {
-                        p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
+                },
+                div { class: "date-jump-controls",
+                    input {
+                        class: "date-jump-input",
+                        r#type: "text",
+                        value: date_input_text.clone(),
+                        aria_label: "表示する日付",
+                        aria_invalid: date_input_error.is_some(),
+                        aria_describedby: date_input_error
+                            .as_ref()
+                            .map(|_| "date-input-error"),
+                        placeholder: "例: 6/18",
+                        autocomplete: "off",
+                        oninput: move |event| on_date_input_change.call(event.value()),
+                    }
+                    button {
+                        class: "date-jump-submit",
+                        r#type: "submit",
+                        disabled: date_input_text.trim().is_empty() || server_actions_blocked,
+                        aria_label: "入力した日付を表示",
+                        "→"
                     }
                 }
+            }
+            if search_available {
                 div { class: "task-name-filter", role: "search",
                     input {
                         class: "task-name-filter-input",
@@ -351,11 +330,8 @@ pub fn CompletedListView(
                     }
                 }
             }
-            CompletedTaskTable {
-                logical_date: selected_logical_date,
-                rows: matching_rows,
-                summary,
-                empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
+            if let Some(ref error) = date_input_error {
+                p { id: "date-input-error", class: "date-input-error", role: "alert", "{error}" }
             }
         }
     }
