@@ -7,6 +7,7 @@ use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
 use dioxus::prelude::*;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+const MAX_VISIBLE_SECONDS: i64 = 99 * 3600 + 59 * 60;
 
 #[derive(Clone, Copy, PartialEq)]
 enum LoadMode {
@@ -72,10 +73,10 @@ pub(crate) fn LoadView(
                             "今日から14日の負荷"
                         }
                     }
-                    p { class: "load-updated", "{updated}" }
                 }
                 button {
                     class: "load-refresh",
+                    aria_label: format!("負荷を更新。{updated}"),
                     r#type: "button",
                     disabled: loading || server_actions_blocked,
                     onclick: move |_| {
@@ -83,7 +84,7 @@ pub(crate) fn LoadView(
                             on_refresh.call(())
                         }
                     },
-                    if loading { "更新中…" } else { "更新" }
+                    span { if loading { "更新中" } else { "更新" } }
                 }
             }
             div { class: "load-mode-tabs", role: "group", aria_label: "負荷表示",
@@ -254,7 +255,14 @@ fn BandDayRow(
                     }
                 }
                 if let Some(date) = date {
-                    small { "{weekday_jp(date.weekday())}" }
+                    span {
+                        class: match date.weekday() {
+                            Weekday::Sat => "load-weekday is-saturday",
+                            Weekday::Sun => "load-weekday is-sunday",
+                            _ => "load-weekday",
+                        },
+                        "({weekday_jp(date.weekday())})"
+                    }
                 }
             }
             strong {
@@ -263,7 +271,7 @@ fn BandDayRow(
                 } else {
                     "load-metric-value is-within"
                 },
-                "{format_signed(row.accumulated_rho_diff_seconds)}"
+                "{format_signed(row.accumulated_rho_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
                 class: if row.accumulated_free_diff_seconds > 0 {
@@ -271,7 +279,7 @@ fn BandDayRow(
                 } else {
                     "load-metric-value is-within"
                 },
-                "{format_signed(row.accumulated_free_diff_seconds)}"
+                "{format_signed(row.accumulated_free_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
                 class: if overflow_seconds > 0 {
@@ -280,7 +288,7 @@ fn BandDayRow(
                     "load-metric-value is-within"
                 },
                 if overflow_seconds > 0 {
-                    "{format_unsigned(overflow_seconds)}"
+                    "{format_unsigned(overflow_seconds.min(MAX_VISIBLE_SECONDS))}"
                 } else {
                     "0:00"
                 }

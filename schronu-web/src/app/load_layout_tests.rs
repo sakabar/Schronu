@@ -65,7 +65,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
     let positions = labels.map(|label| heading.find(label).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(
-        html.contains("<span>11/7</span><small>土</small>"),
+        html.contains("<span>11/7</span><span class=\"load-weekday is-saturday\">(土)</span>"),
         "{html}"
     );
     assert!(!html.contains("load-today"));
@@ -83,7 +83,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
 }
 
 #[test]
-fn 日別負荷の3数値は丸め前の正値を赤にしzero以下を緑にする() {
+fn 日別負荷の数値は丸め前の正負を維持する() {
     let html = render();
     let rows = html
         .split("<button class=\"load-day")
@@ -102,7 +102,7 @@ fn 日別負荷の3数値は丸め前の正値を赤にしzero以下を緑にす
         ],
         [
             ("is-within", "-00:00"),
-            ("is-over", "+123:45"),
+            ("is-over", "+99:59"),
             ("is-within", "0:00"),
         ],
     ];
@@ -189,8 +189,8 @@ fn 日別負荷は月境界を跨ぐ14日を表示し最終日を選択できる
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("今日から14日の負荷"), "{html}");
     assert_eq!(html.matches("<button class=\"load-day").count(), 14);
-    assert!(html.contains("<span>11/25</span><small>水</small>"));
-    assert!(html.contains("<span>12/8</span><small>火</small>"));
+    assert!(html.contains("<span>11/25</span><span class=\"load-weekday\">(水)</span>"));
+    assert!(html.contains("<span>12/8</span><span class=\"load-weekday\">(火)</span>"));
     assert!(!html.contains("14日間"));
     assert!(!html.contains('〜'));
     assert_eq!(listeners.len(), 17);
@@ -256,8 +256,60 @@ fn 日別負荷は月曜開始時に先頭の空週を追加しない() {
             .collect::<Vec<_>>();
         assert_eq!(weeks.len(), 2, "{html}");
         for (week, date) in weeks.iter().zip([first, second]) {
-            assert!(week.contains(&format!("<span>{date}</span><small>月</small>")));
+            assert!(week.contains(&format!(
+                "<span>{date}</span><span class=\"load-weekday\">(月)</span>"
+            )));
             assert_eq!(week.matches("<button class=\"load-day").count(), 7);
         }
     }
+}
+
+#[test]
+fn 日別負荷は更新時刻を表示せず括弧を含む曜日を表示する() {
+    let html = render();
+    assert!(!html.contains("load-updated"));
+    assert!(
+        html.contains("<span class=\"load-weekday is-saturday\">(土)</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span class=\"load-weekday is-sunday\">(日)</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<span class=\"load-weekday\">(月)</span>"),
+        "{html}"
+    );
+    assert!(html.contains("空差累+123時間45分") || html.contains("空差累+123:45"));
+}
+
+fn bounded_values_root() -> Element {
+    rsx! {
+        LoadView {
+            rows: vec![BandDay {
+                logical_date: "2026-12-31".to_owned(),
+                accumulated_rho_diff_seconds: -100 * 3600,
+                accumulated_free_diff_seconds: 100 * 3600,
+                durations: BandDurations {
+                    unavailable_seconds: 0, elapsed_seconds: 0,
+                    repetitive_seconds: 0, non_repetitive_seconds: 147 * 3600,
+                    rho_leeway_seconds: 0,
+                },
+            }],
+            observed_at_epoch_ms: None, loading: false, error: None,
+            on_refresh: move |_| {}, on_select_date: move |_| {},
+        }
+    }
+}
+
+#[test]
+fn 日別負荷の2桁表示は上限を超える実値をariaへ保持する() {
+    let mut dom = VirtualDom::new(bounded_values_root);
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains(">-99:59</strong>"));
+    assert!(html.contains(">+99:59</strong>"));
+    assert!(html.contains(">99:59</strong>"));
+    assert!(html.contains("余差累-100:00、空差累+100:00、超過123時間0分"));
+    assert!(html.contains("<span>12/31</span><span class=\"load-weekday\">(木)</span>"));
 }

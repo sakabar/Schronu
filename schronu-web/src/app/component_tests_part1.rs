@@ -425,7 +425,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         loading_html.contains("繰返負荷を取得しています…"),
         "{loading_html}"
     );
-    assert!(loading_html.contains("更新中…"), "{loading_html}");
+    assert!(loading_html.contains("更新中"), "{loading_html}");
 
     fn empty() -> Element {
         rsx! {
