@@ -434,11 +434,8 @@ pub(super) fn handle_task_tree_command<C: TaskTreeCommandContext + ?Sized>(
             kind: CommandKind::NonRepetitive,
             ..
         }) => {
-            semantic_display = Some(context.show_task_list(
-                Some("単"),
-                TaskListOrder::ScheduledStartDesc,
-                false,
-            )?)
+            semantic_display =
+                Some(context.show_task_list(Some("単"), TaskListOrder::ScheduledStartDesc, true)?)
         }
         Command::Action(CommandAction::NoArguments {
             kind: CommandKind::Calendar,
