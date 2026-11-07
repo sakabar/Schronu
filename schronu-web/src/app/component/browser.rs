@@ -132,6 +132,7 @@ pub(super) fn BrowserApp() -> Element {
         buffer,
         sessions,
         rows,
+        now_epoch_ms,
         completed_report,
         list_mode,
         selected_logical_date,
@@ -344,6 +345,7 @@ pub(super) fn BrowserApp() -> Element {
                         }
                     } else {
                     ListView {
+                        now_epoch_ms,
                         dates,
                         rows,
                         active_task_ids,

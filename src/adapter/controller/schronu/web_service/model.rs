@@ -61,6 +61,8 @@ pub struct ScheduledTaskDto {
     pub task_name: String,
     pub estimated_work_seconds: i64,
     pub actual_work_seconds: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_epoch_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

@@ -117,6 +117,7 @@ ScheduledTask {
     task_name: String,
     estimated_work_seconds: i64,
     actual_work_seconds: i64,
+    start_time_epoch_ms: Option<i64>,
 }
 
 ScheduleOccurrence =
@@ -750,6 +751,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
 - `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではセッションbuttonとそのclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
+- 日付別・全件一覧の`ScheduledTask`はoptionalな`start_time_epoch_ms`を持つ。serverはtask本体の`start_time`をepoch millisecondsで返し、予定segment開始時刻とは区別する。browserは既存の1秒tickの現在epoch millisecondsと比較し、`start_time_epoch_ms > now`の場合だけ青(`--blue: #3677bd`、hoverは`--blue-dark: #255d99`)にする。同値・過去は従来の緑(`--green: #27845e`、hoverは`--green-dark: #196846`)とし、文字は白を維持する。時計後退時も再判定し、通信・追加timerは不要とする。旧responseやcacheでfieldが欠落した場合は緑とし、disabled・追加済み表示・操作条件は維持する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信は行わない。
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
@@ -1007,7 +1009,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 | 6.2、6.3、7.2、11.6 | REQ-CARD-001..020 |
 | 4.4、4.5、4.8、7.4、9、11 | REQ-ACTION-001..018 |
 | 6.4 | REQ-BUFFER-001..010 |
-| 3.3、3.4、4.2..4.4、6.1、6.5、7.3、7.4、8、11.5 | REQ-LIST-001..034 |
+| 3.3、3.4、4.2..4.4、6.1、6.5、7.3、7.4、8、11.5 | REQ-LIST-001..037 |
 | 6.1、7.1、8、11.4、11.5 | REQ-COMMON-001..007、REQ-NET-001、002、008、010 |
 | 3.4、6.6、7.5、8、11.4、11.5 | REQ-LOCK-001..010 |
 | 10、11 | REQ-COMPAT-001..005、全受入条件 |

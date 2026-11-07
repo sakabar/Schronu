@@ -2054,3 +2054,6 @@ fn 前倒しバッジは日付別と全件で正の日数だけを見込みの�
         }
     }
 }
+
+#[path = "session_start_color_tests.rs"]
+mod session_start_color_tests;

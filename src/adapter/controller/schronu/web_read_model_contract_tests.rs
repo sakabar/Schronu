@@ -124,6 +124,18 @@ fn listは指定logical_dateだけを開始時刻のstable昇順でsegment単位
     let rows = build_scheduled_task_rows(&repository, &schedule, date, day_start).unwrap();
     let all_rows = build_all_task_rows(&repository, &schedule, day_start).unwrap();
 
+    for row in &rows {
+        assert_eq!(
+            row.task.start_time_epoch_ms,
+            Some(day_start.timestamp_millis())
+        );
+    }
+    for row in &all_rows {
+        assert_eq!(
+            row.task.start_time_epoch_ms,
+            Some(day_start.timestamp_millis())
+        );
+    }
     assert_eq!(rows.len(), 3);
     assert_eq!(
         rows[0].task.task_id,

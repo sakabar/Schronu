@@ -572,3 +572,15 @@ fn load_views_share_shell_padding_and_reserve_wrapped_navigation_height() {
     let narrow = MAIN_CSS.rsplit("@media (max-width: 380px)").next().unwrap();
     assert!(block_body(narrow, selector).contains("+ 32px)"));
 }
+
+#[test]
+fn future_session_start_preserves_blue_on_hover() {
+    let normal = block_body(MAIN_CSS, ".session-start.is-future");
+    assert!(normal.contains("background: var(--blue);"));
+    assert!(normal.contains("border-color: var(--blue-dark);"));
+    let hover = block_body(
+        block_body(MAIN_CSS, HOVER_MEDIA_QUERY),
+        ".session-start.is-future:hover:not(:disabled)",
+    );
+    assert!(hover.contains("background: var(--blue-dark);"));
+}

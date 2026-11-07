@@ -438,6 +438,11 @@ button:disabled {
     color: white;
 }
 
+.session-start.is-future {
+    border-color: var(--blue-dark);
+    background: var(--blue);
+}
+
 .session-start-compact-label {
     display: inline;
 }
@@ -493,6 +498,11 @@ button:disabled {
     .session-start:hover:not(:disabled) {
         border-color: var(--green-dark);
         background: var(--green-dark);
+    }
+
+    .session-start.is-future:hover:not(:disabled) {
+        border-color: var(--blue-dark);
+        background: var(--blue-dark);
     }
 
     .task-defer:hover:not(:disabled) {

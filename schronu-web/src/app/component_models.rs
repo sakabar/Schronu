@@ -13,6 +13,7 @@ pub(crate) struct BrowserPageModel {
     pub buffer: Option<i128>,
     pub sessions: Vec<SessionCardViewModel>,
     pub rows: Vec<ListRowViewModel>,
+    pub now_epoch_ms: i64,
     pub completed_report: Option<CompletedTaskReport>,
     pub list_mode: ListMode,
     pub selected_logical_date: Option<String>,
@@ -73,6 +74,7 @@ impl BrowserPageModel {
                 (Vec::new(), false, None)
             };
         Self {
+            now_epoch_ms: state.tick_now_epoch_ms(),
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
             sessions: project_session_cards_for_browser(state),

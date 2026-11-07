@@ -94,6 +94,8 @@ pub struct ScheduledTask {
     pub task_name: String,
     pub estimated_work_seconds: i64,
     pub actual_work_seconds: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_epoch_ms: Option<i64>,
 }
 
 impl ScheduledTask {
@@ -110,6 +112,7 @@ impl ScheduledTask {
 impl From<SessionTask> for ScheduledTask {
     fn from(task: SessionTask) -> Self {
         Self {
+            start_time_epoch_ms: None,
             task_id: Some(task.task_id),
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,

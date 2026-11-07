@@ -754,3 +754,25 @@ fn 前倒し日数のない旧wireは日付別と全件とも0で復元する() 
         0
     );
 }
+
+#[test]
+fn scheduled_task_start_time_is_optional_and_round_trips() {
+    let legacy = json!({
+        "task_id": "contract-task", "task_name": "contract task",
+        "estimated_work_seconds": 60, "actual_work_seconds": 0
+    });
+    let mut task: schronu_web::ScheduledTask = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(task.start_time_epoch_ms, None);
+    assert_eq!(serde_json::to_value(&task).unwrap(), legacy);
+    task.start_time_epoch_ms = Some(1_000);
+    let encoded = serde_json::to_value(&task).unwrap();
+    assert_eq!(encoded["start_time_epoch_ms"], 1_000);
+    assert_eq!(
+        serde_json::from_value::<schronu_web::ScheduledTask>(encoded).unwrap(),
+        task
+    );
+    assert!(serde_json::to_value(task.actionable_task().unwrap())
+        .unwrap()
+        .get("start_time_epoch_ms")
+        .is_none());
+}

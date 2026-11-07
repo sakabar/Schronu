@@ -34,6 +34,7 @@ pub struct DateButtonViewModel {
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
     rows: Vec<ListRowViewModel>,
+    #[props(default)] now_epoch_ms: i64,
     active_task_ids: Vec<String>,
     date_input_text: String,
     date_input_error: Option<String>,
@@ -207,6 +208,7 @@ pub fn ListView(
                                 TaskRow {
                                     key: "{row.row_key}",
                                     show_separators,
+                                    now_epoch_ms,
                                     active: row.task.task_id.as_ref().is_some_and(|row_task_id| {
                                         active_task_ids.iter().any(|task_id| task_id == row_task_id)
                                     }),
@@ -599,6 +601,7 @@ fn DateButton(
 
 #[component]
 fn TaskRow(
+    now_epoch_ms: i64,
     row: ListRowViewModel,
     show_separators: bool,
     active: bool,
@@ -644,6 +647,15 @@ fn TaskRow(
         format!("{}: セッション追加済み", task_name)
     } else {
         format!("{}: セッションに追加", task_name)
+    };
+    let start_class = if row
+        .task
+        .start_time_epoch_ms
+        .is_some_and(|start| start > now_epoch_ms)
+    {
+        "session-start is-future"
+    } else {
+        "session-start"
     };
     let button_text = if active { "✓" } else { "＋" };
     let task = row.task.actionable_task();
@@ -696,7 +708,7 @@ fn TaskRow(
                 if !is_projected {
                     if let (true, Some(task)) = (is_leaf, task) {
                     button {
-                        class: "session-start",
+                        class: start_class,
                         r#type: "button",
                         aria_label: button_label,
                         disabled: active || mutations_locked,
