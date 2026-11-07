@@ -257,7 +257,7 @@ RoutineLoadRow {
 
 初期の全体表は「間隔 / 28日合計 / 通常比 / 発生日数 / 1日平均 / プロジェクト・繰返」の6列とする。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 通常比 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 通常比 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
-通常比はapplication行、server DTO、client wireの`estimate_difference_seconds_by_date`で輸送する。日付keyは既存mapと同じlogical date、値は符号付き秒数で、欠落は比較不能、明示的な0は差なしを表す。旧payloadでは追加mapを空mapとして補完し、このfieldの欠落だけで28日mapや既存負荷をfallbackさせない。実segmentのtaskから最寄りの繰返親とその直下の今回taskを求め、今回task自身の見積秒数から親の見積秒数をchecked減算する。比較はrepository snapshotの値を使い、実績、segment時間、子孫の見積合計へ置き換えない。日付ごとに今回taskのUUIDを照合し、同一回の複数segmentと子孫segmentを重複計算しない。複数日でも同一回の差を各日に載せる。複数回が同日にある場合、予測segmentが含まれる場合は比較値を載せない。減算overflowは既存の`RoutineLoadCalculationOverflow`として返す。
+通常比はapplication行、server DTO、client wireの`estimate_difference_seconds_by_date`で輸送する。日付keyは既存mapと同じlogical date、値は符号付き秒数で、欠落は比較不能、明示的な0は差なしを表す。旧payloadでは追加mapを空mapとして補完し、このfieldの欠落だけで28日mapや既存負荷をfallbackさせない。実segmentのtaskから最寄りの繰返親とその直下の今回taskを求め、今回task自身と子孫の見積秒数をchecked加算し、親の見積秒数をchecked減算する。完了済みの子孫も含め、別の繰返親とその子孫は除外する。親自身の見積もりは子の合計ではなく自身の作業時間として加算する。比較はrepository snapshotの値を使い、実績やsegment時間へ置き換えない。今回taskのUUIDごとに合計をcacheし、同じ回を再走査しない。日付ごとに今回taskのUUIDを照合し、同一回の複数segmentと子孫segmentを重複計算しない。複数日でも同一回の差を各日に載せる。複数回が同日にある場合、予測segmentが含まれる場合は比較値を載せない。加算・減算overflowは既存の`RoutineLoadCalculationOverflow`として返す。
 
 日付別projectionだけが比較値を採用し、曜日別・全体は常に`None`とする。通常比cellは共通componentで`format_signed_time`を使い、表示分数が正なら`--red`、負なら`--blue`、0なら通常色、欠落なら`—`を描画する。既存の列順を維持して先頭の数値列の直右に通常比を挿入し、fallback表も6列にする。desktopの通常比列は5rem、46rem以下では13%とし、既存の数値4列の割合は維持して名前列を45%から32%へ調整する。表全体は横scrollさせず、名前cell内だけを横scroll可能にする。通常比の追加でmapの差分、並び順、行選択、通信、localStorageは変えない。
 
@@ -940,7 +940,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 
 - 固定された「セッション」「一覧」「負荷」「作成」の4tab、選択状態、callback、desktopで44px以上・46rem以下で40px以上の操作高、safe area、本文との非重複、通信中overlayとの重なり順をcomponent test、CSS contract test、browser目視で確認する。
 - 負荷内の初期表示が「日別負荷」であること、通信なしに「繰返負荷」へ切り替わること、月曜始まりの28日map、全体・曜日・日付表の列と値、分母0の日付cellが差分と`--`表示かつ超過色になること、差分の正負と一致、今日の残り容量差分、曜日見出しと日付表の0容量表示、99%と100%の表示境界、100%超、同値sort、行強調、ARIA、旧payload fallback、320px幅の3行表示と横はみ出しなし、40px以上の日付buttonをprojection、component、CSS contract testで確認する。
-- 通常比の追加検証: 正負・zero・分未満・100時間以上、実績と独立した計算、同一回の子孫と複数segment・複数日、複数回と予測の混在、減算overflow、DTOとwireの追加mapの保持と欠落時補完、全表示範囲と旧payload fallbackの6列・列位置、正負の色と0の通常色、320pxから1024pxの幅を検証する。
+- 通常比の追加検証: 正負・zero・分未満・100時間以上、実績と独立した計算、同一回の自身と完了済みを含む子孫の見積合計、別の繰返親の除外、複数segment・複数日、複数回と予測の混在、加算・減算overflow、DTOとwireの追加mapの保持と欠落時補完、全表示範囲と旧payload fallbackの6列・列位置、正負の色と0の通常色、320pxから1024pxの幅を検証する。
 - 負荷tabの初回進入・再進入・再選択だけでは通信せず、初回表示・全tabからのreload・背景再試行・自動セッション・予定/完了/全件一覧の取得終了後に負荷を1回取得することをcomponentの製品応答経路で検証する。元の取得失敗・候補なしでも連動し、bootstrapと一覧の連続取得や全件の複数pageでは重複させず、古い・無効化済み・重複応答は無視する。背景通信のoverlay非表示、元のerrorと再試行状態、負荷取得失敗時の直前表示・手動再試行も確認する。
 - 各tabで選択中の画面だけがDOMへ存在し、タイトルは存在せず、持ち歩きロックbarとbufferはセッションtabだけに存在することを確認する。barを隠した一覧・作成・負荷でも持ち歩きロックのmutation guardが有効であることを確認する。
 - rank 0の一覧rowだけにセッションbuttonとclick listenerがあり、rank非0にはセッションbuttonとそのclick listenerがないことを確認する。日付別の親taskには先送りbuttonとclick listenerがあり、通常は即時、期限制限・次周期移動は確認後だけ送信することを確認する。

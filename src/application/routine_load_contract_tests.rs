@@ -1,7 +1,7 @@
 use super::routine_load::{build_routine_load_report, ROUTINE_LOAD_HORIZON_DAYS};
 use super::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use super::task_view::TaskView;
-use crate::entity::task::{TaskAttr, TaskHandle};
+use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use std::collections::BTreeMap;
@@ -54,7 +54,7 @@ fn projected_segment(
 }
 
 #[test]
-fn routine_load_estimate_difference_uses_occurrence_estimate_not_progress_or_segments() {
+fn routine_load_estimate_difference_uses_occurrence_total_not_progress_or_segments() {
     let project = TaskHandle::with_identity("project", Uuid::from_u128(10_001), at(3)).unwrap();
     let routine = child(&project, "routine", 10_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
@@ -82,8 +82,8 @@ fn routine_load_estimate_difference_uses_occurrence_estimate_not_progress_or_seg
     assert_eq!(
         report.rows[0].estimate_difference_seconds_by_date,
         BTreeMap::from([
-            (at(3).date_naive(), -900),
-            (at(4).date_naive(), -900),
+            (at(3).date_naive(), -780),
+            (at(4).date_naive(), -780),
             (at(5).date_naive(), 0),
             (at(6).date_naive(), 900),
         ])
@@ -91,6 +91,109 @@ fn routine_load_estimate_difference_uses_occurrence_estimate_not_progress_or_seg
     shorter.set_actual_work_seconds(800).unwrap();
     let updated = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
     assert_eq!(updated.rows[0], report.rows[0]);
+}
+
+#[test]
+fn routine_load_estimate_difference_sums_split_occurrence_including_completed_descendants() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(13_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 13_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine.set_estimated_work_seconds(10 * 3_600).unwrap();
+    let occurrence = child(&routine, "occurrence", 13_003, at(3));
+    occurrence.set_estimated_work_seconds(0).unwrap();
+    let first = child(&occurrence, "first part", 13_004, at(3));
+    first.set_estimated_work_seconds(3_600).unwrap();
+    let middle = child(&occurrence, "middle part", 13_005, at(3));
+    middle.set_estimated_work_seconds(8 * 3_600).unwrap();
+    let branch = child(&occurrence, "branch", 13_006, at(3));
+    branch.set_estimated_work_seconds(0).unwrap();
+    let last = child(&branch, "last part", 13_007, at(3));
+    last.set_estimated_work_seconds(3_600).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let schedule = vec![
+        segment(&first, at(3), 600),
+        segment(&middle, at(3), 600),
+        segment(&middle, at(3) + Duration::hours(1), 600),
+        segment(&last, at(4), 600),
+    ];
+    for (hours, difference) in [(8, 0), (9, 3_600), (7, -3_600)] {
+        middle.set_estimated_work_seconds(hours * 3_600).unwrap();
+        let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
+        assert_eq!(
+            report.rows[0].estimate_difference_seconds_by_date,
+            BTreeMap::from([
+                (at(3).date_naive(), difference),
+                (at(4).date_naive(), difference)
+            ])
+        );
+    }
+    middle.set_estimated_work_seconds(8 * 3_600).unwrap();
+    first.set_actual_work_seconds(3_600).unwrap();
+    first.set_orig_status(Status::Done).unwrap();
+    let report =
+        build_routine_load_report(&repository, &schedule[1..], at(3).date_naive()).unwrap();
+    assert_eq!(
+        report.rows[0].estimate_difference_seconds_by_date,
+        BTreeMap::from([(at(3).date_naive(), 0), (at(4).date_naive(), 0)])
+    );
+}
+
+#[test]
+fn routine_load_estimate_difference_excludes_nested_routine_subtree() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(14_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 14_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine.set_estimated_work_seconds(600).unwrap();
+    let occurrence = child(&routine, "occurrence", 14_003, at(3));
+    occurrence.set_estimated_work_seconds(600).unwrap();
+    let nested = child(&occurrence, "nested routine", 14_004, at(3));
+    nested.set_repetition_interval_days_opt(Some(1)).unwrap();
+    nested.set_estimated_work_seconds(300).unwrap();
+    let nested_occurrence = child(&nested, "nested occurrence", 14_005, at(3));
+    nested_occurrence.set_estimated_work_seconds(420).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let report = build_routine_load_report(
+        &repository,
+        &[
+            segment(&occurrence, at(3), 600),
+            segment(&nested_occurrence, at(3), 420),
+        ],
+        at(3).date_naive(),
+    )
+    .unwrap();
+    assert_eq!(report.rows.len(), 2);
+    for (id, difference) in [
+        (routine.get_id().unwrap(), 0),
+        (nested.get_id().unwrap(), 120),
+    ] {
+        let row = report
+            .rows
+            .iter()
+            .find(|row| row.routine_task_id == id)
+            .unwrap();
+        assert_eq!(
+            row.estimate_difference_seconds_by_date,
+            BTreeMap::from([(at(3).date_naive(), difference)])
+        );
+    }
+}
+
+#[test]
+fn routine_load_estimate_difference_reports_addition_overflow() {
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(15_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 15_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    let occurrence = child(&routine, "occurrence", 15_003, at(3));
+    occurrence.set_estimated_work_seconds(i64::MAX).unwrap();
+    let part = child(&occurrence, "part", 15_004, at(3));
+    part.set_estimated_work_seconds(1).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let error =
+        build_routine_load_report(&repository, &[segment(&part, at(3), 1)], at(3).date_naive())
+            .unwrap_err();
+    assert!(matches!(error,
+        super::task_use_case::ApplicationError::RoutineLoadCalculationOverflow { routine_task_id }
+        if routine_task_id == routine.get_id().unwrap()));
 }
 
 #[test]

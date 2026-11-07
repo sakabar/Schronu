@@ -70,6 +70,7 @@ pub fn build_routine_load_report(
         })?;
     let mut metadata_by_task_id = HashMap::<(Uuid, bool), Option<RoutineMetadata>>::new();
     let mut accumulators = HashMap::<Uuid, RoutineAccumulator>::new();
+    let mut estimate_by_occurrence_id = HashMap::<Uuid, i64>::new();
 
     for segment in schedule {
         let logical_date = try_logical_date(segment.scheduled_start)?;
@@ -88,7 +89,7 @@ pub fn build_routine_load_report(
             let resolved = if segment.is_projected() {
                 projected_routine_metadata(&task)?
             } else {
-                nearest_routine_metadata(&task)?
+                nearest_routine_metadata(&task, &mut estimate_by_occurrence_id)?
             };
             metadata_by_task_id.insert(cache_key, resolved.clone());
             resolved
@@ -147,6 +148,7 @@ pub fn build_routine_load_report(
 
 fn nearest_routine_metadata(
     task: &TaskHandle,
+    estimate_by_occurrence_id: &mut HashMap<Uuid, i64>,
 ) -> Result<Option<RoutineMetadata>, ApplicationError> {
     let mut occurrence = task.clone();
     let mut current = task.parent().map_err(ApplicationError::TaskTree)?;
@@ -157,9 +159,16 @@ fn nearest_routine_metadata(
         {
             let project = parent.root().map_err(ApplicationError::TaskTree)?;
             let routine_task_id = parent.get_id().map_err(ApplicationError::TaskTree)?;
-            let estimate_difference = occurrence
-                .get_estimated_work_seconds()
-                .map_err(ApplicationError::TaskTree)?
+            let occurrence_id = occurrence.get_id().map_err(ApplicationError::TaskTree)?;
+            let occurrence_estimate =
+                if let Some(estimate) = estimate_by_occurrence_id.get(&occurrence_id) {
+                    *estimate
+                } else {
+                    let estimate = occurrence_estimated_work_seconds(&occurrence, routine_task_id)?;
+                    estimate_by_occurrence_id.insert(occurrence_id, estimate);
+                    estimate
+                };
+            let estimate_difference = occurrence_estimate
                 .checked_sub(
                     parent
                         .get_estimated_work_seconds()
@@ -172,16 +181,41 @@ fn nearest_routine_metadata(
                 routine_task_id,
                 routine_name: parent.get_name().map_err(ApplicationError::TaskTree)?,
                 repetition_interval_days,
-                occurrence_estimate_difference: Some((
-                    occurrence.get_id().map_err(ApplicationError::TaskTree)?,
-                    estimate_difference,
-                )),
+                occurrence_estimate_difference: Some((occurrence_id, estimate_difference)),
             }));
         }
         occurrence = parent.clone();
         current = parent.parent().map_err(ApplicationError::TaskTree)?;
     }
     Ok(None)
+}
+
+fn occurrence_estimated_work_seconds(
+    occurrence: &TaskHandle,
+    routine_task_id: Uuid,
+) -> Result<i64, ApplicationError> {
+    let mut total = occurrence
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    let mut pending = occurrence
+        .get_children()
+        .map_err(ApplicationError::TaskTree)?;
+    while let Some(task) = pending.pop() {
+        if task
+            .is_repeating_task()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            continue;
+        }
+        total = total
+            .checked_add(
+                task.get_estimated_work_seconds()
+                    .map_err(ApplicationError::TaskTree)?,
+            )
+            .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
+        pending.extend(task.get_children().map_err(ApplicationError::TaskTree)?);
+    }
+    Ok(total)
 }
 
 fn projected_routine_metadata(
