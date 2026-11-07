@@ -55,6 +55,12 @@ pub(crate) fn LoadView(
             )
         },
     );
+    let weeks = rows
+        .chunk_by(|_, next| {
+            !chrono::NaiveDate::parse_from_str(&next.logical_date, "%Y-%m-%d")
+                .is_ok_and(|date| date.weekday() == Weekday::Mon)
+        })
+        .collect::<Vec<_>>();
     rsx! {
         section { class: view_class, aria_label: "負荷",
             div { class: "load-toolbar",
@@ -121,12 +127,16 @@ pub(crate) fn LoadView(
                             span { "帯グラフ" }
                         }
                         div { class: "load-days",
-                            for (index, row) in rows.into_iter().enumerate() {
-                                BandDayRow {
-                                    row,
-                                    today: index == 0,
-                                    disabled: server_actions_blocked,
-                                    on_select_date,
+                            for (week_index, week) in weeks.into_iter().enumerate() {
+                                div { class: "load-week",
+                                    for (day_index, row) in week.iter().cloned().enumerate() {
+                                        BandDayRow {
+                                            row,
+                                            today: week_index == 0 && day_index == 0,
+                                            disabled: server_actions_blocked,
+                                            on_select_date,
+                                        }
+                                    }
                                 }
                             }
                         }

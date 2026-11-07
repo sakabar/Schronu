@@ -1800,10 +1800,18 @@ button.routine-load-day.is-at-capacity {
 }
 
 .load-days {
+    --load-row-gap: 5px;
     display: grid;
     width: 100%;
     min-width: 0;
-    gap: 5px;
+    gap: calc(var(--load-row-gap) + 8px);
+}
+
+.load-week {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: var(--load-row-gap);
     grid-auto-rows: minmax(48px, 1fr);
 }
 
@@ -2127,7 +2135,10 @@ button.routine-load-day.is-at-capacity {
     }
 
     .load-days {
-        gap: 2px;
+        --load-row-gap: 2px;
+    }
+
+    .load-week {
         grid-auto-rows: minmax(40px, 1fr);
     }
 

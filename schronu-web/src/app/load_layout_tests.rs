@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 #[derive(Clone)]
 struct Props {
     selected: Arc<Mutex<Vec<String>>>,
+    start_date: Option<chrono::NaiveDate>,
 }
 
 fn root(props: Props) -> Element {
@@ -43,6 +44,7 @@ fn render() -> String {
         root,
         Props {
             selected: Arc::default(),
+            start_date: None,
         },
     );
     dom.rebuild_in_place();
@@ -129,6 +131,7 @@ fn 日別負荷の各行は対象日の一覧選択を通知する() {
         root,
         Props {
             selected: Arc::clone(&selected),
+            start_date: None,
         },
     );
     let listeners = rebuild_with_click_listeners(&mut dom);
@@ -143,7 +146,9 @@ fn 日別負荷の各行は対象日の一覧選択を通知する() {
 }
 
 fn fourteen_day_root(props: Props) -> Element {
-    let start = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+    let start = props
+        .start_date
+        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
     let rows = (0..14)
         .map(|offset| BandDay {
             logical_date: (start + chrono::Duration::days(offset)).to_string(),
@@ -177,6 +182,7 @@ fn 日別負荷は月境界を跨ぐ14日を表示し最終日を選択できる
         fourteen_day_root,
         Props {
             selected: Arc::clone(&selected),
+            start_date: None,
         },
     );
     let listeners = rebuild_with_click_listeners(&mut dom);
@@ -190,4 +196,68 @@ fn 日別負荷は月境界を跨ぐ14日を表示し最終日を選択できる
     assert_eq!(listeners.len(), 17);
     dispatch_click(&dom, *listeners.last().unwrap());
     assert_eq!(*selected.lock().unwrap(), ["2026-12-08"]);
+}
+
+#[test]
+fn 日別負荷は日曜と月曜の間で週を分け月境界でも日付選択を維持する() {
+    let selected = Arc::default();
+    let mut dom = VirtualDom::new_with_props(
+        fourteen_day_root,
+        Props {
+            selected: Arc::clone(&selected),
+            start_date: None,
+        },
+    );
+    let listeners = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    let weeks = html
+        .split("<div class=\"load-week\">")
+        .skip(1)
+        .collect::<Vec<_>>();
+    assert_eq!(weeks.len(), 3, "{html}");
+    let dates = [
+        ("11/25", "11/29", 5),
+        ("11/30", "12/6", 7),
+        ("12/7", "12/8", 2),
+    ];
+    for (week, (first, last, count)) in weeks.iter().zip(dates) {
+        assert_eq!(week.matches("<button class=\"load-day").count(), count);
+        assert!(week.contains(&format!("<span>{first}</span>")));
+        assert!(week.contains(&format!("<span>{last}</span>")));
+    }
+    for id in &listeners[3..] {
+        dispatch_click(&dom, *id);
+    }
+    let start = chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap();
+    let expected = (0..14)
+        .map(|offset| (start + chrono::Duration::days(offset)).to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(*selected.lock().unwrap(), expected);
+}
+
+#[test]
+fn 日別負荷は月曜開始時に先頭の空週を追加しない() {
+    for (start, first, second) in [
+        ((2026, 11, 30), "11/30", "12/7"),
+        ((2026, 5, 25), "5/25", "6/1"),
+    ] {
+        let mut dom = VirtualDom::new_with_props(
+            fourteen_day_root,
+            Props {
+                selected: Arc::default(),
+                start_date: chrono::NaiveDate::from_ymd_opt(start.0, start.1, start.2),
+            },
+        );
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        let weeks = html
+            .split("<div class=\"load-week\">")
+            .skip(1)
+            .collect::<Vec<_>>();
+        assert_eq!(weeks.len(), 2, "{html}");
+        for (week, date) in weeks.iter().zip([first, second]) {
+            assert!(week.contains(&format!("<span>{date}</span><small>月</small>")));
+            assert_eq!(week.matches("<button class=\"load-day").count(), 7);
+        }
+    }
 }
