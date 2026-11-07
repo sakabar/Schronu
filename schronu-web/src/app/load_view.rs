@@ -7,6 +7,7 @@ use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
 use dioxus::prelude::*;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+const MAX_VISIBLE_SECONDS: i64 = 99 * 3600 + 59 * 60;
 
 #[derive(Clone, Copy, PartialEq)]
 enum LoadMode {
@@ -48,13 +49,14 @@ pub(crate) fn LoadView(
         .unwrap_or_else(|| "未取得".to_owned());
     let routine_heading = routine_load_report.as_ref().map_or_else(
         || "繰返負荷".to_owned(),
-        |report| {
-            format!(
-                "今日から{}日後までの繰返負荷",
-                report.horizon_day_count.saturating_sub(1)
-            )
-        },
+        |report| format!("今日から{}日の負荷", report.horizon_day_count),
     );
+    let weeks = rows
+        .chunk_by(|_, next| {
+            !chrono::NaiveDate::parse_from_str(&next.logical_date, "%Y-%m-%d")
+                .is_ok_and(|date| date.weekday() == Weekday::Mon)
+        })
+        .collect::<Vec<_>>();
     rsx! {
         section { class: view_class, aria_label: "負荷",
             div { class: "load-toolbar",
@@ -63,13 +65,13 @@ pub(crate) fn LoadView(
                         if mode() == LoadMode::Routine {
                             "{routine_heading}"
                         } else {
-                            "今日から8日の負荷"
+                            "今日から14日の負荷"
                         }
                     }
-                    p { class: "load-updated", "{updated}" }
                 }
                 button {
                     class: "load-refresh",
+                    aria_label: format!("負荷を更新。{updated}"),
                     r#type: "button",
                     disabled: loading || server_actions_blocked,
                     onclick: move |_| {
@@ -77,7 +79,7 @@ pub(crate) fn LoadView(
                             on_refresh.call(())
                         }
                     },
-                    if loading { "更新中…" } else { "更新" }
+                    span { if loading { "更新中" } else { "更新" } }
                 }
             }
             div { class: "load-mode-tabs", role: "group", aria_label: "負荷表示",
@@ -118,15 +120,19 @@ pub(crate) fn LoadView(
                             span { "余差累" }
                             span { "空差累" }
                             span { "超過" }
-                            span { "帯グラフ" }
+                            span { "時間内訳" }
                         }
                         div { class: "load-days",
-                            for (index, row) in rows.into_iter().enumerate() {
-                                BandDayRow {
-                                    row,
-                                    today: index == 0,
-                                    disabled: server_actions_blocked,
-                                    on_select_date,
+                            for (week_index, week) in weeks.into_iter().enumerate() {
+                                div { class: "load-week",
+                                    for (day_index, row) in week.iter().cloned().enumerate() {
+                                        BandDayRow {
+                                            row,
+                                            today: week_index == 0 && day_index == 0,
+                                            disabled: server_actions_blocked,
+                                            on_select_date,
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -244,16 +250,25 @@ fn BandDayRow(
                     }
                 }
                 if let Some(date) = date {
-                    small { "{weekday_jp(date.weekday())}" }
+                    span {
+                        class: match date.weekday() {
+                            Weekday::Sat => "load-weekday is-saturday",
+                            Weekday::Sun => "load-weekday is-sunday",
+                            _ => "load-weekday",
+                        },
+                        "({weekday_jp(date.weekday())})"
+                    }
                 }
             }
             strong {
-                class: if row.accumulated_rho_diff_seconds > 0 {
+                class: if row.accumulated_rho_diff_seconds == 0 {
+                    "load-metric-value is-zero"
+                } else if row.accumulated_rho_diff_seconds > 0 {
                     "load-metric-value is-over"
                 } else {
                     "load-metric-value is-within"
                 },
-                "{format_signed(row.accumulated_rho_diff_seconds)}"
+                "{format_signed(row.accumulated_rho_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
                 class: if row.accumulated_free_diff_seconds > 0 {
@@ -261,7 +276,7 @@ fn BandDayRow(
                 } else {
                     "load-metric-value is-within"
                 },
-                "{format_signed(row.accumulated_free_diff_seconds)}"
+                "{format_signed(row.accumulated_free_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
                 class: if overflow_seconds > 0 {
@@ -270,7 +285,7 @@ fn BandDayRow(
                     "load-metric-value is-within"
                 },
                 if overflow_seconds > 0 {
-                    "{format_unsigned(overflow_seconds)}"
+                    "{format_unsigned(overflow_seconds.min(MAX_VISIBLE_SECONDS))}"
                 } else {
                     "0:00"
                 }

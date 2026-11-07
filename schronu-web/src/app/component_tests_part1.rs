@@ -197,7 +197,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     let mut dom = VirtualDom::new(root);
     let html = render_band_load_view(&mut dom);
 
-    assert!(html.contains("今日から8日の負荷"), "{html}");
+    assert!(html.contains("今日から14日の負荷"), "{html}");
     assert!(html.contains("9/27(日)"), "{html}");
     assert!(
         html.contains("余差累+01:15、空差累-00:45"),
@@ -217,7 +217,7 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
     );
     assert!(
         html.contains(
-            "<strong class=\"load-metric-value is-within\">+00:00"
+            "<strong class=\"load-metric-value is-zero\">+00:00"
         ),
         "{html}"
     );
@@ -298,7 +298,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let click_ids = rebuild_with_click_listeners(&mut dom);
     let initial_html = dioxus::ssr::render(&dom);
 
-    assert!(initial_html.contains("今日から8日の負荷"), "{initial_html}");
+    assert!(initial_html.contains("今日から14日の負荷"), "{initial_html}");
     assert!(initial_html.contains("帯の凡例"), "{initial_html}");
     assert!(!initial_html.contains("routine-load-table"), "{initial_html}");
     assert!(
@@ -315,7 +315,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
     let routine_html = dioxus::ssr::render(&dom);
 
     assert!(
-        routine_html.contains("今日から27日後までの繰返負荷"),
+        routine_html.contains("今日から28日の負荷"),
         "{routine_html}"
     );
     assert!(routine_html.contains("10/3〜10/30"), "{routine_html}");
@@ -425,7 +425,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
         loading_html.contains("繰返負荷を取得しています…"),
         "{loading_html}"
     );
-    assert!(loading_html.contains("更新中…"), "{loading_html}");
+    assert!(loading_html.contains("更新中"), "{loading_html}");
 
     fn empty() -> Element {
         rsx! {
@@ -460,7 +460,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
     dispatch_click(&empty_dom, empty_click_ids[2]);
     empty_dom.render_immediate_to_vec();
     let empty_html = dioxus::ssr::render(&empty_dom);
-    assert!(empty_html.contains("今日から2日後までの繰返負荷"), "{empty_html}");
+    assert!(empty_html.contains("今日から3日の負荷"), "{empty_html}");
     assert!(empty_html.contains("10/3〜10/5"), "{empty_html}");
     assert!(
         empty_html.contains("今日から2日後までに発生する繰返負荷はありません。"),
@@ -1109,7 +1109,7 @@ fn 負荷取得はstale_responseを捨て失敗時に直前の表示を保持す
 }
 
 #[test]
-fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
+fn 負荷取得は14日帯と28日繰返負荷を同時に置換する() {
     let storage = MemoryStorage::default();
     let (mut state, _) = initialize_client(&storage, 1_000);
     let request_id = match state.request_load_band() {
@@ -1121,7 +1121,9 @@ fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
         Ok(WebSuccess {
             snapshot: load_snapshot(1_100),
             data: LoadData {
-                band_days: vec![band_day("2026-10-03", 1)],
+                band_days: (3..17)
+                    .map(|day| band_day(&format!("2026-10-{day:02}"), 1))
+                    .collect(),
                 routine_load: RoutineLoadReport {
                     start_date: "2026-10-03".to_owned(),
                     end_date: "2026-10-30".to_owned(),
@@ -1129,9 +1131,9 @@ fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
                     full_day_available_seconds_by_date: Default::default(),
                     rows: vec![RoutineLoadRow {
                         project_task_id: "project".to_owned(),
-                        project_name: "生活".to_owned(),
+                        project_name: "集計対象".to_owned(),
                         routine_task_id: "routine".to_owned(),
-                        routine_name: "日次".to_owned(),
+                        routine_name: "日次集計".to_owned(),
                         repetition_interval_days: 1,
                         total_work_seconds: 3_600,
                         occurrence_day_count: 4,
@@ -1146,8 +1148,9 @@ fn 負荷取得は8日帯と28日繰返負荷を同時に置換する() {
         }),
     );
 
-    assert_eq!(state.band_rows().len(), 1);
-    assert_eq!(state.routine_load_report().unwrap().rows[0].routine_name, "日次");
+    assert_eq!(state.band_rows().len(), 14);
+    assert_eq!(state.band_rows()[13].logical_date, "2026-10-16");
+    assert_eq!(state.routine_load_report().unwrap().rows[0].routine_name, "日次集計");
 }
 
 #[test]

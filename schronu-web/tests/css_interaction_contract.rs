@@ -109,7 +109,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     assert!(row.contains("min-width: 0;"));
 
     let grid = block_body(MAIN_CSS, ".load-grid");
-    assert!(grid.contains("--load-columns: 40px 7ch 7ch 6ch minmax(0, 1fr);"));
+    assert!(grid.contains("--load-columns: 64px 6ch 6ch 5ch minmax(0, 1fr);"));
     assert!(row.contains("font-weight: inherit;"));
     let heading = block_body(MAIN_CSS, ".load-column-headings");
     for block in [heading, row] {
@@ -118,8 +118,8 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     }
     let narrow = block_body(MAIN_CSS, "@media (max-width: 380px)");
     assert!(block_body(narrow, ".load-grid")
-        .contains("--load-columns: 38px 7ch 7ch 6ch minmax(0, 1fr);"));
-    assert!(block_body(MAIN_CSS, ".load-bands").contains("gap: 6px;"));
+        .contains("--load-columns: 60px 6ch 6ch 5ch minmax(0, 1fr);"));
+    assert!(block_body(MAIN_CSS, ".load-bands").contains("gap: 4px;"));
     assert!(
         block_body(MAIN_CSS, ".load-metric-value.is-within").contains("color: var(--green-dark);")
     );
@@ -258,29 +258,27 @@ fn routine_load_capacity_threshold_uses_dark_red_with_white_text() {
 }
 
 #[test]
-fn load_rows_fit_without_scroll_from_35rem_and_compact_through_60rem() {
-    let no_scroll = block_body(MAIN_CSS, "@media (min-height: 35rem)");
-    assert!(!MAIN_CSS.contains("@media (max-height: 50rem)"));
-
-    let view = block_body(no_scroll, ".load-view");
-    assert!(view.contains("height: calc(100dvh"));
-    assert!(view.contains("display: flex;"));
-    assert!(view.contains("flex-direction: column;"));
-    let error_view = block_body(no_scroll, ".load-view.has-error");
-    assert!(error_view.contains("height: auto;"));
-
-    let days = block_body(no_scroll, ".load-days");
-    assert!(days.contains("flex: 1 1 auto;"));
-    assert!(days.contains("min-height: 0;"));
-    assert!(days.contains("grid-template-rows: repeat(8, minmax(40px, 1fr));"));
-    let compact = block_body(
-        MAIN_CSS,
-        "@media (min-height: 35rem) and (max-height: 60rem)",
-    );
+fn load_rows_keep_readable_heights_with_page_scrolling() {
+    assert!(!MAIN_CSS.contains("@media (min-height: 35rem)"));
+    assert!(!MAIN_CSS.contains("grid-template-rows: repeat(8,"));
+    let days = block_body(MAIN_CSS, ".load-days");
+    assert!(days.contains("--load-row-gap: 5px;"));
+    assert!(days.contains("gap: calc(var(--load-row-gap) + 8px);"));
+    let week = block_body(MAIN_CSS, ".load-week {");
+    assert!(week.contains("grid-auto-rows: auto;"));
+    assert!(week.contains("gap: var(--load-row-gap);"));
+    assert!(!week.contains("margin"));
+    let row = block_body(MAIN_CSS, ".load-day {");
+    assert!(row.contains("min-height: 48px;"));
+    let view = block_body(MAIN_CSS, ".load-view");
+    assert!(!view.contains("height:"));
+    assert!(!view.contains("overflow:"));
+    let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
+    assert!(block_body(compact, ".load-days").contains("--load-row-gap: 2px;"));
     let legend = block_body(compact, ".band-legend");
-    assert!(legend.contains("grid-template-columns: repeat(4, minmax(0, 1fr));"));
+    assert!(legend.contains("flex-wrap: nowrap;"));
     let row = block_body(compact, ".load-day {");
-    assert!(row.contains("min-height: 40px;"));
+    assert!(row.contains("min-height: 36px;"));
     let stack = block_body(MAIN_CSS, ".load-band-stack");
     assert!(stack.contains("min-width: 0;"));
     assert!(stack.contains("overflow: hidden;"));
@@ -552,4 +550,25 @@ fn routine_estimate_difference_colors_follow_displayed_sign() {
     assert!(
         !block_body(MAIN_CSS, ".routine-load-table .routine-load-difference {").contains("color:")
     );
+}
+
+#[test]
+fn daily_load_compact_layout_retains_zero_and_weekend_colors_and_touch_target() {
+    assert!(block_body(MAIN_CSS, ".load-metric-value.is-zero").contains("color: var(--load-zero);"));
+    assert!(block_body(MAIN_CSS, ".load-weekday.is-saturday").contains("color: var(--blue);"));
+    assert!(block_body(MAIN_CSS, ".load-weekday.is-sunday").contains("color: var(--red);"));
+    let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
+    assert!(block_body(compact, ".load-day.is-today").contains("min-height: 40px;"));
+    assert!(block_body(compact, ".load-refresh {").contains("min-height: 44px;"));
+    assert!(block_body(compact, ".load-refresh span").contains("height: 26px;"));
+}
+
+#[test]
+fn load_views_share_shell_padding_and_reserve_wrapped_navigation_height() {
+    let selector = ".shell:has(.load-view)";
+    assert!(!MAIN_CSS.contains(":not(.is-routine)"));
+    let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
+    assert!(block_body(compact, selector).contains("+ 8px)"));
+    let narrow = MAIN_CSS.rsplit("@media (max-width: 380px)").next().unwrap();
+    assert!(block_body(narrow, selector).contains("+ 32px)"));
 }

@@ -29,6 +29,7 @@
     --band-leeway: #166534;
     --band-free: #4ade80;
     --band-overflow: #ff0000;
+    --load-zero: #9ba59f;
     --shadow: 0 0.75rem 2rem rgb(35 65 52 / 9%);
     --bottom-navigation-height: 3.5rem;
 }
@@ -1457,8 +1458,7 @@ button:disabled {
     margin-bottom: 0.75rem;
 }
 
-.load-toolbar h2,
-.load-updated {
+.load-toolbar h2 {
     margin: 0;
 }
 
@@ -1466,7 +1466,6 @@ button:disabled {
     font-size: 1.25rem;
 }
 
-.load-updated,
 .load-status {
     color: var(--muted);
     font-size: 0.78rem;
@@ -1778,8 +1777,8 @@ button.routine-load-day.is-at-capacity {
 .is-overflow { background: var(--band-overflow); }
 
 .load-grid {
-    --load-columns: 40px 7ch 7ch 6ch minmax(0, 1fr);
-    --load-column-gap: 8px;
+    --load-columns: 64px 6ch 6ch 5ch minmax(0, 1fr);
+    --load-column-gap: 4px;
     min-width: 0;
     font-size: 12px;
     font-weight: 500;
@@ -1790,7 +1789,7 @@ button.routine-load-day.is-at-capacity {
     display: grid;
     grid-template-columns: var(--load-columns);
     column-gap: var(--load-column-gap);
-    padding: 0 8px 5px;
+    padding: 0 6px 3px;
     color: var(--muted);
     font-size: inherit;
 }
@@ -1800,10 +1799,19 @@ button.routine-load-day.is-at-capacity {
 }
 
 .load-days {
+    --load-row-gap: 5px;
     display: grid;
     width: 100%;
     min-width: 0;
-    gap: 5px;
+    gap: calc(var(--load-row-gap) + 8px);
+}
+
+.load-week {
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    gap: var(--load-row-gap);
+    grid-auto-rows: auto;
 }
 
 .load-day {
@@ -1814,7 +1822,7 @@ button.routine-load-day.is-at-capacity {
     width: 100%;
     min-width: 0;
     min-height: 48px;
-    padding: 3px 8px;
+    padding: 3px 6px;
     border: 0;
     background: var(--surface);
     box-shadow: 0 0.35rem 1rem rgb(35 65 52 / 6%);
@@ -1830,21 +1838,20 @@ button.routine-load-day.is-at-capacity {
 }
 
 .load-date {
-    display: grid;
-    gap: 2px;
+    display: flex;
+    align-items: center;
     white-space: nowrap;
     font-size: 12px;
 }
 
-.load-date small {
-    color: var(--muted);
-    font-size: 11px;
-}
+.load-weekday.is-saturday { color: var(--blue); }
+.load-weekday.is-sunday { color: var(--red); }
+.load-metric-value.is-zero { color: var(--load-zero); }
 
 .load-bands {
     display: grid;
     min-width: 0;
-    gap: 6px;
+    gap: 4px;
 }
 
 .load-band-caption {
@@ -1930,8 +1937,8 @@ button.routine-load-day.is-at-capacity {
 
 @media (max-width: 380px) {
     .load-grid {
-        --load-columns: 38px 7ch 7ch 6ch minmax(0, 1fr);
-        --load-column-gap: 5px;
+        --load-columns: 60px 6ch 6ch 5ch minmax(0, 1fr);
+        --load-column-gap: 3px;
         font-size: 11px;
     }
 }
@@ -2082,72 +2089,73 @@ button.routine-load-day.is-at-capacity {
 
 }
 
-@media (min-height: 35rem) {
-    .load-view {
-        display: flex;
-        height: calc(100dvh - var(--bottom-navigation-height) - env(safe-area-inset-bottom) - 3.5rem);
-        min-height: 0;
-        flex-direction: column;
+@media (max-height: 60rem) {
+    .shell:has(.load-view) {
+        padding-block: 8px calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 8px);
     }
-
-    .load-view.has-error {
-        height: auto;
-    }
-
-    .load-view.is-routine {
-        height: auto;
-    }
-
-    .load-grid {
-        display: flex;
-        flex: 1 1 auto;
-        min-height: 0;
-        flex-direction: column;
-    }
-
-    .load-days {
-        flex: 1 1 auto;
-        min-height: 0;
-        grid-template-rows: repeat(8, minmax(40px, 1fr));
-    }
-}
-
-@media (min-height: 35rem) and (max-height: 60rem) {
 
     .load-toolbar {
-        flex: 0 0 auto;
-        gap: 0.5rem;
-        margin-bottom: 0.25rem;
+        position: relative;
+        min-height: 32px;
+        margin-bottom: 6px;
+        padding-right: 56px;
     }
 
     .load-toolbar h2 {
-        font-size: 0.95rem;
+        font-size: 15px;
+        font-weight: 500;
     }
 
     .load-refresh {
-        min-height: 30px;
-        padding: 0.25rem 0.7rem;
+        position: absolute;
+        top: -6px;
+        right: 0;
+        display: grid;
+        place-items: center;
+        width: 52px;
+        min-height: 44px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+    }
+
+    .load-refresh span {
+        display: grid;
+        place-items: center;
+        width: 44px;
+        height: 26px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--ink);
+        font-size: 12px;
     }
 
     .band-legend {
-        display: grid;
-        flex: 0 0 auto;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 0.1rem 0.3rem;
-        margin-bottom: 0.25rem;
-        padding: 0.25rem 0.4rem;
-        font-size: 0.62rem;
+        display: flex;
+        flex-wrap: nowrap;
+        justify-content: space-between;
+        gap: 3px;
+        padding: 4px;
+        margin-bottom: 6px;
+        font-size: 11px;
+        line-height: 1.2;
     }
 
+    .band-legend-item { gap: 3px; }
+    .band-swatch { width: 8px; height: 7px; }
+
     .load-mode-tabs {
-        margin-bottom: 4px;
+        height: 30px;
+        margin-bottom: 6px;
         padding: 2px;
     }
 
     .load-mode-tab {
-        min-height: 30px;
-        padding: 3px 8px;
+        min-height: 26px;
+        padding: 0;
         font-size: 12px;
+        font-weight: 500;
     }
 
     .load-column-headings {
@@ -2155,25 +2163,21 @@ button.routine-load-day.is-at-capacity {
         line-height: 14px;
     }
 
-    .load-days { gap: 2px; }
+    .load-days { --load-row-gap: 2px; }
+    .load-day { min-height: 36px; padding-block: 2px; }
+    .load-day.is-today { min-height: 40px; }
+    .load-band { height: 5px; }
+    .load-overflow-rail { height: 2px; }
+}
 
-    .load-day {
-        min-height: 40px;
-        padding-block: 2px;
+@media (max-width: 380px) {
+    .shell:has(.load-view) {
+        padding-bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 32px);
     }
 
-    .load-band {
-        height: 5px;
-    }
-
-    .load-overflow-rail {
-        height: 2px;
-    }
-
-    .load-band-caption {
-        margin-bottom: 1px;
-        line-height: 11px;
-    }
+    .load-date { font-size: 11px; }
+    .load-day, .load-column-headings { padding-inline: 5px; }
+    .band-legend { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 2px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

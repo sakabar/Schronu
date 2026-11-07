@@ -876,16 +876,22 @@ pub(super) fn format_band_day_row(row: &BandDayRow, supports_ansi_color: bool) -
         "{}({}) {} {} [{}]{}",
         row.date,
         weekday_jp(row.date.weekday()),
-        format_band_cumulative_diff(row.accumulated_rho_diff_seconds, supports_ansi_color,),
-        format_band_cumulative_diff(row.accumulated_free_diff_seconds, supports_ansi_color,),
+        format_band_cumulative_diff(row.accumulated_rho_diff_seconds, supports_ansi_color, 0),
+        format_band_cumulative_diff(
+            row.accumulated_free_diff_seconds,
+            supports_ansi_color,
+            BAND_FREE_COLOR
+        ),
         bar,
         overflow,
     )
 }
 
-fn format_band_cumulative_diff(seconds: i64, supports_ansi_color: bool) -> String {
+fn format_band_cumulative_diff(seconds: i64, supports_ansi_color: bool, zero_color: u8) -> String {
     let formatted = format_signed_seconds(seconds);
-    if seconds > 0 {
+    if seconds == 0 {
+        ansi_foreground(&formatted, zero_color, supports_ansi_color)
+    } else if seconds > 0 {
         ansi_foreground(&formatted, DEADLINE_OVERRUN_COLOR, supports_ansi_color)
     } else {
         ansi_foreground(&formatted, BAND_FREE_COLOR, supports_ansi_color)
