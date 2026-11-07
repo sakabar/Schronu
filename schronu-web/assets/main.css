@@ -1843,6 +1843,8 @@ button.routine-load-day.is-at-capacity {
     font-size: 12px;
 }
 
+.load-weekday.is-saturday { color: var(--blue); }
+.load-weekday.is-sunday { color: var(--red); }
 
 .load-bands {
     display: grid;

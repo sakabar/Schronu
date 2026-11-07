@@ -265,7 +265,7 @@ fn 日別負荷は月曜開始時に先頭の空週を追加しない() {
 }
 
 #[test]
-fn 日別負荷は更新時刻を表示せず括弧を含む曜日を表示する() {
+fn 日別負荷は更新時刻を表示せず括弧を含む週末曜日を色分けする() {
     let html = render();
     assert!(!html.contains("load-updated"));
     assert!(
