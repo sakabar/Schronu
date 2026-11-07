@@ -203,7 +203,7 @@ ListAllTasksRequest {
 }
 ```
 
-負荷取得は現在logical dateから7日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
+負荷取得は現在logical dateから13日後までを次の型で返す。空日もrowを持ち、`logical_date`は昇順かつ連続する。各秒数はCLI`帯`と同じ計算規則とする。
 
 ```text
 BandDay {
@@ -249,7 +249,7 @@ RoutineLoadRow {
 }
 ```
 
-`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、8日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、同一日の複数segmentを`work_seconds_by_date`へ合算する。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。Web read modelは同じscheduleと既存の全日free-time helperを使って28 logical datesを1回走査し、`busy_time_slot`、`end_of_day_offset_minutes`、DSTを反映した`full_day_available_seconds_by_date`を生成する。このmapは今日もlogical date全体を対象とする。今日の日付指標と今日を含む曜日指標は、同じresponseの帯が持つ利用不可と経過済みを24時間から除いた残り可処分秒数を今日の分母にし、曜日指標では他の同曜日日の全日容量と合算する。帯が欠落する旧responseでは全日容量へfallbackする。既存の`peak_date`と`peak_work_seconds`も情報量と旧wire互換性のため保持するが、現行のCLIとWebでは表示しない。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
+`load_band`は`WebSuccess<LoadData>`を返す。serverはscheduleを1回だけ計算し、14日帯と今日から27日後までの28日繰返負荷を同じsnapshotへ格納する。繰返負荷はCLI`荷`と同じapplication層の集計を使い、同一日の複数segmentを`work_seconds_by_date`へ合算する。実taskのsegmentはrepository上のtaskから最寄りの繰返間隔を持つ祖先へ、予測segmentは内部synthetic IDを検索せず`source_task_id`が指す繰返元task自身へ帰属させる。開始日と27日後を含み、28日後以降を除外する。Web read modelは同じscheduleと既存の全日free-time helperを使って28 logical datesを1回走査し、`busy_time_slot`、`end_of_day_offset_minutes`、DSTを反映した`full_day_available_seconds_by_date`を生成する。このmapは今日もlogical date全体を対象とする。今日の日付指標と今日を含む曜日指標は、同じresponseの帯が持つ利用不可と経過済みを24時間から除いた残り可処分秒数を今日の分母にし、曜日指標では他の同曜日日の全日容量と合算する。帯が欠落する旧responseでは全日容量へfallbackする。既存の`peak_date`と`peak_work_seconds`も情報量と旧wire互換性のため保持するが、現行のCLIとWebでは表示しない。rowは28日合計降順、同値ではプロジェクト名、繰返名、繰返UUIDの順で安定化する。
 
 `horizon_day_count`、`average_work_seconds`、2つの日付別mapは追加fieldとする。旧payloadでmapが欠落する場合はserver DTOとclient wireの双方で空mapとして復元し、clientはmapと範囲選択を表示しない。旧8日payloadで既存の追加fieldが欠落する場合、clientは`horizon_day_count`を8として補い、平均秒数を`total_work_seconds / occurrence_day_count`で求める。`peak_date`と`peak_work_seconds`は新payloadから削除しない。
 
