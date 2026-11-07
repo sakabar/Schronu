@@ -103,6 +103,7 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
     occurrence.set_estimated_work_seconds(0).unwrap();
     let first = child(&occurrence, "first part", 13_004, at(3));
     first.set_estimated_work_seconds(3_600).unwrap();
+    first.set_actual_work_seconds(2 * 3_600).unwrap();
     let middle = child(&occurrence, "middle part", 13_005, at(3));
     middle.set_estimated_work_seconds(8 * 3_600).unwrap();
     let branch = child(&occurrence, "branch", 13_006, at(3));
@@ -128,13 +129,26 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
         );
     }
     middle.set_estimated_work_seconds(8 * 3_600).unwrap();
-    first.set_actual_work_seconds(3_600).unwrap();
     first.set_orig_status(Status::Done).unwrap();
+    for (actual, difference) in [(2 * 3_600, 3_600), (0, -3_600)] {
+        first.set_actual_work_seconds(actual).unwrap();
+        let report =
+            build_routine_load_report(&repository, &schedule[1..], at(3).date_naive()).unwrap();
+        assert_eq!(
+            report.rows[0].estimate_difference_seconds_by_date,
+            BTreeMap::from([
+                (at(3).date_naive(), difference),
+                (at(4).date_naive(), difference)
+            ])
+        );
+    }
+    last.set_actual_work_seconds(1_800).unwrap();
+    last.set_orig_status(Status::Done).unwrap();
     let report =
-        build_routine_load_report(&repository, &schedule[1..], at(3).date_naive()).unwrap();
+        build_routine_load_report(&repository, &schedule[1..3], at(3).date_naive()).unwrap();
     assert_eq!(
         report.rows[0].estimate_difference_seconds_by_date,
-        BTreeMap::from([(at(3).date_naive(), 0), (at(4).date_naive(), 0)])
+        BTreeMap::from([(at(3).date_naive(), -5_400)])
     );
 }
 
@@ -188,12 +202,18 @@ fn routine_load_estimate_difference_reports_addition_overflow() {
     let part = child(&occurrence, "part", 15_004, at(3));
     part.set_estimated_work_seconds(1).unwrap();
     let repository = TestTaskRepository::new(vec![project], at(3));
-    let error =
-        build_routine_load_report(&repository, &[segment(&part, at(3), 1)], at(3).date_naive())
-            .unwrap_err();
-    assert!(matches!(error,
-        super::task_use_case::ApplicationError::RoutineLoadCalculationOverflow { routine_task_id }
-        if routine_task_id == routine.get_id().unwrap()));
+    part.set_actual_work_seconds(1).unwrap();
+    for status in [Status::Todo, Status::Done] {
+        part.set_estimated_work_seconds(if status == Status::Done { 0 } else { 1 })
+            .unwrap();
+        part.set_orig_status(status).unwrap();
+        let error =
+            build_routine_load_report(&repository, &[segment(&part, at(3), 1)], at(3).date_naive())
+                .unwrap_err();
+        assert!(matches!(error,
+            super::task_use_case::ApplicationError::RoutineLoadCalculationOverflow { routine_task_id }
+            if routine_task_id == routine.get_id().unwrap()));
+    }
 }
 
 #[test]
