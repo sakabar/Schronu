@@ -496,6 +496,10 @@ impl WebService {
             operation_now,
             operation,
         );
+        if result.is_ok() {
+            // Publish only committed state; failed mutations remain isolated.
+            self.task_repository = Some(task_repository);
+        }
         self.finish_mutation_result(result)
     }
 
@@ -598,3 +602,7 @@ mod save_error_contract_tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "web_service/cache_tests.rs"]
+mod cache_tests;
