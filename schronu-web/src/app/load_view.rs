@@ -125,7 +125,7 @@ pub(crate) fn LoadView(
                             span { "余差累" }
                             span { "空差累" }
                             span { "超過" }
-                            span { "帯グラフ" }
+                            span { "時間内訳" }
                         }
                         div { class: "load-days",
                             for (week_index, week) in weeks.into_iter().enumerate() {

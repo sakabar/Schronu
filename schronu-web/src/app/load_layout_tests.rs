@@ -61,7 +61,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
         .split("load-days")
         .next()
         .unwrap();
-    let labels = ["日付", "余差累", "空差累", "超過", "帯グラフ"];
+    let labels = ["日付", "余差累", "空差累", "超過", "時間内訳"];
     let positions = labels.map(|label| heading.find(label).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(
