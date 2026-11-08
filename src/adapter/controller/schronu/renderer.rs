@@ -595,6 +595,7 @@ fn render_completed_task_report_display(
         format_elapsed_seconds(display.report.total_actual_work_seconds),
         format_elapsed_seconds(display.report.available_seconds),
     );
+    writer.writeln_newline("")?;
     if let Some(in_progress) = display.report.in_progress_actual_work_seconds {
         writer.writeln_newline(&format!(
             "進行中: {}  {summary}",

@@ -204,6 +204,7 @@ fn completed_report_renderer_explicitly_reports_empty_results() {
         concat!(
             "完了  実績  見積  差  task_id  プロジェクト  project_id  タスク\n",
             "完了したタスクはありません。\n",
+            "\n",
             "実績合計: 00:00:00  利用可能: 08:00:00  記録率: 0%\n",
         )
     );

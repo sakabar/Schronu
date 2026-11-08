@@ -2181,6 +2181,14 @@ fn completed_commandは製品handlerからapplication_queryを通して完了tas
         assert!(output.contains("完了レポート対象"));
         assert!(output.contains("利用可能: 06:00:00"), "{output}");
         assert!(output.contains("記録率: 50%"), "{output}");
+        let lines = output.lines().collect::<Vec<_>>();
+        let summary_index = lines
+            .iter()
+            .position(|line| line.starts_with("進行中:"))
+            .unwrap();
+        assert!(summary_index >= 2, "{output}");
+        assert_eq!(lines[summary_index - 1], "", "{output}");
+        assert!(lines[summary_index - 2].contains("完了レポート対象"), "{output}");
     }
 }
 
