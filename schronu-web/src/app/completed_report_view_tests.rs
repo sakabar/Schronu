@@ -208,7 +208,7 @@ fn 完了modeはread_only表と件数と全情報を表示する() {
             "aria-label=\"単発タスク: 設計を仕上げる; Project: Schronu\">",
             "<div class=\"completed-subject-scroll\" tabindex=0>",
             "<strong class=\"completed-task-name task-kind-non-repetitive\">",
-            "設計を仕上げる</strong>",
+            "<button class=\"task-id-copy\" type=\"button\" title=\"タスクIDをコピー\" aria-label=\"設計を仕上げる: タスクIDをコピー\">設計を仕上げる</button></strong>",
             "<span class=\"completed-project\">Schronu</span>",
             "</div></th>"
         )),
@@ -330,11 +330,11 @@ fn 完了task名は予定と同じtask種別classと意味labelを使う() {
 
     for expected in [
         "aria-label=\"固定タスク: 固定完了; Project: Schronu\"",
-        "class=\"completed-task-name task-kind-fixed\">固定完了</strong>",
+        "class=\"completed-task-name task-kind-fixed\"><button class=\"task-id-copy\" type=\"button\" title=\"タスクIDをコピー\" aria-label=\"固定完了: タスクIDをコピー\">固定完了</button></strong>",
         "aria-label=\"繰返タスク: 繰返完了; Project: Schronu\"",
-        "class=\"completed-task-name task-kind-repetitive\">繰返完了</strong>",
+        "class=\"completed-task-name task-kind-repetitive\"><button class=\"task-id-copy\" type=\"button\" title=\"タスクIDをコピー\" aria-label=\"繰返完了: タスクIDをコピー\">繰返完了</button></strong>",
         "aria-label=\"単発タスク: 単発完了; Project: Schronu\"",
-        "class=\"completed-task-name task-kind-non-repetitive\">単発完了</strong>",
+        "class=\"completed-task-name task-kind-non-repetitive\"><button class=\"task-id-copy\" type=\"button\" title=\"タスクIDをコピー\" aria-label=\"単発完了: タスクIDをコピー\">単発完了</button></strong>",
     ] {
         assert!(html.contains(expected), "missing {expected}: {html}");
     }
@@ -779,4 +779,54 @@ fn url_suffix_is_hidden_in_completed_task_and_project_names() {
     assert!(!html.contains("http://example.com"), "{html}");
     assert!(!html.contains("https://example.com"), "{html}");
     assert!(html.contains("completed task; Project: project"), "{html}");
+}
+
+#[test]
+fn completed_name_click_copies_the_exact_id() {
+    #[component]
+    fn CopyCompletedHarness(events: Rc<RefCell<Vec<String>>>) -> Element {
+        let copy = use_callback(move |id: String| events.borrow_mut().push(id));
+        use_context_provider(|| super::task_id_copy::CopyTaskId { _handler: copy });
+        let report = CompletedTaskReport {
+            rows: vec![CompletedTaskRow {
+                task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
+                task_name: "completed contract https://example.com".to_owned(),
+                project_name: "contract project".to_owned(),
+                completed_at_epoch_ms: 1_789_551_723_000,
+                actual_work_seconds: 60,
+                estimated_work_seconds: 60,
+                task_display_kind: Default::default(),
+            }],
+            in_progress_actual_work_seconds: None,
+            total_actual_work_seconds: 60,
+            available_seconds: 3600,
+            recorded_percentage: Some(2),
+        };
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(), report: Some(report),
+                selected_logical_date: Some("2026-09-16".to_owned()),
+                date_input_text: String::new(), date_input_error: None, filter_text: String::new(),
+                on_select_date: move |_| {}, on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {}, on_filter_change: move |_| {},
+            }
+        }
+    }
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let mut dom = VirtualDom::new_with_props(
+        CopyCompletedHarness,
+        CopyCompletedHarnessProps {
+            events: events.clone(),
+        },
+    );
+    let listeners = super::view_test_support::rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert_eq!(listeners.len(), 1);
+    assert!(
+        html.contains("completed contract: タスクIDをコピー"),
+        "{html}"
+    );
+    assert!(!html.contains("https://example.com"), "{html}");
+    dispatch_click(&dom, listeners[0]);
+    assert_eq!(*events.borrow(), ["00000000-0000-4000-8000-000000000001"]);
 }

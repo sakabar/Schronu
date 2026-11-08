@@ -148,6 +148,10 @@ ScheduledTaskRow {
 
 日付別と全件一覧のタスク名横scroll領域で、正の日数だけ「前N」バッジを表示する。予測行は「見込み」「前N」「タスク名」の順とし、列・操作を追加しない。背景`#f1f5f9`、枠`#cbd5e1`、文字`#475569`で種類色・締切警告色から独立させる。バッジとタスク名cellのaccessible labelで「N日前倒し可能」を伝える。完了一覧・セッションcard・負荷集計は変更しない。
 
+日付別・全件・完了一覧の実task名は、共通の`TaskIdCopyButton`で描画する。既存の分類色・太字・横scroll・バッジを維持し、表示名を含む「タスクIDをコピー」のaccessible labelとfocus表示を持つ通常のbuttonとする。親taskも対象とし、`Projected`行は従来どおり通常の文字で描画する。copyは持ち歩きロックと独立したbrowser内の操作とし、server request、session変更、localStorage保存を行わない。session cardの名前によるURL表示は維持する。
+
+`CopyTaskIdProvider`は画面全体で共有するcopy処理と通知を提供する。click handlerからClipboard APIの`writeText`を開始し、渡す文字列は実taskの`task_id`だけとする。成功時は「タスクIDをコピーしました」を1,500ms、API未対応・権限拒否などの失敗時は「タスクIDをコピーできませんでした」を4,000ms表示する。通知は画面下部の固定位置に置き、pointer eventやfocusを奪わず、layoutを動かさず、`role="status"`のpolite live regionで読み上げる。各操作に世代を付け、古い完了応答や消去timerが最新の通知を上書きしない。代替copy方式やmodalは追加しない。
+
 実task行は`Actual`、`task_id: Some`、`defer_plan: Some`を持つ。繰り返し予測行は`Projected`、`task_id: None`、`defer_plan: None`とし、`occurrence_key`は繰り返し元UUIDと基準deadline epoch millisecondsから安定生成する。
 
 繰り返し予測は28日窓内にある同じ繰り返し元の全実体回を起点に展開する。正確なdeadlineが実体回または別起点の予測回と一致する場合は重複生成せず、実体回を優先する。

@@ -688,7 +688,7 @@ fn native_ssrはbrowser_storageへ触れず非blockingな復元shellを描画す
     assert!(!html.contains("通信中…"), "{html}");
     assert!(!html.contains("loading-overlay"), "{html}");
     assert!(!html.contains("loading-spinner"), "{html}");
-    assert!(!html.contains("aria-live=\"polite\""), "{html}");
+    assert!(html.contains("class=\"task-copy-notice\" role=\"status\" aria-live=\"polite\""), "{html}");
     assert!(!html.contains("aria-busy=\"true\""), "{html}");
     assert!(!html.contains("id=\"schronu-web-loading\""), "{html}");
     assert!(!html.contains("inert"), "{html}");
