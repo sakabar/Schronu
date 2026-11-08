@@ -248,16 +248,23 @@ fn project_session_cards_with(
                 display_now,
             );
             SessionCardViewModel {
-                future_pending_date_label: session
-                    .start_time_epoch_ms
-                    .max(session.pending_until_epoch_ms)
-                    .and_then(|until| {
-                        let planned = logical_date_with_offset(until, &offset_at)?;
-                        let today =
-                            logical_date_with_offset(state.tick_now_epoch_ms(), &offset_at)?;
-                        (planned > today)
-                            .then(|| format!("{} 着手予定", planned.format("%Y/%m/%d")))
-                    }),
+                future_pending_date_label: logical_date_with_offset(
+                    state.tick_now_epoch_ms(),
+                    &offset_at,
+                )
+                .and_then(|today| {
+                    if let Some(start) = session
+                        .start_time_epoch_ms
+                        .and_then(|start| logical_date_with_offset(start, &offset_at))
+                        .filter(|start| *start > today)
+                    {
+                        return Some(format!("{} 開始予定", start.format("%Y/%m/%d")));
+                    }
+                    let pending = session
+                        .pending_until_epoch_ms
+                        .and_then(|until| logical_date_with_offset(until, &offset_at))?;
+                    (pending > today).then(|| format!("{} 着手予定", pending.format("%Y/%m/%d")))
+                }),
                 task_id: session.task_id.clone(),
                 task_name: session.task_name.clone(),
                 started_at_hh_mm: format_with_offset_provider(

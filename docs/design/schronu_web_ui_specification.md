@@ -296,7 +296,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `start_time_epoch_ms`と`pending_until_epoch_ms`はセッション開始時のtask snapshotから保持する任意fieldで、欠落・nullは情報なしとする。旧version 1を引き続き復元し、fieldがないことによる追加通信や保存は行わない。親への引き継ぎと一覧・自動開始の全経路でDTOからwire、WorkSessionへ同じ値を渡し、再開時にも保持する。
 
-cardの`future_pending_date_label`はbrowserの現在時刻と保存した`max(start_time_epoch_ms, pending_until_epoch_ms)`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して比較する。片方が欠落した場合は取得済みの値を使う。旧sessionで開始時刻がない場合は従来のpending情報だけで判定する。予定日が今日より後の場合だけ`YYYY/MM/DD 着手予定`をtask名の直下へ表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。今日以前、情報なし、日時変換不能時は通常表示とする。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、当日になれば注意表示を解除する。計測・server通信・task更新・操作guardは変えない。
+cardの`future_pending_date_label`はbrowserの現在時刻と保存した`start_time_epoch_ms`、`pending_until_epoch_ms`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して判定する。開始日が今日より後なら開始日の`YYYY/MM/DD 開始予定`を優先する。それ以外で保留期限日が今日より後なら保留期限日の`YYYY/MM/DD 着手予定`を使う。どちらも該当しなければ通常表示とする。旧sessionで開始時刻がない場合は従来のpending情報だけで判定し、自動補完は行わない。情報なし・変換不能な予定日時はその判定から除外し、現在日時が変換不能なら通常表示とする。両labelともtask名の直下へ括弧なしで表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、開始日になると保留期限に応じて「着手予定」へ切り替えるか注意表示を解除し、「着手予定」は保留期限日になると注意表示を解除する。DTO・保存形式・公開API・計測・server通信・task更新・操作guardは変えない。
 
 読込規則:
 
