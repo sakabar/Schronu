@@ -82,6 +82,8 @@ pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     pub task_id: String,
     pub task_name: String,
@@ -105,6 +107,7 @@ pub struct ScheduledTask {
 impl ScheduledTask {
     pub fn actionable_task(&self) -> Option<SessionTask> {
         Some(SessionTask {
+            start_time_epoch_ms: self.start_time_epoch_ms,
             pending_until_epoch_ms: self.pending_until_epoch_ms,
             task_id: self.task_id.clone()?,
             task_name: self.task_name.clone(),
@@ -117,7 +120,7 @@ impl ScheduledTask {
 impl From<SessionTask> for ScheduledTask {
     fn from(task: SessionTask) -> Self {
         Self {
-            start_time_epoch_ms: None,
+            start_time_epoch_ms: task.start_time_epoch_ms,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: Some(task.task_id),
             task_name: task.task_name,
@@ -345,6 +348,7 @@ mod all_task_contract_tests {
 
         let row = AllTaskRow {
             task: SessionTask {
+                start_time_epoch_ms: None,
                 pending_until_epoch_ms: None,
                 task_id: "task".to_owned(),
                 task_name: "name".to_owned(),

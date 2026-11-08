@@ -538,6 +538,7 @@ pub(in crate::adapter::controller) fn build_auto_session_dto_with_minutes(
 
 pub(super) fn session_task_dto_from_view(task: TaskView) -> SessionTaskDto {
     SessionTaskDto {
+        start_time_epoch_ms: Some(task.start_time.timestamp_millis()),
         pending_until_epoch_ms: task.pending_until.map(|until| until.timestamp_millis()),
         task_id: task.id.hyphenated().to_string(),
         task_name: task.name,

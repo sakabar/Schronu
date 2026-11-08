@@ -248,6 +248,7 @@ impl From<CoreServerSnapshot> for ServerSnapshot {
 impl From<SessionTaskDto> for SessionTask {
     fn from(task: SessionTaskDto) -> Self {
         Self {
+            start_time_epoch_ms: task.start_time_epoch_ms,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: task.task_id,
             task_name: task.task_name,
@@ -984,6 +985,20 @@ mod tests {
             let _ = fs::remove_dir_all(&self.root);
         }
     }
+    #[test]
+    fn session_start_time_survives_dto_to_wire_conversion() {
+        let dto = serde_json::from_value::<super::SessionTaskDto>(serde_json::json!({
+            "task_id": "00000000-0000-4000-8000-000000000001",
+            "task_name": "session metadata contract",
+            "estimated_work_seconds": 600,
+            "actual_work_seconds": 0,
+            "start_time_epoch_ms": 1788568100000_i64
+        }))
+        .unwrap();
+        let wire: super::SessionTask = dto.into();
+        assert_eq!(wire.start_time_epoch_ms, Some(1788568100000));
+    }
+
     #[test]
     fn 前倒し日数と開始時刻とpendingは日付別と全件のdtoからwireへ保持する() {
         use super::{AllTaskRow, AllTaskRowDto, ScheduledTaskRow, ScheduledTaskRowDto};

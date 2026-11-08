@@ -49,6 +49,8 @@ pub struct ServerSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_epoch_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     pub task_id: String,
     pub task_name: String,

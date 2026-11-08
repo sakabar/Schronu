@@ -776,6 +776,7 @@ fn auto_sessionは候補をdtoで返しtask_treeを変更しない() {
 
     assert_eq!(dto.task_id, task_id.hyphenated().to_string());
     assert_eq!(dto.task_name, "auto task");
+    assert_eq!(dto.start_time_epoch_ms, Some(now.timestamp_millis()));
     assert_eq!(dto.estimated_work_seconds, 900);
     assert_eq!(dto.actual_work_seconds, 120);
     assert_eq!(task.snapshot().unwrap(), before);

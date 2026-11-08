@@ -18,6 +18,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         buffer_seconds: -61,
     };
     let task = SessionTask {
+        start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
         task_name: "wire task".to_owned(),
@@ -772,8 +773,8 @@ fn scheduled_task_start_time_is_optional_and_round_trips() {
         serde_json::from_value::<schronu_web::ScheduledTask>(encoded).unwrap(),
         task
     );
-    assert!(serde_json::to_value(task.actionable_task().unwrap())
-        .unwrap()
-        .get("start_time_epoch_ms")
-        .is_none());
+    let session_task = task.actionable_task().unwrap();
+    assert_eq!(session_task.start_time_epoch_ms, Some(1_000));
+    let round_trip: schronu_web::ScheduledTask = session_task.into();
+    assert_eq!(round_trip, task);
 }
