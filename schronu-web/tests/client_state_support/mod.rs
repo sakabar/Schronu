@@ -79,6 +79,7 @@ pub fn state_with_sessions(storage: &FakeStorage, ids: &[&str]) -> ClientState {
             storage,
             ids.iter()
                 .map(|id| WorkSession {
+                    pending_until_epoch_ms: None,
                     task_id: (*id).to_owned(),
                     task_name: "task".to_owned(),
                     started_at_epoch_ms: 0,
@@ -102,6 +103,7 @@ pub fn snapshot(logical_date: &str, observed_at_epoch_ms: i64) -> ServerSnapshot
 pub fn row(task_id: &str, actual_work_seconds: i64) -> ScheduledTaskRow {
     ScheduledTaskRow {
         task: SessionTask {
+            pending_until_epoch_ms: None,
             task_id: task_id.to_owned(),
             task_name: "task".to_owned(),
             estimated_work_seconds: 900,

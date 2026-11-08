@@ -253,6 +253,7 @@ fn build_dom(
 
 fn card(task_id: &str) -> SessionCardViewModel {
     SessionCardViewModel {
+        future_pending_date_label: None,
         task_id: task_id.to_owned(),
         task_name: "コピーをせん".to_owned(),
         started_at_hh_mm: "11:25".to_owned(),
@@ -276,6 +277,27 @@ fn empty_session_view_only_offers_auto_session_without_firing_callbacks() {
     assert!(html.contains("自動セッション"));
     assert!(!html.contains("session-card"));
     assert!(events.is_empty());
+}
+
+#[test]
+fn future_pending_card_has_attention_color_and_an_unparenthesized_full_date() {
+    let mut future = card("future-contract");
+    future.task_name = "pending contract".to_owned();
+    future.future_pending_date_label = Some("2026/12/31 着手予定".to_owned());
+    let (html, _) = render(vec![future], false);
+    assert!(
+        html.contains("class=\"session-card is-future-pending\""),
+        "{html}"
+    );
+    assert!(html.contains("class=\"session-pending-date\""), "{html}");
+    assert!(html.contains(">2026/12/31 着手予定</span>"), "{html}");
+    assert!(!html.contains("(2026/12/31 着手予定)"), "{html}");
+    for label in ["記録して解除", "記録して完了", "計測を破棄して解除"] {
+        assert!(html.contains(label), "{html}");
+    }
+    let (normal, _) = render(vec![card("today-contract")], false);
+    assert!(!normal.contains("is-future-pending"), "{normal}");
+    assert!(!normal.contains("着手予定"), "{normal}");
 }
 
 #[test]

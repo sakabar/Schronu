@@ -250,9 +250,14 @@ fn SessionCard(
     });
     let open_task_id = session.task_id.clone();
     let open_task_label = format!("{}: 開", task_name);
+    let card_class = if session.future_pending_date_label.is_some() {
+        "session-card is-future-pending"
+    } else {
+        "session-card"
+    };
 
     rsx! {
-        article { class: "session-card",
+        article { class: card_class,
             div { class: "session-card-heading",
                 h2 {
                     if linkable {
@@ -270,6 +275,9 @@ fn SessionCard(
                         }
                     } else {
                         "{task_name}"
+                    }
+                    if let Some(label) = &session.future_pending_date_label {
+                        span { class: "session-pending-date", "{label}" }
                     }
                 }
                 span { class: "session-progress-label", "{progress}" }

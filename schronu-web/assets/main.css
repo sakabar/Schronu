@@ -24,6 +24,8 @@
     --task-repetitive: #0069c2;
     --task-non-repetitive: #a44a00;
     --deadline-today: #9a5a00;
+    --session-future-surface: #fff7e7;
+    --session-future-accent: #9a5a00;
     --deadline-future: #196846;
     --band-unavailable: #87afaf;
     --band-elapsed: #808080;
@@ -534,6 +536,20 @@ button:disabled {
     background: var(--surface);
     box-shadow: var(--shadow);
     padding: 1.25rem;
+}
+
+.session-card.is-future-pending {
+    background: var(--session-future-surface);
+    border-left: 4px solid var(--session-future-accent);
+    padding-left: calc(1.25rem - 3px);
+}
+
+.session-pending-date {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--session-future-accent);
+    font-size: 0.85rem;
+    font-weight: 600;
 }
 
 .session-card-heading {

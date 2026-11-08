@@ -10,6 +10,37 @@ use chrono::{Duration, Local, NaiveDate, TimeZone};
 use uuid::Uuid;
 
 #[test]
+fn daily_and_all_rows_preserve_original_pending_until_for_session_start() {
+    use crate::application::schedule_use_case::get_schedule;
+
+    let now = Local.with_ymd_and_hms(2026, 12, 30, 12, 0, 0).unwrap();
+    let until = Local.with_ymd_and_hms(2027, 1, 1, 1, 0, 0).unwrap();
+    let task = TaskHandle::with_identity("pending metadata contract", Uuid::new_v4(), now).unwrap();
+    task.set_estimated_work_seconds(600).unwrap();
+    task.set_orig_status(Status::Pending).unwrap();
+    task.set_pending_until(until).unwrap();
+    let repository = TestTaskRepository::new(vec![task], now);
+    let schedule = get_schedule(&repository).unwrap();
+    let daily = build_scheduled_task_rows(
+        &repository,
+        &schedule,
+        NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+        now,
+    )
+    .unwrap();
+    let all = build_all_task_rows(&repository, &schedule, now).unwrap();
+    assert!(!daily.is_empty());
+    assert!(!all.is_empty());
+    for task in daily
+        .iter()
+        .map(|row| &row.task)
+        .chain(all.iter().map(|row| &row.task))
+    {
+        assert_eq!(task.pending_until_epoch_ms, Some(until.timestamp_millis()));
+    }
+}
+
+#[test]
 fn cli_and_web_place_zero_work_tasks_after_preceding_work() {
     use super::renderer::{DisplayModel, TaskListRow};
     use super::view::{build_show_all_tasks_display_with_config, TaskListDisplayOrder};

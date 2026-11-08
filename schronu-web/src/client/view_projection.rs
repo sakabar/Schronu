@@ -4,13 +4,14 @@ use crate::{
     AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTask,
     TaskDisplayKind,
 };
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Utc, Weekday};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
 use std::collections::HashSet;
 
 const INVALID_TIME: &str = "--:--";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionCardViewModel {
+    pub future_pending_date_label: Option<String>,
     pub task_id: String,
     pub task_name: String,
     pub started_at_hh_mm: String,
@@ -247,6 +248,11 @@ fn project_session_cards_with(
                 display_now,
             );
             SessionCardViewModel {
+                future_pending_date_label: session.pending_until_epoch_ms.and_then(|until| {
+                    let planned = logical_date_with_offset(until, &offset_at)?;
+                    let today = logical_date_with_offset(state.tick_now_epoch_ms(), &offset_at)?;
+                    (planned > today).then(|| format!("{} 着手予定", planned.format("%Y/%m/%d")))
+                }),
                 task_id: session.task_id.clone(),
                 task_name: session.task_name.clone(),
                 started_at_hh_mm: format_with_offset_provider(
@@ -466,6 +472,19 @@ fn local_datetime(epoch_ms: i64, utc_offset_minutes: i32) -> Option<DateTime<Fix
     let offset_seconds = utc_offset_minutes.checked_mul(60)?;
     let offset = FixedOffset::east_opt(offset_seconds)?;
     Some(DateTime::<Utc>::from_timestamp_millis(epoch_ms)?.with_timezone(&offset))
+}
+
+fn logical_date_with_offset(
+    epoch_ms: i64,
+    offset_at: &impl Fn(i64) -> Option<i32>,
+) -> Option<NaiveDate> {
+    let datetime = local_datetime(epoch_ms, offset_at(epoch_ms)?)?;
+    let date = datetime.date_naive();
+    if datetime.hour() < 6 {
+        date.pred_opt()
+    } else {
+        Some(date)
+    }
 }
 
 #[cfg(feature = "web")]

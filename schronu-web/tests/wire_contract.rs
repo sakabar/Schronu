@@ -18,6 +18,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         buffer_seconds: -61,
     };
     let task = SessionTask {
+        pending_until_epoch_ms: None,
         task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
         task_name: "wire task".to_owned(),
         estimated_work_seconds: 900,

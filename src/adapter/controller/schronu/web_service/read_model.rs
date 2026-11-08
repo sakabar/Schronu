@@ -133,6 +133,10 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
                     segment.task.start_time.timestamp_millis(),
+                    segment
+                        .task
+                        .pending_until
+                        .map(|until| until.timestamp_millis()),
                 ),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
@@ -383,6 +387,10 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                     segment.task.estimated_work_seconds,
                     segment.task.actual_work_seconds,
                     segment.task.start_time.timestamp_millis(),
+                    segment
+                        .task
+                        .pending_until
+                        .map(|until| until.timestamp_millis()),
                 ),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
@@ -529,25 +537,12 @@ pub(in crate::adapter::controller) fn build_auto_session_dto_with_minutes(
 }
 
 pub(super) fn session_task_dto_from_view(task: TaskView) -> SessionTaskDto {
-    session_task_dto(
-        task.id.hyphenated().to_string(),
-        task.name,
-        task.estimated_work_seconds,
-        task.actual_work_seconds,
-    )
-}
-
-fn session_task_dto(
-    task_id: String,
-    task_name: String,
-    estimated_work_seconds: i64,
-    actual_work_seconds: i64,
-) -> SessionTaskDto {
     SessionTaskDto {
-        task_id,
-        task_name,
-        estimated_work_seconds,
-        actual_work_seconds,
+        pending_until_epoch_ms: task.pending_until.map(|until| until.timestamp_millis()),
+        task_id: task.id.hyphenated().to_string(),
+        task_name: task.name,
+        estimated_work_seconds: task.estimated_work_seconds,
+        actual_work_seconds: task.actual_work_seconds,
     }
 }
 
@@ -557,8 +552,10 @@ fn scheduled_task_dto(
     estimated_work_seconds: i64,
     actual_work_seconds: i64,
     start_time_epoch_ms: i64,
+    pending_until_epoch_ms: Option<i64>,
 ) -> ScheduledTaskDto {
     ScheduledTaskDto {
+        pending_until_epoch_ms,
         start_time_epoch_ms: Some(start_time_epoch_ms),
         task_id,
         task_name,
