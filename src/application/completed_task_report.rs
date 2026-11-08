@@ -17,6 +17,7 @@ pub struct CompletedTaskReportRow {
     pub task_id: Uuid,
     pub task_name: String,
     pub project_name: String,
+    pub project_id: Uuid,
     pub completed_at: DateTime<Local>,
     pub actual_work_seconds: i64,
     pub estimated_work_seconds: i64,
@@ -157,6 +158,7 @@ pub fn list_completed_task_report(
                 task_id: task.id,
                 task_name: task.name,
                 project_name,
+                project_id: task.root_id,
                 completed_at,
                 actual_work_seconds: if task.actual_work_seconds == 0 {
                     task.estimated_work_seconds
@@ -325,6 +327,9 @@ mod tests {
             ]
         );
         assert!(report.iter().all(|row| row.project_name == "project root"));
+        assert!(report
+            .iter()
+            .all(|row| row.project_id == root.get_id().unwrap()));
         assert_eq!(report[0].task_name, "earlier child");
         assert_eq!(report[0].completed_at, local_time(11, 9, 0, 0));
         assert_eq!(report[0].actual_work_seconds, 11);

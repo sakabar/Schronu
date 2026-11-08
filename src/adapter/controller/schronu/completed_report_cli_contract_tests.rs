@@ -116,6 +116,7 @@ fn report_row(
         task_id: Uuid::from_u128(id),
         task_name: task.to_string(),
         project_name: project.to_string(),
+        project_id: Uuid::from_u128(id + 100),
         completed_at: Local.with_ymd_and_hms(2026, 8, 11, hour, 2, 3).unwrap(),
         actual_work_seconds: actual,
         estimated_work_seconds: estimated,
@@ -178,8 +179,11 @@ fn completed_report_renderer_uses_unicode_fixed_widths_signed_differences_and_un
             .iter()
             .zip(["タスク", "末尾まで省略しない長いタスク名", "second", "zero"])
     {
-        assert_eq!(suffix_at_width(line, 99), task);
-        assert_eq!(UnicodeWidthStr::width(&line[..line.len() - task.len()]), 99);
+        assert_eq!(suffix_at_width(line, 137), task);
+        assert_eq!(
+            UnicodeWidthStr::width(&line[..line.len() - task.len()]),
+            137
+        );
     }
     assert_eq!(
         lines.last().copied(),
@@ -198,7 +202,7 @@ fn completed_report_renderer_explicitly_reports_empty_results() {
             recorded_percentage: Some(0),
         }),
         concat!(
-            "完了  実績  見積  差  task_id  Project  タスク\n",
+            "完了  実績  見積  差  task_id  プロジェクト  project_id  タスク\n",
             "完了したタスクはありません。\n",
             "実績合計: 00:00:00  利用可能: 08:00:00  記録率: 0%\n",
         )
@@ -235,4 +239,40 @@ fn completed_report_renderer_shows_in_progress_actual_work_when_present() {
         .last(),
         Some("進行中: 00:15:00  実績合計: 00:15:00  利用可能: 01:00:00  記録率: 25%")
     );
+}
+
+#[test]
+fn completed_report_renderer_distinguishes_same_named_projects_by_full_uuid() {
+    let output = render(CompletedTaskReport {
+        rows: vec![
+            report_row(1, 8, 1, 1, "same project", "first task"),
+            report_row(2, 9, 1, 1, "same project", "second task"),
+        ],
+        in_progress_actual_work_seconds: None,
+        total_actual_work_seconds: 2,
+        available_seconds: 3_600,
+        recorded_percentage: Some(0),
+    });
+    let lines = output.lines().collect::<Vec<_>>();
+    let headers = lines[0].split_whitespace().collect::<Vec<_>>();
+    assert_eq!(
+        headers,
+        [
+            "完了",
+            "実績",
+            "見積",
+            "差",
+            "task_id",
+            "プロジェクト",
+            "project_id",
+            "タスク"
+        ]
+    );
+    for (line, id) in lines[1..3].iter().zip([1, 2]) {
+        let task_id = Uuid::from_u128(id).to_string();
+        let project_id = Uuid::from_u128(id + 100).to_string();
+        assert!(line.find(&task_id).unwrap() < line.find("same project").unwrap());
+        assert!(line.find("same project").unwrap() < line.find(&project_id).unwrap());
+        assert!(line.find(&project_id).unwrap() < line.find("task").unwrap());
+    }
 }

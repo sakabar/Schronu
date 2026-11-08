@@ -513,7 +513,16 @@ fn render_completed_task_report_display(
     writer: &mut dyn SchronuWriter,
     display: &CompletedTaskReportDisplay,
 ) -> Result<(), std::io::Error> {
-    const HEADERS: [&str; 7] = ["完了", "実績", "見積", "差", "task_id", "Project", "タスク"];
+    const HEADERS: [&str; 8] = [
+        "完了",
+        "実績",
+        "見積",
+        "差",
+        "task_id",
+        "プロジェクト",
+        "project_id",
+        "タスク",
+    ];
     let rows = display
         .report
         .rows
@@ -526,6 +535,7 @@ fn render_completed_task_report_display(
                 format_completed_difference(row.actual_work_seconds, row.estimated_work_seconds),
                 row.task_id.to_string(),
                 truncate_project_name(&row.project_name),
+                row.project_id.to_string(),
                 row.task_name.clone(),
             ]
         })
@@ -539,9 +549,10 @@ fn render_completed_task_report_display(
         widths[5] = widths[5]
             .max(UnicodeWidthStr::width(row[5].as_str()))
             .min(20);
+        widths[6] = widths[6].max(UnicodeWidthStr::width(row[6].as_str()));
     }
 
-    let format_row = |row: [&str; 7]| {
+    let format_row = |row: [&str; 8]| {
         let pad_left = |value: &str, width: usize| {
             format!(
                 "{}{value}",
@@ -555,14 +566,15 @@ fn render_completed_task_report_display(
             )
         };
         format!(
-            "{}  {}  {}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}  {}  {}",
             pad_left(row[0], widths[0]),
             pad_left(row[1], widths[1]),
             pad_left(row[2], widths[2]),
             pad_left(row[3], widths[3]),
             pad_left(row[4], widths[4]),
             pad_right(row[5], widths[5]),
-            row[6],
+            pad_left(row[6], widths[6]),
+            row[7],
         )
     };
 

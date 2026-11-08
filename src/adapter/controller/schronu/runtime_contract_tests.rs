@@ -2148,23 +2148,40 @@ fn test_execute_all_pendingタスクを予定時刻に含め_doneタスクを除
 fn completed_commandは製品handlerからapplication_queryを通して完了taskを表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let completed_at = Local.with_ymd_and_hms(2026, 8, 11, 8, 2, 3).unwrap();
-    let task = new_test_task_handle("完了レポート対象").unwrap();
+    let project = new_test_task_handle("report project").unwrap();
+    let project_id = project.get_id().unwrap();
+    let parent = project
+        .create_child(new_test_task_attr("report parent"))
+        .unwrap();
+    let task = parent
+        .create_child(new_test_task_attr("完了レポート対象"))
+        .unwrap();
     task.set_orig_status(Status::Done).unwrap();
     task.set_end_time_opt(Some(completed_at)).unwrap();
     task.set_actual_work_seconds(3 * 60 * 60).unwrap();
     task.set_estimated_work_seconds(60).unwrap();
 
-    let output =
-        execute_calendar_command_with_ansi_color_for_test("済", now, task, None, false);
+    for command in ["済", "completed"] {
+        let output = execute_calendar_command_with_ansi_color_for_test(
+            command,
+            now,
+            project.clone(),
+            None,
+            false,
+        );
 
-    assert!(output.contains("完了"));
-    assert!(output.contains("08:02"));
-    assert!(!output.contains("08:02:03"));
-    assert!(output.contains("03:00:00"));
-    assert!(output.contains("+02:59:00"));
-    assert!(output.contains("完了レポート対象"));
-    assert!(output.contains("利用可能: 06:00:00"), "{output}");
-    assert!(output.contains("記録率: 50%"), "{output}");
+        assert!(output.contains("project_id"), "{output}");
+        assert!(output.contains("プロジェクト"), "{output}");
+        assert!(output.contains(&project_id.to_string()), "{output}");
+        assert!(output.contains("完了"));
+        assert!(output.contains("08:02"));
+        assert!(!output.contains("08:02:03"));
+        assert!(output.contains("03:00:00"));
+        assert!(output.contains("+02:59:00"));
+        assert!(output.contains("完了レポート対象"));
+        assert!(output.contains("利用可能: 06:00:00"), "{output}");
+        assert!(output.contains("記録率: 50%"), "{output}");
+    }
 }
 
 #[test]

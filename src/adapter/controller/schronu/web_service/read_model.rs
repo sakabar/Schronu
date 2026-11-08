@@ -635,7 +635,7 @@ mod completed_task_report_tests {
     use uuid::Uuid;
 
     #[test]
-    fn application_rowの全fieldをdtoへ保持する() {
+    fn application_rowのweb表示fieldをdtoへ保持する() {
         let completed_at = Local
             .with_ymd_and_hms(2026, 9, 5, 8, 7, 6)
             .single()
@@ -644,6 +644,7 @@ mod completed_task_report_tests {
             task_id: Uuid::from_u128(1),
             task_name: "task".to_owned(),
             project_name: "project".to_owned(),
+            project_id: Uuid::from_u128(2),
             completed_at,
             actual_work_seconds: 3_661,
             estimated_work_seconds: 3_600,
