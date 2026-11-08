@@ -592,5 +592,5 @@ fn future_session_start_uses_shared_palette_with_dark_text_on_hover() {
         ".session-start.is-future:hover:not(:disabled)",
     );
     assert!(hover.contains("background: var(--session-start-future-hover);"));
-    assert!(hover.contains("border-color: var(--session-start-future-hover);"));
+    assert!(hover.contains("border-color: var(--session-start-future-border);"));
 }

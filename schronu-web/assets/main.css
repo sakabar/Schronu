@@ -505,7 +505,7 @@ button:disabled {
     }
 
     .session-start.is-future:hover:not(:disabled) {
-        border-color: var(--session-start-future-hover);
+        border-color: var(--session-start-future-border);
         background: var(--session-start-future-hover);
     }
 
