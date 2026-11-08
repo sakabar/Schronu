@@ -1,3 +1,4 @@
+use super::task_id_copy::TaskIdCopyButton;
 use dioxus::prelude::*;
 use std::rc::Rc;
 
@@ -539,7 +540,7 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
                 div { class: "completed-subject-scroll", tabindex: 0,
                     strong {
                         class: task_class,
-                        "{task_name}"
+                        TaskIdCopyButton { task_id: row.task_id.clone(), name: task_name.clone() }
                     }
                     span { class: "completed-project", "{project_name}" }
                 }
@@ -754,7 +755,15 @@ fn TaskRow(
                             "前{row.advanceable_days}"
                         }
                     }
-                    "{display_task_name}"
+                    if !is_projected {
+                        if let Some(task_id) = row.task.task_id.as_ref() {
+                            TaskIdCopyButton { task_id: task_id.clone(), name: display_task_name.clone() }
+                        } else {
+                            "{display_task_name}"
+                        }
+                    } else {
+                        "{display_task_name}"
+                    }
                     if let Some(source_task_id) = source_task_id.as_deref() {
                         span {
                             class: "projected-task-source",

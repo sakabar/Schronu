@@ -1199,11 +1199,11 @@ fn date_and_leaf_task_clicks_dispatch_exact_payload_once() {
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&task_dom, task_listeners[1]);
+    dispatch_click(&task_dom, task_listeners[2]);
     assert_eq!(*events.lock().unwrap(), ["task:task-id:task task-id:true"]);
 
     events.lock().unwrap().clear();
-    dispatch_click(&task_dom, task_listeners[2]);
+    dispatch_click(&task_dom, task_listeners[3]);
     assert_eq!(*events.lock().unwrap(), ["defer:task-id"]);
 }
 
@@ -1220,7 +1220,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&cancel_dom, initial_ids[2]);
+    dispatch_click(&cancel_dom, initial_ids[3]);
     let confirmation_ids = render_with_click_listeners(&mut cancel_dom);
     let html = dioxus::ssr::render(&cancel_dom);
     assert!(events.lock().unwrap().is_empty());
@@ -1245,7 +1245,7 @@ fn 期限余裕不足の先送りは確認後だけdispatchしキャンセルで
         filter_text: String::new(),
         events: Arc::clone(&events),
     });
-    dispatch_click(&confirm_dom, initial_ids[2]);
+    dispatch_click(&confirm_dom, initial_ids[3]);
     let confirmation_ids = render_with_click_listeners(&mut confirm_dom);
     let html = dioxus::ssr::render(&confirm_dom);
     assert!(html.contains("次の周期へ送ります"), "{html}");
@@ -1302,7 +1302,7 @@ fn row差替えで先送り確認stateを別taskへ継承しない() {
         },
     );
     let initial_ids = rebuild_with_click_listeners(&mut dom);
-    dispatch_click(&dom, initial_ids[3]);
+    dispatch_click(&dom, initial_ids[4]);
     dom.render_immediate_to_vec();
     assert!(dioxus::ssr::render(&dom).contains("task firstは締切までの余裕がありません"));
 
@@ -1325,14 +1325,18 @@ fn rank非0のtaskはsession追加なしで先送りをdispatchする() {
         events: Arc::clone(&events),
     });
 
-    assert_eq!(listeners.len(), 2, "全てと先送りだけがclick listenerを持つ");
+    assert_eq!(
+        listeners.len(),
+        3,
+        "全て・IDコピー・先送りがclick listenerを持つ"
+    );
     assert!(!dioxus::ssr::render(&dom).contains("session-start"));
     assert!(
         dioxus::ssr::render(&dom).contains("aria-label=\"task non-leaf: 先送り\""),
         "rank非0でも先送りを表示する"
     );
     assert!(events.lock().unwrap().is_empty());
-    dispatch_click(&dom, listeners[1]);
+    dispatch_click(&dom, listeners[2]);
     assert_eq!(*events.lock().unwrap(), ["defer:non-leaf"]);
 }
 
@@ -1919,7 +1923,7 @@ fn filter入力とclearは副作用なく再描画されtab往復でも条件を
     assert!(events.borrow().is_empty());
 
     assert_eq!(clear_ids.len(), 1);
-    assert_eq!(restored_clear_ids.len(), 3);
+    assert_eq!(restored_clear_ids.len(), 4);
     dispatch_click(&dom, *restored_clear_ids.last().unwrap());
     render_with_click_listeners(&mut dom);
     let cleared_html = dioxus::ssr::render(&dom);
@@ -1952,7 +1956,7 @@ fn url_suffix_is_hidden_in_list_but_search_and_session_action_keep_original_name
             html.contains(&format!("aria-label=\"{expected}: セッションに追加\"")),
             "{html}"
         );
-        dispatch_click(&dom, ids[1]);
+        dispatch_click(&dom, ids[2]);
         assert!(events
             .lock()
             .unwrap()
@@ -1988,7 +1992,7 @@ fn url_suffix_is_hidden_in_all_tasks_and_defer_confirmation() {
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("all task: 先送り"), "{html}");
     assert!(!html.contains("https://example.com"), "{html}");
-    dispatch_click(&dom, ids[2]);
+    dispatch_click(&dom, ids[3]);
     render_with_click_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
     assert!(
@@ -2018,8 +2022,8 @@ fn 親taskの先送りは期限と周期の確認後だけdispatchする() {
             filter_text: String::new(),
             events: Arc::clone(&events),
         });
-        assert_eq!(ids.len(), 2);
-        dispatch_click(&dom, ids[1]);
+        assert_eq!(ids.len(), 3);
+        dispatch_click(&dom, ids[2]);
         let confirmation_ids = render_with_click_listeners(&mut dom);
         assert!(events.lock().unwrap().is_empty());
         assert!(dioxus::ssr::render(&dom).contains("先送りしますか?"));
@@ -2107,3 +2111,50 @@ fn 前倒しバッジは日付別と全件で正の日数だけを見込みの�
 
 #[path = "session_start_color_tests.rs"]
 mod session_start_color_tests;
+
+#[test]
+fn actual_names_are_copy_buttons_and_projected_names_are_plain_text() {
+    for all in [false, true] {
+        #[component]
+        fn CopyHarness(all: bool, events: Rc<RefCell<Vec<String>>>) -> Element {
+            let copy = use_callback(move |id: String| events.borrow_mut().push(id));
+            use_context_provider(|| super::task_id_copy::CopyTaskId { _handler: copy });
+            let mut projected = row("unused", false, true);
+            projected.task.task_id = None;
+            projected.defer_plan = None;
+            projected.occurrence = crate::ScheduleOccurrence::Projected {
+                occurrence_key: "source:1788568200000".to_owned(),
+                source_task_id: "source".to_owned(),
+            };
+            rsx! {
+                ListView {
+                    dates: Vec::new(), rows: vec![row("leaf", false, true), row("parent", false, false), row("leaf", false, true), projected],
+                    active_task_ids: vec!["leaf".to_owned()], mutations_locked: true,
+                    date_input_text: String::new(), date_input_error: None, filter_text: String::new(),
+                    all_tasks_status: if all { Some(super::list_view::AllTasksViewStatus::Loaded) } else { None },
+                    on_select_date: move |_| {}, on_date_input_change: move |_| {},
+                    on_submit_date_input: move |_| {}, on_start_session: move |_| {},
+                    on_filter_change: move |_| {},
+                }
+            }
+        }
+        let events = Rc::new(RefCell::new(Vec::new()));
+        let mut dom = VirtualDom::new_with_props(
+            CopyHarness,
+            CopyHarnessProps {
+                all,
+                events: events.clone(),
+            },
+        );
+        let listeners = rebuild_with_click_listeners(&mut dom);
+        let html = dioxus::ssr::render(&dom);
+        assert_eq!(html.matches("class=\"task-id-copy\"").count(), 3, "{html}");
+        assert!(html.contains("task leaf: タスクIDをコピー"), "{html}");
+        assert!(html.contains("task parent: タスクIDをコピー"), "{html}");
+        assert!(!html.contains("task unused: タスクIDをコピー"), "{html}");
+        for id in listeners {
+            dispatch_click(&dom, id);
+        }
+        assert_eq!(*events.borrow(), ["leaf", "parent", "leaf"]);
+    }
+}

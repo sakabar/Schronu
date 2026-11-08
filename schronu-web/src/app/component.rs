@@ -10,7 +10,9 @@ use browser::BrowserApp;
 pub fn app() -> Element {
     rsx! {
         document::Stylesheet { href: asset!("/assets/main.css") }
-        AppBody {}
+        super::task_id_copy::CopyTaskIdProvider {
+            AppBody {}
+        }
     }
 }
 

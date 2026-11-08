@@ -470,6 +470,11 @@ button:disabled {
 }
 
 @media (hover: hover) and (pointer: fine) {
+    button.task-id-copy:hover:not(:disabled) {
+        background: transparent;
+        text-decoration: underline;
+    }
+
     button:hover:not(:disabled) {
         border-color: var(--green);
         background: #f2faf6;
@@ -2273,4 +2278,43 @@ button.routine-load-day.is-at-capacity {
     .loading-spinner {
         animation: none;
     }
+}
+
+button.task-id-copy {
+    display: inline;
+    border: 0;
+    border-radius: 0.15rem;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: inherit;
+    white-space: inherit;
+}
+
+button.task-id-copy:active:not(:disabled) {
+    transform: none;
+}
+
+button.task-id-copy:focus-visible {
+    outline-offset: -1px;
+}
+
+.task-copy-notice {
+    position: fixed;
+    inset-inline: 1rem;
+    bottom: calc(var(--bottom-navigation-height, 0px) + env(safe-area-inset-bottom) + 1rem);
+    z-index: 1000;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.task-copy-notice span {
+    max-width: 100%;
+    border-radius: 0.5rem;
+    padding: 0.65rem 1rem;
+    background: var(--ink);
+    color: var(--surface);
+    box-shadow: 0 3px 12px rgb(0 0 0 / 20%);
 }
