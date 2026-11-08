@@ -1003,13 +1003,14 @@ fn resolve_deadline_time(
     Ok(Some(try_local_date_and_time(date, time)?))
 }
 
-fn execute_set_arrange_children_work_minutes(
+fn execute_arrange_children_estimates(
     focused_task_opt: &Option<TaskHandle>,
-    estimated_minutes: i64,
+    estimated_minutes: Option<i64>,
     includes_zero_estimate: bool,
 ) -> Result<(), ApplicationError> {
-    // 繰り返しタスクについて、その子タスクでDoneでないものの時間を一律変更する。
-    if !(0..=MAX_ARRANGE_ESTIMATED_WORK_MINUTES).contains(&estimated_minutes) {
+    if estimated_minutes
+        .is_some_and(|minutes| !(0..=MAX_ARRANGE_ESTIMATED_WORK_MINUTES).contains(&minutes))
+    {
         return Ok(());
     }
 
@@ -1022,21 +1023,39 @@ fn execute_set_arrange_children_work_minutes(
             let children = focused_task
                 .get_children()
                 .map_err(ApplicationError::TaskTree)?;
-            for child_task in children.iter() {
+            let mut targets = Vec::new();
+            for child_task in children {
                 if child_task
                     .get_status()
                     .map_err(ApplicationError::TaskTree)?
-                    != Status::Done
-                    && (includes_zero_estimate
-                        || child_task
-                            .get_estimated_work_seconds()
-                            .map_err(ApplicationError::TaskTree)?
-                            != 0)
+                    == Status::Done
                 {
-                    child_task
-                        .set_estimated_work_seconds(estimated_minutes * 60)
-                        .map_err(ApplicationError::TaskTree)?;
+                    continue;
                 }
+                let seconds = child_task
+                    .get_estimated_work_seconds()
+                    .map_err(ApplicationError::TaskTree)?;
+                if seconds != 0 || (estimated_minutes.is_some() && includes_zero_estimate) {
+                    targets.push((child_task, seconds));
+                }
+            }
+            if targets.is_empty() {
+                return Ok(());
+            }
+            let estimated_seconds = match estimated_minutes {
+                Some(minutes) => minutes * 60,
+                None => {
+                    let total: i128 = targets
+                        .iter()
+                        .map(|(_, seconds)| i128::from(*seconds))
+                        .sum();
+                    (total / targets.len() as i128) as i64
+                }
+            };
+            for (child_task, _) in targets {
+                child_task
+                    .set_estimated_work_seconds(estimated_seconds)
+                    .map_err(ApplicationError::TaskTree)?;
             }
         }
     }
@@ -1122,14 +1141,10 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
 
     fn arrange(
         &mut self,
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     ) -> Result<(), ApplicationError> {
-        execute_set_arrange_children_work_minutes(
-            &self.focused_task()?,
-            minutes,
-            includes_zero_estimate,
-        )
+        execute_arrange_children_estimates(&self.focused_task()?, minutes, includes_zero_estimate)
     }
 
     fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError> {
@@ -1594,7 +1609,7 @@ impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
 
     fn arrange(
         &mut self,
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     ) -> Result<(), ApplicationError> {
         let mut context = RuntimeTaskAttributeCommandContext {

@@ -4802,6 +4802,96 @@ fn test_execute_deadline_不正日時はfield付き入力エラーを表示し�
 }
 
 #[test]
+fn test_execute_arrange_引数なしで更新前の見積もりの平均秒数に揃える() {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    for (estimates, expected) in [
+        (vec![600, 900], 750),
+        (vec![1, 2, 2], 1),
+        (vec![61], 61),
+        (vec![i64::MAX, i64::MAX - 2], i64::MAX - 1),
+    ] {
+        for command in ["揃", "arr", "arrange"] {
+            let task = new_test_task_handle("平均対象の親").unwrap();
+            task.set_repetition_interval_days_opt(Some(7)).unwrap();
+            for &seconds in &estimates {
+                let mut attr = new_test_task_attr("平均対象の子");
+                attr.set_estimated_work_seconds(seconds);
+                task.create_as_last_child(attr);
+            }
+            let task_id = task.get_id().unwrap();
+            let result = execute_command_for_test(task, now, Some(task_id), command);
+            assert!(!result.output.contains("[Error]"), "{}", result.output);
+            for child in result.task.get_children().unwrap() {
+                assert_eq!(child.get_estimated_work_seconds().unwrap(), expected,
+                    "command: {command}, estimates: {estimates:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn test_execute_arrange_平均の計算と更新は未完了かつ非ゼロの直下の子だけを対象とする() {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    let task = new_test_task_handle("対象範囲の親").unwrap();
+    task.set_repetition_interval_days_opt(Some(7)).unwrap();
+    task.set_estimated_work_seconds(1800).unwrap();
+    for (seconds, status) in [
+        (600, Status::Todo),
+        (900, Status::Pending),
+        (0, Status::Todo),
+        (300, Status::Done),
+    ] {
+        let mut attr = new_test_task_attr("対象範囲の子");
+        attr.set_estimated_work_seconds(seconds);
+        attr.set_orig_status(status);
+        let child = task.create_as_last_child(attr);
+        let mut grandchild = new_test_task_attr("対象外の孫");
+        grandchild.set_estimated_work_seconds(3600);
+        child.create_as_last_child(grandchild);
+    }
+    let task_id = task.get_id().unwrap();
+    let result = execute_command_for_test(task, now, Some(task_id), "揃");
+    assert!(!result.output.contains("[Error]"), "{}", result.output);
+    assert_eq!(result.focused_task_id_opt, Some(task_id));
+    assert_eq!(result.task.get_estimated_work_seconds().unwrap(), 1800);
+    for (child, expected) in result.task.get_children().unwrap().iter().zip([750, 750, 0, 300]) {
+        assert_eq!(child.get_estimated_work_seconds().unwrap(), expected);
+        assert_eq!(child.get_children().unwrap()[0].get_estimated_work_seconds().unwrap(), 3600);
+    }
+}
+
+#[test]
+fn test_execute_arrange_対象なしまたは適用条件外では状態を変更しない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 3, 12, 0, 0).unwrap();
+    for (repeating, focused, estimates) in [
+        (true, true, vec![]),
+        (true, true, vec![0, 0]),
+        (false, true, vec![600, 900]),
+        (true, false, vec![600, 900]),
+    ] {
+        let task = new_test_task_handle("適用条件の親").unwrap();
+        if repeating {
+            task.set_repetition_interval_days_opt(Some(7)).unwrap();
+        }
+        for seconds in estimates {
+            let mut attr = new_test_task_attr("適用条件の子");
+            attr.set_estimated_work_seconds(seconds);
+            task.create_as_last_child(attr);
+        }
+        let mut done = new_test_task_attr("対象外の完了済み");
+        done.set_estimated_work_seconds(300);
+        done.set_orig_status(Status::Done);
+        task.create_as_last_child(done);
+        let focus = focused.then(|| task.get_id().unwrap());
+        let before = task.snapshot().unwrap();
+        let result = execute_command_for_test(task, now, focus, "揃");
+        assert!(!result.output.contains("[Error]"), "{}", result.output);
+        assert_eq!(result.task.snapshot().unwrap(), before);
+        assert_eq!(result.focused_task_id_opt, focus);
+    }
+}
+
+#[test]
 fn test_execute_arrange_デフォルトで見積もり0と完了済みを維持する() {
     let task = execute_arrange_command("揃 15");
     let children = task
@@ -4854,7 +4944,7 @@ fn test_execute_arrange_未知のflagを拒否して状態を変更しない() {
     assert_eq!(result.task.snapshot().unwrap(), original_snapshot);
     assert_eq!(result.focused_task_id_opt, Some(task_id));
     assert!(result.output.contains(
-        "[Error] 入力エラー: includes_zero_estimate: 全またはallで指定してください (コマンド: 揃, 使い方: 揃 <分> [全])"
+        "[Error] 入力エラー: includes_zero_estimate: 全またはallで指定してください (コマンド: 揃, 使い方: 揃 [<分> [全]])"
     ));
 }
 
