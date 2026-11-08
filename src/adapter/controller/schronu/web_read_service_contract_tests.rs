@@ -1506,7 +1506,7 @@ fn complete_session_returns_cli_parent_handoff() {
             parent.set_actual_work_seconds(120).unwrap();
             parent.set_orig_status(parent_status).unwrap();
             if parent_status == Status::Pending {
-                parent.set_pending_until(now + Duration::hours(1)).unwrap();
+                parent.set_pending_until(now + Duration::days(2)).unwrap();
             }
             if future_start {
                 parent.set_start_time(now + Duration::hours(1)).unwrap();
@@ -1552,6 +1552,14 @@ fn complete_session_returns_cli_parent_handoff() {
                 assert_eq!(value["data"]["task_name"], "handoff parent");
                 assert_eq!(value["data"]["estimated_work_seconds"], 600);
                 assert_eq!(value["data"]["actual_work_seconds"], 120);
+                if parent_status == Status::Pending {
+                    assert_eq!(
+                        value["data"]["pending_until_epoch_ms"],
+                        (now + Duration::days(2)).timestamp_millis()
+                    );
+                } else {
+                    assert!(value["data"]["pending_until_epoch_ms"].is_null());
+                }
             } else {
                 assert!(value["data"].is_null());
             }

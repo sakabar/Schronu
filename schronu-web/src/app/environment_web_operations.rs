@@ -248,6 +248,7 @@ impl From<CoreServerSnapshot> for ServerSnapshot {
 impl From<SessionTaskDto> for SessionTask {
     fn from(task: SessionTaskDto) -> Self {
         Self {
+            pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: task.task_id,
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
@@ -259,6 +260,7 @@ impl From<SessionTaskDto> for SessionTask {
 impl From<ScheduledTaskDto> for ScheduledTask {
     fn from(task: ScheduledTaskDto) -> Self {
         Self {
+            pending_until_epoch_ms: task.pending_until_epoch_ms,
             start_time_epoch_ms: task.start_time_epoch_ms,
             task_id: task.task_id,
             task_name: task.task_name,
@@ -983,10 +985,10 @@ mod tests {
         }
     }
     #[test]
-    fn 前倒し日数と開始時刻は日付別と全件のdtoからwireへ保持する() {
+    fn 前倒し日数と開始時刻とpendingは日付別と全件のdtoからwireへ保持する() {
         use super::{AllTaskRow, AllTaskRowDto, ScheduledTaskRow, ScheduledTaskRowDto};
         let value = serde_json::json!({
-            "task": {"task_id": "00000000-0000-4000-8000-000000000001", "task_name": "contract task", "estimated_work_seconds": 600, "actual_work_seconds": 0, "start_time_epoch_ms": 1788568100000_i64},
+            "task": {"task_id": "00000000-0000-4000-8000-000000000001", "task_name": "contract task", "estimated_work_seconds": 600, "actual_work_seconds": 0, "start_time_epoch_ms": 1788568100000_i64, "pending_until_epoch_ms": 1788654500000_i64},
             "display_task_name": "contract task", "advanceable_days": 3,
             "schedule_start_epoch_ms": 1788568200000_i64,
             "schedule_end_epoch_ms": 1788568800000_i64,
@@ -1003,5 +1005,7 @@ mod tests {
         assert_eq!(all.advanceable_days, 3);
         assert_eq!(daily.task.start_time_epoch_ms, Some(1788568100000));
         assert_eq!(all.task.start_time_epoch_ms, Some(1788568100000));
+        assert_eq!(daily.task.pending_until_epoch_ms, Some(1788654500000));
+        assert_eq!(all.task.pending_until_epoch_ms, Some(1788654500000));
     }
 }

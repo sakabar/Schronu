@@ -34,6 +34,7 @@ impl KeyValueStorage for Storage {
 
 fn storage(estimated: i64, actual: i64) -> Storage {
     let session = WorkSession {
+        pending_until_epoch_ms: None,
         task_id: TASK.into(),
         task_name: "残り時間の検証".into(),
         started_at_epoch_ms: START,

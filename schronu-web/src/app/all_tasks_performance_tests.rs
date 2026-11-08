@@ -88,6 +88,7 @@ fn all_task_rows(count: usize) -> Vec<AllTaskRow> {
     (0..count)
         .map(|index| AllTaskRow {
             task: SessionTask {
+                pending_until_epoch_ms: None,
                 task_id: format!("00000000-0000-4000-8000-{index:012x}"),
                 task_name: if index % 10 == 0 {
                     format!("検索対象 TASK {index:05}")

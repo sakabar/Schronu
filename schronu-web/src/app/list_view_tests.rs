@@ -206,6 +206,7 @@ fn build(props: RootProps) -> (VirtualDom, Vec<dioxus::dioxus_core::ElementId>) 
 
 fn task(task_id: &str, task_name: &str) -> SessionTask {
     SessionTask {
+        pending_until_epoch_ms: None,
         task_id: task_id.to_owned(),
         task_name: task_name.to_owned(),
         estimated_work_seconds: 900,

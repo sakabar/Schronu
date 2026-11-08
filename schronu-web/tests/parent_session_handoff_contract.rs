@@ -33,12 +33,29 @@ fn handoff() -> CompleteSessionResponse {
     WebSuccess {
         snapshot: snapshot("2026-09-05", 65_000),
         data: Some(SessionTask {
+            pending_until_epoch_ms: None,
             task_id: PARENT_ID.to_owned(),
             task_name: "handoff parent".to_owned(),
             estimated_work_seconds: 600,
             actual_work_seconds: 120,
         }),
     }
+}
+
+#[test]
+fn pending_parent_metadata_survives_handoff_and_reload() {
+    let storage = FakeStorage::default();
+    let mut state = state_with_sessions(&storage, &[TASK_ID]);
+    let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
+    let mut payload = serde_json::to_value(handoff()).unwrap();
+    let pending_until = 1_798_732_800_000_i64;
+    payload["data"]["pending_until_epoch_ms"] = pending_until.into();
+    let response = serde_json::from_value(payload).unwrap();
+    state.apply_complete_result(&storage, request_id, Ok(response));
+    let restored = load_client_state(&storage, 80_000).unwrap();
+    let sessions = serde_json::to_value(restored.sessions()).unwrap();
+    assert_eq!(sessions[0]["task_id"], PARENT_ID);
+    assert_eq!(sessions[0]["pending_until_epoch_ms"], pending_until);
 }
 
 #[test]

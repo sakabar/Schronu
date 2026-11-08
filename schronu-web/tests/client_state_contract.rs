@@ -449,6 +449,7 @@ fn restored_sessionの未送信進捗は見積到達時刻で打ち切る() {
         .replace_sessions(
             &storage,
             vec![WorkSession {
+                pending_until_epoch_ms: None,
                 task_id: TASK_ID.to_owned(),
                 task_name: "task".to_owned(),
                 started_at_epoch_ms: 0,
@@ -497,6 +498,7 @@ fn restored_sessionの未送信進捗を個別にserver_bufferへ加算する() 
             &storage,
             vec![
                 WorkSession {
+                    pending_until_epoch_ms: None,
                     task_id: TASK_ID.to_owned(),
                     task_name: "first".to_owned(),
                     started_at_epoch_ms: 1_000_000,
@@ -504,6 +506,7 @@ fn restored_sessionの未送信進捗を個別にserver_bufferへ加算する() 
                     actual_work_seconds_at_start: 0,
                 },
                 WorkSession {
+                    pending_until_epoch_ms: None,
                     task_id: OTHER_TASK_ID.to_owned(),
                     task_name: "second".to_owned(),
                     started_at_epoch_ms: 1_010_000,
@@ -557,6 +560,7 @@ fn restored_sessionの未送信進捗は終了click時刻で打ち切る() {
         .replace_sessions(
             &storage,
             vec![WorkSession {
+                pending_until_epoch_ms: None,
                 task_id: TASK_ID.to_owned(),
                 task_name: "task".to_owned(),
                 started_at_epoch_ms: 1_000_000,
@@ -1025,6 +1029,7 @@ fn auto_sessionはsnapshotを適用しtick開始で保存成功時だけ追加�
     let storage = FakeStorage::default();
     let mut state = load_client_state(&storage, 5_000).unwrap();
     let selected = SessionTask {
+        pending_until_epoch_ms: None,
         task_id: TASK_ID.to_owned(),
         task_name: "selected".to_owned(),
         estimated_work_seconds: 900,

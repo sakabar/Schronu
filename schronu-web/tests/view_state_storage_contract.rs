@@ -706,6 +706,7 @@ fn boundary_view_state(list_mode: ListMode, logical_date: &str) -> ViewState {
 fn row(task_id: &str, task_name: &str) -> ScheduledTaskRow {
     ScheduledTaskRow {
         task: SessionTask {
+            pending_until_epoch_ms: None,
             task_id: task_id.to_owned(),
             task_name: task_name.to_owned(),
             estimated_work_seconds: 900,

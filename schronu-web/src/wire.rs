@@ -81,6 +81,8 @@ pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_until_epoch_ms: Option<i64>,
     pub task_id: String,
     pub task_name: String,
     pub estimated_work_seconds: i64,
@@ -89,6 +91,8 @@ pub struct SessionTask {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_until_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
     pub task_name: String,
@@ -101,6 +105,7 @@ pub struct ScheduledTask {
 impl ScheduledTask {
     pub fn actionable_task(&self) -> Option<SessionTask> {
         Some(SessionTask {
+            pending_until_epoch_ms: self.pending_until_epoch_ms,
             task_id: self.task_id.clone()?,
             task_name: self.task_name.clone(),
             estimated_work_seconds: self.estimated_work_seconds,
@@ -113,6 +118,7 @@ impl From<SessionTask> for ScheduledTask {
     fn from(task: SessionTask) -> Self {
         Self {
             start_time_epoch_ms: None,
+            pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: Some(task.task_id),
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
@@ -339,6 +345,7 @@ mod all_task_contract_tests {
 
         let row = AllTaskRow {
             task: SessionTask {
+                pending_until_epoch_ms: None,
                 task_id: "task".to_owned(),
                 task_name: "name".to_owned(),
                 estimated_work_seconds: 1,

@@ -11,6 +11,8 @@ const STORAGE_VERSION: u64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_until_epoch_ms: Option<i64>,
     pub task_id: String,
     pub task_name: String,
     pub started_at_epoch_ms: i64,

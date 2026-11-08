@@ -106,6 +106,7 @@ SessionTask {
     task_name: String,
     estimated_work_seconds: i64,
     actual_work_seconds: i64,
+    pending_until_epoch_ms: Option<i64>,
 }
 ```
 
@@ -118,6 +119,7 @@ ScheduledTask {
     estimated_work_seconds: i64,
     actual_work_seconds: i64,
     start_time_epoch_ms: Option<i64>,
+    pending_until_epoch_ms: Option<i64>,
 }
 
 ScheduleOccurrence =
@@ -283,11 +285,16 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
       "task_name": "task name",
       "started_at_epoch_ms": 1788565500000,
       "estimated_work_seconds_at_start": 900,
-      "actual_work_seconds_at_start": 300
+      "actual_work_seconds_at_start": 300,
+      "pending_until_epoch_ms": 1788732000000
     }
   ]
 }
 ```
+
+`pending_until_epoch_ms`はセッション開始時のtask snapshotから保持する任意fieldで、欠落・nullは情報なしとする。旧version 1を引き続き復元し、fieldがないことによる追加通信や保存は行わない。親への引き継ぎと一覧・自動開始の全経路でDTOからwire、WorkSessionへ同じ値を渡し、再開時にも保持する。
+
+cardの`future_pending_date_label`はbrowserの現在時刻と保存した`pending_until_epoch_ms`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して比較する。予定日が今日より後の場合だけ`YYYY/MM/DD 着手予定`をtask名の直下へ表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。今日以前、情報なし、日時変換不能時は通常表示とする。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、当日になれば注意表示を解除する。計測・server通信・task更新・操作guardは変えない。
 
 読込規則:
 
