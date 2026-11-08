@@ -19,7 +19,7 @@
     --red-soft: #fff0f0;
     --session-start-future: #facc15;
     --session-start-future-hover: #eab308;
-    --session-start-future-border: #a16207;
+    --session-start-future-border: #facc15;
     --task-fixed: #af00af;
     --task-repetitive: #0069c2;
     --task-non-repetitive: #a44a00;
@@ -505,7 +505,7 @@ button:disabled {
     }
 
     .session-start.is-future:hover:not(:disabled) {
-        border-color: var(--session-start-future-border);
+        border-color: var(--session-start-future-hover);
         background: var(--session-start-future-hover);
     }
 
