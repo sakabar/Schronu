@@ -1550,6 +1550,15 @@ fn complete_session_returns_cli_parent_handoff() {
             if returns_parent {
                 assert_eq!(value["data"]["task_id"], parent_id.to_string());
                 assert_eq!(value["data"]["task_name"], "handoff parent");
+                assert_eq!(
+                    value["data"]["start_time_epoch_ms"],
+                    (if future_start {
+                        now + Duration::hours(1)
+                    } else {
+                        now
+                    })
+                    .timestamp_millis()
+                );
                 assert_eq!(value["data"]["estimated_work_seconds"], 600);
                 assert_eq!(value["data"]["actual_work_seconds"], 120);
                 if parent_status == Status::Pending {

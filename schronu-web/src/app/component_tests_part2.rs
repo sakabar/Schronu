@@ -1353,6 +1353,7 @@ fn snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
 
 fn task(task_id: &str) -> SessionTask {
     SessionTask {
+                start_time_epoch_ms: None,
                 pending_until_epoch_ms: None,
         task_id: task_id.to_owned(),
         task_name: format!("task {task_id}"),

@@ -51,7 +51,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 
 - **REQ-SESSION-001**: 複数のセッションを同時に保持し、それぞれの経過時間を独立して計測できること。
 - **REQ-SESSION-002**: `work_sessions`をlocalStorageの`schronu_web.work_sessions.v1`へ保存すること。
-- **REQ-SESSION-003**: 各`work_session`はtask UUID、task名、開始epoch milliseconds、開始時見積秒、開始時実績秒、および開始時に取得した任意の`pending_until_epoch_ms`を保持すること。追加fieldがない旧version 1も復元できること。
+- **REQ-SESSION-003**: 各`work_session`はtask UUID、task名、開始epoch milliseconds、開始時見積秒、開始時実績秒、および開始時に取得した任意の`start_time_epoch_ms`と`pending_until_epoch_ms`を保持すること。追加fieldがない旧version 1も復元できること。
 - **REQ-SESSION-004**: reload後は保存した開始時刻と現在時刻との差から各セッションを復元し、reload中の経過時間も反映すること。復元したセッションもpage内で開始したセッションと同様に、serverへ未送信の進捗秒をbufferへ加算すること。
 - **REQ-SESSION-005**: 同じtask UUIDのセッションは1件だけ保持し、重複追加しないこと。
 - **REQ-SESSION-006**: localStorageのtop-level JSONが不正またはversionが非対応の場合は空の`work_sessions`で表示し、元のkeyを自動上書きせずwarningを表示すること。個別entryだけが不正な場合はそのentryだけを除外し、次のlocal state変更時にvalid entryだけをversion 1として保存すること。いずれの場合もtaskを更新せず、初回`bootstrap`を継続すること。
@@ -68,7 +68,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 ### 4.4 セッションcard
 
 - **REQ-CARD-001**: 各cardにtask名を表示すること。
-- **REQ-CARD-001B**: セッション開始時の`pending_until`が現在のlogical dateより後の日に属する場合、cardを淡い注意色と左の注意色線で示し、task名の直下に括弧なしの`YYYY/MM/DD 着手予定`を表示すること。日付表示と比較はともに06:00境界のlogical dateを使い、`2027/01/01 01:00`は`2026/12/31`とすること。今日以前または情報なしの場合は通常表示とし、既存tickによって当日に変われば注意表示を解除すること。親への自動移行、計測、操作可否、taskのPending状態はこの表示によって変更しないこと。
+- **REQ-CARD-001B**: セッション開始時の`max(start_time, pending_until)`が現在のlogical dateより後の日に属する場合、cardを淡い注意色と左の注意色線で示し、task名の直下に括弧なしの`YYYY/MM/DD 着手予定`を表示すること。日付表示と比較はともに06:00境界のlogical dateを使い、`2027/01/01 01:00`は`2026/12/31`とすること。片方だけ取得済みならその値を使い、今日以前または両方情報なしの場合は通常表示とし、既存tickによって当日に変われば注意表示を解除すること。親への自動移行、計測、操作可否、taskのPending状態はこの表示によって変更しないこと。
 - **REQ-CARD-001A**: 各cardのtask名は、選択したsessionのtaskから親へ順にCLI「開」と同じ規則でHTTP(S) URLを確認できた場合だけ「開」操作として表示すること。確認中、URLなし、取得失敗時は通常の文字とし、リンク装飾と「↗」を表示しないこと。URLありのtask名は確認済みURLを選択時に新しいbrowser tabで直接開き、空tabを先に作らないこと。取得失敗とpopup拒否は元画面に理由を表示し、sessionとtaskを変更しないこと。持ち歩きロック中もURLありの操作を利用できること。
 - **REQ-CARD-002**: セッション開始時刻をlocal timeの`HH:MM`で表示し、完了予定時刻および開始時実績と同じ補助情報領域へ置くこと。
 - **REQ-CARD-003**: 完了予定時刻をlocal timeの`HH:MM`で開始時刻の右に表示し、算出不能時は`--:--`とすること。開始時刻と完了予定時刻はsemanticな`time`要素を維持し、assistive technologyが両者を識別できるlabelを持つこと。

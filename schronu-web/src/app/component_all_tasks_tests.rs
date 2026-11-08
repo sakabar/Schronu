@@ -32,6 +32,7 @@ fn snapshot(observed_at_epoch_ms: i64) -> ServerSnapshot {
 fn all_row(segment_index: usize, task_id: &str, task_name: &str, is_leaf: bool) -> AllTaskRow {
     AllTaskRow {
         task: SessionTask {
+            start_time_epoch_ms: None,
             pending_until_epoch_ms: None,
             task_id: task_id.to_owned(),
             task_name: task_name.to_owned(),
@@ -250,6 +251,7 @@ fn allからsession追加成功した時だけ共有検索語をclearする() {
         &storage,
         0,
         SessionTask {
+            start_time_epoch_ms: None,
             pending_until_epoch_ms: None,
             task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
             task_name: "task".to_owned(),
@@ -290,6 +292,7 @@ fn allからsession追加が重複で拒否された時は共有検索語を保�
         },
     );
     let task = SessionTask {
+        start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
         task_name: "task".to_owned(),
@@ -587,6 +590,7 @@ fn 全件自動再取得は背景通信で入力を保持し失敗後の再試�
         },
     );
     let task = SessionTask {
+        start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
         task_name: "task".to_owned(),

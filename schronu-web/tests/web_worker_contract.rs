@@ -498,6 +498,7 @@ fn load_data() -> LoadData {
 
 fn task() -> SessionTask {
     SessionTask {
+        start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: "task-1".to_owned(),
         task_name: "task".to_owned(),
