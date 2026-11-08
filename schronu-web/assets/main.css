@@ -439,8 +439,9 @@ button:disabled {
 }
 
 .session-start.is-future {
-    border-color: var(--blue-dark);
-    background: var(--blue);
+    border-color: #a16207;
+    background: #facc15;
+    color: var(--ink);
 }
 
 .session-start-compact-label {
@@ -501,8 +502,8 @@ button:disabled {
     }
 
     .session-start.is-future:hover:not(:disabled) {
-        border-color: var(--blue-dark);
-        background: var(--blue-dark);
+        border-color: #a16207;
+        background: #eab308;
     }
 
     .task-defer:hover:not(:disabled) {
