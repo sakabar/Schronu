@@ -281,7 +281,7 @@ fn empty_session_view_only_offers_auto_session_without_firing_callbacks() {
 
 #[test]
 fn future_pending_card_has_attention_color_and_an_unparenthesized_full_date() {
-    for kind in ["開始予定", "着手予定"] {
+    for kind in ["開始可能", "着手予定"] {
         let mut future = card("future-contract");
         future.task_name = "pending contract".to_owned();
         future.future_pending_date_label = Some(format!("2026/12/31 {kind}"));

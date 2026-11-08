@@ -115,22 +115,22 @@ fn attention_prioritizes_future_start_day_after_manual_auto_start_and_reload() {
             (
                 "2027-01-02T06:00:00+09:00",
                 None,
-                Some("2027/01/02 開始予定"),
+                Some("2027/01/02 開始可能"),
             ),
             (
                 "2027-01-02T06:00:00+09:00",
                 Some("2026-12-31T06:00:00+09:00"),
-                Some("2027/01/02 開始予定"),
+                Some("2027/01/02 開始可能"),
             ),
             (
                 "2026-12-31T06:00:00+09:00",
                 Some("2027-01-02T06:00:00+09:00"),
-                Some("2026/12/31 開始予定"),
+                Some("2026/12/31 開始可能"),
             ),
             (
                 "2026-12-31T06:00:00+09:00",
                 Some("2026-12-31T06:00:00+09:00"),
-                Some("2026/12/31 開始予定"),
+                Some("2026/12/31 開始可能"),
             ),
             (
                 "2026-12-30T06:00:00+09:00",
@@ -202,7 +202,7 @@ fn start_attention_transitions_to_pending_then_expires_at_six_without_mutation()
             project_session_cards(&state, 9 * 60)[0]
                 .future_pending_date_label
                 .as_deref(),
-            Some("2026/12/31 開始予定")
+            Some("2026/12/31 開始可能")
         );
         state.tick(now + 1_000);
         assert_eq!(

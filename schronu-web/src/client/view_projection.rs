@@ -258,7 +258,7 @@ fn project_session_cards_with(
                         .and_then(|start| logical_date_with_offset(start, &offset_at))
                         .filter(|start| *start > today)
                     {
-                        return Some(format!("{} 開始予定", start.format("%Y/%m/%d")));
+                        return Some(format!("{} 開始可能", start.format("%Y/%m/%d")));
                     }
                     let pending = session
                         .pending_until_epoch_ms
