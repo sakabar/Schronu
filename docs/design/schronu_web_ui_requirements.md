@@ -169,7 +169,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-034**: 予定行と完了行はactive mode付きで保持し、異なるmodeまたは古いrequestのresponseで表示を上書きしないこと。mutation後の一覧再取得はactive modeのendpointを使い、完了modeでtaskを完了した直後は同じ完了一覧へ新しいrowを反映できること。
 - **REQ-LIST-035**: 日付別・全件一覧は28日窓へ展開された繰り返し予測もschedule順に表示すること。展開は窓内にある同じ繰り返し元の全実体回を起点とし、正確なdeadlineが一致する実体回または予測回を重複生成せず、実体回を優先すること。予測行は「見込み」badgeと繰り返し元task UUIDを表示し、task名検索、予定日時・時間、締切警告、繰返色を実task行と同じ規則で適用すること。予測行はactionableなtask UUIDを持たず、rankにかかわらずセッション追加・先送りを表示またはdispatchしないこと。`is_leaf`を操作可否へ読み替えないこと。
 - **REQ-LIST-036**: 予定modeの日付別・全件一覧では、既存のtask列見出しを`タスク (N)`として検索一致件数を1行で表示すること。実taskはtask ID、繰り返し予測はoccurrence keyで重複を除き、同じ予定の複数segmentを1件とする。全件一覧では500行の描画上限を超える一致分も数え、取得中・失敗・無効化中は件数を表示しないこと。検索結果が空でも`タスク (0)`の見出しを表示すること。
-- **REQ-LIST-037**: 日付別一覧と「全て」のセッション追加buttonは、task本体の`start_time <= browser現在時刻`なら緑、未来なら黄色背景`#facc15`、枠線`#a16207`、濃色文字`--ink`(`#193128`)にし、hover時の背景を`#eab308`にすること。未来のtaskも追加可能とし、既存の操作可否を維持すること。既存の1秒tickで再判定し、旧response・保存済みcacheに開始時刻がない場合は緑を維持すること。
+- **REQ-LIST-037**: 日付別一覧と「全て」のセッション追加buttonは、task本体の`start_time <= browser現在時刻`なら緑、未来なら黄色背景`--session-start-future`、枠線`--session-start-future-border`、濃色文字`--ink`にし、hover時の背景を`--session-start-future-hover`にすること。未来のtaskも追加可能とし、既存の操作可否を維持すること。既存の1秒tickで再判定し、旧response・保存済みcacheに開始時刻がない場合は緑を維持すること。
 
 ### 4.8 負荷画面
 

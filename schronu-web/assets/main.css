@@ -17,6 +17,9 @@
     --red: #c33d43;
     --red-dark: #982b31;
     --red-soft: #fff0f0;
+    --session-start-future: #facc15;
+    --session-start-future-hover: #eab308;
+    --session-start-future-border: #a16207;
     --task-fixed: #af00af;
     --task-repetitive: #0069c2;
     --task-non-repetitive: #a44a00;
@@ -439,8 +442,8 @@ button:disabled {
 }
 
 .session-start.is-future {
-    border-color: #a16207;
-    background: #facc15;
+    border-color: var(--session-start-future-border);
+    background: var(--session-start-future);
     color: var(--ink);
 }
 
@@ -502,8 +505,8 @@ button:disabled {
     }
 
     .session-start.is-future:hover:not(:disabled) {
-        border-color: #a16207;
-        background: #eab308;
+        border-color: var(--session-start-future-border);
+        background: var(--session-start-future-hover);
     }
 
     .task-defer:hover:not(:disabled) {

@@ -574,15 +574,23 @@ fn load_views_share_shell_padding_and_reserve_wrapped_navigation_height() {
 }
 
 #[test]
-fn future_session_start_uses_yellow_with_dark_text_on_hover() {
+fn future_session_start_uses_shared_palette_with_dark_text_on_hover() {
+    let root = block_body(MAIN_CSS, ":root");
+    for variable in [
+        "--session-start-future:",
+        "--session-start-future-hover:",
+        "--session-start-future-border:",
+    ] {
+        assert!(root.contains(variable));
+    }
     let normal = block_body(MAIN_CSS, ".session-start.is-future");
-    assert!(normal.contains("background: #facc15;"));
+    assert!(normal.contains("background: var(--session-start-future);"));
     assert!(normal.contains("color: var(--ink);"));
-    assert!(normal.contains("border-color: #a16207;"));
+    assert!(normal.contains("border-color: var(--session-start-future-border);"));
     let hover = block_body(
         block_body(MAIN_CSS, HOVER_MEDIA_QUERY),
         ".session-start.is-future:hover:not(:disabled)",
     );
-    assert!(hover.contains("background: #eab308;"));
-    assert!(hover.contains("border-color: #a16207;"));
+    assert!(hover.contains("background: var(--session-start-future-hover);"));
+    assert!(hover.contains("border-color: var(--session-start-future-border);"));
 }
