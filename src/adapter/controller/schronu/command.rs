@@ -134,7 +134,7 @@ pub(super) enum Command {
         task_id: Uuid,
     },
     Arrange {
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     },
     TuckAway,
@@ -695,13 +695,17 @@ fn parse_arrange(
     definition: CommandDefinition,
     arguments: &[String],
 ) -> Result<Command, CommandParseError> {
-    let value = required_argument(arguments, definition, "estimated_work_minutes")?;
-    let minutes = parse_i64(
-        value,
-        definition,
-        "estimated_work_minutes",
-        "整数で指定してください",
-    )?;
+    let minutes = arguments
+        .first()
+        .map(|value| {
+            parse_i64(
+                value,
+                definition,
+                "estimated_work_minutes",
+                "整数で指定してください",
+            )
+        })
+        .transpose()?;
     let includes_zero_estimate = match arguments.get(1).map(String::as_str) {
         None => false,
         Some("全" | "all") => true,
@@ -1107,7 +1111,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
             CommandDefinition::new(Kind::Estimate, "予", "予 <分>", 1, Some(1))
         }
         "揃" | "arrange" | "arr" => {
-            CommandDefinition::new(Kind::Arrange, "揃", "揃 <分> [全]", 1, Some(2))
+            CommandDefinition::new(Kind::Arrange, "揃", "揃 [<分> [全]]", 0, Some(2))
         }
         "実" | "actual" | "ac" => {
             CommandDefinition::new(Kind::Actual, "実", "実 <integer>", 1, Some(1))

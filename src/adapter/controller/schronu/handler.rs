@@ -137,7 +137,7 @@ pub(super) trait TaskAttributeCommandContext {
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn arrange(
         &mut self,
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     ) -> Result<(), ApplicationError>;
     fn set_actual(&mut self, minutes: i64) -> Result<(), ApplicationError>;

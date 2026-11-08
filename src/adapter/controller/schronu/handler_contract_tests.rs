@@ -1287,11 +1287,11 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
 
     fn arrange(
         &mut self,
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     ) -> Result<(), ApplicationError> {
         self.calls
-            .push(format!("arrange:{minutes}:{includes_zero_estimate}"));
+            .push(format!("arrange:{minutes:?}:{includes_zero_estimate}"));
         Ok(())
     }
 
@@ -1387,8 +1387,12 @@ fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有す�
         }),
         Command::Estimate { minutes: 25 },
         Command::Arrange {
-            minutes: 30,
+            minutes: Some(30),
             includes_zero_estimate: true,
+        },
+        Command::Arrange {
+            minutes: None,
+            includes_zero_estimate: false,
         },
         Command::Action(CommandAction::IntegerValue {
             kind: CommandKind::Actual,
@@ -1415,7 +1419,8 @@ fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有す�
         "rename:renamed task",
         "deadline:明",
         "estimate:25",
-        "arrange:30:true",
+        "arrange:Some(30):true",
+        "arrange:None:false",
         "actual:35",
         "priority:7",
         "category:investment",
@@ -1436,7 +1441,7 @@ fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有す�
 #[test]
 fn task属性更新commandはruntime_fallbackに残さない() {
     let command = Command::Arrange {
-        minutes: 37,
+        minutes: Some(37),
         includes_zero_estimate: true,
     };
     let mut context = TraceTaskAttributeContext::default();
@@ -1446,7 +1451,7 @@ fn task属性更新commandはruntime_fallbackに残さない() {
         .expect("typed attribute command must be owned by the handler");
 
     assert_eq!(outcome.kind, CommandKind::Arrange);
-    assert_eq!(context.calls, ["arrange:37:true"]);
+    assert_eq!(context.calls, ["arrange:Some(37):true"]);
 }
 
 #[derive(Default)]
@@ -2248,7 +2253,7 @@ impl TaskAttributeCommandContext for CompositeTraceContext {
 
     fn arrange(
         &mut self,
-        minutes: i64,
+        minutes: Option<i64>,
         includes_zero_estimate: bool,
     ) -> Result<(), ApplicationError> {
         self.task_attribute.arrange(minutes, includes_zero_estimate)
