@@ -1030,6 +1030,17 @@ impl TaskHandle {
         Ok(())
     }
 
+    pub(crate) fn set_name(&self, name: &str) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            if attr.name == name {
+                false
+            } else {
+                attr.name = name.to_string();
+                true
+            }
+        })
+    }
+
     pub fn get_name(&self) -> Result<String, TaskTreeError> {
         self.node
             .try_borrow_data()

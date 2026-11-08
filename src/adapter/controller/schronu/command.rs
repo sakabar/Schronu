@@ -1,4 +1,6 @@
-use crate::application::task_use_case::{estimated_work_seconds_from_minutes, ApplicationError};
+use crate::application::task_use_case::{
+    estimated_work_seconds_from_minutes, validate_task_name, ApplicationError,
+};
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
 use regex::Regex;
@@ -55,6 +57,7 @@ pub(super) enum CommandKind {
     Arrange,
     Actual,
     Priority,
+    Rename,
     Category,
     Work,
     WorkSlice,
@@ -391,6 +394,14 @@ pub(super) fn parse_project_category_input(
 
 pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandValidationError> {
     match command {
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Rename,
+            value,
+            ..
+        }) => {
+            validate_task_name(value, "name")?;
+            Ok(())
+        }
         Command::Estimate { minutes } => {
             estimated_work_seconds_from_minutes(*minutes)?;
             Ok(())
@@ -818,6 +829,11 @@ fn parse_action(
             canonical_name,
             values: arguments.to_vec(),
         },
+        CommandKind::Rename => CommandAction::StringValue {
+            kind,
+            canonical_name,
+            value: required_argument(arguments, definition, "name")?.to_string(),
+        },
         CommandKind::Category => CommandAction::StringValue {
             kind,
             canonical_name,
@@ -1099,6 +1115,7 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "重" | "priority" | "pr" => {
             CommandDefinition::new(Kind::Priority, "重", "重 <integer>", 1, Some(1))
         }
+        "名" => CommandDefinition::new(Kind::Rename, "名", "名 <name>", 1, Some(1)),
         "類" | "category" | "cat" => {
             CommandDefinition::new(Kind::Category, "類", "類 <カテゴリ>", 1, Some(1))
         }
@@ -1163,6 +1180,7 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
         "予" | "estimate" | "es" | "揃" | "arrange" | "arr" | "実" | "actual" | "ac" | "重"
         | "priority" | "pr" | "働" | "work" | "wk" | "刻" | "slice" | "押" | "extrude" => " 15",
         "類" | "category" | "cat" => " 資",
+        "名" => " task",
         "後" | "defer" | "逃" | "escape" | "esc" => " 1 秒",
         "空" | "clear" | "集" | "gather" => " 明",
         "終" | "finish" | "fin" => " 今",
@@ -1177,8 +1195,8 @@ pub(super) fn representative_valid_commands() -> Vec<Command> {
     let names = [
         "新", "遊", "突", "連", "繰", "約", "始", "樹", "条", "根", "葉", "全", "済", "尾", "今",
         "単", "暦", "帯", "荷", "見", "選", "開", "計", "黒", "外", "親", "子", "深", "上", "下",
-        "割", "待", "〆", "予", "揃", "実", "重", "類", "働", "刻", "後", "清", "逃", "平", "詰",
-        "押", "空", "集", "終", "高", "低", "backup", "検証",
+        "割", "待", "〆", "予", "揃", "実", "重", "名", "類", "働", "刻", "後", "清", "逃", "平",
+        "詰", "押", "空", "集", "終", "高", "低", "backup", "検証",
     ];
     let mut commands = vec![Command::Noop];
     commands.extend(names.into_iter().map(|name| {

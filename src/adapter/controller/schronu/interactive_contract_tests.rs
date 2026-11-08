@@ -26,6 +26,7 @@ fn interactive再描画判断はtyped_command_kindだけで決まる() {
 
     for kind in [
         CommandKind::Estimate,
+        CommandKind::Rename,
         CommandKind::Focus,
         CommandKind::Defer,
         CommandKind::Finish,
@@ -70,7 +71,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
     );
     assert_eq!(
         all_command_kinds.len(),
-        58,
+        59,
         "shared representative command fixture must cover every CommandKind"
     );
     for (index, kind) in all_command_kinds.iter().enumerate() {
@@ -124,6 +125,7 @@ fn interactive再描画分類は全command_kindを網羅する() {
             | CommandKind::TuckAway
             | CommandKind::Actual
             | CommandKind::Priority
+            | CommandKind::Rename
             | CommandKind::Category
             | CommandKind::Work
             | CommandKind::WorkSlice

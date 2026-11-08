@@ -1731,6 +1731,10 @@ fn interactive_application(
 include!("runtime_contract_tests.rs");
 
 #[cfg(test)]
+#[path = "rename_contract_tests.rs"]
+mod rename_contract_tests;
+
+#[cfg(test)]
 include!("interactive_io_contract_tests.rs");
 
 #[cfg(test)]

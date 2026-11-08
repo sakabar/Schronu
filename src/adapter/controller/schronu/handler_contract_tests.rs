@@ -1270,6 +1270,11 @@ struct TraceTaskAttributeContext {
 }
 
 impl TaskAttributeCommandContext for TraceTaskAttributeContext {
+    fn rename(&mut self, name: &str) -> Result<(), ApplicationError> {
+        self.calls.push(format!("rename:{name}"));
+        Ok(())
+    }
+
     fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         self.calls.push(format!("deadline:{}", values.join(",")));
         Ok(())
@@ -1370,6 +1375,11 @@ fn handler入口は直接構築された不正属性値をcontext実行前に拒
 #[test]
 fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有する() {
     let commands = [
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Rename,
+            canonical_name: "名",
+            value: "renamed task".to_string(),
+        }),
         Command::Action(CommandAction::TimeExpression {
             kind: CommandKind::Deadline,
             canonical_name: "〆",
@@ -1402,6 +1412,7 @@ fn task属性更新commandはhandlerがtyped_fieldを直接matchして所有す�
         }),
     ];
     let expected_calls = [
+        "rename:renamed task",
         "deadline:明",
         "estimate:25",
         "arrange:30:true",
@@ -2223,6 +2234,10 @@ impl TaskTreeCommandContext for CompositeTraceContext {
 }
 
 impl TaskAttributeCommandContext for CompositeTraceContext {
+    fn rename(&mut self, name: &str) -> Result<(), ApplicationError> {
+        self.task_attribute.rename(name)
+    }
+
     fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         self.task_attribute.set_deadline(values)
     }

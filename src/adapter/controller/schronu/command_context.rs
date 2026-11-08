@@ -24,7 +24,7 @@ use crate::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minute
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     add_actual_work, breakdown_task, complete_task, complete_work_slice, create_task,
-    defer_routine_task, defer_task, estimated_work_seconds_from_minutes, set_category,
+    defer_routine_task, defer_task, estimated_work_seconds_from_minutes, rename_task, set_category,
     set_deadline, set_estimate, validate_task_name, AddActualWorkInput, ApplicationError,
     BreakdownTaskInput, CompleteTaskInput, CompleteWorkSliceInput, CreateTaskInput, TaskFactory,
 };
@@ -1094,6 +1094,13 @@ impl RuntimeTaskAttributeCommandContext<'_> {
 }
 
 impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
+    fn rename(&mut self, name: &str) -> Result<(), ApplicationError> {
+        if let Some(task_id) = *self.focused_task_id_opt {
+            rename_task(self.task_repository, task_id, name)?;
+        }
+        Ok(())
+    }
+
     fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         let deadline_time = resolve_deadline_time(
             values,
@@ -1555,6 +1562,16 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
 }
 
 impl TaskAttributeCommandContext for CliCommandContext<'_, '_, '_> {
+    fn rename(&mut self, name: &str) -> Result<(), ApplicationError> {
+        let mut context = RuntimeTaskAttributeCommandContext {
+            task_repository: self.task_repository,
+            focused_task_id_opt: self.focused_task_id_opt,
+            focus_started_datetime: &self.focus_started_datetime,
+            config: self.config,
+        };
+        context.rename(name)
+    }
+
     fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError> {
         let mut context = RuntimeTaskAttributeCommandContext {
             task_repository: self.task_repository,
