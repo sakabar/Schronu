@@ -7,6 +7,43 @@ use super::command_test_support::parse_command;
 use uuid::Uuid;
 
 #[test]
+fn renameは名前を単一引数として原文保持する() {
+    for (input, name) in [
+        ("名   新しいタスク名", "新しいタスク名"),
+        (r#"名 "  名前に  空白  ""#, "  名前に  空白  "),
+        (r#"名 '名前 "引用" C:\path'"#, r#"名前 "引用" C:\path"#),
+    ] {
+        let command = parse_command(input, ParseMode::Interactive).unwrap();
+        assert!(
+            matches!(command, Command::Action(CommandAction::StringValue {
+            canonical_name: "名", value, ..
+        }) if value == name)
+        );
+    }
+    let name = "  名前に  空白 '引用' \"二重\" C:\\path  ";
+    let command = parse_non_interactive_command_tokens(&["名".into(), name.into()]).unwrap();
+    assert!(
+        matches!(command, Command::Action(CommandAction::StringValue {
+        canonical_name: "名", value, ..
+    }) if value == name)
+    );
+}
+
+#[test]
+fn renameは引数不足と過剰と未閉鎖quoteを拒否する() {
+    for mode in [ParseMode::Interactive, ParseMode::NonInteractive] {
+        for input in ["名", "名 名前 余分"] {
+            let error = parse_command(input, mode).unwrap_err();
+            assert_eq!(error.field(), "arguments");
+            assert_eq!(error.usage(), "名 <name>");
+        }
+    }
+    for input in ["名 \"未閉鎖", "名 '未閉鎖", "名 名前\\"] {
+        assert!(parse_command(input, ParseMode::Interactive).is_err());
+    }
+}
+
+#[test]
 fn all_aliases_parse_to_the_same_typed_command_kind() {
     let aliases = [
         (&["新", "new"][..], CommandKind::NewProject),
@@ -44,6 +81,7 @@ fn all_aliases_parse_to_the_same_typed_command_kind() {
         (&["揃", "arrange", "arr"][..], CommandKind::Arrange),
         (&["実", "actual", "ac"][..], CommandKind::Actual),
         (&["重", "priority", "pr"][..], CommandKind::Priority),
+        (&["名"][..], CommandKind::Rename),
         (&["類", "category", "cat"][..], CommandKind::Category),
         (&["働", "work", "wk"][..], CommandKind::Work),
         (&["刻", "slice"][..], CommandKind::WorkSlice),

@@ -132,6 +132,7 @@ pub(super) trait TaskTreeCommandContext {
 }
 
 pub(super) trait TaskAttributeCommandContext {
+    fn rename(&mut self, name: &str) -> Result<(), ApplicationError>;
     fn set_deadline(&mut self, values: &[String]) -> Result<(), HandlerError>;
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError>;
     fn arrange(
@@ -671,6 +672,11 @@ pub(super) fn handle_task_attribute_command<C: TaskAttributeCommandContext + ?Si
             values,
             ..
         }) => context.set_deadline(values)?,
+        Command::Action(CommandAction::StringValue {
+            kind: CommandKind::Rename,
+            value,
+            ..
+        }) => context.rename(value)?,
         Command::Estimate { minutes } => context.set_estimate(*minutes)?,
         Command::Arrange {
             minutes,

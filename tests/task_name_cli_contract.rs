@@ -11,6 +11,56 @@ use cli_support::CliFixture;
 use persistent_storage::persistent_storage_bytes_excluding_process_lock as collect_persistent_storage_bytes;
 
 #[test]
+fn rename非対話cliは名前argvを保存し同名ではstorageを変更しない() {
+    let fixture = CliFixture::new(true);
+    let name = "  更新後の  名前 '引用' \"二重\" C:\\path  ";
+    let output = fixture.run(&["名", name]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fixture.stored_project_names(), [name]);
+    let before = persistent_storage_bytes_excluding_process_lock(&fixture);
+    let output = fixture.run(&["名", name]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        persistent_storage_bytes_excluding_process_lock(&fixture),
+        before
+    );
+}
+
+#[test]
+fn rename非対話cliは不正入力でstorageを変更しない() {
+    let fixture = CliFixture::new(true);
+    let before = persistent_storage_bytes_excluding_process_lock(&fixture);
+    for args in [
+        vec!["名"],
+        vec!["名", "名前", "余分"],
+        vec!["名", ""],
+        vec!["名", "  "],
+        vec!["名", "123"],
+        vec!["名", "+123"],
+        vec!["名", "-123"],
+        vec!["名", "tab\tname"],
+        vec!["名", "ESC\u{1b}name"],
+    ] {
+        let output = fixture.run(&args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        assert!(output.stdout.is_empty(), "{args:?}");
+        assert_eq!(
+            persistent_storage_bytes_excluding_process_lock(&fixture),
+            before,
+            "{args:?}"
+        );
+    }
+}
+
+#[test]
 fn 非対話cliはosのtask名argvを原文のまま保存する() {
     let task_names = [
         "内部  連続 空白 日本語 'single' \"double\" C:\\temp",

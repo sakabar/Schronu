@@ -845,6 +845,17 @@ fn prospective_next_focus_task_id(task: &TaskHandle) -> Result<Option<Uuid>, App
         .map_err(ApplicationError::TaskTree)
 }
 
+pub(crate) fn rename_task(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+    name: &str,
+) -> Result<(), ApplicationError> {
+    validate_task_name(name, "name")?;
+    find_task(repository, task_id)?
+        .set_name(name)
+        .map_err(ApplicationError::TaskTree)
+}
+
 pub fn set_estimate(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
