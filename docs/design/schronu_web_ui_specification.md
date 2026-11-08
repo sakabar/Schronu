@@ -751,7 +751,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
 - schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
 - `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではセッションbuttonとそのclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
-- 日付別・全件一覧の`ScheduledTask`はoptionalな`start_time_epoch_ms`を持つ。serverはtask本体の`start_time`をepoch millisecondsで返し、予定segment開始時刻とは区別する。browserは既存の1秒tickの現在epoch millisecondsと比較し、`start_time_epoch_ms > now`の場合だけ青(`--blue: #3677bd`、hoverは`--blue-dark: #255d99`)にする。同値・過去は従来の緑(`--green: #27845e`、hoverは`--green-dark: #196846`)とし、文字は白を維持する。時計後退時も再判定し、通信・追加timerは不要とする。旧responseやcacheでfieldが欠落した場合は緑とし、disabled・追加済み表示・操作条件は維持する。
+- 日付別・全件一覧の`ScheduledTask`はoptionalな`start_time_epoch_ms`を持つ。serverはtask本体の`start_time`をepoch millisecondsで返し、予定segment開始時刻とは区別する。browserは既存の1秒tickの現在epoch millisecondsと比較し、`start_time_epoch_ms > now`の場合だけ黄色背景`--session-start-future`、枠線`--session-start-future-border`、文字`--ink`にし、hover時は背景を`--session-start-future-hover`にする。開始時刻前の配色の値は`main.css`の`:root`を正本とする。同値・過去は従来の緑(`--green: #27845e`、hoverは`--green-dark: #196846`)とし、緑のbuttonの文字は白を維持する。時計後退時も再判定し、通信・追加timerは不要とする。旧responseやcacheでfieldが欠落した場合は緑とし、disabled・追加済み表示・操作条件は維持する。
 - 「セッション」click時はrowのtask snapshotと`is_leaf`、client現在時刻からsessionを作り、localStorageへ保存する。追加成功後はtask名検索文字列を空にして取得済みrowへの絞り込みを解除し、セッションtabへ切り替え、更新後のview stateを保存する。追加前後のsession件数が増えた場合だけ成功とし、server通信は行わない。
 - 全件一覧と日付別一覧のどちらからセッションを追加しても、成功時だけ共有検索文字列を空にする。
 - 持ち歩きロックの一時許可中に一覧からの追加成功で件数が0件から1件になった場合は、セッションtabへの切替とともに即時再ロックする。
