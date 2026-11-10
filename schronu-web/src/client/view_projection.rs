@@ -1,10 +1,11 @@
+use super::local_time::{local_datetime, logical_date_with_offset};
 use super::state::ClientState;
 use super::time_model::{session_timing, SessionTiming};
 use crate::{
     AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTask,
     TaskDisplayKind,
 };
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
+use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 use std::collections::HashSet;
 
 const INVALID_TIME: &str = "--:--";
@@ -478,25 +479,6 @@ fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option
     offset_at(epoch_ms)
         .map(|offset| format_local_hh_mm(epoch_ms, offset))
         .unwrap_or_else(|| INVALID_TIME.to_owned())
-}
-
-fn local_datetime(epoch_ms: i64, utc_offset_minutes: i32) -> Option<DateTime<FixedOffset>> {
-    let offset_seconds = utc_offset_minutes.checked_mul(60)?;
-    let offset = FixedOffset::east_opt(offset_seconds)?;
-    Some(DateTime::<Utc>::from_timestamp_millis(epoch_ms)?.with_timezone(&offset))
-}
-
-fn logical_date_with_offset(
-    epoch_ms: i64,
-    offset_at: &impl Fn(i64) -> Option<i32>,
-) -> Option<NaiveDate> {
-    let datetime = local_datetime(epoch_ms, offset_at(epoch_ms)?)?;
-    let date = datetime.date_naive();
-    if datetime.hour() < 6 {
-        date.pred_opt()
-    } else {
-        Some(date)
-    }
 }
 
 #[cfg(feature = "web")]
