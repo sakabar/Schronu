@@ -8,8 +8,11 @@ use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::invocation::{Operation, ServerActionInvocation};
+use super::local_time::local_utc_offset_minutes;
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
-use super::time_model::{buffer_timing_with_sessions, session_timing};
+use super::time_model::{
+    buffer_timing_with_sessions, session_credit_start_epoch_ms, session_timing,
+};
 use super::view_state::ViewState;
 use super::work_sessions::{
     load_work_sessions, unavailable_state, KeyValueStorage, StorageError, WorkSession,
@@ -333,7 +336,11 @@ impl ClientState {
             })
     }
 
-    fn buffer_protected_intervals(&self, session: &WorkSession) -> Vec<(i64, Option<i64>)> {
+    fn buffer_protected_intervals(
+        &self,
+        session: &WorkSession,
+        credit_start_epoch_ms: i64,
+    ) -> Vec<(i64, Option<i64>)> {
         let estimated_completion_epoch_ms = session_timing(
             session.started_at_epoch_ms,
             session.estimated_work_seconds_at_start,
@@ -345,10 +352,10 @@ impl ClientState {
             if estimated_completion_epoch_ms.is_none_or(|estimated_completion| {
                 conflict.ended_at_epoch_ms <= estimated_completion
             }) {
-                return vec![(session.started_at_epoch_ms, None)];
+                return vec![(credit_start_epoch_ms.min(conflict.ended_at_epoch_ms), None)];
             }
             return vec![
-                (session.started_at_epoch_ms, estimated_completion_epoch_ms),
+                (credit_start_epoch_ms, estimated_completion_epoch_ms),
                 (conflict.ended_at_epoch_ms, None),
             ];
         }
@@ -360,16 +367,59 @@ impl ClientState {
             (Some(estimated_completion), None) => Some(estimated_completion),
             (None, stopped_at) => stopped_at,
         };
-        vec![(session.started_at_epoch_ms, protected_until_epoch_ms)]
+        vec![(credit_start_epoch_ms, protected_until_epoch_ms)]
     }
 
     pub fn display_buffer_seconds(&self) -> Option<i128> {
+        self.display_buffer_seconds_with(local_utc_offset_minutes)
+    }
+
+    fn display_buffer_seconds_with(&self, offset_at: impl Fn(i64) -> Option<i32>) -> Option<i128> {
         let snapshot = self.snapshot()?;
+        let snapshot_elapsed = buffer_timing_with_sessions(
+            snapshot.observed_at_epoch_ms,
+            0,
+            self.tick_now_epoch_ms,
+            &[],
+        )
+        .snapshot_elapsed_seconds;
+        let mut frozen_credit_seconds = 0;
         let session_intervals: Vec<_> = self
             .sessions()
             .iter()
             .filter(|session| !self.is_session_committed_blocked(&session.task_id))
-            .flat_map(|session| self.buffer_protected_intervals(session))
+            .flat_map(|session| {
+                let credit_start = session_credit_start_epoch_ms(
+                    session.started_at_epoch_ms,
+                    session.start_time_epoch_ms,
+                    session.pending_until_epoch_ms,
+                    self.tick_now_epoch_ms,
+                    &offset_at,
+                );
+                let credit_start = credit_start.max(
+                    session
+                        .buffer_credit_start_epoch_ms
+                        .unwrap_or(session.started_at_epoch_ms),
+                );
+                let intervals = self.buffer_protected_intervals(session, credit_start);
+                if credit_start > session.started_at_epoch_ms {
+                    if let Some(conflict) = self.sessions.completion_conflicts.get(&session.task_id)
+                    {
+                        // Freeze the already rounded value at click. Rounding an interval
+                        // from a fractional click independently would make it oscillate by 1s.
+                        let at_click = buffer_timing_with_sessions(
+                            snapshot.observed_at_epoch_ms,
+                            0,
+                            conflict.ended_at_epoch_ms,
+                            &intervals,
+                        );
+                        frozen_credit_seconds +=
+                            at_click.display_buffer_seconds + i128::from(snapshot_elapsed);
+                        return Vec::new();
+                    }
+                }
+                intervals
+            })
             .collect();
         let timing = buffer_timing_with_sessions(
             snapshot.observed_at_epoch_ms,
@@ -377,7 +427,7 @@ impl ClientState {
             self.tick_now_epoch_ms,
             &session_intervals,
         );
-        Some(timing.display_buffer_seconds)
+        Some(timing.display_buffer_seconds + frozen_credit_seconds)
     }
 
     pub fn switch_tab(&mut self, tab: ActiveTab) -> ClientEffect {

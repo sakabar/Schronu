@@ -1,3 +1,6 @@
+use super::local_time::logical_date_with_offset;
+use chrono::NaiveDate;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionTiming {
     pub elapsed_seconds: i64,
@@ -132,4 +135,102 @@ fn completion_epoch_ms(started_at_epoch_ms: i64, remaining_seconds: i128) -> Opt
     let remaining_ms = remaining_seconds.checked_mul(1_000)?;
     let completion = i128::from(started_at_epoch_ms).checked_add(remaining_ms)?;
     i64::try_from(completion).ok()
+}
+
+// Both the card label and buffer credit use the saved session metadata.
+pub(super) fn session_plan_dates(
+    start_time_epoch_ms: Option<i64>,
+    pending_until_epoch_ms: Option<i64>,
+    offset_at: &impl Fn(i64) -> Option<i32>,
+) -> [Option<NaiveDate>; 2] {
+    [start_time_epoch_ms, pending_until_epoch_ms]
+        .map(|epoch| epoch.and_then(|epoch| logical_date_with_offset(epoch, offset_at)))
+}
+
+pub(super) fn session_credit_start_epoch_ms(
+    started_at_epoch_ms: i64,
+    start_time_epoch_ms: Option<i64>,
+    pending_until_epoch_ms: Option<i64>,
+    now_epoch_ms: i64,
+    offset_at: &impl Fn(i64) -> Option<i32>,
+) -> i64 {
+    let eligible_start = || -> Option<i64> {
+        logical_date_with_offset(now_epoch_ms, offset_at)?;
+        let started_date = logical_date_with_offset(started_at_epoch_ms, offset_at)?;
+        let dates = session_plan_dates(start_time_epoch_ms, pending_until_epoch_ms, offset_at);
+        let (eligible_date, upper) = dates
+            .into_iter()
+            .zip([start_time_epoch_ms, pending_until_epoch_ms])
+            .filter_map(|(date, epoch)| Some((date?, epoch?)))
+            .max_by_key(|(date, _)| *date)?;
+        if eligible_date <= started_date {
+            return Some(started_at_epoch_ms);
+        }
+        // Find the logical day boundary using the offset at each instant, including DST.
+        // The metadata instant belongs to the eligible day and bounds the search.
+        let mut lower = started_at_epoch_ms;
+        let mut upper = upper;
+        while i128::from(upper) - i128::from(lower) > 1 {
+            let middle = (i128::from(lower) + (i128::from(upper) - i128::from(lower)) / 2) as i64;
+            if logical_date_with_offset(middle, offset_at)? < eligible_date {
+                lower = middle;
+            } else {
+                upper = middle;
+            }
+        }
+        Some(upper)
+    };
+    eligible_start().unwrap_or(started_at_epoch_ms)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+
+    fn epoch(text: &str) -> i64 {
+        DateTime::parse_from_rfc3339(text)
+            .unwrap()
+            .timestamp_millis()
+    }
+
+    #[test]
+    fn eligibility_boundary_uses_the_offset_at_each_instant_across_dst() {
+        for (started, metadata, transition, before, after, expected) in [
+            (
+                "2026-03-07T12:00:00Z",
+                "2026-03-08T12:00:00Z",
+                "2026-03-08T07:00:00Z",
+                -300,
+                -240,
+                "2026-03-08T10:00:00Z",
+            ),
+            (
+                "2026-10-31T12:00:00Z",
+                "2026-11-01T12:00:00Z",
+                "2026-11-01T06:00:00Z",
+                -240,
+                -300,
+                "2026-11-01T11:00:00Z",
+            ),
+        ] {
+            let offset_at = |instant| {
+                Some(if instant < epoch(transition) {
+                    before
+                } else {
+                    after
+                })
+            };
+            assert_eq!(
+                session_credit_start_epoch_ms(
+                    epoch(started),
+                    Some(epoch(metadata)),
+                    None,
+                    epoch(metadata),
+                    &offset_at,
+                ),
+                epoch(expected)
+            );
+        }
+    }
 }

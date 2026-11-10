@@ -158,6 +158,7 @@ impl ClientState {
             return ClientEffect::None;
         };
         session.started_at_epoch_ms = self.tick_now_epoch_ms;
+        session.buffer_credit_start_epoch_ms = None;
         let result = self
             .sessions
             .work_sessions
@@ -559,6 +560,30 @@ impl ClientState {
         else {
             return ClientEffect::None;
         };
+        let credit_start = session_credit_start_epoch_ms(
+            session.started_at_epoch_ms,
+            session.start_time_epoch_ms,
+            session.pending_until_epoch_ms,
+            conflict.ended_at_epoch_ms,
+            &local_utc_offset_minutes,
+        )
+        .max(
+            session
+                .buffer_credit_start_epoch_ms
+                .unwrap_or(session.started_at_epoch_ms),
+        );
+        let excluded_milliseconds = (i128::from(credit_start.min(conflict.ended_at_epoch_ms))
+            - i128::from(session.started_at_epoch_ms))
+        .max(0);
+        let Some(shifted_credit_start) = i128::from(started_at_epoch_ms)
+            .checked_add(excluded_milliseconds)
+            .and_then(|epoch| i64::try_from(epoch).ok())
+        else {
+            self.record_local_result(Some(task_id), false);
+            return ClientEffect::None;
+        };
+        session.buffer_credit_start_epoch_ms =
+            (shifted_credit_start > started_at_epoch_ms).then_some(shifted_credit_start);
         session.started_at_epoch_ms = started_at_epoch_ms;
         session.actual_work_seconds_at_start = conflict.current_actual_work_seconds;
         let mut persisted_work_sessions = self.sessions.work_sessions.clone();
@@ -761,6 +786,7 @@ impl ClientState {
 
 fn session_from_task(task: &SessionTask, started_at_epoch_ms: i64) -> WorkSession {
     WorkSession {
+        buffer_credit_start_epoch_ms: None,
         start_time_epoch_ms: task.start_time_epoch_ms,
         pending_until_epoch_ms: task.pending_until_epoch_ms,
         task_id: task.task_id.clone(),

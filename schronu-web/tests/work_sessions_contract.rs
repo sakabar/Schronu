@@ -47,6 +47,7 @@ impl KeyValueStorage for FakeStorage {
 
 fn session(task_id: &str, task_name: &str) -> WorkSession {
     WorkSession {
+        buffer_credit_start_epoch_ms: None,
         start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: task_id.to_owned(),
@@ -267,4 +268,31 @@ fn invalid_candidate_mutations_preserve_all_state_without_writing() {
         ),
         before
     );
+}
+
+#[test]
+fn resumed_buffer_credit_boundary_roundtrips_and_rejects_invalid_epochs() {
+    let storage = FakeStorage::default();
+    let mut state = load_work_sessions(&storage).unwrap();
+    let mut candidate = session("550e8400-e29b-41d4-a716-446655440000", "credit boundary");
+    candidate.buffer_credit_start_epoch_ms = Some(candidate.started_at_epoch_ms + 300_000);
+    state
+        .replace_sessions(&storage, vec![candidate.clone()])
+        .unwrap();
+    assert_eq!(
+        load_work_sessions(&storage).unwrap().sessions(),
+        &[candidate.clone()]
+    );
+    for invalid in [candidate.started_at_epoch_ms - 1, i64::MAX] {
+        let mut invalid_candidate = candidate.clone();
+        invalid_candidate.buffer_credit_start_epoch_ms = Some(invalid);
+        assert_eq!(
+            state.replace_sessions(&storage, vec![invalid_candidate]),
+            Err(WorkSessionsMutationError::InvalidSession)
+        );
+        assert_eq!(
+            load_work_sessions(&storage).unwrap().sessions(),
+            &[candidate.clone()]
+        );
+    }
 }
