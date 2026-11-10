@@ -300,7 +300,9 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `start_time_epoch_ms`と`pending_until_epoch_ms`はセッション開始時のtask snapshotから保持する任意fieldで、欠落・nullは情報なしとする。旧version 1を引き続き復元し、fieldがないことによる追加通信や保存は行わない。親への引き継ぎと一覧・自動開始の全経路でDTOからwire、WorkSessionへ同じ値を渡し、再開時にも保持する。
 
-cardの`future_pending_date_label`はbrowserの現在時刻と保存した`start_time_epoch_ms`、`pending_until_epoch_ms`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して判定する。開始日が今日より後なら開始日の`YYYY/MM/DD 開始可能`を優先する。それ以外で保留期限日が今日より後なら保留期限日の`YYYY/MM/DD 着手予定`を使う。どちらも該当しなければ通常表示とする。旧sessionで開始時刻がない場合は従来のpending情報だけで判定し、自動補完は行わない。情報なし・変換不能な予定日時はその判定から除外し、現在日時が変換不能なら通常表示とする。両labelともtask名の直下へ括弧なしで表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、開始日になると保留期限に応じて「着手予定」へ切り替えるか注意表示を解除し、「着手予定」は保留期限日になると注意表示を解除する。DTO・保存形式・公開API・計測・server通信・task更新・操作guardは変えない。
+`buffer_credit_start_epoch_ms`は任意の相殺開始epochで、欠落・nullなら従来の開始時刻を使う。完了実績競合からの「計測を再開」で開始時刻を補正する際、初回clickまでに相殺対象外だったmillisecondを補正後の開始時刻へ加えて保存する。これにより前倒し分を後から相殺しない。versionは1を維持し、通常開始・親への引き継ぎ・「計測を破棄して再開」では設定しない。値が開始時刻より前または変換不能なepochなら不正entryとして扱う。
+
+cardの`future_pending_date_label`はbrowserの現在時刻と保存した`start_time_epoch_ms`、`pending_until_epoch_ms`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して判定する。開始日が今日より後なら開始日の`YYYY/MM/DD 開始可能`を優先する。それ以外で保留期限日が今日より後なら保留期限日の`YYYY/MM/DD 着手予定`を使う。どちらも該当しなければ通常表示とする。旧sessionで開始時刻がない場合は従来のpending情報だけで判定し、自動補完は行わない。情報なし・変換不能な予定日時はその判定から除外し、現在日時が変換不能なら通常表示とする。両labelともtask名の直下へ括弧なしで表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、開始日になると保留期限に応じて「着手予定」へ切り替えるか注意表示を解除し、「着手予定」は保留期限日になると注意表示を解除する。この判定のlogical date変換をbufferの未送信進捗区間と共通化する。DTO・server API・作業の計測・server通信・task更新・操作guardは変えない。
 
 読込規則:
 
@@ -633,15 +635,21 @@ protected_until(session) = min(
   session.stopped_atがあればその時刻
 )
 credit_until = max(tick_now, observed_at)
+eligible_at(session) = 開始日と保留期限日の両方が今日以前になるlogical date境界
+credit_start(session) = max(
+  session.started_at,
+  eligible_at(session),
+  session.buffer_credit_start_epoch_msがあればその時刻
+)
 normal_session_credit = sum(
-  max(0, floor((min(credit_until, protected_until(session)) - session.started_at) / 1000))
+  max(0, floor((min(credit_until, protected_until(session)) - credit_start(session)) / 1000))
   for each completion conflict中ではないbuffer_session
 )
 conflict_session_credit(session) =
   初回click <= estimated_completionまたはestimated_completionを算出不能:
-    max(0, floor((credit_until - session.started_at) / 1000))
+    max(0, floor((credit_until - min(credit_start(session), 初回click)) / 1000))
   初回click > estimated_completion:
-    max(0, floor((estimated_completion - session.started_at) / 1000))
+    max(0, floor((estimated_completion - credit_start(session)) / 1000))
     + max(0, floor((credit_until - 初回click) / 1000))
 session_credit = normal_session_credit + sum(conflict_session_credit)
 
@@ -649,13 +657,16 @@ display_buffer = buffer_seconds - snapshot_elapsed + session_credit
 display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 ```
 
-`protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが補正後の完了予定への到達以前なら開始から競合解消までを連続して加算し、補正後の完了予定への到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。補正後の完了予定時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
+`protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが補正後の完了予定への到達以前なら相殺開始時刻と初回clickの早い方から競合解消までを連続して加算し、補正後の完了予定への到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。補正後の完了予定時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
 
+- `eligible_at`はカードと共通のlogical date変換を使い、有効な開始日と保留期限日の遅い方の日付で06:00を迎えた瞬間とする。情報なし・変換不能な予定日時は除外し、有効な日付がなければ区間を制限しない。現在日時が変換不能な場合も通常の相殺を使う。各時点のbrowser local offsetを使って境界を求め、DSTをまたいでも固定offsetで代用しない。
+- 未来日注意表示中の通常作業は壁時計減算を相殺しない。06:00以降も、それ以前の前倒し作業を後から加算しない。完了予定時刻は従来の開始時刻を基準とし、相殺開始時刻へずらさない。完了実績競合中の初回click以後の表示固定は前倒し作業と別に維持する。
+- 前倒し分を除外したsessionの完了実績競合では、初回click時点の丸め済み補正値へ`現在のsnapshot_elapsed - click時点のsnapshot_elapsed`を加えて表示を固定する。clickからの区間を独立に秒切り捨てして1秒揺らさない。
 - `snapshot_elapsed`はserver観測時刻からbrowser現在時刻までのbuffer減算として1回だけ差し引く。
 - 新しいserver responseを受信した場合は、その`buffer_seconds`と`observed_at`を新たな表示計算の基準とする。page内で開始したセッションとlocalStorageから復元したセッションを区別せず、観測時刻以前も含む未送信進捗秒を新基準へ加算する。
 - `record_session`または`complete_session`のmutation responseは、対象実績を反映した`buffer_seconds`をそのまま新たな基準とする。server commit済みでlocalStorage削除だけに失敗した対象sessionは、以後のbuffer計算上の計測中sessionから除外する。
 - 終了操作をdispatchしたsessionはclick時刻と補正後の完了予定時刻の早い方で未送信進捗の加算を打ち切る。未commitが確定するerrorでは対象を計測中へ戻し、transport切断または`repository_state_uncertain`ではrepository確認完了までclick時刻の終端を保持する。完了実績競合では初回click後の壁時計減算を相殺し、確認中と再送中の表示を固定する。成功時はresponseのsnapshotを新たな基準とするため、通信待ち時間を未送信進捗へ加算しない。
-- 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。2件が10分ずつ同時計測された場合は20分を加算する。
+- 複数の計測中セッションは重複区間を除かず、各セッションの完了済み整数秒を個別に合算する。通常の2件が10分ずつ同時計測された場合は20分を加算する。未来日条件に該当する区間は、そのsessionの加算から除外する。
 - 「計測を破棄して解除」成功後は残存セッションから式全体を再計算し、破棄したセッション分の未送信進捗を加算しない。全件破棄した場合はsnapshot後の全経過秒を減算する。localStorage保存失敗時はmemory stateを確定しないため、buffer表示も変化させない。
 - browser時計が後退した区間は0秒へclampする。時刻差と加減算は`i64`境界でもoverflowしない計算を用いる。
 - `schronu-web/src/app/component.rs`の内部enum `TimeDisplayMode { Sleep, Buffer, Hidden }`とcompile-time定数`TIME_DISPLAY_MODE`で表示方法を選ぶ。初期値は`Sleep`。変更後は再buildしてbrowserをreloadする。切り替えUI、localStorage設定、server APIは追加しない。

@@ -1,10 +1,13 @@
+#[cfg(feature = "web")]
+use super::local_time::local_utc_offset_minutes;
+use super::local_time::{local_datetime, logical_date_with_offset};
 use super::state::ClientState;
-use super::time_model::{session_timing, SessionTiming};
+use super::time_model::{session_plan_dates, session_timing, SessionTiming};
 use crate::{
     AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTask,
     TaskDisplayKind,
 };
-use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, Timelike, Utc, Weekday};
+use chrono::{Datelike, NaiveDate, Weekday};
 use std::collections::HashSet;
 
 const INVALID_TIME: &str = "--:--";
@@ -212,12 +215,12 @@ pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
 
 #[cfg(feature = "web")]
 pub fn project_session_cards_for_browser(state: &ClientState) -> Vec<SessionCardViewModel> {
-    project_session_cards_with(state, browser_utc_offset_minutes)
+    project_session_cards_with(state, local_utc_offset_minutes)
 }
 
 #[cfg(feature = "web")]
 pub fn project_list_rows_for_browser(state: &ClientState) -> Vec<ListRowViewModel> {
-    project_list_rows_with(state, browser_utc_offset_minutes)
+    project_list_rows_with(state, local_utc_offset_minutes)
 }
 
 fn project_session_cards_with(
@@ -253,17 +256,17 @@ fn project_session_cards_with(
                     &offset_at,
                 )
                 .and_then(|today| {
-                    if let Some(start) = session
-                        .start_time_epoch_ms
-                        .and_then(|start| logical_date_with_offset(start, &offset_at))
-                        .filter(|start| *start > today)
-                    {
+                    let [start, pending] = session_plan_dates(
+                        session.start_time_epoch_ms,
+                        session.pending_until_epoch_ms,
+                        &offset_at,
+                    );
+                    if let Some(start) = start.filter(|start| *start > today) {
                         return Some(format!("{} 開始可能", start.format("%Y/%m/%d")));
                     }
-                    let pending = session
-                        .pending_until_epoch_ms
-                        .and_then(|until| logical_date_with_offset(until, &offset_at))?;
-                    (pending > today).then(|| format!("{} 着手予定", pending.format("%Y/%m/%d")))
+                    pending
+                        .filter(|pending| *pending > today)
+                        .map(|pending| format!("{} 着手予定", pending.format("%Y/%m/%d")))
                 }),
                 task_id: session.task_id.clone(),
                 task_name: session.task_name.clone(),
@@ -478,39 +481,4 @@ fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option
     offset_at(epoch_ms)
         .map(|offset| format_local_hh_mm(epoch_ms, offset))
         .unwrap_or_else(|| INVALID_TIME.to_owned())
-}
-
-fn local_datetime(epoch_ms: i64, utc_offset_minutes: i32) -> Option<DateTime<FixedOffset>> {
-    let offset_seconds = utc_offset_minutes.checked_mul(60)?;
-    let offset = FixedOffset::east_opt(offset_seconds)?;
-    Some(DateTime::<Utc>::from_timestamp_millis(epoch_ms)?.with_timezone(&offset))
-}
-
-fn logical_date_with_offset(
-    epoch_ms: i64,
-    offset_at: &impl Fn(i64) -> Option<i32>,
-) -> Option<NaiveDate> {
-    let datetime = local_datetime(epoch_ms, offset_at(epoch_ms)?)?;
-    let date = datetime.date_naive();
-    if datetime.hour() < 6 {
-        date.pred_opt()
-    } else {
-        Some(date)
-    }
-}
-
-#[cfg(feature = "web")]
-fn browser_utc_offset_minutes(epoch_ms: i64) -> Option<i32> {
-    DateTime::<Utc>::from_timestamp_millis(epoch_ms)?;
-    let date = js_sys::Date::new_0();
-    date.set_time(epoch_ms as f64);
-    let utc_minus_local = date.get_timezone_offset();
-    if !utc_minus_local.is_finite()
-        || utc_minus_local.fract() != 0.0
-        || utc_minus_local < f64::from(i32::MIN)
-        || utc_minus_local > f64::from(i32::MAX)
-    {
-        return None;
-    }
-    (-(utc_minus_local as i64)).try_into().ok()
 }

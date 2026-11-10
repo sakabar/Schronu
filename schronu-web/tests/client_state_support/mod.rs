@@ -79,6 +79,7 @@ pub fn state_with_sessions(storage: &FakeStorage, ids: &[&str]) -> ClientState {
             storage,
             ids.iter()
                 .map(|id| WorkSession {
+                    buffer_credit_start_epoch_ms: None,
                     start_time_epoch_ms: None,
                     pending_until_epoch_ms: None,
                     task_id: (*id).to_owned(),

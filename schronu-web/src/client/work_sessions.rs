@@ -11,6 +11,9 @@ const STORAGE_VERSION: u64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkSession {
+    /// Retain excluded early work when conflict resume shifts the timer origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffer_credit_start_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -168,6 +171,10 @@ fn valid_task_id(session: &WorkSession) -> Option<Uuid> {
         || session.estimated_work_seconds_at_start < 0
         || session.actual_work_seconds_at_start < 0
         || DateTime::<Utc>::from_timestamp_millis(session.started_at_epoch_ms).is_none()
+        || session.buffer_credit_start_epoch_ms.is_some_and(|epoch| {
+            epoch < session.started_at_epoch_ms
+                || DateTime::<Utc>::from_timestamp_millis(epoch).is_none()
+        })
     {
         return None;
     }
