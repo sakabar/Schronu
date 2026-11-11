@@ -11,10 +11,10 @@ struct Props {
 }
 
 fn root(props: Props) -> Element {
-    let rows = [(1, -1, 1), (0, 0, 0), (-1, 123 * 3600 + 45 * 60, 0)]
+    let rows = [(1, -1, 1), (0, 0, 0), (-1, 123 * 3600 + 45 * 60, -1)]
         .into_iter()
         .enumerate()
-        .map(|(index, (rho, free, overflow))| BandDay {
+        .map(|(index, (rho, free, day_difference))| BandDay {
             logical_date: format!("2026-11-{:02}", index + 7),
             accumulated_rho_diff_seconds: rho,
             accumulated_free_diff_seconds: free,
@@ -22,7 +22,7 @@ fn root(props: Props) -> Element {
                 unavailable_seconds: 8 * 3600,
                 elapsed_seconds: 0,
                 repetitive_seconds: 0,
-                non_repetitive_seconds: 16 * 3600 + overflow,
+                non_repetitive_seconds: 16 * 3600 + day_difference,
                 rho_leeway_seconds: 0,
             },
         })
@@ -83,7 +83,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
 }
 
 #[test]
-fn 日別負荷は余差累zeroだけを灰色にし丸め前の正負を維持する() {
+fn 日別負荷は余差累と超過のゼロを灰色にし丸め前の正負を維持する() {
     let html = render();
     let rows = html
         .split("<button class=\"load-day")
@@ -98,15 +98,18 @@ fn 日別負荷は余差累zeroだけを灰色にし丸め前の正負を維持�
         [
             ("is-zero", "+00:00"),
             ("is-within", "+00:00"),
-            ("is-within", "0:00"),
+            ("is-zero", "0:00"),
         ],
         [
             ("is-within", "-00:00"),
             ("is-over", "+99:59"),
-            ("is-within", "0:00"),
+            ("is-within", "-00:00"),
         ],
     ];
-    for (row, values) in rows.iter().zip(expected) {
+    let aria_values = ["超過0時間0分1秒", "超過0時間0分", "超過マイナス0時間0分1秒"];
+    assert_eq!(rows.len(), expected.len());
+    for ((row, values), aria_value) in rows.iter().zip(expected).zip(aria_values) {
+        assert!(row.contains(&format!("{aria_value}。")), "{row}");
         let rendered = row
             .split("</button>")
             .next()

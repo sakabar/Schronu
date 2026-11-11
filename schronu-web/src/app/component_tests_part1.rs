@@ -228,7 +228,8 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
         "{html}"
     );
     assert!(html.contains("load-metric-value is-over\">01:30"), "{html}");
-    assert!(html.contains("超過0時間0分"), "{html}");
+    assert!(html.contains("load-metric-value is-within\">-24:00"), "{html}");
+    assert!(html.contains("超過マイナス24時間0分"), "{html}");
 }
 
 #[test]
@@ -593,8 +594,11 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
     assert_eq!(today_html.matches("aria-hidden=\"true\"").count(), 4, "{html}");
     assert!(today_html.contains("width:50.0000%"), "{html}");
     assert!(today_html.contains("width:16.6667%"), "{html}");
-    assert!(future_html.contains("width:0.0000%"), "{html}");
-    assert!(future_html.contains("is-zero"), "{html}");
+    assert!(
+        future_html.contains("class=\"load-overflow-fill is-zero\" style=\"width:0.0000%\""),
+        "{html}"
+    );
+    assert!(future_html.contains("load-metric-value is-within\">-04:00"), "{html}");
     assert!(today_html.contains("load-metric-value is-over\">04:00"), "{html}");
     assert!(today_html.contains("超過4時間0分"), "{html}");
 }
@@ -655,7 +659,7 @@ fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
                     durations: BandDurations {
                         unavailable_seconds: 24 * 60 * 60,
                         elapsed_seconds: 0,
-                        repetitive_seconds: 30 * 60 * 60,
+                        repetitive_seconds: 123 * 60 * 60,
                         non_repetitive_seconds: 0,
                         rho_leeway_seconds: 0,
                     },
@@ -672,6 +676,8 @@ fn 負荷viewは24時間以上の超過railを満幅へ打ち切る() {
     let mut dom = VirtualDom::new(root);
     let html = render_band_load_view(&mut dom);
 
+    assert!(html.contains("load-metric-value is-over\">99:59"), "{html}");
+    assert!(html.contains("超過123時間0分"), "{html}");
     assert_eq!(
         html.matches("class=\"load-overflow-fill\" style=\"width:100.0000%\"")
             .count(),
