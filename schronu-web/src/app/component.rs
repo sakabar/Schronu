@@ -163,34 +163,62 @@ pub(super) fn BackgroundRefreshStatus(
     }
 }
 
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+const NAVIGATION_TABS: [(ActiveTab, &str); 4] = [
+    (ActiveTab::Session, "セッション"),
+    (ActiveTab::List, "一覧"),
+    (ActiveTab::Load, "負荷"),
+    (ActiveTab::Create, "作成"),
+];
+
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+fn adjacent_tab(active_tab: ActiveTab, key: &str) -> Option<ActiveTab> {
+    let offset = match key {
+        "ArrowLeft" => NAVIGATION_TABS.len() - 1,
+        "ArrowRight" => 1,
+        _ => return None,
+    };
+    let current = NAVIGATION_TABS
+        .iter()
+        .position(|&(tab, _)| tab == active_tab)?;
+    Some(NAVIGATION_TABS[(current + offset) % NAVIGATION_TABS.len()].0)
+}
+
+#[cfg(test)]
+#[test]
+fn arrow_navigation_wraps_in_display_order() {
+    use ActiveTab::{Create, List, Load, Session};
+
+    for (current, left, right) in [
+        (Session, Create, List),
+        (List, Session, Load),
+        (Load, List, Create),
+        (Create, Load, Session),
+    ] {
+        assert_eq!(adjacent_tab(current, "ArrowLeft"), Some(left));
+        assert_eq!(adjacent_tab(current, "ArrowRight"), Some(right));
+        assert_eq!(adjacent_tab(current, "ArrowUp"), None);
+    }
+}
+
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 #[component]
 pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<ActiveTab>) -> Element {
     rsx! {
         nav { class: "tabs", aria_label: "表示切替",
-            TabButton {
-                label: "セッション",
-                selected: active_tab == ActiveTab::Session,
-                onclick: move |_| on_switch.call(ActiveTab::Session),
-            }
-            TabButton {
-                label: "一覧",
-                selected: active_tab == ActiveTab::List,
-                onclick: move |_| on_switch.call(ActiveTab::List),
-            }
-            TabButton {
-                label: "負荷",
-                selected: active_tab == ActiveTab::Load,
-                onclick: move |_| on_switch.call(ActiveTab::Load),
-            }
-            TabButton {
-                label: "作成",
-                selected: active_tab == ActiveTab::Create,
-                onclick: move |_| on_switch.call(ActiveTab::Create),
+            for (tab, label) in NAVIGATION_TABS {
+                TabButton {
+                    key: "{label}",
+                    label,
+                    selected: active_tab == tab,
+                    onclick: move |_| on_switch.call(tab),
+                }
             }
         }
     }
 }
 
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 #[component]
 fn TabButton(label: &'static str, selected: bool, onclick: EventHandler<MouseEvent>) -> Element {
     let class = if selected {

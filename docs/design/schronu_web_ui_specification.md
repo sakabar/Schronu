@@ -714,6 +714,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 6. tab barはsafe areaをpaddingへ含め、全幅かつ最大82remで中央配置する。本文末尾にはbar高、safe area、余白の合計を確保し、通信中overlayより低い`z-index`にする。
 7. 完了modeから別tabを経た一覧tabへの再進入は、予定modeへ戻し、選択中のlogical dateの`list_tasks`を1回送る。作成成功後の一覧tab進入でも選択日の`list_tasks`を1回送る。負荷を含むその他のtab切替ではserver操作を行わず、未取得表示または直前の負荷dataを維持する。選択中の1画面だけをDOMへ描画する。負荷画面内は先頭の「日別負荷」を初期表示し、「繰返負荷」との切替はlocal stateだけを変更する。タイトルとtoolbarは描画せず、持ち歩きロックbarとbufferはセッションtabだけに表示する。持ち歩きロックstateとmutation guardはtabにかかわらず有効にする。
 8. セッションtab表示中にセッション件数が実際に減少して0件になった場合は、既存のtab切替処理で一覧tabへ移る。件数不変、セッションが残る場合、一覧・作成・負荷tab表示中は強制遷移しない。
+9. browserの`keydown`で`Ctrl+Shift+←`または`Ctrl+Shift+→`を受けた時は、現在のtabを基準に表示順で移動し、両端で回り込む。入力・選択・編集欄、IME変換中、処理済みイベント、AltやMetaとの併用、復元中、全面の通信中overlay表示中は処理しない。ショートカットを処理するイベントだけ既定動作を抑止し、tab buttonと同じ切替処理を呼ぶ。
 
 client componentは利用者起点の非`None`な`ClientEffect`をserverへdispatchする直前に実行中通信数を1増やし、response受理後に成否にかかわらず1減らす。ただし`ListAllTasks` effectは実行中通信数へ加えず、一覧内statusだけで進捗を示す。実行中通信数が1以上の間は、viewport全体を覆う半透明overlay、スピナー、「通信中…」を表示する。背面の`main`に`inert`と`aria-busy`を設定し、pointerとkeyboard操作を無効にする。overlayのstatusは`aria-live=polite`で通知する。`prefers-reduced-motion: reduce`ではスピナーの回転を停止するが、待機表示自体は維持する。
 

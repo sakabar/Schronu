@@ -37,6 +37,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-001**: viewport下端に「セッション」「一覧」「負荷」「作成」のtabを固定表示し、選択中の画面を上端の緑indicatorと`aria-pressed`で識別できること。4buttonは均等幅とし、操作高はdesktopで44px以上、46rem以下で40px以上とすること。safe areaを避け、desktopでは既存shell最大幅へ中央配置すること。
 - **REQ-COMMON-002**: tab切替はclient内で処理すること。ただし完了modeから別tabを経て「一覧」へ戻る時と作成成功後に「一覧」へ入る時は選択日の予定一覧を取得すること。tab barは通信中overlayより背面に配置すること。
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
+- **REQ-COMMON-010**: `Ctrl+Shift+←`と`Ctrl+Shift+→`で下部tabを表示順に1つずつ切り替え、両端で回り込むこと。入力・選択・編集欄とIME変換中は既存のキー操作を優先し、復元中と全面の通信中overlay表示中は切り替えを受け付けないこと。
 
 - **REQ-CREATE-001**: 作成tabはタスク名と任意の非負整数の見積分数を受け付け、省略時は15分とすること。CLI`新`と同じapplicationの`create_task`でルートのプロジェクトタスクを作り、翌論理日06:00までPendingとする。WebからCLIのフォーカスは変更しない。
 - **REQ-CREATE-002**: 作成成功時は作成tabに留まり、成功内容を表示して入力を空にすること。失敗時は入力を保持する。成功後は古い一覧と全件取得を無効化し、次の一覧進入時に日付別一覧を取得する。作成は持ち歩きロック、背景更新、repository状態不確実の変更guardに従う。

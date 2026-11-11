@@ -14,15 +14,59 @@ use super::super::long_press_controller::LongPressSchedulerHandle;
 use super::super::session_links::SessionLinks;
 use super::super::session_view::SessionView;
 use super::{
-    BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay, NavigationTabs,
-    RestoringShell, SessionChrome, TIME_DISPLAY_MODE,
+    adjacent_tab, BackgroundRefreshStatus, BufferPanel, InteractiveShell, LoadingOverlay,
+    NavigationTabs, RestoringShell, SessionChrome, TIME_DISPLAY_MODE,
 };
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
-use wasm_bindgen::JsValue;
+use std::rc::Rc;
+use wasm_bindgen::{closure::Closure, JsCast, JsValue};
+use web_sys::{Element as DomElement, HtmlElement, KeyboardEvent as DomKeyboardEvent, Window};
 
 const TICK_MILLIS: u32 = 1_000;
+
+struct TabKeyListener {
+    window: Window,
+    callback: Closure<dyn FnMut(DomKeyboardEvent)>,
+}
+
+impl TabKeyListener {
+    fn attach(on_keydown: Callback<DomKeyboardEvent>) -> Option<Self> {
+        let window = web_sys::window()?;
+        let callback = Closure::new(on_keydown.into_closure());
+        window
+            .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
+            .ok()?;
+        Some(Self { window, callback })
+    }
+}
+
+impl Drop for TabKeyListener {
+    fn drop(&mut self) {
+        let _ = self
+            .window
+            .remove_event_listener_with_callback("keydown", self.callback.as_ref().unchecked_ref());
+    }
+}
+
+fn is_editing_target(event: &DomKeyboardEvent) -> bool {
+    event
+        .composed_path()
+        .get(0)
+        .dyn_into::<DomElement>()
+        .ok()
+        .is_some_and(|element| {
+            element
+                .closest("input, textarea, select")
+                .ok()
+                .flatten()
+                .is_some()
+                || element
+                    .dyn_ref::<HtmlElement>()
+                    .is_some_and(HtmlElement::is_content_editable)
+        })
+}
 
 #[component]
 pub(super) fn BrowserApp() -> Element {
@@ -35,6 +79,33 @@ pub(super) fn BrowserApp() -> Element {
         use_signal(super::super::timer_shortcut::browser_supports_timer_shortcut);
     let long_press_scheduler =
         use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
+
+    let on_tab_keydown = use_callback(move |event: DomKeyboardEvent| {
+        if event.default_prevented()
+            || event.is_composing()
+            || !event.ctrl_key()
+            || !event.shift_key()
+            || event.alt_key()
+            || event.meta_key()
+            || is_editing_target(&event)
+        {
+            return;
+        }
+        let target = {
+            let client = client.peek();
+            if client.server_effect_in_flight() {
+                return;
+            }
+            client
+                .state()
+                .and_then(|state| adjacent_tab(state.active_tab(), &event.key()))
+        };
+        if let Some(tab) = target {
+            event.prevent_default();
+            dispatch_action(client, ComponentAction::SwitchTab(tab));
+        }
+    });
+    use_hook(move || TabKeyListener::attach(on_tab_keydown).map(Rc::new));
 
     use_effect(move || {
         let effect = client
