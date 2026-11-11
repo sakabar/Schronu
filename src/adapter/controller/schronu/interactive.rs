@@ -523,6 +523,14 @@ where
                     render_prompt(stdout, header, &line, cursor_x)
                         .map_err(|error| DriverRunError::Io(InteractiveIoError::Output(error)))?;
                 }
+                Key::Ctrl('d') => {
+                    if let Some((byte_offset, _)) = line.char_indices().nth(cursor_x) {
+                        line.remove(byte_offset);
+                        render_prompt(stdout, header, &line, cursor_x).map_err(|error| {
+                            DriverRunError::Io(InteractiveIoError::Output(error))
+                        })?;
+                    }
+                }
                 Key::Char(character) => {
                     let byte_offset = get_byte_offset_for_insert(&line, cursor_x);
                     line.insert(byte_offset, character);
@@ -1097,6 +1105,44 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(submitted_lines, ["見積", "積"]);
+    }
+
+    #[test]
+    fn ctrl_d_deletes_the_character_after_the_cursor() {
+        let mut writer = TestWriter::default();
+        let mut submitted_lines = Vec::new();
+        let keys = [
+            Key::Char('a'),
+            Key::Char('界'),
+            Key::Char('b'),
+            Key::Ctrl('d'),
+            Key::Char('\n'),
+            Key::Char('a'),
+            Key::Char('界'),
+            Key::Char('b'),
+            Key::Left,
+            Key::Left,
+            Key::Ctrl('d'),
+            Key::Char('x'),
+            Key::Char('\n'),
+            Key::Ctrl('d'),
+        ];
+        let result = run_script(
+            &mut writer,
+            keys.into_iter().map(ReceivedInput::Key),
+            |event| match event {
+                DriverEvent::RenderScreen { .. } => DriverOutcome::Continue,
+                DriverEvent::Submit { line } => {
+                    submitted_lines.push(line.to_string());
+                    DriverOutcome::Submitted
+                }
+                DriverEvent::Exit => DriverOutcome::Exit,
+                _ => unreachable!(),
+            },
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(submitted_lines, ["a界b", "axb"]);
     }
 
     #[test]
