@@ -109,7 +109,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     assert!(row.contains("min-width: 0;"));
 
     let grid = block_body(MAIN_CSS, ".load-grid");
-    assert!(grid.contains("--load-columns: 64px 6ch 6ch 5ch minmax(0, 1fr);"));
+    assert!(grid.contains("--load-columns: 64px 6ch 6ch 6ch minmax(0, 1fr);"));
     assert!(row.contains("font-weight: inherit;"));
     let heading = block_body(MAIN_CSS, ".load-column-headings");
     for block in [heading, row] {
@@ -118,7 +118,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     }
     let narrow = block_body(MAIN_CSS, "@media (max-width: 380px)");
     assert!(block_body(narrow, ".load-grid")
-        .contains("--load-columns: 60px 6ch 6ch 5ch minmax(0, 1fr);"));
+        .contains("--load-columns: 60px 6ch 6ch 6ch minmax(0, 1fr);"));
     assert!(block_body(MAIN_CSS, ".load-bands").contains("gap: 4px;"));
     assert!(
         block_body(MAIN_CSS, ".load-metric-value.is-within").contains("color: var(--green-dark);")

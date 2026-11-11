@@ -5,6 +5,7 @@ use super::routine_load_view::RoutineLoadTable;
 use crate::{BandDay, BandDurations, RoutineLoadReport};
 use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
 use dioxus::prelude::*;
+use std::cmp::Ordering;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 const MAX_VISIBLE_SECONDS: i64 = 99 * 3600 + 59 * 60;
@@ -198,8 +199,13 @@ fn BandDayRow(
         .unwrap_or_else(|| row.logical_date.clone());
     let segments = clipped_segments(row.durations);
     let remaining_capacity_seconds = remaining_capacity_seconds(&segments);
-    let used_seconds = raw_used_seconds(row.durations);
-    let overflow_seconds = used_seconds.saturating_sub(SECONDS_PER_DAY);
+    let day_difference_seconds = raw_used_seconds(row.durations) - SECONDS_PER_DAY;
+    let overflow_seconds = day_difference_seconds.max(0);
+    let visible_difference = match day_difference_seconds.cmp(&0) {
+        Ordering::Less => format_signed(day_difference_seconds.max(-MAX_VISIBLE_SECONDS)),
+        Ordering::Equal => "0:00".to_owned(),
+        Ordering::Greater => format_unsigned(day_difference_seconds.min(MAX_VISIBLE_SECONDS)),
+    };
     let remaining_aria = if today {
         format!(
             "残り枠{}、残り繰返{}、残り単発{}、残り余差{}、残り空き{}。",
@@ -222,7 +228,7 @@ fn BandDayRow(
         format_duration(segments.free_seconds),
         format_signed(row.accumulated_rho_diff_seconds),
         format_signed(row.accumulated_free_diff_seconds),
-        format_duration(overflow_seconds),
+        format_day_difference_for_aria(day_difference_seconds),
     );
     let class = if today {
         "load-day is-today"
@@ -261,13 +267,7 @@ fn BandDayRow(
                 }
             }
             strong {
-                class: if row.accumulated_rho_diff_seconds == 0 {
-                    "load-metric-value is-zero"
-                } else if row.accumulated_rho_diff_seconds > 0 {
-                    "load-metric-value is-over"
-                } else {
-                    "load-metric-value is-within"
-                },
+                class: signed_metric_class(row.accumulated_rho_diff_seconds),
                 "{format_signed(row.accumulated_rho_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
@@ -279,16 +279,8 @@ fn BandDayRow(
                 "{format_signed(row.accumulated_free_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
-                class: if overflow_seconds > 0 {
-                    "load-metric-value is-over"
-                } else {
-                    "load-metric-value is-within"
-                },
-                if overflow_seconds > 0 {
-                    "{format_unsigned(overflow_seconds.min(MAX_VISIBLE_SECONDS))}"
-                } else {
-                    "0:00"
-                }
+                class: signed_metric_class(day_difference_seconds),
+                "{visible_difference}"
             }
             span { class: "load-bands",
                 if today {
@@ -412,6 +404,14 @@ fn remaining_capacity_seconds(segments: &BandSegments) -> i64 {
         .max(0)
 }
 
+fn signed_metric_class(seconds: i64) -> &'static str {
+    match seconds.cmp(&0) {
+        Ordering::Less => "load-metric-value is-within",
+        Ordering::Equal => "load-metric-value is-zero",
+        Ordering::Greater => "load-metric-value is-over",
+    }
+}
+
 fn format_signed(seconds: i64) -> String {
     let sign = if seconds >= 0 { '+' } else { '-' };
     let minutes = seconds.unsigned_abs() / 60;
@@ -421,6 +421,17 @@ fn format_signed(seconds: i64) -> String {
 fn format_duration(seconds: i64) -> String {
     let minutes = seconds.max(0) / 60;
     format!("{}時間{}分", minutes / 60, minutes % 60)
+}
+
+fn format_day_difference_for_aria(seconds: i64) -> String {
+    let sign = if seconds < 0 { "マイナス" } else { "" };
+    let magnitude = seconds.saturating_abs();
+    let mut label = format!("{sign}{}", format_duration(magnitude));
+    let remainder = magnitude % 60;
+    if remainder != 0 {
+        label.push_str(&format!("{remainder}秒"));
+    }
+    label
 }
 
 fn weekday_jp(weekday: Weekday) -> &'static str {

@@ -1867,7 +1867,7 @@ button.routine-load-day.is-at-capacity {
 .is-overflow { background: var(--band-overflow); }
 
 .load-grid {
-    --load-columns: 64px 6ch 6ch 5ch minmax(0, 1fr);
+    --load-columns: 64px 6ch 6ch 6ch minmax(0, 1fr);
     --load-column-gap: 4px;
     min-width: 0;
     font-size: 12px;
@@ -2027,7 +2027,7 @@ button.routine-load-day.is-at-capacity {
 
 @media (max-width: 380px) {
     .load-grid {
-        --load-columns: 60px 6ch 6ch 5ch minmax(0, 1fr);
+        --load-columns: 60px 6ch 6ch 6ch minmax(0, 1fr);
         --load-column-gap: 3px;
         font-size: 11px;
     }
