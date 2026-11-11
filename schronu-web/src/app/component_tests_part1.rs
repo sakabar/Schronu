@@ -114,10 +114,10 @@ fn 固定navigationは4tabの選択状態とcallbackを提供する() {
     assert_eq!(
         *events.lock().unwrap(),
         [
-            ActiveTab::Create,
-            ActiveTab::Load,
+            ActiveTab::Session,
             ActiveTab::List,
-            ActiveTab::Session
+            ActiveTab::Load,
+            ActiveTab::Create
         ]
     );
 }
