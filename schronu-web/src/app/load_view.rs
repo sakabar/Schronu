@@ -206,7 +206,7 @@ fn BandDayRow(
         .unwrap_or_else(|| row.logical_date.clone());
     let segments = clipped_segments(row.durations);
     let remaining_capacity_seconds = remaining_capacity_seconds(&segments);
-    let day_difference_seconds = raw_used_seconds(row.durations) - SECONDS_PER_DAY;
+    let day_difference_seconds = occupied_seconds(row.durations) - SECONDS_PER_DAY;
     let overflow_seconds = day_difference_seconds.max(0);
     let visible_difference = match day_difference_seconds.cmp(&0) {
         Ordering::Less => format_signed(day_difference_seconds.max(-MAX_VISIBLE_SECONDS)),
@@ -366,13 +366,12 @@ fn overflow_percentage(overflow_seconds: i64, capacity_seconds: i64) -> f64 {
     }
 }
 
-fn raw_used_seconds(durations: BandDurations) -> i64 {
+fn occupied_seconds(durations: BandDurations) -> i64 {
     [
         durations.unavailable_seconds,
         durations.elapsed_seconds,
         durations.repetitive_seconds,
         durations.non_repetitive_seconds,
-        durations.rho_leeway_seconds,
     ]
     .into_iter()
     .fold(0_i64, |sum, value| sum.saturating_add(value.max(0)))
