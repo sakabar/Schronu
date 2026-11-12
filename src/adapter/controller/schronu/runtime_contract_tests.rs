@@ -3113,7 +3113,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
         repeat_root.clone(),
         now,
         Some(repeat_root.get_id().unwrap()),
-        "繰 習慣 10 毎 09:00 10:00",
+        "繰 習慣 10 1 09:00 10:00",
     );
     assert_eq!(repeat_result.task.get_children().unwrap().len(), 1);
     assert!(repeat_result.output.contains("習慣"));
@@ -3142,7 +3142,7 @@ fn test_project作成commandの製品handler経路がtyped_fieldと表示とfocu
     assert!(!start_result.task.get_fixed_start().unwrap());
     assert!(start_result.task.get_atomic().unwrap());
 
-    for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 毎 09:00 10:00"] {
+    for invalid_command in ["新 123 10", "連 手順 -1 1 2", "繰 習慣 -1 1 09:00 10:00"] {
         let task = new_test_task_handle("変更なし").unwrap();
         let result = execute_command_for_test(
             task.clone(),
@@ -4370,7 +4370,7 @@ fn test_execute_repetition_数値だけの名前は拒否して元taskを変更�
         task.clone(),
         now,
         Some(task.get_id().unwrap()),
-        "繰 123 10 毎 09:00 10:00",
+        "繰 123 10 1 09:00 10:00",
     );
 
     assert_eq!(result.task.get_estimated_work_seconds().unwrap(), 45 * 60);
@@ -4396,13 +4396,143 @@ fn test_execute_new_数値だけの名前は拒否して元taskを変更しな�
 }
 
 #[test]
+fn repetition_cliは間隔と論理日から実タスクを作る() {
+    for (interval, offsets, period) in [
+        (1, &[0, 1, 2, 3, 4, 5, 6][..], 7),
+        (2, &[0, 2, 4][..], 7),
+        (3, &[0, 3][..], 7),
+        (7, &[0][..], 7),
+        (8, &[0][..], 8),
+    ] {
+        for (hour, logical_day) in [(5, 10), (6, 11)] {
+            let now = Local.with_ymd_and_hms(2026, 8, 11, hour, 0, 0).unwrap();
+            let root = new_test_task_handle("作成先").unwrap();
+            let root_id = root.get_id().unwrap();
+            let result = execute_command_for_test(
+                root, now, Some(root_id), &format!("繰 定期作業 15 {interval}"),
+            );
+            let parent = result.task.get_children().unwrap().remove(0);
+            assert_eq!(result.focused_task_id_opt, Some(parent.get_id().unwrap()));
+            assert_eq!(parent.get_repetition_interval_days_opt().unwrap(), Some(period));
+            assert_eq!(parent.get_estimated_work_seconds().unwrap(), 900);
+            assert_eq!(parent.get_deadline_time_opt().unwrap(), None);
+            let children = parent.get_children().unwrap();
+            assert_eq!(children.len(), offsets.len());
+            for (child, offset) in children.iter().zip(offsets) {
+                let day = logical_day + offset;
+                assert_eq!(child.get_estimated_work_seconds().unwrap(), 900);
+                assert!(!child.get_fixed_start().unwrap());
+                assert_eq!(child.get_start_time().unwrap(),
+                    Local.with_ymd_and_hms(2026, 8, day, 6, 0, 0).unwrap());
+                assert_eq!(child.get_deadline_time_opt().unwrap(),
+                    Local.with_ymd_and_hms(2026, 8, day + 1, 5, 59, 59).single());
+            }
+        }
+    }
+}
+
+#[test]
+fn repetition_cliは省略した締切を翌暦日に置く() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("作成先").unwrap();
+    let root_id = root.get_id().unwrap();
+    let result = execute_command_for_test(root, now, Some(root_id), "repeat 定期作業 15 7 01:20");
+    let parent = result.task.get_children().unwrap().remove(0);
+    let child = parent.get_children().unwrap().remove(0);
+    assert_eq!(child.get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 1, 20, 0).unwrap());
+    assert_eq!(child.get_deadline_time_opt().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 59).single());
+    let completed = execute_command_for_test(
+        result.task,
+        now,
+        Some(child.get_id().unwrap()),
+        "終",
+    );
+    let parent = completed.task.get_children().unwrap().remove(0);
+    let children = parent.get_children().unwrap();
+    assert_eq!(children.len(), 2);
+    assert_eq!(children[1].get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 19, 1, 20, 0).unwrap());
+    assert_eq!(children[1].get_deadline_time_opt().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 19, 5, 59, 59).single());
+
+}
+
+#[test]
+fn repetition_cliは保存後も各初期回を予測し完了した回だけ次回を作る() {
+    use crate::application::schedule_use_case::get_schedule;
+
+    let storage = TestStorageDir::new();
+    std::fs::create_dir_all(&storage.path).unwrap();
+    let path = storage.path.to_str().unwrap();
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 8, 0, 0).unwrap();
+    let mut repository = TaskRepository::new(path);
+    repository.sync_clock(now).unwrap();
+    let root = new_test_task_handle("作成先").unwrap();
+    let mut focus = Some(root.get_id().unwrap());
+    repository.start_new_project(root).unwrap();
+    let mut free_time = TestFreeTimeManager::default();
+    let mut output = TestWriter::new_for_pipe();
+    execute(&mut output, &mut repository, &mut free_time, &mut focus, &now,
+        "繰 定期作業 15 2 06:00:05 09:00:10").unwrap();
+    repository.save().unwrap();
+
+    let mut reloaded = TaskRepository::new(path);
+    reloaded.sync_clock(now).unwrap();
+    reloaded.load().unwrap();
+    let parent = reloaded.get_by_id(focus.unwrap()).unwrap().unwrap();
+    assert_eq!(parent.get_repetition_start_time_opt().unwrap(), NaiveTime::from_hms_opt(6, 0, 5));
+    assert_eq!(parent.get_repetition_deadline_time_opt().unwrap(), NaiveTime::from_hms_opt(9, 0, 10));
+    let children = parent.get_children().unwrap();
+    assert_eq!(children.len(), 3);
+    assert_eq!(children[0].get_start_time().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 5).unwrap());
+    let schedule = get_schedule(&reloaded).unwrap();
+    for day in [18, 20, 22] {
+        let deadline = Local.with_ymd_and_hms(2026, 8, day, 9, 0, 10).single();
+        assert!(schedule.iter().any(|entry| entry.is_projected() && entry.task.deadline_time == deadline));
+    }
+    focus = Some(children[0].get_id().unwrap());
+    execute(&mut output, &mut reloaded, &mut free_time, &mut focus, &now, "終").unwrap();
+    let children = parent.get_children().unwrap();
+    assert_eq!(children.len(), 4);
+    assert_eq!(children[0].get_orig_status().unwrap(), Status::Done);
+    assert_eq!(children[3].get_deadline_time_opt().unwrap(),
+        Local.with_ymd_and_hms(2026, 8, 18, 9, 0, 10).single());
+}
+
+#[test]
+fn repetition_cliは無効な入力やフォーカスなしでタスクを作らない() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let root = new_test_task_handle("作成先").unwrap();
+    let root_id = root.get_id().unwrap();
+    let before = root.snapshot().unwrap();
+    for (command, focus, diagnostic) in [
+        ("繰 定期作業 15 0", Some(root_id), "repetition_interval_days"),
+        ("繰 定期作業 15 -1", Some(root_id), "repetition_interval_days"),
+        ("繰 定期作業 15 9223372036854775807", Some(root_id), "repetition_occurrence_date"),
+        ("繰 定期作業 15 2 25:00", Some(root_id), "repetition_start_time"),
+        ("繰 定期作業 15 2 06:00 09:00:60", Some(root_id), "repetition_deadline_time"),
+        ("繰 定期作業 15 2 10:00 09:00", Some(root_id), "repetition_deadline_time"),
+        ("繰 定期作業 15 月 06:00 09:00", Some(root_id), "[開始時刻] [締切時刻]"),
+        ("繰 定期作業 15 2", None, "フォーカス中のタスクがありません"),
+    ] {
+        let result = execute_command_for_test(root.clone(), now, focus, command);
+        assert!(result.output.contains(diagnostic), "{command}: {}", result.output);
+        assert_eq!(result.focused_task_id_opt, focus);
+        assert_eq!(result.task.snapshot().unwrap(), before);
+    }
+}
+
+#[test]
 fn test_execute_repetition_不正な見積もりでは元taskを変更しない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
 
     for estimated_work_minutes in ["-1", "9223372036854775807"] {
         let task = new_test_task_handle("既存タスク").unwrap();
         let _ = task.set_estimated_work_seconds(45 * 60);
-        let command = format!("繰 反復 {estimated_work_minutes} 毎 09:00 10:00");
+        let command = format!("繰 反復 {estimated_work_minutes} 1 09:00 10:00");
 
         let result =
             execute_command_for_test(task.clone(), now, Some(task.get_id().unwrap()), &command);

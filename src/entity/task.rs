@@ -827,6 +827,29 @@ impl TaskHandle {
         Ok(Self { node: child_node })
     }
 
+    pub(crate) fn create_child_with_children(
+        &self,
+        parent_attr: TaskAttr,
+        child_attrs: Vec<TaskAttr>,
+    ) -> Result<(), TaskTreeError> {
+        let root = self.root()?;
+        let grant = self
+            .node
+            .tree()
+            .grant_hierarchy_edit()
+            .map_err(|_| TaskTreeError::HierarchyGrant)?;
+        let mut root_attr = root
+            .node
+            .try_borrow_data_mut()
+            .map_err(|_| TaskTreeError::Borrow)?;
+        let parent = self.node.create_as_last_child(&grant, parent_attr);
+        for attr in child_attrs {
+            parent.create_as_last_child(&grant, attr);
+        }
+        root_attr.mark_persistent_mutation();
+        Ok(())
+    }
+
     pub(crate) fn complete_with_next_repetition(
         &self,
         actual_work_seconds: i64,

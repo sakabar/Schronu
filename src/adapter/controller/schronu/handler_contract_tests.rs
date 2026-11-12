@@ -17,7 +17,9 @@ use super::renderer::{
 use crate::application::flatten_use_case::FlattenResult;
 use crate::application::pack_use_case::PackResult;
 use crate::application::task_use_case::ApplicationError;
-use crate::application::task_use_case::{BreakdownTaskInput, CompleteTaskInput, CreateTaskInput};
+use crate::application::task_use_case::{
+    BreakdownTaskInput, CompleteTaskInput, CreateRepetitionInput, CreateTaskInput,
+};
 use crate::entity::task::{TaskAttr, TaskHandle, TaskTreeError};
 use chrono::{Local, NaiveDate, TimeZone};
 use std::io::Write;
@@ -231,7 +233,8 @@ struct TraceProjectContext {
     created: Vec<CreateTaskInput>,
     breakdowns: Vec<BreakdownTaskInput>,
     created_attr_names: Vec<String>,
-    estimates: Vec<(Uuid, i64)>,
+    repetitions: Vec<CreateRepetitionInput>,
+    repetition_error: Option<ApplicationError>,
     breakdown_error_after_successes: Option<usize>,
 }
 
@@ -244,7 +247,8 @@ impl TraceProjectContext {
             created: Vec::new(),
             breakdowns: Vec::new(),
             created_attr_names: Vec::new(),
-            estimates: Vec::new(),
+            repetitions: Vec::new(),
+            repetition_error: None,
             breakdown_error_after_successes: None,
         }
     }
@@ -280,9 +284,15 @@ impl ProjectCommandContext for TraceProjectContext {
         TaskAttr::with_identity(name, Uuid::from_u128(5), self.now)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError> {
-        self.estimates.push((task_id, seconds));
-        Ok(())
+    fn create_repetition(
+        &mut self,
+        input: CreateRepetitionInput,
+    ) -> Result<Vec<Uuid>, ApplicationError> {
+        self.repetitions.push(input);
+        if let Some(error) = &self.repetition_error {
+            return Err(error.clone());
+        }
+        Ok(vec![Uuid::from_u128(3), Uuid::from_u128(4)])
     }
 
     fn focused_task_id(&self) -> Option<Uuid> {
@@ -325,9 +335,9 @@ fn repeat_project_command() -> Command {
     Command::Action(CommandAction::Repeat {
         name: "typed routine".to_string(),
         estimated_minutes: 15,
-        day: "月".to_string(),
-        start_time: "09:00".to_string(),
-        deadline_time: "10:00".to_string(),
+        interval_days: 7,
+        start_time: chrono::NaiveTime::from_hms_opt(9, 0, 0),
+        deadline_time: chrono::NaiveTime::from_hms_opt(10, 0, 0),
     })
 }
 
@@ -429,33 +439,20 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
     assert!(sequential.display.is_empty());
 
     let mut repeat_context = TraceProjectContext::new(now);
-    let repeat = handle_project_command(
-        &Command::Action(CommandAction::Repeat {
-            name: "typed routine".to_string(),
-            estimated_minutes: 15,
-            day: "月".to_string(),
-            start_time: "09:00".to_string(),
-            deadline_time: "10:00".to_string(),
-        }),
-        &mut repeat_context,
-    )
-    .unwrap()
-    .expect("repeat command must be owned by the handler");
-    assert_eq!(repeat_context.breakdowns.len(), 5);
-    assert!(repeat_context
-        .breakdowns
-        .iter()
-        .all(|input| { input.names == ["typed routine"] && input.pending_until.is_none() }));
+    let repeat = handle_project_command(&repeat_project_command(), &mut repeat_context)
+        .unwrap()
+        .expect("repeat command must be owned by the handler");
+    assert_eq!(repeat.kind, CommandKind::Repeat);
+    assert_eq!(repeat_context.repetitions.len(), 1);
+    let input = &repeat_context.repetitions[0];
+    assert_eq!(input.parent_id, Uuid::from_u128(1));
+    assert_eq!(input.name, "typed routine");
+    assert_eq!(input.estimated_work_seconds, 15 * 60);
+    assert_eq!(input.interval_days, 7);
+    assert_eq!(input.start_time, chrono::NaiveTime::from_hms_opt(9, 0, 0));
     assert_eq!(
-        repeat_context.estimates,
-        vec![(Uuid::from_u128(1), 15 * 60); 5]
-    );
-    assert_eq!(
-        repeat.display,
-        semantic_project_display(
-            &vec![format!("{} typed routine", Uuid::from_u128(3)); 5],
-            None,
-        )
+        input.deadline_time,
+        chrono::NaiveTime::from_hms_opt(10, 0, 0)
     );
 
     let mut appointment_context = TraceProjectContext::new(now);
@@ -654,7 +651,6 @@ fn split検証errorはhandlerがsemantic_errorを返し状態を変更しない(
 fn repetition成功はhandlerがplain_messageを順序どおりcomposeする() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
     let repeat = repeat_project_command();
-    let repeated_line = format!("{} typed routine", Uuid::from_u128(3));
 
     let mut success_context = TraceProjectContext::new(now);
     let success = handle_project_command(&repeat, &mut success_context)
@@ -662,32 +658,28 @@ fn repetition成功はhandlerがplain_messageを順序どおりcomposeする() {
         .expect("repetition must be handled");
     assert_eq!(
         success.display,
-        semantic_project_display(&vec![repeated_line.clone(); 5], None)
+        semantic_project_display(
+            &[3, 4].map(|id| format!("{} typed routine", Uuid::from_u128(id))),
+            None,
+        )
     );
 }
 
 #[test]
-fn repetition途中errorはhandlerが先行messageとerrorを順序どおりcomposeする() {
+fn repetition追加errorは作成messageを出さずfocusを維持する() {
     let now = Local.with_ymd_and_hms(2026, 8, 23, 12, 0, 0).unwrap();
-    let repeat = repeat_project_command();
-    let repeated_line = format!("{} typed routine", Uuid::from_u128(3));
-    let mut partial_error_context = TraceProjectContext::new(now);
-    partial_error_context.breakdown_error_after_successes = Some(2);
-    let partial_error = handle_project_command(&repeat, &mut partial_error_context)
+    let mut context = TraceProjectContext::new(now);
+    let expected_error =
+        ApplicationError::TaskTree(crate::entity::task::TaskTreeError::HierarchyGrant);
+    context.repetition_error = Some(expected_error.clone());
+    let outcome = handle_project_command(&repeat_project_command(), &mut context)
         .unwrap()
         .expect("reported repetition error must remain a handled outcome");
-    let expected_error = ApplicationError::InvalidInput {
-        field: "breakdown",
-        reason: "injected partial failure",
-    };
     assert_eq!(
-        partial_error.display,
-        semantic_project_display(
-            &[repeated_line.clone(), repeated_line],
-            Some(&expected_error),
-        )
+        outcome.display,
+        semantic_project_display(&[], Some(&expected_error))
     );
-    assert_eq!(partial_error_context.breakdowns.len(), 2);
+    assert_eq!(context.focused_task_id, Some(Uuid::from_u128(1)));
 }
 
 #[derive(Default)]
@@ -2173,8 +2165,11 @@ impl ProjectCommandContext for CompositeTraceContext {
         self.project.create_task_attr(name)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError> {
-        self.project.set_estimate(task_id, seconds)
+    fn create_repetition(
+        &mut self,
+        input: CreateRepetitionInput,
+    ) -> Result<Vec<Uuid>, ApplicationError> {
+        self.project.create_repetition(input)
     }
 
     fn focused_task_id(&self) -> Option<Uuid> {
