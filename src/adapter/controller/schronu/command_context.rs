@@ -1,5 +1,6 @@
 use super::command::{
-    parse_project_category_input, CommandKind, CommandParseError, DEADLINE_USAGE,
+    parse_deadline_time, parse_project_category_input, CommandKind, CommandParseError,
+    DEADLINE_USAGE,
 };
 use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, HandlerError,
@@ -14,7 +15,8 @@ use super::view::{
 use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::application::completed_task_report::build_completed_task_report;
 use crate::application::daily_capacity::{
-    try_local_date_and_time, try_logical_date, try_logical_date_start, try_next_logical_date_start,
+    try_local_date_and_time, try_logical_date, try_logical_date_and_time, try_logical_date_start,
+    try_next_logical_date_start,
 };
 use crate::application::flatten_use_case::{
     flatten_tasks_with_end_of_day_offset_minutes, FlattenResult,
@@ -928,7 +930,8 @@ pub(super) fn resolve_deadline_date(
             || command_parse_error("〆", "deadline", "日時が不正です", DEADLINE_USAGE);
         let month = captures[1].parse::<u32>().map_err(|_| invalid_deadline())?;
         let day = captures[2].parse::<u32>().map_err(|_| invalid_deadline())?;
-        let validation_year = 2000 + now.year().rem_euclid(400);
+        let today = try_logical_date(now)?;
+        let validation_year = 2000 + today.year().rem_euclid(400);
         if NaiveDate::from_ymd_opt(validation_year, month, day).is_none() {
             return Err(invalid_deadline());
         }
@@ -937,12 +940,9 @@ pub(super) fn resolve_deadline_date(
             datetime: now,
         };
         let mut deadline_date =
-            NaiveDate::from_ymd_opt(now.year(), month, day).ok_or_else(out_of_range)?;
-        let deadline_noon = deadline_date
-            .and_hms_opt(12, 0, 0)
-            .ok_or_else(out_of_range)?;
-        if deadline_noon < now.naive_local() {
-            let next_year = now.year().checked_add(1).ok_or_else(out_of_range)?;
+            NaiveDate::from_ymd_opt(today.year(), month, day).ok_or_else(out_of_range)?;
+        if deadline_date < today {
+            let next_year = today.year().checked_add(1).ok_or_else(out_of_range)?;
             let next_validation_year = 2000 + next_year.rem_euclid(400);
             if NaiveDate::from_ymd_opt(next_validation_year, month, day).is_none() {
                 return Err(invalid_deadline());
@@ -961,46 +961,34 @@ fn resolve_deadline_time(
     now: DateTime<Local>,
     config: &SchronuConfig,
 ) -> Result<Option<DateTime<Local>>, HandlerError> {
-    let hhmm_reg = Regex::new(r"^(\d{1,2}):(\d{1,2})$").unwrap();
     let invalid_datetime =
         || command_parse_error("〆", "deadline", "日時が不正です", DEADLINE_USAGE);
-    let (date_value, time_value) = match deadline_values {
+    let (date_value, time) = match deadline_values {
         [value] if value == "消" => return Ok(None),
-        [value] if hhmm_reg.is_match(value) => (None, Some(value.as_str())),
-        [value] => (Some(value.as_str()), None),
-        [first, second] if hhmm_reg.is_match(first) && !hhmm_reg.is_match(second) => {
-            (Some(second.as_str()), Some(first.as_str()))
-        }
-        [first, second] if !hhmm_reg.is_match(first) && hhmm_reg.is_match(second) => {
-            (Some(first.as_str()), Some(second.as_str()))
-        }
+        [value] => match parse_deadline_time(value) {
+            Some(time) => (None, time),
+            None => (Some(value.as_str()), config.default_deadline_time),
+        },
+        [first, second] => match (parse_deadline_time(first), parse_deadline_time(second)) {
+            (Some(time), None) => (Some(second.as_str()), time),
+            (None, Some(time)) => (Some(first.as_str()), time),
+            _ => return Err(invalid_datetime()),
+        },
         _ => return Err(invalid_datetime()),
     };
 
     let date = if let Some(value) = date_value {
         let deadline_date_str = resolve_deadline_date(value, now)?;
-        if deadline_date_str == "消" {
-            return Err(invalid_datetime());
-        }
         NaiveDate::parse_from_str(&deadline_date_str, "%Y/%m/%d").map_err(|_| invalid_datetime())?
     } else {
-        now.date_naive()
+        try_logical_date(now)?
     };
-    let time = if let Some(value) = time_value {
-        let caps = hhmm_reg
-            .captures(value)
-            .expect("matched deadline time must have captures");
-        let hh: u32 = caps[1]
-            .parse()
-            .map_err(|_| command_parse_error("〆", "deadline", "時刻が不正です", DEADLINE_USAGE))?;
-        let mm: u32 = caps[2]
-            .parse()
-            .map_err(|_| command_parse_error("〆", "deadline", "時刻が不正です", DEADLINE_USAGE))?;
-        NaiveTime::from_hms_opt(hh, mm, 0).ok_or_else(invalid_datetime)?
-    } else {
-        config.default_deadline_time
-    };
-    Ok(Some(try_local_date_and_time(date, time)?))
+    Ok(Some(try_logical_date_and_time(
+        date,
+        time,
+        "deadline_time",
+        now,
+    )?))
 }
 
 fn execute_arrange_children_estimates(
@@ -1953,19 +1941,22 @@ mod deadline_resolution_tests {
     #[test]
     fn 日付だけの締切は設定された既定時刻を使う() {
         let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-        let config = SchronuConfig {
-            default_deadline_time: NaiveTime::from_hms_opt(19, 0, 0).unwrap(),
-            ..SchronuConfig::default()
-        };
+        for (hour, expected_day) in [(19, 21), (1, 22)] {
+            let config = SchronuConfig {
+                default_deadline_time: NaiveTime::from_hms_opt(hour, 0, 0).unwrap(),
+                ..SchronuConfig::default()
+            };
+            let actual = resolve_deadline_time(&["9/21".to_string()], now, &config)
+                .unwrap()
+                .unwrap();
 
-        let actual = resolve_deadline_time(&["9/21".to_string()], now, &config)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            actual,
-            Local.with_ymd_and_hms(2026, 9, 21, 19, 0, 0).unwrap()
-        );
+            assert_eq!(
+                actual,
+                Local
+                    .with_ymd_and_hms(2026, 9, expected_day, hour, 0, 0)
+                    .unwrap()
+            );
+        }
     }
 
     #[test]

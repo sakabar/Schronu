@@ -39,7 +39,7 @@ mod tests {
         assert!(actual.extrude_skip_weekdays.is_empty());
         assert_eq!(
             actual.default_deadline_time,
-            NaiveTime::from_hms_opt(23, 59, 59).unwrap()
+            NaiveTime::from_hms_opt(5, 59, 59).unwrap()
         );
     }
 
@@ -166,7 +166,7 @@ impl Default for SchronuConfig {
             end_of_day_offset_minutes: DEFAULT_END_OF_DAY_OFFSET_MINUTES,
             calendar_blank_line_weekday: Weekday::Mon,
             extrude_skip_weekdays: vec![],
-            default_deadline_time: NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+            default_deadline_time: NaiveTime::from_hms_opt(5, 59, 59).unwrap(),
         }
     }
 }

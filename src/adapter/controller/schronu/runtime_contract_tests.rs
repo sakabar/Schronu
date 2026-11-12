@@ -4192,12 +4192,12 @@ fn test_resolve_deadline_date_曜日は同じ曜日を7日後にする() {
 }
 
 #[test]
-fn test_resolve_deadline_date_mmddは同日正午を過ぎると翌年を選ぶ() {
+fn test_resolve_deadline_date_mmddは同日正午を過ぎても現在年を選ぶ() {
     let now = Local.with_ymd_and_hms(2026, 8, 14, 13, 0, 0).unwrap();
 
     assert!(matches!(
         resolve_deadline_date("8/14", now),
-        Ok(actual) if actual == "2027/08/14"
+        Ok(actual) if actual == "2026/08/14"
     ));
 }
 
@@ -4228,7 +4228,7 @@ fn test_resolve_deadline_date_mmddの翌年範囲外を情報付きerrorにす�
         .unwrap();
 
     assert!(matches!(
-        resolve_deadline_date("12/31", now),
+        resolve_deadline_date("12/30", now),
         Err(HandlerError::Application(
             ApplicationError::LogicalDateOutOfRange {
                 operation: "deadline_calendar_date",
@@ -4649,6 +4649,48 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
 }
 
 #[test]
+fn deadline_command_resolves_times_within_the_selected_logical_date() {
+    let now = Local.with_ymd_and_hms(2026, 9, 21, 13, 0, 0).unwrap();
+    for (command, day, hour, minute, second) in [
+        ("〆 9/21", 22, 5, 59, 59),
+        ("〆 2026/9/21 23:59", 21, 23, 59, 0),
+        ("〆 今日 00:00", 22, 0, 0, 0),
+        ("〆 24:00 今日", 22, 0, 0, 0),
+        ("〆 今日 05:59", 22, 5, 59, 0),
+        ("〆 今日 29:59", 22, 5, 59, 0),
+        ("〆 今日 06:00", 21, 6, 0, 0),
+    ] {
+        let task = new_test_task_handle("締切対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, day, hour, minute, second).unwrap()),
+            "{command}: {}",
+            result.output
+        );
+    }
+}
+
+#[test]
+fn deadline_command_selects_the_year_from_the_current_logical_date() {
+    let now = Local.with_ymd_and_hms(2027, 1, 1, 2, 0, 0).unwrap();
+    for (command, day, hour) in [
+        ("〆 12/31 05:00", 1, 5),
+        ("〆 1/2 05:00", 3, 5),
+    ] {
+        let task = new_test_task_handle("締切対象").unwrap();
+        let task_id = task.get_id().unwrap();
+        let result = execute_command_for_test(task, now, Some(task_id), command);
+        assert_eq!(
+            result.task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2027, 1, day, hour, 0, 0).unwrap()),
+            "{command}"
+        );
+    }
+}
+
+#[test]
 fn test_execute_deadline_締切を設定して解除する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let task = new_test_task_handle("更新対象").unwrap();
@@ -4657,7 +4699,7 @@ fn test_execute_deadline_締切を設定して解除する() {
     let updated = execute_command_for_test(task, now, Some(task_id), "〆 2026/08/20");
     assert_eq!(
         updated.task.get_deadline_time_opt().unwrap(),
-        Some(Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap())
+        Some(Local.with_ymd_and_hms(2026, 8, 21, 5, 59, 59).unwrap())
     );
 
     let cleared = execute_command_for_test(updated.task, now, Some(task_id), "〆 消");
@@ -4680,7 +4722,7 @@ fn test_execute_deadline_締切を設定して解除する() {
     let today = execute_command_for_test(today_task, now, Some(today_task_id), "〆 今日");
     assert_eq!(
         today.task.get_deadline_time_opt().unwrap(),
-        Some(Local.with_ymd_and_hms(2026, 8, 11, 23, 59, 59).unwrap())
+        Some(Local.with_ymd_and_hms(2026, 8, 12, 5, 59, 59).unwrap())
     );
 
     let tomorrow_task = new_test_task_handle("明日締切").unwrap();
@@ -4688,7 +4730,7 @@ fn test_execute_deadline_締切を設定して解除する() {
     let tomorrow = execute_command_for_test(tomorrow_task, now, Some(tomorrow_task_id), "〆 明日");
     assert_eq!(
         tomorrow.task.get_deadline_time_opt().unwrap(),
-        Some(Local.with_ymd_and_hms(2026, 8, 12, 23, 59, 59).unwrap())
+        Some(Local.with_ymd_and_hms(2026, 8, 13, 5, 59, 59).unwrap())
     );
 
     for command in ["〆 14:30 9/21", "〆 9/21 14:30"] {
@@ -4704,7 +4746,7 @@ fn test_execute_deadline_締切を設定して解除する() {
 
     let before_logical_day_boundary =
         Local.with_ymd_and_hms(2026, 8, 11, 2, 0, 0).unwrap();
-    let task = new_test_task_handle("暦日指定").unwrap();
+    let task = new_test_task_handle("時刻指定").unwrap();
     let task_id = task.get_id().unwrap();
     let result = execute_command_for_test(
         task,
@@ -4714,7 +4756,7 @@ fn test_execute_deadline_締切を設定して解除する() {
     );
     assert_eq!(
         result.task.get_deadline_time_opt().unwrap(),
-        Some(Local.with_ymd_and_hms(2026, 8, 11, 14, 30, 0).unwrap())
+        Some(Local.with_ymd_and_hms(2026, 8, 10, 14, 30, 0).unwrap())
     );
 
     let task = new_test_task_handle("logical date指定").unwrap();
@@ -4784,6 +4826,7 @@ fn test_execute_deadline_不正日時はfield付き入力エラーを表示し�
     for command in [
         "〆 13/40",
         "〆 25:99",
+        "〆 今日 30:00",
         "〆 9/21 9/22",
         "〆 14:30 15:30",
         "〆 消 14:30",
@@ -7955,6 +7998,39 @@ fn test_execute_calendarとband_締切日の見積合計超過だけでは締切
             !actual.contains("〆切に間に合"),
             "scheduled_endが締切内なら、締切日の見積合計が日次容量を超えても締切警告は不要です: {actual}"
         );
+    }
+}
+
+#[test]
+fn calendar_and_band_report_overnight_deadlines_on_the_previous_logical_date() {
+    let now = Local.with_ymd_and_hms(2026, 9, 22, 0, 0, 0).unwrap();
+    let start = Local.with_ymd_and_hms(2026, 9, 22, 4, 0, 0).unwrap();
+    for duration in [60, 61] {
+        let root = new_test_task_handle("集計対象").unwrap();
+        root.set_estimated_work_seconds(0).unwrap();
+        let task = add_scheduled_child_for_test(&root, "固定タスク", start, duration);
+        task.set_fixed_start(true).unwrap();
+        let result = execute_command_for_test(root, now, Some(task.get_id().unwrap()), "〆 今日 05:00");
+        assert_eq!(
+            task.get_deadline_time_opt().unwrap(),
+            Some(Local.with_ymd_and_hms(2026, 9, 22, 5, 0, 0).unwrap())
+        );
+        for command in ["暦", "帯"] {
+            let output = execute_calendar_command_with_ansi_color_for_test(
+                command, now, result.task.clone(), None, false,
+            );
+            if duration == 60 {
+                assert!(!output.contains("〆切に間に合"), "{command}: {output}");
+                if command == "暦" {
+                    let row = output.lines().find(|line| line.starts_with("2026-09-21(")).unwrap();
+                    assert_eq!(row.split('\t').nth(1).unwrap().trim(), "0.5時間");
+                    assert_eq!(row.split('\t').nth(6).unwrap().trim(), "0時間30分");
+                }
+            } else {
+                assert!(output.contains("〆切に間に合わないタスクが1件"), "{command}: {output}");
+                assert!(output.contains("対象日: 2026-09-21, 最大超過: 0時間01分"), "{command}: {output}");
+            }
+        }
     }
 }
 
