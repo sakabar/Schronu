@@ -200,7 +200,7 @@ pub(crate) fn resolve_local_datetime(
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTaskInput {
     pub name: String,
-    pub estimated_work_minutes: Option<i64>,
+    pub estimated_work_seconds: Option<i64>,
     pub pending_until: Option<DateTime<Local>>,
 }
 
@@ -391,53 +391,16 @@ pub fn create_task(
     input: CreateTaskInput,
     factory: &mut TaskFactory<'_>,
 ) -> Result<Uuid, ApplicationError> {
-    create_task_with_estimate(
-        repository,
-        &input.name,
-        input.pending_until,
-        input
-            .estimated_work_minutes
-            .map(estimated_work_seconds_from_minutes)
-            .transpose(),
-        factory,
-    )
-}
-
-pub(crate) fn create_task_with_estimate_seconds(
-    repository: &mut dyn TaskRepositoryTrait,
-    name: &str,
-    pending_until: Option<DateTime<Local>>,
-    estimated_work_seconds: Option<i64>,
-    factory: &mut TaskFactory<'_>,
-) -> Result<Uuid, ApplicationError> {
-    create_task_with_estimate(
-        repository,
-        name,
-        pending_until,
-        estimated_work_seconds
-            .map(validate_estimated_work_seconds)
-            .transpose(),
-        factory,
-    )
-}
-
-fn create_task_with_estimate(
-    repository: &mut dyn TaskRepositoryTrait,
-    name: &str,
-    pending_until: Option<DateTime<Local>>,
-    estimated_work_seconds: Result<Option<i64>, ApplicationError>,
-    factory: &mut TaskFactory<'_>,
-) -> Result<Uuid, ApplicationError> {
-    validate_task_name(name, "name")?;
+    validate_task_name(&input.name, "name")?;
 
     let root_task = factory
-        .create_root_task(name)
+        .create_root_task(&input.name)
         .map_err(ApplicationError::TaskTree)?;
     root_task
         .set_priority(5)
         .map_err(ApplicationError::TaskTree)?;
 
-    if let Some(pending_until) = pending_until {
+    if let Some(pending_until) = input.pending_until {
         root_task
             .set_pending_until(pending_until)
             .map_err(ApplicationError::TaskTree)?;
@@ -446,9 +409,9 @@ fn create_task_with_estimate(
             .map_err(ApplicationError::TaskTree)?;
     }
 
-    if let Some(estimated_work_seconds) = estimated_work_seconds? {
+    if let Some(estimated_work_seconds) = input.estimated_work_seconds {
         root_task
-            .set_estimated_work_seconds(estimated_work_seconds)
+            .set_estimated_work_seconds(validate_estimated_work_seconds(estimated_work_seconds)?)
             .map_err(ApplicationError::TaskTree)?;
     }
 
@@ -892,15 +855,6 @@ pub(crate) fn rename_task(
 }
 
 pub fn set_estimate(
-    repository: &mut dyn TaskRepositoryTrait,
-    task_id: Uuid,
-    estimated_work_minutes: i64,
-) -> Result<(), ApplicationError> {
-    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-    set_estimate_seconds(repository, task_id, estimated_work_seconds)
-}
-
-pub(crate) fn set_estimate_seconds(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
     estimated_work_seconds: i64,

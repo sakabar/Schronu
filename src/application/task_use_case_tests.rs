@@ -554,7 +554,7 @@ fn create_task_属性を設定してsaveしない() {
         &mut repository,
         CreateTaskInput {
             name: "新規".to_string(),
-            estimated_work_minutes: Some(30),
+            estimated_work_seconds: Some(30 * 60),
             pending_until: Some(pending_until),
         },
     )
@@ -581,7 +581,7 @@ fn create_task_operationで固定したidと時刻を使う() {
         &mut repository,
         CreateTaskInput {
             name: "新規".to_string(),
-            estimated_work_minutes: None,
+            estimated_work_seconds: None,
             pending_until: None,
         },
         &mut factory,
@@ -602,7 +602,7 @@ fn create_task_空の名前を拒否して変更しない() {
         &mut repository,
         CreateTaskInput {
             name: String::new(),
-            estimated_work_minutes: None,
+            estimated_work_seconds: None,
             pending_until: None,
         },
     );
@@ -624,7 +624,7 @@ fn create_task_project登録errorを情報を落とさず返して変更しな�
         &mut repository,
         CreateTaskInput {
             name: "重複project".to_string(),
-            estimated_work_minutes: None,
+            estimated_work_seconds: None,
             pending_until: None,
         },
     );
@@ -653,7 +653,7 @@ fn create_task_空白名と整数名を拒否して変更しない() {
             &mut repository,
             CreateTaskInput {
                 name: name.to_string(),
-                estimated_work_minutes: None,
+                estimated_work_seconds: None,
                 pending_until: None,
             },
         );
@@ -674,7 +674,7 @@ fn create_task_負の見積もりを拒否して変更しない() {
         &mut repository,
         CreateTaskInput {
             name: "負の見積もり".to_string(),
-            estimated_work_minutes: Some(-1),
+            estimated_work_seconds: Some(-1),
             pending_until: None,
         },
     );
@@ -682,34 +682,9 @@ fn create_task_負の見積もりを拒否して変更しない() {
     assert!(matches!(
         actual,
         Err(ApplicationError::InvalidInput {
-            field: "estimated_work_minutes",
+            field: "estimated_work_seconds",
             ..
         })
-    ));
-    assert!(repository.projects().is_empty());
-}
-
-#[test]
-fn create_task_秒変換がoverflowする見積もりをerrorにする() {
-    let mut repository = TestTaskRepository::new(vec![], fixed_now());
-
-    let actual = catch_unwind(AssertUnwindSafe(|| {
-        create_task_with_fresh_factory(
-            &mut repository,
-            CreateTaskInput {
-                name: "巨大な見積もり".to_string(),
-                estimated_work_minutes: Some(i64::MAX),
-                pending_until: None,
-            },
-        )
-    }));
-
-    assert!(matches!(
-        actual,
-        Ok(Err(ApplicationError::InvalidInput {
-            field: "estimated_work_minutes",
-            ..
-        }))
     ));
     assert!(repository.projects().is_empty());
 }
@@ -2726,7 +2701,7 @@ fn update_use_cases_見積もり実績締切カテゴリを設定して解除す
     let mut repository = TestTaskRepository::new(vec![task], fixed_now());
     let deadline = Local.with_ymd_and_hms(2026, 8, 20, 23, 59, 59).unwrap();
 
-    set_estimate(&mut repository, task_id, 45).unwrap();
+    set_estimate(&mut repository, task_id, 45 * 60).unwrap();
     set_actual_work(&mut repository, task_id, 900).unwrap();
     set_deadline(&mut repository, task_id, Some(deadline)).unwrap();
     set_category(&mut repository, task_id, Some(ProjectCategory::Recovery)).unwrap();
@@ -2752,7 +2727,7 @@ fn update_use_cases_未知uuidはtask_not_foundを返す() {
     let task_id = Uuid::new_v4();
 
     assert_eq!(
-        set_estimate(&mut repository, task_id, 10),
+        set_estimate(&mut repository, task_id, 10 * 60),
         Err(ApplicationError::TaskNotFound(task_id))
     );
     assert_eq!(
@@ -2832,37 +2807,9 @@ fn set_estimate_負数を拒否して変更しない() {
     assert!(matches!(
         negative,
         Err(ApplicationError::InvalidInput {
-            field: "estimated_work_minutes",
+            field: "estimated_work_seconds",
             ..
         })
-    ));
-    assert_eq!(
-        repository
-            .get_by_id(task_id)
-            .unwrap()
-            .unwrap()
-            .get_estimated_work_seconds()
-            .unwrap(),
-        30 * 60
-    );
-}
-
-#[test]
-fn set_estimate_秒変換がoverflowする場合はerrorにして変更しない() {
-    let task = crate::test_support::new_task_handle("更新対象").unwrap();
-    task.set_estimated_work_seconds(30 * 60).unwrap();
-    let task_id = task.get_id().unwrap();
-    let mut repository = TestTaskRepository::new(vec![task], fixed_now());
-
-    let overflow = catch_unwind(AssertUnwindSafe(|| {
-        set_estimate(&mut repository, task_id, i64::MAX)
-    }));
-    assert!(matches!(
-        overflow,
-        Ok(Err(ApplicationError::InvalidInput {
-            field: "estimated_work_minutes",
-            ..
-        }))
     ));
     assert_eq!(
         repository
@@ -2884,7 +2831,7 @@ fn set_estimate_duration範囲外は属性とrevisionを変更しない() {
     let original_estimate = task.get_estimated_work_seconds().unwrap();
     let mut repository = TestTaskRepository::new(vec![task], fixed_now());
 
-    let actual = set_estimate(&mut repository, task_id, i64::MAX / 60);
+    let actual = set_estimate(&mut repository, task_id, i64::MAX);
 
     assert!(matches!(
         actual,
@@ -2918,9 +2865,9 @@ fn set_estimate_日時減算範囲外は属性とrevisionを変更しない() {
     let revision = task.get_persistent_mutation_revision().unwrap();
     let original_estimate = task.get_estimated_work_seconds().unwrap();
     let mut repository = TestTaskRepository::new(vec![task], fixed_now());
-    let estimated_work_minutes = 10_000_000_000_000_i64 / 60;
+    let estimated_work_seconds = 10_000_000_000_000_i64;
 
-    let actual = set_estimate(&mut repository, task_id, estimated_work_minutes);
+    let actual = set_estimate(&mut repository, task_id, estimated_work_seconds);
 
     assert!(matches!(
         actual,
@@ -2956,7 +2903,7 @@ fn write_use_cases_repositoryをsaveしない() {
         &mut repository,
         CreateTaskInput {
             name: "新規".to_string(),
-            estimated_work_minutes: None,
+            estimated_work_seconds: None,
             pending_until: None,
         },
     )
@@ -2971,7 +2918,7 @@ fn write_use_cases_repositoryをsaveしない() {
     )
     .unwrap()[0];
     defer_task(&mut repository, child_id, fixed_now()).unwrap();
-    set_estimate(&mut repository, child_id, 10).unwrap();
+    set_estimate(&mut repository, child_id, 10 * 60).unwrap();
     set_deadline(&mut repository, child_id, Some(fixed_now())).unwrap();
     set_category(&mut repository, child_id, Some(ProjectCategory::Investment)).unwrap();
     complete_task_with_fresh_factory(

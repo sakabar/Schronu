@@ -1134,7 +1134,8 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
 
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
         if let Some(task_id) = *self.focused_task_id_opt {
-            set_estimate(self.task_repository, task_id, minutes)?;
+            let seconds = estimated_work_seconds_from_minutes(minutes)?;
+            set_estimate(self.task_repository, task_id, seconds)?;
         }
         Ok(())
     }
@@ -1549,8 +1550,8 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
         self.task_factory.create_task_attr(name)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
-        set_estimate(self.task_repository, task_id, minutes)
+    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError> {
+        set_estimate(self.task_repository, task_id, seconds)
     }
 
     fn focused_task_id(&self) -> Option<Uuid> {

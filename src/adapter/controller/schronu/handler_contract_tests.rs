@@ -280,8 +280,8 @@ impl ProjectCommandContext for TraceProjectContext {
         TaskAttr::with_identity(name, Uuid::from_u128(5), self.now)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
-        self.estimates.push((task_id, minutes));
+    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError> {
+        self.estimates.push((task_id, seconds));
         Ok(())
     }
 
@@ -351,7 +351,7 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         context.created,
         [CreateTaskInput {
             name: "typed project".to_string(),
-            estimated_work_minutes: Some(45),
+            estimated_work_seconds: Some(45 * 60),
             pending_until: Some(Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap()),
         }]
     );
@@ -370,7 +370,10 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
     .unwrap()
     .expect("hobby project must be owned by the handler");
     assert_eq!(hobby_context.created[0].name, "typed hobby");
-    assert_eq!(hobby_context.created[0].estimated_work_minutes, Some(20));
+    assert_eq!(
+        hobby_context.created[0].estimated_work_seconds,
+        Some(20 * 60)
+    );
     assert_eq!(
         hobby_context.created[0].pending_until,
         Some(Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap() + chrono::Duration::days(1399))
@@ -392,7 +395,7 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         unplanned_context.created,
         [CreateTaskInput {
             name: "typed unplanned".to_string(),
-            estimated_work_minutes: Some(25),
+            estimated_work_seconds: Some(25 * 60),
             pending_until: None,
         }]
     );
@@ -443,7 +446,10 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         .breakdowns
         .iter()
         .all(|input| { input.names == ["typed routine"] && input.pending_until.is_none() }));
-    assert_eq!(repeat_context.estimates, vec![(Uuid::from_u128(1), 15); 5]);
+    assert_eq!(
+        repeat_context.estimates,
+        vec![(Uuid::from_u128(1), 15 * 60); 5]
+    );
     assert_eq!(
         repeat.display,
         semantic_project_display(
@@ -1325,14 +1331,19 @@ impl TaskAttributeCommandContext for TraceTaskAttributeContext {
 fn handler入口は直接構築された不正属性値をcontext実行前に拒否する() {
     let now = Local.with_ymd_and_hms(2026, 8, 27, 12, 0, 0).unwrap();
     let mut estimate_context = CompositeTraceContext::new(now);
-    let estimate = handle_command(&Command::Estimate { minutes: -1 }, &mut estimate_context);
-    assert!(matches!(
-        estimate,
-        Err(HandlerError::Application(ApplicationError::InvalidInput {
-            field: "estimated_work_minutes",
-            reason: "must not be negative",
-        }))
-    ));
+    for (minutes, expected_reason) in [
+        (-1, "must not be negative"),
+        (i64::MAX, "seconds conversion overflow"),
+    ] {
+        let estimate = handle_command(&Command::Estimate { minutes }, &mut estimate_context);
+        assert!(matches!(
+            estimate,
+            Err(HandlerError::Application(ApplicationError::InvalidInput {
+                field: "estimated_work_minutes",
+                reason,
+            })) if reason == expected_reason
+        ));
+    }
     assert!(estimate_context.task_attribute.calls.is_empty());
 
     let cases = [
@@ -2162,8 +2173,8 @@ impl ProjectCommandContext for CompositeTraceContext {
         self.project.create_task_attr(name)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
-        self.project.set_estimate(task_id, minutes)
+    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError> {
+        self.project.set_estimate(task_id, seconds)
     }
 
     fn focused_task_id(&self) -> Option<Uuid> {

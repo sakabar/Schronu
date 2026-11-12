@@ -2,7 +2,8 @@ use super::error::InvalidParams;
 use crate::application::daily_capacity::{try_logical_date_start, try_next_logical_date_start};
 use crate::application::task_use_case::{
     ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
-    CompleteTaskInput as ApplicationCompleteTaskInput, ListTasksFilter, ListTasksPageRequest,
+    CompleteTaskInput as ApplicationCompleteTaskInput,
+    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, ListTasksPageRequest,
     TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE, MAX_BREAKDOWN_TASK_NAMES,
 };
 use crate::entity::task::{ProjectCategory, Status};
@@ -450,7 +451,7 @@ pub(super) struct CreateTaskInput {
 }
 
 impl CreateTaskInput {
-    pub(super) fn into_parts(self) -> (String, Option<DateTime<Local>>, Option<i64>) {
+    pub(super) fn into_application(self) -> ApplicationCreateTaskInput {
         let pending_until = match self.pending_until {
             OptionalValue::Missing => None,
             OptionalValue::Value(pending_until) => Some(pending_until.0),
@@ -459,7 +460,11 @@ impl CreateTaskInput {
             OptionalValue::Missing => None,
             OptionalValue::Value(seconds) => Some(seconds.0),
         };
-        (self.name.0, pending_until, estimated_work_seconds)
+        ApplicationCreateTaskInput {
+            name: self.name.0,
+            pending_until,
+            estimated_work_seconds,
+        }
     }
 }
 

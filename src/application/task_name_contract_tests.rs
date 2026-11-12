@@ -55,7 +55,7 @@ fn create_taskは許可名を原文のまま保存する() {
                 &mut repository,
                 CreateTaskInput {
                     name: name.to_string(),
-                    estimated_work_minutes: None,
+                    estimated_work_seconds: None,
                     pending_until: None,
                 },
                 factory,
@@ -162,7 +162,7 @@ fn create_taskはcontrol名を拒否してrepositoryを変更しない() {
             &mut repository,
             CreateTaskInput {
                 name: "task\nname".to_string(),
-                estimated_work_minutes: None,
+                estimated_work_seconds: None,
                 pending_until: None,
             },
             factory,
