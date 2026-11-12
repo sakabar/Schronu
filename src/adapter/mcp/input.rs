@@ -2,8 +2,7 @@ use super::error::InvalidParams;
 use crate::application::daily_capacity::{try_logical_date_start, try_next_logical_date_start};
 use crate::application::task_use_case::{
     ApplicationError, BreakdownTaskInput as ApplicationBreakdownTaskInput,
-    CompleteTaskInput as ApplicationCompleteTaskInput,
-    CreateTaskInput as ApplicationCreateTaskInput, ListTasksFilter, ListTasksPageRequest,
+    CompleteTaskInput as ApplicationCompleteTaskInput, ListTasksFilter, ListTasksPageRequest,
     TaskPeriodField, TaskPeriodFilter, LIST_TASKS_MAX_PAGE_SIZE, MAX_BREAKDOWN_TASK_NAMES,
 };
 use crate::entity::task::{ProjectCategory, Status};
@@ -442,29 +441,25 @@ pub(super) struct GetTaskInput {
 pub(super) struct CreateTaskInput {
     /// The exact task name is preserved without trimming or normalization. Validation trims only to detect blank names and optionally signed ASCII-integer-only names; all Unicode control characters are rejected. Non-control whitespace, Unicode text, quotes, and backslashes are allowed.
     pub(super) name: NonEmptyString,
-    /// The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.
+    /// The estimated work duration as a non-negative integer number of seconds. Omit this field to use the default estimate of 900 seconds.
     #[serde(default)]
-    pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    pub(super) estimated_work_seconds: OptionalValue<NonNegativeI64>,
     /// An RFC 3339 date-time with Z or a numeric UTC offset. Providing it sets the original status to Pending, but the effective status can be Todo when the time is not in the future. Omit it for an original status of Todo.
     #[serde(default)]
     pub(super) pending_until: OptionalValue<Rfc3339DateTime>,
 }
 
 impl CreateTaskInput {
-    pub(super) fn into_application(self) -> ApplicationCreateTaskInput {
-        let estimated_work_minutes = match self.estimated_work_minutes {
+    pub(super) fn into_parts(self) -> (String, Option<DateTime<Local>>, Option<i64>) {
+        let pending_until = match self.pending_until {
             OptionalValue::Missing => None,
-            OptionalValue::Value(minutes) => Some(minutes.0),
+            OptionalValue::Value(pending_until) => Some(pending_until.0),
         };
-
-        ApplicationCreateTaskInput {
-            name: self.name.0,
-            estimated_work_minutes,
-            pending_until: match self.pending_until {
-                OptionalValue::Missing => None,
-                OptionalValue::Value(pending_until) => Some(pending_until.0),
-            },
-        }
+        let estimated_work_seconds = match self.estimated_work_seconds {
+            OptionalValue::Missing => None,
+            OptionalValue::Value(seconds) => Some(seconds.0),
+        };
+        (self.name.0, pending_until, estimated_work_seconds)
     }
 }
 
@@ -587,7 +582,7 @@ fn additional_work_seconds_schema(generator: &mut SchemaGenerator) -> Schema {
 
 #[derive(Clone, Copy)]
 enum UpdateTaskField {
-    EstimatedWorkMinutes,
+    EstimatedWorkSeconds,
     ActualWorkSeconds,
     DeadlineTime,
     Category,
@@ -596,7 +591,7 @@ enum UpdateTaskField {
 impl UpdateTaskField {
     fn name(self) -> &'static str {
         match self {
-            Self::EstimatedWorkMinutes => "estimated_work_minutes",
+            Self::EstimatedWorkSeconds => "estimated_work_seconds",
             Self::ActualWorkSeconds => "actual_work_seconds",
             Self::DeadlineTime => "deadline_time",
             Self::Category => "category",
@@ -605,8 +600,8 @@ impl UpdateTaskField {
 
     fn is_provided(self, fields: &UpdateTaskInputFields) -> bool {
         match self {
-            Self::EstimatedWorkMinutes => {
-                !matches!(fields.estimated_work_minutes, OptionalValue::Missing)
+            Self::EstimatedWorkSeconds => {
+                !matches!(fields.estimated_work_seconds, OptionalValue::Missing)
             }
             Self::ActualWorkSeconds => {
                 !matches!(fields.actual_work_seconds, OptionalValue::Missing)
@@ -618,7 +613,7 @@ impl UpdateTaskField {
 }
 
 const UPDATE_TASK_FIELDS: [UpdateTaskField; 4] = [
-    UpdateTaskField::EstimatedWorkMinutes,
+    UpdateTaskField::EstimatedWorkSeconds,
     UpdateTaskField::ActualWorkSeconds,
     UpdateTaskField::DeadlineTime,
     UpdateTaskField::Category,
@@ -629,7 +624,7 @@ const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field
 #[serde(try_from = "UpdateTaskInputFields")]
 pub(super) struct UpdateTaskInput {
     pub(super) task_id: UuidValue,
-    pub(super) estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    pub(super) estimated_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) actual_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
     pub(super) category: NullablePatch<ProjectCategoryValue>,
@@ -637,7 +632,7 @@ pub(super) struct UpdateTaskInput {
 
 pub(super) struct UpdateTaskChanges {
     pub(super) task_id: Uuid,
-    pub(super) estimated_work_minutes: Option<i64>,
+    pub(super) estimated_work_seconds: Option<i64>,
     pub(super) actual_work_seconds: Option<i64>,
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
     pub(super) category: Option<Option<ProjectCategory>>,
@@ -645,9 +640,9 @@ pub(super) struct UpdateTaskChanges {
 
 impl UpdateTaskInput {
     pub(super) fn into_changes(self) -> UpdateTaskChanges {
-        let estimated_work_minutes = match self.estimated_work_minutes {
+        let estimated_work_seconds = match self.estimated_work_seconds {
             OptionalValue::Missing => None,
-            OptionalValue::Value(minutes) => Some(minutes.0),
+            OptionalValue::Value(seconds) => Some(seconds.0),
         };
         let actual_work_seconds = match self.actual_work_seconds {
             OptionalValue::Missing => None,
@@ -666,7 +661,7 @@ impl UpdateTaskInput {
 
         UpdateTaskChanges {
             task_id: self.task_id.0,
-            estimated_work_minutes,
+            estimated_work_seconds,
             actual_work_seconds,
             deadline_time,
             category,
@@ -680,9 +675,9 @@ impl UpdateTaskInput {
 struct UpdateTaskInputFields {
     /// The UUID of the existing task to update.
     task_id: UuidValue,
-    /// Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.
+    /// Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.
     #[serde(default)]
-    estimated_work_minutes: OptionalValue<NonNegativeI64>,
+    estimated_work_seconds: OptionalValue<NonNegativeI64>,
     /// Set the task's actual work duration to a non-negative integer number of seconds. Omit this field to leave the actual work unchanged.
     #[serde(default)]
     actual_work_seconds: OptionalValue<NonNegativeI64>,
@@ -709,7 +704,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
 
         Ok(Self {
             task_id: fields.task_id,
-            estimated_work_minutes: fields.estimated_work_minutes,
+            estimated_work_seconds: fields.estimated_work_seconds,
             actual_work_seconds: fields.actual_work_seconds,
             deadline_time: fields.deadline_time,
             category: fields.category,

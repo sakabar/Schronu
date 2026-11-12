@@ -505,7 +505,7 @@ fn mcp_stdio_duration範囲外の見積更新は保存内容を変えず後続re
     let failed = mcp.call_tool(
         "duration-update",
         "update_task",
-        json!({"task_id": task_id, "estimated_work_minutes": i64::MAX / 60}),
+        json!({"task_id": task_id, "estimated_work_seconds": i64::MAX}),
     );
 
     assert_eq!(failed["result"]["isError"], true);
@@ -556,7 +556,7 @@ fn mcp_stdio_日時減算範囲外の見積更新は保存内容を変えず後�
         "update_task",
         json!({
             "task_id": task_id,
-            "estimated_work_minutes": 10_000_000_000_000_i64 / 60
+            "estimated_work_seconds": 10_000_000_000_000_i64
         }),
     );
 
@@ -755,7 +755,7 @@ fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を�
         "update_task",
         Some(json!({
             "task_id": child_id,
-            "estimated_work_minutes": i64::MAX / 60
+            "estimated_work_seconds": i64::MAX
         })),
     );
     assert_eq!(estimate_update["result"]["isError"], false);
@@ -848,13 +848,68 @@ fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更�
 }
 
 #[test]
+fn mcp_stdio_preserves_estimated_work_seconds() {
+    let storage = TestStorageDirectory::new();
+    let create = call_tool(
+        storage.path(),
+        "create",
+        "create_task",
+        Some(json!({"name": "estimated task", "estimated_work_seconds": 90})),
+    );
+    assert_eq!(create["result"]["isError"], false);
+    let task_id = create["result"]["structuredContent"]["task_id"]
+        .as_str()
+        .unwrap();
+    let read_estimate = |task_id: &str| {
+        let response = call_tool(
+            storage.path(),
+            "read",
+            "get_task",
+            Some(json!({"task_id": task_id})),
+        );
+        assert_eq!(response["result"]["isError"], false);
+        response["result"]["structuredContent"]["task"]["estimated_work_seconds"]
+            .as_i64()
+            .unwrap()
+    };
+    assert_eq!(read_estimate(task_id), 90);
+
+    for (fields, expected) in [
+        (json!({"actual_work_seconds": 5}), 90),
+        (json!({"estimated_work_seconds": 0}), 0),
+        (json!({"estimated_work_seconds": 90}), 90),
+    ] {
+        let mut arguments = fields;
+        arguments["task_id"] = json!(task_id);
+        let update = call_tool(storage.path(), "update", "update_task", Some(arguments));
+        assert_eq!(update["result"]["isError"], false);
+        assert_eq!(read_estimate(task_id), expected);
+    }
+
+    for (arguments, expected) in [
+        (json!({"name": "default estimate"}), 900),
+        (
+            json!({"name": "zero estimate", "estimated_work_seconds": 0}),
+            0,
+        ),
+    ] {
+        let create = call_tool(storage.path(), "create", "create_task", Some(arguments));
+        assert_eq!(create["result"]["isError"], false);
+        let task_id = create["result"]["structuredContent"]["task_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(read_estimate(task_id), expected);
+    }
+}
+
+#[test]
 fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後も保存内容を読む() {
     let storage = TestStorageDirectory::new();
     let create = call_tool(
         storage.path(),
         "create",
         "create_task",
-        Some(json!({"name": "integration project", "estimated_work_minutes": 30})),
+        Some(json!({"name": "integration project", "estimated_work_seconds": 1800})),
     );
     let parent_id = create["result"]["structuredContent"]["task_id"]
         .as_str()
@@ -924,7 +979,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         "update_task",
         Some(json!({
             "task_id": child_id,
-            "estimated_work_minutes": 10,
+            "estimated_work_seconds": 600,
             "deadline_time": deadline.to_rfc3339(),
             "category": "recovery"
         })),
@@ -1179,12 +1234,12 @@ fn mcp_stdio_task不明と入力不正と未完了childのerror_codeを区別す
         storage.path(),
         "invalid-number",
         "create_task",
-        Some(json!({"name": "invalid estimate", "estimated_work_minutes": -1})),
+        Some(json!({"name": "invalid estimate", "estimated_work_seconds": -1})),
     );
     assert_eq!(invalid_number["error"]["code"], -32602);
     assert_eq!(
         invalid_number["error"]["data"]["field"],
-        "estimated_work_minutes"
+        "estimated_work_seconds"
     );
     let invalid_datetime = call_tool(
         storage.path(),

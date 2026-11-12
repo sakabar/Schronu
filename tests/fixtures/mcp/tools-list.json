@@ -172,8 +172,8 @@
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
-        "estimated_work_minutes": {
-          "description": "The estimated work duration as a non-negative integer number of minutes. When provided, it is converted to seconds; when omitted, the task keeps the default estimate of 15 minutes.",
+        "estimated_work_seconds": {
+          "description": "The estimated work duration as a non-negative integer number of seconds. Omit this field to use the default estimate of 900 seconds.",
           "minimum": 0,
           "type": "integer"
         },
@@ -336,7 +336,7 @@
       "anyOf": [
         {
           "required": [
-            "estimated_work_minutes"
+            "estimated_work_seconds"
           ]
         },
         {
@@ -396,8 +396,8 @@
             }
           ]
         },
-        "estimated_work_minutes": {
-          "description": "Set the estimated work duration from a non-negative integer number of minutes, converted to seconds. Omit this field to leave the estimate unchanged; the request fails if conversion to seconds overflows.",
+        "estimated_work_seconds": {
+          "description": "Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.",
           "minimum": 0,
           "type": "integer"
         },

@@ -10,9 +10,9 @@ use crate::application::interface::TaskRepositoryTrait;
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
-    create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
+    create_task_with_estimate_seconds, defer_routine_task as defer_routine_task_use_case,
     defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_actual_work,
-    set_category, set_deadline, set_estimate, ApplicationError, TaskFactory, TaskView,
+    set_category, set_deadline, set_estimate_seconds, ApplicationError, TaskFactory, TaskView,
 };
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
@@ -220,9 +220,15 @@ fn call_create_task<R: TaskRepositoryTrait>(
     input: CreateTaskInput,
     factory: &mut TaskFactory<'_>,
 ) -> Value {
-    let input = input.into_application();
+    let (name, pending_until, estimated_work_seconds) = input.into_parts();
 
-    let task_id = match create_task_use_case(repository, input, factory) {
+    let task_id = match create_task_with_estimate_seconds(
+        repository,
+        &name,
+        pending_until,
+        estimated_work_seconds,
+        factory,
+    ) {
         Ok(task_id) => task_id,
         Err(ApplicationError::InvalidInput { field, reason }) => {
             return invalid_input_response(id, field, reason)
@@ -346,8 +352,9 @@ fn call_update_task<R: TaskRepositoryTrait>(
 ) -> Value {
     let input = input.into_changes();
 
-    if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-        if let Err(error) = set_estimate(repository, input.task_id, estimated_work_minutes) {
+    if let Some(estimated_work_seconds) = input.estimated_work_seconds {
+        if let Err(error) = set_estimate_seconds(repository, input.task_id, estimated_work_seconds)
+        {
             return update_task_application_error_response(id, error);
         }
     }
