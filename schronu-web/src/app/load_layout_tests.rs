@@ -179,6 +179,31 @@ fn fourteen_day_root(props: Props) -> Element {
 }
 
 #[test]
+fn 日別負荷は開始曜日にかかわらず八日目の直前に区切りを表示する() {
+    for (day, earlier_in_week) in [(25, 2), (30, 0)] {
+        let mut dom = VirtualDom::new_with_props(
+            fourteen_day_root,
+            Props {
+                selected: Arc::default(),
+                start_date: chrono::NaiveDate::from_ymd_opt(2026, 11, day),
+            },
+        );
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        let (before, after) = html
+            .split_once("<div class=\"load-horizon-divider\">8日目以降</div>")
+            .expect("日別負荷に8日目以降の区切りが必要");
+        let day_button = "<button class=\"load-day";
+        assert_eq!(before.matches(day_button).count(), 7);
+        assert_eq!(after.matches(day_button).count(), 7);
+        assert_eq!(html.matches("load-horizon-divider").count(), 1);
+        let week = before.rsplit_once("<div class=\"load-week\">").unwrap().1;
+        assert_eq!(week.matches(day_button).count(), earlier_in_week);
+    }
+    assert!(!render().contains("load-horizon-divider"));
+}
+
+#[test]
 fn 日別負荷は月境界を跨ぐ14日を表示し最終日を選択できる() {
     let selected = Arc::default();
     let mut dom = VirtualDom::new_with_props(
