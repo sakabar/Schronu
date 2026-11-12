@@ -87,7 +87,7 @@ pub(super) trait ProjectCommandContext {
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError>;
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError>;
     fn create_task_attr(&mut self, name: &str) -> TaskAttr;
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError>;
+    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError>;
     fn focused_task_id(&self) -> Option<Uuid>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
     fn completed_task_report(
@@ -1030,9 +1030,9 @@ fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
     estimated_work_minutes_opt: Option<i64>,
 ) -> Result<(), ApplicationError> {
     validate_task_name(name, "name")?;
-    if let Some(estimated_work_minutes) = estimated_work_minutes_opt {
-        estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-    }
+    let estimated_work_seconds = estimated_work_minutes_opt
+        .map(estimated_work_seconds_from_minutes)
+        .transpose()?;
     let pending_until = if let Some(defer_days) = defer_days_opt {
         let now = context.last_synced_time();
         let next_logical_date_start = try_next_logical_date_start(now)?;
@@ -1059,7 +1059,7 @@ fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
     };
     let task_id = context.create_task(CreateTaskInput {
         name: name.to_string(),
-        estimated_work_minutes: estimated_work_minutes_opt,
+        estimated_work_seconds,
         pending_until,
     })?;
     context.set_focused_task_id(Some(task_id));
@@ -1198,7 +1198,7 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
     _deadline_time: &str,
     lines: &mut Vec<String>,
 ) -> Result<Option<Uuid>, ApplicationError> {
-    estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
     let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
         return Ok(None);
     };
@@ -1209,7 +1209,7 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
         .transpose()
         .map_err(ApplicationError::TaskTree)?
     {
-        context.set_estimate(task_id, estimated_work_minutes)?;
+        context.set_estimate(task_id, estimated_work_seconds)?;
     }
 
     let task_num = if day == "毎" { 7 } else { 4 };
@@ -1225,7 +1225,7 @@ fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
                 .transpose()
                 .map_err(ApplicationError::TaskTree)?
             {
-                context.set_estimate(task_id, estimated_work_minutes)?;
+                context.set_estimate(task_id, estimated_work_seconds)?;
             }
             context.set_focused_task_id(Some(repetition_parent_task_id));
         }
@@ -1447,7 +1447,7 @@ mod task_generation_context_tests {
             )
         }
 
-        fn set_estimate(&mut self, _task_id: Uuid, _minutes: i64) -> Result<(), ApplicationError> {
+        fn set_estimate(&mut self, _task_id: Uuid, _seconds: i64) -> Result<(), ApplicationError> {
             unreachable!("this contract test does not set estimates through the context")
         }
 

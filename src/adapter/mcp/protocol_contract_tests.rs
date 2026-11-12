@@ -962,7 +962,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_eq!(property_names(tools, "get_schedule"), vec!["from", "until"]);
     assert_eq!(
         property_names(tools, "create_task"),
-        vec!["estimated_work_minutes", "name", "pending_until"]
+        vec!["estimated_work_seconds", "name", "pending_until"]
     );
     assert_eq!(
         property_names(tools, "breakdown_task"),
@@ -983,7 +983,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             "actual_work_seconds",
             "category",
             "deadline_time",
-            "estimated_work_minutes",
+            "estimated_work_seconds",
             "task_id"
         ]
     );
@@ -1013,7 +1013,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
     assert_string_property(tools, "get_schedule", "until", Some("date"));
     assert_string_property(tools, "create_task", "name", None);
     assert_eq!(property(tools, "create_task", "name")["minLength"], 1);
-    assert_non_negative_integer_property(tools, "create_task", "estimated_work_minutes");
+    assert_non_negative_integer_property(tools, "create_task", "estimated_work_seconds");
     assert_string_property(tools, "create_task", "pending_until", Some("date-time"));
     assert_string_property(tools, "breakdown_task", "parent_id", Some("uuid"));
     let names_schema = property(tools, "breakdown_task", "names");
@@ -1034,7 +1034,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
         "A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range."
     );
     assert_string_property(tools, "update_task", "task_id", Some("uuid"));
-    assert_non_negative_integer_property(tools, "update_task", "estimated_work_minutes");
+    assert_non_negative_integer_property(tools, "update_task", "estimated_work_seconds");
     assert_non_negative_integer_property(tools, "update_task", "actual_work_seconds");
     assert_nullable_string_property(tools, "update_task", "deadline_time", Some("date-time"));
     assert_nullable_string_property(tools, "update_task", "category", None);
@@ -1093,7 +1093,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             vec!["actual_work_seconds"],
             vec!["category"],
             vec!["deadline_time"],
-            vec!["estimated_work_minutes"]
+            vec!["estimated_work_seconds"]
         ]
     );
 }

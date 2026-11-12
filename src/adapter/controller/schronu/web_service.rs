@@ -45,8 +45,9 @@ use crate::application::repository_transaction::{
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
-    add_actual_work, complete_task, complete_work_slice, create_task, execute_defer_task_plan,
-    get_task, CreateTaskInput, TaskFactory,
+    add_actual_work, complete_task, complete_work_slice, create_task,
+    estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, validate_task_name,
+    CreateTaskInput, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -102,13 +103,18 @@ impl WebService {
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let pending_until = try_next_logical_date_start(operation_now)
                 .map_err(WebReadCoreError::Application)?;
+            validate_task_name(&name, "name").map_err(WebReadCoreError::Application)?;
+            let estimated_work_seconds = estimated_work_minutes
+                .map(estimated_work_seconds_from_minutes)
+                .transpose()
+                .map_err(WebReadCoreError::Application)?;
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
             let task_id = create_task(
                 repository,
                 CreateTaskInput {
                     name,
-                    estimated_work_minutes,
+                    estimated_work_seconds,
                     pending_until: Some(pending_until),
                 },
                 &mut factory,

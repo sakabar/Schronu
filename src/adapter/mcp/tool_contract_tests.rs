@@ -1141,7 +1141,7 @@ fn create_task_作成して成功時に1回saveする() {
             "create_task",
             json!({
                 "name": "created by MCP",
-                "estimated_work_minutes": 30,
+                "estimated_work_seconds": 1800,
                 "pending_until": pending_until.to_rfc3339()
             }),
         ))
@@ -1181,8 +1181,8 @@ fn create_task_schema違反ではtaskを作成せずsaveもしない() {
         ("name-type", json!({"name": 1}), "name"),
         (
             "negative-estimate",
-            json!({"name": "task", "estimated_work_minutes": -1}),
-            "estimated_work_minutes",
+            json!({"name": "task", "estimated_work_seconds": -1}),
+            "estimated_work_seconds",
         ),
         (
             "extra",
@@ -1221,14 +1221,9 @@ fn create_task_意味的不正では作成もsaveもしない() {
             "pending_until",
         ),
         (
-            "estimate-overflow",
-            json!({"name": "task", "estimated_work_minutes": i64::MAX}),
-            "estimated_work_minutes",
-        ),
-        (
             "estimate-out-of-range",
-            json!({"name": "task", "estimated_work_minutes": u64::MAX}),
-            "estimated_work_minutes",
+            json!({"name": "task", "estimated_work_seconds": u64::MAX}),
+            "estimated_work_seconds",
         ),
     ];
 
@@ -2502,7 +2497,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
             "update_task",
             json!({
                 "task_id": task_id.to_string(),
-                "estimated_work_minutes": 45,
+                "estimated_work_seconds": 2700,
                 "actual_work_seconds": 900,
                 "deadline_time": deadline.to_rfc3339(),
                 "category": "recovery"
@@ -2550,7 +2545,7 @@ fn update_task_同じ値ならsaveしない() {
             "update_task",
             json!({
                 "task_id": task_id.to_string(),
-                "estimated_work_minutes": 15,
+                "estimated_work_seconds": 900,
                 "actual_work_seconds": 900
             }),
         ))
@@ -2692,9 +2687,9 @@ fn update_task_入力不正では変更もsaveもしない() {
         ),
         (
             "negative-estimate",
-            json!({"task_id": task_id.to_string(), "estimated_work_minutes": -1}),
+            json!({"task_id": task_id.to_string(), "estimated_work_seconds": -1}),
             Some(-32602),
-            "estimated_work_minutes",
+            "estimated_work_seconds",
         ),
         (
             "negative-actual-work",
@@ -2728,9 +2723,9 @@ fn update_task_入力不正では変更もsaveもしない() {
         ),
         (
             "estimate-out-of-range",
-            json!({"task_id": task_id.to_string(), "estimated_work_minutes": u64::MAX}),
+            json!({"task_id": task_id.to_string(), "estimated_work_seconds": u64::MAX}),
             None,
-            "estimated_work_minutes",
+            "estimated_work_seconds",
         ),
         (
             "actual-work-out-of-range",
@@ -2800,23 +2795,23 @@ fn update_task_application_errorと未知taskでは変更もsaveもしない() {
     let missing_task_id = Uuid::new_v4();
     let cases = [
         (
-            "estimate-overflow",
+            "estimate-deadline-overflow",
             task_id,
             json!({
                 "task_id": task_id.to_string(),
-                "estimated_work_minutes": i64::MAX,
+                "estimated_work_seconds": i64::MAX,
                 "deadline_time": requested_deadline.to_rfc3339(),
                 "category": "investment"
             }),
-            "invalid_input",
-            "estimated_work_minutes",
+            "internal_error",
+            json!(null),
         ),
         (
             "missing-task",
             missing_task_id,
             json!({"task_id": missing_task_id.to_string(), "category": "investment"}),
             "task_not_found",
-            "task_id",
+            json!("task_id"),
         ),
     ];
 
