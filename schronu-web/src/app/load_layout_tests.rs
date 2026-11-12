@@ -161,7 +161,7 @@ fn fourteen_day_root(props: Props) -> Element {
                 unavailable_seconds: 8 * 3600,
                 elapsed_seconds: 4 * 3600 * i64::from(offset == 0),
                 repetitive_seconds: 5 * 3600,
-                non_repetitive_seconds: 2 * 3600,
+                non_repetitive_seconds: if offset == 0 { 330 * 60 } else { 2 * 3600 },
                 rho_leeway_seconds: 3600,
             },
         })
@@ -176,6 +176,62 @@ fn fourteen_day_root(props: Props) -> Element {
             on_select_date: move |date| props.selected.lock().unwrap().push(date),
         }
     }
+}
+
+#[test]
+fn 日別負荷の超過は余差を除き帯の余差と空きを維持する() {
+    let mut dom = VirtualDom::new_with_props(
+        fourteen_day_root,
+        Props {
+            selected: Arc::default(),
+            start_date: None,
+        },
+    );
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+    let today = html
+        .split_once("<button class=\"load-day is-today\"")
+        .unwrap()
+        .1
+        .split_once("</button>")
+        .unwrap()
+        .0;
+    assert!(today.contains("load-metric-value is-within\">-01:30</strong>"));
+    assert!(today.contains("超過マイナス1時間30分。"));
+    assert!(today.contains("余差1時間0分、空き0時間30分"));
+    assert_eq!(
+        today
+            .matches("load-overflow-fill is-zero\" style=\"width:0.0000%")
+            .count(),
+        2
+    );
+    assert!(today.contains("load-band-segment is-leeway\" style=\"width:4.1667%"));
+    assert!(today.contains("load-band-segment is-free\" style=\"width:2.0833%"));
+}
+
+#[test]
+fn 日別負荷は開始曜日にかかわらず八日目の直前に区切りを表示する() {
+    for (day, earlier_in_week) in [(25, 2), (30, 0)] {
+        let mut dom = VirtualDom::new_with_props(
+            fourteen_day_root,
+            Props {
+                selected: Arc::default(),
+                start_date: chrono::NaiveDate::from_ymd_opt(2026, 11, day),
+            },
+        );
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        let (before, after) = html
+            .split_once("<div class=\"load-horizon-divider\">8日目以降</div>")
+            .expect("日別負荷に8日目以降の区切りが必要");
+        let day_button = "<button class=\"load-day";
+        assert_eq!(before.matches(day_button).count(), 7);
+        assert_eq!(after.matches(day_button).count(), 7);
+        assert_eq!(html.matches("load-horizon-divider").count(), 1);
+        let week = before.rsplit_once("<div class=\"load-week\">").unwrap().1;
+        assert_eq!(week.matches(day_button).count(), earlier_in_week);
+    }
+    assert!(!render().contains("load-horizon-divider"));
 }
 
 #[test]

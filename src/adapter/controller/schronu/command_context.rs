@@ -25,10 +25,11 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minutes, PackResult};
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
-    add_actual_work, breakdown_task, complete_task, complete_work_slice, create_task,
-    defer_routine_task, defer_task, estimated_work_seconds_from_minutes, rename_task, set_category,
-    set_deadline, set_estimate, validate_task_name, AddActualWorkInput, ApplicationError,
-    BreakdownTaskInput, CompleteTaskInput, CompleteWorkSliceInput, CreateTaskInput, TaskFactory,
+    add_actual_work, breakdown_task, complete_task, complete_work_slice, create_repetition,
+    create_task, defer_routine_task, defer_task, estimated_work_seconds_from_minutes, rename_task,
+    set_category, set_deadline, set_estimate, validate_task_name, AddActualWorkInput,
+    ApplicationError, BreakdownTaskInput, CompleteTaskInput, CompleteWorkSliceInput,
+    CreateRepetitionInput, CreateTaskInput, TaskFactory,
 };
 use crate::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status,
@@ -1122,7 +1123,8 @@ impl TaskAttributeCommandContext for RuntimeTaskAttributeCommandContext<'_> {
 
     fn set_estimate(&mut self, minutes: i64) -> Result<(), ApplicationError> {
         if let Some(task_id) = *self.focused_task_id_opt {
-            set_estimate(self.task_repository, task_id, minutes)?;
+            let seconds = estimated_work_seconds_from_minutes(minutes)?;
+            set_estimate(self.task_repository, task_id, seconds)?;
         }
         Ok(())
     }
@@ -1537,8 +1539,11 @@ impl ProjectCommandContext for CliCommandContext<'_, '_, '_> {
         self.task_factory.create_task_attr(name)
     }
 
-    fn set_estimate(&mut self, task_id: Uuid, minutes: i64) -> Result<(), ApplicationError> {
-        set_estimate(self.task_repository, task_id, minutes)
+    fn create_repetition(
+        &mut self,
+        input: CreateRepetitionInput,
+    ) -> Result<Vec<Uuid>, ApplicationError> {
+        create_repetition(self.task_repository, input, self.task_factory)
     }
 
     fn focused_task_id(&self) -> Option<Uuid> {

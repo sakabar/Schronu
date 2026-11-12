@@ -1,4 +1,6 @@
-use crate::application::daily_capacity::{try_logical_date, try_logical_date_and_time};
+use crate::application::daily_capacity::{
+    try_logical_date, try_logical_date_and_time, try_logical_date_start,
+};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 pub use crate::application::task_list::{
     list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
@@ -198,7 +200,7 @@ pub(crate) fn resolve_local_datetime(
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTaskInput {
     pub name: String,
-    pub estimated_work_minutes: Option<i64>,
+    pub estimated_work_seconds: Option<i64>,
     pub pending_until: Option<DateTime<Local>>,
 }
 
@@ -207,6 +209,15 @@ pub struct BreakdownTaskInput {
     pub parent_id: Uuid,
     pub names: Vec<String>,
     pub pending_until: Option<DateTime<Local>>,
+}
+
+pub(crate) struct CreateRepetitionInput {
+    pub(crate) parent_id: Uuid,
+    pub(crate) name: String,
+    pub(crate) estimated_work_seconds: i64,
+    pub(crate) interval_days: i64,
+    pub(crate) start_time: Option<NaiveTime>,
+    pub(crate) deadline_time: Option<NaiveTime>,
 }
 
 pub(crate) const MAX_BREAKDOWN_TASK_NAMES: usize = 64;
@@ -407,11 +418,9 @@ pub fn create_task(
             .map_err(ApplicationError::TaskTree)?;
     }
 
-    if let Some(estimated_work_minutes) = input.estimated_work_minutes {
+    if let Some(estimated_work_seconds) = input.estimated_work_seconds {
         root_task
-            .set_estimated_work_seconds(estimated_work_seconds_from_minutes(
-                estimated_work_minutes,
-            )?)
+            .set_estimated_work_seconds(validate_estimated_work_seconds(estimated_work_seconds)?)
             .map_err(ApplicationError::TaskTree)?;
     }
 
@@ -420,6 +429,93 @@ pub fn create_task(
         .start_new_project(root_task)
         .map_err(ApplicationError::ProjectRegistration)?;
     Ok(task_id)
+}
+
+pub(crate) fn create_repetition(
+    repository: &dyn TaskRepositoryTrait,
+    input: CreateRepetitionInput,
+    factory: &mut TaskFactory<'_>,
+) -> Result<Vec<Uuid>, ApplicationError> {
+    validate_task_name(&input.name, "name")?;
+    let estimate = validate_estimated_work_seconds(input.estimated_work_seconds)?;
+    if input.interval_days <= 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "repetition_interval_days",
+            reason: "must be a positive integer",
+        });
+    }
+    let parent = find_task(repository, input.parent_id)?;
+    let now = factory.now;
+    let today = try_logical_date(now)?;
+    let day_start = try_logical_date_start(today)?.time();
+    let start = input.start_time.unwrap_or(day_start);
+    let deadline = input
+        .deadline_time
+        .unwrap_or(day_start - Duration::seconds(1));
+    if (deadline < day_start, deadline) <= (start < day_start, start) {
+        return Err(ApplicationError::InvalidInput {
+            field: "repetition_deadline_time",
+            reason: "must be after the start time within the same Schronu day",
+        });
+    }
+    let period = input.interval_days.max(7);
+    let count = (7 / input.interval_days).max(1);
+    let mut repetition = factory.create_task_attr(&input.name);
+    repetition.set_estimated_work_seconds(estimate);
+    repetition
+        .set_repetition_interval_days_opt(Some(period))
+        .and_then(|()| repetition.set_repetition_start_time_opt(Some(start)))
+        .and_then(|()| repetition.set_repetition_deadline_time_opt(Some(deadline)))
+        .map_err(ApplicationError::TaskTree)?;
+
+    let mut children = Vec::new();
+    for index in 0..count {
+        let date = shift_logical_date(
+            today,
+            index * input.interval_days,
+            "repetition_occurrence_date",
+            now,
+        )?;
+        let start_time = try_logical_date_and_time(date, start, "repetition_occurrence_date", now)?;
+        let deadline_time =
+            try_logical_date_and_time(date, deadline, "repetition_occurrence_date", now)?;
+        next_repetition_occurrence_times(deadline_time, period, start, deadline, 0)?;
+        let mut child = factory.create_task_attr(&input.name);
+        child.set_start_time(start_time);
+        child.set_estimated_work_seconds(estimate);
+        child
+            .set_deadline_time_opt(Some(deadline_time))
+            .map_err(ApplicationError::TaskTree)?;
+        TaskAttr::validate_deadline_calculations(
+            *child.get_id(),
+            Some(deadline_time),
+            estimate,
+            0,
+            "deadline_time",
+        )
+        .map_err(ApplicationError::TaskTree)?;
+        children.push(child);
+    }
+
+    let ids = std::iter::once(&repetition)
+        .chain(&children)
+        .map(|attr| *attr.get_id())
+        .collect::<Vec<_>>();
+    if let Some(index) = ids.iter().position(Uuid::is_nil) {
+        let task_path = if index == 0 {
+            input.name
+        } else {
+            format!("{}/{} (初期回 {})", input.name, input.name, index)
+        };
+        return Err(ApplicationError::ProjectRegistration(
+            ProjectRegistrationError::NilTaskId { task_path },
+        ));
+    }
+    ensure_task_ids_available(repository, ids.iter().copied())?;
+    parent
+        .create_child_with_children(repetition, children)
+        .map_err(ApplicationError::TaskTree)?;
+    Ok(ids)
 }
 
 pub fn breakdown_task(
@@ -855,9 +951,9 @@ pub(crate) fn rename_task(
 pub fn set_estimate(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
-    estimated_work_minutes: i64,
+    estimated_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
-    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    let estimated_work_seconds = validate_estimated_work_seconds(estimated_work_seconds)?;
     let task = find_task(repository, task_id)?;
     task.set_estimated_work_seconds(estimated_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
@@ -943,6 +1039,16 @@ pub fn validate_task_name(name: &str, field: &'static str) -> Result<(), Applica
         field,
         reason: violation.reason(),
     })
+}
+
+fn validate_estimated_work_seconds(seconds: i64) -> Result<i64, ApplicationError> {
+    if seconds < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "estimated_work_seconds",
+            reason: "must not be negative",
+        });
+    }
+    Ok(seconds)
 }
 
 pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, ApplicationError> {
@@ -1137,7 +1243,7 @@ pub(crate) fn next_repetition_occurrence_times(
     let logical_date = shift_logical_date(
         try_logical_date(occurrence_anchor)?,
         repetition_interval_days,
-        "next_logical_date_start",
+        "repetition_occurrence_date",
         occurrence_anchor,
     )?;
     let start_operation = "repetition_start_time";

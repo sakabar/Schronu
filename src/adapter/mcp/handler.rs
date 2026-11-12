@@ -220,9 +220,7 @@ fn call_create_task<R: TaskRepositoryTrait>(
     input: CreateTaskInput,
     factory: &mut TaskFactory<'_>,
 ) -> Value {
-    let input = input.into_application();
-
-    let task_id = match create_task_use_case(repository, input, factory) {
+    let task_id = match create_task_use_case(repository, input.into_application(), factory) {
         Ok(task_id) => task_id,
         Err(ApplicationError::InvalidInput { field, reason }) => {
             return invalid_input_response(id, field, reason)
@@ -346,8 +344,8 @@ fn call_update_task<R: TaskRepositoryTrait>(
 ) -> Value {
     let input = input.into_changes();
 
-    if let Some(estimated_work_minutes) = input.estimated_work_minutes {
-        if let Err(error) = set_estimate(repository, input.task_id, estimated_work_minutes) {
+    if let Some(estimated_work_seconds) = input.estimated_work_seconds {
+        if let Err(error) = set_estimate(repository, input.task_id, estimated_work_seconds) {
             return update_task_application_error_response(id, error);
         }
     }

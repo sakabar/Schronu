@@ -168,8 +168,8 @@ fn 負荷viewは日次帯と累積差分と超過を表示して日付を通知�
                             unavailable_seconds: 10 * 60 * 60,
                             elapsed_seconds: 6 * 60 * 60,
                             repetitive_seconds: 90 * 60,
-                            non_repetitive_seconds: 7 * 60 * 60,
-                            rho_leeway_seconds: 60 * 60,
+                            non_repetitive_seconds: 8 * 60 * 60,
+                            rho_leeway_seconds: 0,
                         },
                     },
                     BandDay {
@@ -554,8 +554,8 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
                 unavailable_seconds: 8 * 60 * 60,
                 elapsed_seconds: 8 * 60 * 60,
                 repetitive_seconds: 4 * 60 * 60,
-                non_repetitive_seconds: 5 * 60 * 60,
-                rho_leeway_seconds: 3 * 60 * 60,
+                non_repetitive_seconds: 8 * 60 * 60,
+                rho_leeway_seconds: 0,
             },
         };
         let future = BandDay {
@@ -592,8 +592,14 @@ fn 負荷viewは右寄せ超過railを当日の二尺度と未来日へ表示す
     assert_eq!(today_html.matches("class=\"load-overflow-rail\"").count(), 2, "{html}");
     assert_eq!(future_html.matches("class=\"load-overflow-rail\"").count(), 1, "{html}");
     assert_eq!(today_html.matches("aria-hidden=\"true\"").count(), 4, "{html}");
-    assert!(today_html.contains("width:50.0000%"), "{html}");
-    assert!(today_html.contains("width:16.6667%"), "{html}");
+    assert!(
+        today_html.contains("class=\"load-overflow-fill\" style=\"width:50.0000%\""),
+        "{html}"
+    );
+    assert!(
+        today_html.contains("class=\"load-overflow-fill\" style=\"width:16.6667%\""),
+        "{html}"
+    );
     assert!(
         future_html.contains("class=\"load-overflow-fill is-zero\" style=\"width:0.0000%\""),
         "{html}"

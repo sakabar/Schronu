@@ -349,7 +349,7 @@ fn state_change_input_payload_and_patch_values_are_preserved() {
     .unwrap_or_else(|_| panic!("nullable update patch must decode"));
     assert_eq!(update.task_id.0.to_string(), task_id);
     assert!(matches!(
-        update.estimated_work_minutes,
+        update.estimated_work_seconds,
         OptionalValue::Missing
     ));
     assert!(matches!(update.actual_work_seconds, OptionalValue::Missing));
@@ -366,14 +366,14 @@ fn state_change_input_payload_and_patch_values_are_preserved() {
 
     let update = decode_input::<UpdateTaskInput>(&json!({
         "task_id": task_id,
-        "estimated_work_minutes": 30,
+        "estimated_work_seconds": 30,
         "actual_work_seconds": 900,
         "deadline_time": "2026-08-19T10:00:00+09:00",
         "category": "earning"
     }))
     .unwrap_or_else(|_| panic!("update patch values must decode"));
     assert!(matches!(
-        update.estimated_work_minutes,
+        update.estimated_work_seconds,
         OptionalValue::Value(value) if value.0 == 30
     ));
     assert!(matches!(
@@ -552,7 +552,7 @@ fn update_task_input_cases() -> Vec<ContractCase> {
     vec![
         valid_case(
             "update estimate",
-            json!({"task_id": task_id, "estimated_work_minutes": 0}),
+            json!({"task_id": task_id, "estimated_work_seconds": 0}),
         ),
         valid_case(
             "update actual work",
@@ -579,7 +579,7 @@ fn update_task_input_cases() -> Vec<ContractCase> {
                 "task_id": task_id,
                 "category": "earning",
                 "deadline_time": null,
-                "estimated_work_minutes": 30
+                "estimated_work_seconds": 30
             }),
         ),
         schema_case(
@@ -608,37 +608,37 @@ fn update_task_input_cases() -> Vec<ContractCase> {
         ),
         schema_case(
             "estimate cannot be null",
-            json!({"task_id": task_id, "estimated_work_minutes": null}),
-            "estimated_work_minutes",
+            json!({"task_id": task_id, "estimated_work_seconds": null}),
+            "estimated_work_seconds",
             "must be a non-negative integer",
         ),
         schema_case(
             "estimate cannot be negative",
-            json!({"task_id": task_id, "estimated_work_minutes": -1}),
-            "estimated_work_minutes",
+            json!({"task_id": task_id, "estimated_work_seconds": -1}),
+            "estimated_work_seconds",
             "must be a non-negative integer",
         ),
         schema_case(
             "estimate cannot be fractional",
-            json!({"task_id": task_id, "estimated_work_minutes": 1.5}),
-            "estimated_work_minutes",
+            json!({"task_id": task_id, "estimated_work_seconds": 1.5}),
+            "estimated_work_seconds",
             "must be a non-negative integer",
         ),
         schema_case(
             "estimate has wrong type",
-            json!({"task_id": task_id, "estimated_work_minutes": "1"}),
-            "estimated_work_minutes",
+            json!({"task_id": task_id, "estimated_work_seconds": "1"}),
+            "estimated_work_seconds",
             "must be a non-negative integer",
         ),
         valid_case(
             "estimate accepts i64 maximum",
-            json!({"task_id": task_id, "estimated_work_minutes": i64::MAX}),
+            json!({"task_id": task_id, "estimated_work_seconds": i64::MAX}),
         ),
         semantic_case_with_schema_acceptance(
             "estimate outside i64 range",
-            json!({"task_id": task_id, "estimated_work_minutes": u64::MAX}),
+            json!({"task_id": task_id, "estimated_work_seconds": u64::MAX}),
             true,
-            "estimated_work_minutes",
+            "estimated_work_seconds",
             "is outside the supported integer range",
         ),
         schema_case(
@@ -717,9 +717,9 @@ fn update_task_input_cases() -> Vec<ContractCase> {
             "must be a supported category or null",
         ),
         schema_case(
-            "update task has unknown field",
-            json!({"task_id": task_id, "category": null, "extra": true}),
-            "arguments.extra",
+            "update task rejects the former minutes field",
+            json!({"task_id": task_id, "category": null, "estimated_work_minutes": 1}),
+            "arguments.estimated_work_minutes",
             "additional property is not allowed",
         ),
         schema_case(
@@ -790,7 +790,7 @@ fn create_task_input_cases() -> Vec<ContractCase> {
             name: "all create fields",
             input: json!({
                 "name": "write contract test",
-                "estimated_work_minutes": 0,
+                "estimated_work_seconds": 0,
                 "pending_until": "2026-08-19T10:00:00+09:00"
             }),
             schema_accepts: true,
@@ -837,43 +837,43 @@ fn create_task_input_cases() -> Vec<ContractCase> {
         },
         ContractCase {
             name: "estimated work cannot be null",
-            input: json!({"name": "write contract test", "estimated_work_minutes": null}),
+            input: json!({"name": "write contract test", "estimated_work_seconds": null}),
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
-                field: "estimated_work_minutes",
+                field: "estimated_work_seconds",
                 reason: "must be a non-negative integer",
             },
         },
         ContractCase {
             name: "estimated work can be zero",
-            input: json!({"name": "write contract test", "estimated_work_minutes": 0}),
+            input: json!({"name": "write contract test", "estimated_work_seconds": 0}),
             schema_accepts: true,
             decode: ExpectedDecode::Valid,
         },
         ContractCase {
             name: "estimated work cannot be negative",
-            input: json!({"name": "write contract test", "estimated_work_minutes": -1}),
+            input: json!({"name": "write contract test", "estimated_work_seconds": -1}),
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
-                field: "estimated_work_minutes",
+                field: "estimated_work_seconds",
                 reason: "must be a non-negative integer",
             },
         },
         ContractCase {
             name: "estimated work cannot be fractional",
-            input: json!({"name": "write contract test", "estimated_work_minutes": 1.5}),
+            input: json!({"name": "write contract test", "estimated_work_seconds": 1.5}),
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
-                field: "estimated_work_minutes",
+                field: "estimated_work_seconds",
                 reason: "must be a non-negative integer",
             },
         },
         ContractCase {
             name: "estimated work has wrong type",
-            input: json!({"name": "write contract test", "estimated_work_minutes": "1"}),
+            input: json!({"name": "write contract test", "estimated_work_seconds": "1"}),
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
-                field: "estimated_work_minutes",
+                field: "estimated_work_seconds",
                 reason: "must be a non-negative integer",
             },
         },
@@ -881,7 +881,7 @@ fn create_task_input_cases() -> Vec<ContractCase> {
             name: "estimated work accepts i64 maximum",
             input: json!({
                 "name": "write contract test",
-                "estimated_work_minutes": i64::MAX
+                "estimated_work_seconds": i64::MAX
             }),
             schema_accepts: true,
             decode: ExpectedDecode::Valid,
@@ -890,11 +890,11 @@ fn create_task_input_cases() -> Vec<ContractCase> {
             name: "estimated work outside i64 range",
             input: json!({
                 "name": "write contract test",
-                "estimated_work_minutes": u64::MAX
+                "estimated_work_seconds": u64::MAX
             }),
             schema_accepts: true,
             decode: ExpectedDecode::Semantic {
-                field: "estimated_work_minutes",
+                field: "estimated_work_seconds",
                 reason: "is outside the supported integer range",
             },
         },
@@ -923,11 +923,11 @@ fn create_task_input_cases() -> Vec<ContractCase> {
             },
         },
         ContractCase {
-            name: "create task has unknown field",
-            input: json!({"name": "write contract test", "extra": true}),
+            name: "create task rejects the former minutes field",
+            input: json!({"name": "write contract test", "estimated_work_minutes": 1}),
             schema_accepts: false,
             decode: ExpectedDecode::Schema {
-                field: "arguments.extra",
+                field: "arguments.estimated_work_minutes",
                 reason: "additional property is not allowed",
             },
         },

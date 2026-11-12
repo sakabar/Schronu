@@ -634,10 +634,10 @@ fn all_commands_enforce_argument_bounds() {
         Case {
             command: "繰",
             mode: ParseMode::NonInteractive,
-            valid_arguments: &["task", "15", "月", "09:00", "10:00"],
-            minimum: 5,
+            valid_arguments: &["task", "15", "2", "09:00", "10:00"],
+            minimum: 3,
             maximum: Some(5),
-            usage: "繰 <name> <minutes> <day> <start> <deadline>",
+            usage: "繰 <名前> <見積分> <繰返間隔> [開始時刻] [締切時刻]",
         },
         Case {
             command: "下",

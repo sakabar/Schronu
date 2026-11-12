@@ -26,7 +26,7 @@ fn interactive_parser_preserves_quoted_task_names_for_every_task_name_command() 
             expected_name: "pre middle post",
         },
         Case {
-            input: r#"繰 "alpha\"beta\\gamma" 15 月 09:00 10:00"#,
+            input: r#"繰 "alpha\"beta\\gamma" 15 2 09:00 10:00"#,
             expected_name: r#"alpha"beta\gamma"#,
         },
         Case {

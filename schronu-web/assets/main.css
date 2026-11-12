@@ -1904,6 +1904,31 @@ button.routine-load-day.is-at-capacity {
     grid-auto-rows: auto;
 }
 
+.load-horizon-divider {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    height: 16px;
+    color: #596a61;
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.load-horizon-divider::before,
+.load-horizon-divider::after {
+    content: "";
+    border-top: 3px solid currentColor;
+}
+
+.load-horizon-divider::before {
+    width: 18px;
+}
+
+.load-horizon-divider::after {
+    flex: 1;
+}
+
 .load-day {
     display: grid;
     grid-template-columns: var(--load-columns);

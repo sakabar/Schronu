@@ -505,7 +505,7 @@ fn mcp_stdio_duration範囲外の見積更新は保存内容を変えず後続re
     let failed = mcp.call_tool(
         "duration-update",
         "update_task",
-        json!({"task_id": task_id, "estimated_work_minutes": i64::MAX / 60}),
+        json!({"task_id": task_id, "estimated_work_seconds": i64::MAX}),
     );
 
     assert_eq!(failed["result"]["isError"], true);
@@ -556,7 +556,7 @@ fn mcp_stdio_日時減算範囲外の見積更新は保存内容を変えず後�
         "update_task",
         json!({
             "task_id": task_id,
-            "estimated_work_minutes": 10_000_000_000_000_i64 / 60
+            "estimated_work_seconds": 10_000_000_000_000_i64
         }),
     );
 
@@ -755,7 +755,7 @@ fn mcp_stdio_親deadline伝搬は計算不能な子を特定し保存内容を�
         "update_task",
         Some(json!({
             "task_id": child_id,
-            "estimated_work_minutes": i64::MAX / 60
+            "estimated_work_seconds": i64::MAX
         })),
     );
     assert_eq!(estimate_update["result"]["isError"], false);
@@ -854,7 +854,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         storage.path(),
         "create",
         "create_task",
-        Some(json!({"name": "integration project", "estimated_work_minutes": 30})),
+        Some(json!({"name": "integration project", "estimated_work_seconds": 90})),
     );
     let parent_id = create["result"]["structuredContent"]["task_id"]
         .as_str()
@@ -924,7 +924,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         "update_task",
         Some(json!({
             "task_id": child_id,
-            "estimated_work_minutes": 10,
+            "estimated_work_seconds": 90,
             "deadline_time": deadline.to_rfc3339(),
             "category": "recovery"
         })),
@@ -944,7 +944,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
             .unwrap(),
         pending_until.fixed_offset()
     );
-    assert_eq!(reloaded_child["estimated_work_seconds"], 10 * 60);
+    assert_eq!(reloaded_child["estimated_work_seconds"], 90);
     assert_eq!(
         chrono::DateTime::parse_from_rfc3339(reloaded_child["deadline_time"].as_str().unwrap())
             .unwrap(),
@@ -985,6 +985,10 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
     assert_eq!(
         reloaded["result"]["structuredContent"]["task"]["original_status"],
         "done"
+    );
+    assert_eq!(
+        reloaded["result"]["structuredContent"]["task"]["estimated_work_seconds"],
+        90
     );
 }
 
@@ -1179,12 +1183,12 @@ fn mcp_stdio_task不明と入力不正と未完了childのerror_codeを区別す
         storage.path(),
         "invalid-number",
         "create_task",
-        Some(json!({"name": "invalid estimate", "estimated_work_minutes": -1})),
+        Some(json!({"name": "invalid estimate", "estimated_work_seconds": -1})),
     );
     assert_eq!(invalid_number["error"]["code"], -32602);
     assert_eq!(
         invalid_number["error"]["data"]["field"],
-        "estimated_work_minutes"
+        "estimated_work_seconds"
     );
     let invalid_datetime = call_tool(
         storage.path(),

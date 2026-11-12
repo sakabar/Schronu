@@ -17,6 +17,7 @@ use crate::adapter::mcp::test_support::{
     try_next_logical_date_start, Duration, Local, ProjectCategory, RecordingRepository, Status,
     TimeZone,
 };
+use crate::application::interface::TaskRepositoryTrait;
 use crate::application::task_use_case::{ApplicationError, TaskFactory};
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
 use serde_json::{json, Value};
@@ -512,7 +513,7 @@ fn create_task_handlerはtyped_inputをapplication入力へ変換する() {
         json!("typed-create"),
         CreateTaskInput {
             name: NonEmptyString("created by typed input".to_string()),
-            estimated_work_minutes: OptionalValue::Value(NonNegativeI64(30)),
+            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(1800)),
             pending_until: OptionalValue::Value(Rfc3339DateTime(pending_until)),
         },
     );
@@ -601,7 +602,7 @@ fn create_task_handlerはtyped_inputの空白名をapplicationへそのまま渡
         json!("typed-create-blank"),
         CreateTaskInput {
             name: NonEmptyString("   ".to_string()),
-            estimated_work_minutes: OptionalValue::Missing,
+            estimated_work_seconds: OptionalValue::Missing,
             pending_until: OptionalValue::Missing,
         },
     );
@@ -649,30 +650,33 @@ fn breakdown_task_handlerはtyped_inputの空白名をapplicationへそのまま
 }
 
 #[test]
-fn create_task_handlerはtyped_i64上限の秒変換overflowをtool_errorにする() {
-    let repository = RecordingRepository::new(vec![]);
-    let save_count = Rc::clone(&repository.save_count);
-    let mutation_count = Rc::clone(&repository.mutation_count);
-    let mut repository = repository;
+fn create_task_handler_preserves_explicit_estimates_and_the_default() {
+    for (estimate, expected) in [
+        (OptionalValue::Missing, 900),
+        (OptionalValue::Value(NonNegativeI64(0)), 0),
+        (OptionalValue::Value(NonNegativeI64(i64::MAX)), i64::MAX),
+    ] {
+        let mut repository = RecordingRepository::new(vec![]);
+        let response = call_create_task(
+            &mut repository,
+            json!("create-estimate"),
+            CreateTaskInput {
+                name: NonEmptyString("estimated task".to_string()),
+                estimated_work_seconds: estimate,
+                pending_until: OptionalValue::Missing,
+            },
+        );
 
-    let response = call_create_task(
-        &mut repository,
-        json!("typed-create-overflow"),
-        CreateTaskInput {
-            name: NonEmptyString("overflow".to_string()),
-            estimated_work_minutes: OptionalValue::Value(NonNegativeI64(i64::MAX)),
-            pending_until: OptionalValue::Missing,
-        },
-    );
-
-    assert_eq!(response["result"]["isError"], true);
-    assert_tool_result_content_matches_structured(&response);
-    let error = &response["result"]["structuredContent"]["error"];
-    assert_eq!(error["code"], "invalid_input");
-    assert_eq!(error["field"], "estimated_work_minutes");
-    assert_eq!(error["message"], "seconds conversion overflow");
-    assert_eq!(mutation_count.get(), 0);
-    assert_eq!(save_count.get(), 0);
+        assert_eq!(response["result"]["isError"], false);
+        let task_id = Uuid::parse_str(
+            response["result"]["structuredContent"]["task_id"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_estimated_work_seconds().unwrap(), expected);
+    }
 }
 
 #[test]
@@ -937,7 +941,7 @@ fn update_task_handlerはtyped_valueを公開field順に適用する() {
         json!("typed-update-values"),
         UpdateTaskInput {
             task_id: UuidValue(task_id),
-            estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(2700)),
             actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),
             deadline_time: NullablePatch::Value(Rfc3339DateTime(deadline)),
             category: NullablePatch::Value(ProjectCategoryValue::Recovery),
@@ -983,7 +987,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         json!("typed-update-missing-patches"),
         UpdateTaskInput {
             task_id: UuidValue(task_id),
-            estimated_work_minutes: OptionalValue::Value(NonNegativeI64(45)),
+            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(0)),
             actual_work_seconds: OptionalValue::Missing,
             deadline_time: NullablePatch::Missing,
             category: NullablePatch::Missing,
@@ -992,7 +996,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
 
     assert_eq!(response["id"], "typed-update-missing-patches");
     assert_eq!(response["result"]["isError"], false);
-    assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 45 * 60);
+    assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 0);
     assert_eq!(
         task_observer.get_deadline_time_opt().unwrap(),
         Some(deadline)
@@ -1023,7 +1027,7 @@ fn update_task_handlerはtyped_missingを変更せずnullを解除に変換す�
         json!("typed-update-clear"),
         UpdateTaskInput {
             task_id: UuidValue(task_id),
-            estimated_work_minutes: OptionalValue::Missing,
+            estimated_work_seconds: OptionalValue::Missing,
             actual_work_seconds: OptionalValue::Missing,
             deadline_time: NullablePatch::Null,
             category: NullablePatch::Null,
@@ -1058,7 +1062,7 @@ fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() 
         json!("typed-update-first-field-error"),
         UpdateTaskInput {
             task_id: UuidValue(task_id),
-            estimated_work_minutes: OptionalValue::Value(NonNegativeI64(i64::MAX)),
+            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(i64::MAX)),
             actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),
             deadline_time: NullablePatch::Value(Rfc3339DateTime(requested_deadline)),
             category: NullablePatch::Value(ProjectCategoryValue::Investment),
@@ -1068,14 +1072,13 @@ fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() 
     assert_eq!(response["id"], "typed-update-first-field-error");
     assert_eq!(response["result"]["isError"], true);
     assert_tool_result_content_matches_structured(&response);
-    assert_eq!(
-        response["result"]["structuredContent"]["error"],
-        json!({
-            "code": "invalid_input",
-            "message": "seconds conversion overflow",
-            "field": "estimated_work_minutes"
-        })
-    );
+    let error = &response["result"]["structuredContent"]["error"];
+    assert_eq!(error["code"], "internal_error");
+    assert!(error["message"]
+        .as_str()
+        .unwrap()
+        .contains("deadline_pending_limit"));
+    assert_eq!(task_observer.get_actual_work_seconds().unwrap(), 0);
     assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 30 * 60);
     assert_eq!(
         task_observer.get_deadline_time_opt().unwrap(),
