@@ -57,7 +57,11 @@ pub(crate) fn LoadView(
             !chrono::NaiveDate::parse_from_str(&next.logical_date, "%Y-%m-%d")
                 .is_ok_and(|date| date.weekday() == Weekday::Mon)
         })
-        .collect::<Vec<_>>();
+        .scan(0, |days_seen, week| {
+            let week_start = *days_seen;
+            *days_seen += week.len();
+            Some((week_start, week))
+        });
     rsx! {
         section { class: view_class, aria_label: "負荷",
             div { class: "load-toolbar",
@@ -124,12 +128,15 @@ pub(crate) fn LoadView(
                             span { "時間内訳" }
                         }
                         div { class: "load-days",
-                            for (week_index, week) in weeks.into_iter().enumerate() {
+                            for (week_start, week) in weeks {
                                 div { class: "load-week",
                                     for (day_index, row) in week.iter().cloned().enumerate() {
+                                        if week_start + day_index == 7 {
+                                            div { class: "load-horizon-divider", "8日目以降" }
+                                        }
                                         BandDayRow {
                                             row,
-                                            today: week_index == 0 && day_index == 0,
+                                            today: week_start == 0 && day_index == 0,
                                             disabled: server_actions_blocked,
                                             on_select_date,
                                         }
