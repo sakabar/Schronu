@@ -4827,11 +4827,21 @@ fn test_execute_actual_work_overflowはfield付きerrorで状態を変更しな�
 }
 
 #[test]
-fn deadline_command_resolves_times_within_the_selected_logical_date() {
+fn deadline_command_distinguishes_calendar_dates_and_logical_dates() {
     let now = Local.with_ymd_and_hms(2026, 9, 21, 13, 0, 0).unwrap();
     for (command, day, hour, minute, second) in [
         ("〆 9/21", 22, 5, 59, 59),
         ("〆 2026/9/21 23:59", 21, 23, 59, 0),
+        ("〆 1:00 9/21", 21, 1, 0, 0),
+        ("〆 9/21 1:00", 21, 1, 0, 0),
+        ("〆 9/21 25:00", 22, 1, 0, 0),
+        ("〆 25:00 9/21", 22, 1, 0, 0),
+        ("〆 2026/9/21 01:00", 21, 1, 0, 0),
+        ("〆 2026/9/21 25:00", 22, 1, 0, 0),
+        ("〆 今日 1:00", 22, 1, 0, 0),
+        ("〆 1:00", 22, 1, 0, 0),
+        ("〆 明日 1:00", 23, 1, 0, 0),
+        ("〆 火 1:00", 23, 1, 0, 0),
         ("〆 今日 00:00", 22, 0, 0, 0),
         ("〆 24:00 今日", 22, 0, 0, 0),
         ("〆 今日 05:59", 22, 5, 59, 0),
@@ -4854,8 +4864,8 @@ fn deadline_command_resolves_times_within_the_selected_logical_date() {
 fn deadline_command_selects_the_year_from_the_current_logical_date() {
     let now = Local.with_ymd_and_hms(2027, 1, 1, 2, 0, 0).unwrap();
     for (command, day, hour) in [
-        ("〆 12/31 05:00", 1, 5),
-        ("〆 1/2 05:00", 3, 5),
+        ("〆 12/31 25:00", 1, 1),
+        ("〆 1/2 05:00", 2, 5),
     ] {
         let task = new_test_task_handle("締切対象").unwrap();
         let task_id = task.get_id().unwrap();

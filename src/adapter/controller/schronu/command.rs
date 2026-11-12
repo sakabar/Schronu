@@ -444,17 +444,20 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
     }
 }
 
-fn is_deadline_date(value: &str) -> bool {
-    value.starts_with('今')
-        || value.starts_with('明')
+pub(super) fn is_relative_deadline_date(value: &str) -> bool {
+    value.starts_with(['今', '明'])
         || matches!(value, "月" | "火" | "水" | "木" | "金" | "土" | "日")
+}
+
+fn is_deadline_date(value: &str) -> bool {
+    is_relative_deadline_date(value)
         || Regex::new(r"^\d{1,2}/\d{1,2}$")
             .expect("valid regex")
             .is_match(value)
         || NaiveDate::parse_from_str(value, "%Y/%m/%d").is_ok()
 }
 
-pub(super) fn parse_deadline_time(value: &str) -> Option<NaiveTime> {
+pub(super) fn parse_deadline_time(value: &str) -> Option<(NaiveTime, bool)> {
     let (hour, minute) = value.split_once(':')?;
     let parse_component = |component: &str| {
         if (1..=2).contains(&component.len()) && component.bytes().all(|b| b.is_ascii_digit()) {
@@ -465,12 +468,10 @@ pub(super) fn parse_deadline_time(value: &str) -> Option<NaiveTime> {
     };
     let hour = parse_component(hour)?;
     let minute = parse_component(minute)?;
-    let hour = match hour {
-        0..=23 => hour,
-        24..=29 => hour - 24,
-        _ => return None,
-    };
-    NaiveTime::from_hms_opt(hour, minute, 0)
+    if hour >= 30 {
+        return None;
+    }
+    Some((NaiveTime::from_hms_opt(hour % 24, minute, 0)?, hour >= 24))
 }
 
 pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandParseError> {

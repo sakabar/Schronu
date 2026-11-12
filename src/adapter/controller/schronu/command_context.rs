@@ -1,6 +1,6 @@
 use super::command::{
-    parse_deadline_time, parse_project_category_input, CommandKind, CommandParseError,
-    DEADLINE_USAGE,
+    is_relative_deadline_date, parse_deadline_time, parse_project_category_input, CommandKind,
+    CommandParseError, DEADLINE_USAGE,
 };
 use super::handler::{
     DeferCommandContext, DeferCommandError, FinishPlacementCommandContext, HandlerError,
@@ -964,15 +964,15 @@ fn resolve_deadline_time(
 ) -> Result<Option<DateTime<Local>>, HandlerError> {
     let invalid_datetime =
         || command_parse_error("〆", "deadline", "日時が不正です", DEADLINE_USAGE);
-    let (date_value, time) = match deadline_values {
+    let (date_value, explicit_time) = match deadline_values {
         [value] if value == "消" => return Ok(None),
         [value] => match parse_deadline_time(value) {
-            Some(time) => (None, time),
-            None => (Some(value.as_str()), config.default_deadline_time),
+            Some(time) => (None, Some(time)),
+            None => (Some(value.as_str()), None),
         },
         [first, second] => match (parse_deadline_time(first), parse_deadline_time(second)) {
-            (Some(time), None) => (Some(second.as_str()), time),
-            (None, Some(time)) => (Some(first.as_str()), time),
+            (Some(time), None) => (Some(second.as_str()), Some(time)),
+            (None, Some(time)) => (Some(first.as_str()), Some(time)),
             _ => return Err(invalid_datetime()),
         },
         _ => return Err(invalid_datetime()),
@@ -984,12 +984,27 @@ fn resolve_deadline_time(
     } else {
         try_logical_date(now)?
     };
-    Ok(Some(try_logical_date_and_time(
-        date,
-        time,
-        "deadline_time",
-        now,
-    )?))
+    let (time, next_calendar_date) = explicit_time.unwrap_or((config.default_deadline_time, false));
+    if explicit_time.is_some() && date_value.is_some_and(|value| !is_relative_deadline_date(value))
+    {
+        let date = if next_calendar_date {
+            date.succ_opt()
+                .ok_or(ApplicationError::LogicalDateOutOfRange {
+                    operation: "deadline_time",
+                    datetime: now,
+                })?
+        } else {
+            date
+        };
+        Ok(Some(try_local_date_and_time(date, time)?))
+    } else {
+        Ok(Some(try_logical_date_and_time(
+            date,
+            time,
+            "deadline_time",
+            now,
+        )?))
+    }
 }
 
 fn execute_arrange_children_estimates(
