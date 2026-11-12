@@ -5,6 +5,8 @@ use chrono::{
 use std::fmt;
 
 const LOGICAL_DATE_START_HOUR: u32 = 6;
+pub(crate) const DEFAULT_REPETITION_DEADLINE_TIME: NaiveTime =
+    NaiveTime::from_hms_opt(LOGICAL_DATE_START_HOUR - 1, 59, 59).unwrap();
 const DEADLINE_PENDING_BUFFER_MINUTES: i64 = 5;
 const DEADLINE_FORCE_TODO_AFTER_START_BUFFER_MINUTES: i64 = 60;
 pub const DEFAULT_END_OF_DAY_OFFSET_MINUTES: i64 = 30;

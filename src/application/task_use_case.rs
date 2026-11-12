@@ -8,7 +8,9 @@ pub use crate::application::task_list::{
 };
 use crate::application::task_name;
 pub use crate::application::task_view::TaskView;
-use crate::entity::datetime::{LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES};
+use crate::entity::datetime::{
+    LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES, DEFAULT_REPETITION_DEADLINE_TIME,
+};
 use crate::entity::task::{
     ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
 };
@@ -451,7 +453,7 @@ pub(crate) fn create_repetition(
     let start = input.start_time.unwrap_or(day_start);
     let deadline = input
         .deadline_time
-        .unwrap_or(day_start - Duration::seconds(1));
+        .unwrap_or(DEFAULT_REPETITION_DEADLINE_TIME);
     if (deadline < day_start, deadline) <= (start < day_start, start) {
         return Err(ApplicationError::InvalidInput {
             field: "repetition_deadline_time",

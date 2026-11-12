@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::entity::datetime::{
     try_appointment_deadline, DeadlineCalculationError, LogicalDateTimePolicy,
-    DEFAULT_END_OF_DAY_OFFSET_MINUTES,
+    DEFAULT_END_OF_DAY_OFFSET_MINUTES, DEFAULT_REPETITION_DEADLINE_TIME,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq, Serialize)]
@@ -542,7 +542,7 @@ impl TaskAttr {
             self.repetition_start_time_opt
                 .get_or_insert(self.start_time.time());
             self.repetition_deadline_time_opt
-                .get_or_insert_with(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+                .get_or_insert(DEFAULT_REPETITION_DEADLINE_TIME);
             self.deadline_time_opt = None;
         } else {
             self.repetition_start_time_opt = None;
