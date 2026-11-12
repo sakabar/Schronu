@@ -1,6 +1,4 @@
-use crate::application::daily_capacity::{
-    try_local_date_and_time, try_logical_date, try_next_logical_date_start,
-};
+use crate::application::daily_capacity::{try_logical_date, try_logical_date_and_time};
 use crate::application::interface::{ProjectRegistrationError, TaskRepositoryTrait};
 pub use crate::application::task_list::{
     list_tasks, list_tasks_page, ListTasksFilter, ListTasksPage, ListTasksPageRequest,
@@ -737,19 +735,17 @@ pub fn defer_routine_task(
         field: "repetition_start_time",
         reason: "repeating task must have a start time template",
     })?;
-    let new_deadline_time = shift_local_date_and_time(
+    let new_deadline_time = shift_logical_date_and_time(
         orig_deadline_time,
         repetition_interval_days,
         deadline_time,
         "defer_routine_deadline",
-        orig_deadline_time,
     )?;
-    let new_start_time = shift_local_date_and_time(
+    let new_start_time = shift_logical_date_and_time(
         orig_start_time,
         repetition_interval_days,
         start_time,
         "defer_routine_start",
-        orig_start_time,
     )?;
 
     task.replace_deadline_time(new_deadline_time)
@@ -1096,34 +1092,37 @@ fn adjusted_repetition_estimate(
     Ok(adjusted_estimated_seconds)
 }
 
-fn resolve_date_and_time(
-    base_datetime: DateTime<Local>,
-    time: NaiveTime,
-) -> Result<DateTime<Local>, ApplicationError> {
-    let local_datetime = base_datetime.date_naive().and_time(time);
-    resolve_local_datetime(local_datetime, local_datetime.and_local_timezone(Local))
+fn shift_logical_date(
+    date: NaiveDate,
+    days: i64,
+    operation: &'static str,
+    reference: DateTime<Local>,
+) -> Result<NaiveDate, ApplicationError> {
+    Duration::try_days(days)
+        .and_then(|duration| date.checked_add_signed(duration))
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
+            operation,
+            datetime: reference,
+        })
 }
 
-fn shift_local_date_and_time(
+fn shift_logical_date_and_time(
     base_datetime: DateTime<Local>,
     days: i64,
     time: NaiveTime,
     operation: &'static str,
-    out_of_range_datetime: DateTime<Local>,
 ) -> Result<DateTime<Local>, ApplicationError> {
-    let out_of_range = || ApplicationError::LogicalDateOutOfRange {
+    let date = shift_logical_date(
+        try_logical_date(base_datetime)?,
+        days,
         operation,
-        datetime: out_of_range_datetime,
-    };
-    let duration = Duration::try_days(days).ok_or_else(out_of_range)?;
-    let target_date = base_datetime
-        .date_naive()
-        .checked_add_signed(duration)
-        .ok_or_else(out_of_range)?;
-    try_local_date_and_time(target_date, time)
+        base_datetime,
+    )?;
+    try_logical_date_and_time(date, time, operation, base_datetime)
 }
 
 pub(crate) struct RepetitionOccurrenceTimes {
+    pub(crate) logical_date: NaiveDate,
     pub(crate) start_time: DateTime<Local>,
     pub(crate) deadline_time: DateTime<Local>,
 }
@@ -1135,38 +1134,40 @@ pub(crate) fn next_repetition_occurrence_times(
     repetition_deadline_time: NaiveTime,
     days_in_advance: i64,
 ) -> Result<RepetitionOccurrenceTimes, ApplicationError> {
-    let next_logical_date_start = try_next_logical_date_start(occurrence_anchor)?;
-    let repetition_offset_days =
-        repetition_interval_days
-            .checked_sub(1)
-            .ok_or(ApplicationError::LogicalDateOutOfRange {
-                operation: "next_logical_date_start",
-                datetime: occurrence_anchor,
-            })?;
-    let next_occurrence_day = shift_local_date_and_time(
-        next_logical_date_start,
-        repetition_offset_days,
-        next_logical_date_start.time(),
+    let logical_date = shift_logical_date(
+        try_logical_date(occurrence_anchor)?,
+        repetition_interval_days,
         "next_logical_date_start",
         occurrence_anchor,
     )?;
-    let occurrence_start_time = resolve_date_and_time(next_occurrence_day, repetition_start_time)?;
+    let start_operation = "repetition_start_time";
     let start_offset_days =
         days_in_advance
             .checked_neg()
             .ok_or(ApplicationError::LogicalDateOutOfRange {
-                operation: "repetition_start_time",
-                datetime: occurrence_start_time,
+                operation: start_operation,
+                datetime: occurrence_anchor,
             })?;
-    let task_start_time = shift_local_date_and_time(
-        occurrence_start_time,
+    let start_date = shift_logical_date(
+        logical_date,
         start_offset_days,
-        occurrence_start_time.time(),
-        "repetition_start_time",
-        occurrence_start_time,
+        start_operation,
+        occurrence_anchor,
     )?;
-    let deadline_time = resolve_date_and_time(next_occurrence_day, repetition_deadline_time)?;
+    let task_start_time = try_logical_date_and_time(
+        start_date,
+        repetition_start_time,
+        start_operation,
+        occurrence_anchor,
+    )?;
+    let deadline_time = try_logical_date_and_time(
+        logical_date,
+        repetition_deadline_time,
+        "repetition_deadline_time",
+        occurrence_anchor,
+    )?;
     Ok(RepetitionOccurrenceTimes {
+        logical_date,
         start_time: task_start_time,
         deadline_time,
     })
@@ -1226,8 +1227,8 @@ fn build_next_repetition_task_attr(
     let mut new_task_attr = factory.create_task_attr(&format!(
         "{}({}/{})",
         parent_name,
-        occurrence_times.deadline_time.month(),
-        occurrence_times.deadline_time.day()
+        occurrence_times.logical_date.month(),
+        occurrence_times.logical_date.day()
     ));
     new_task_attr.set_start_time(occurrence_times.start_time);
     new_task_attr

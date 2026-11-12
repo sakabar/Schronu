@@ -870,6 +870,8 @@ SpreadsheetのA-S列は[spreadsheet_columns.tsv](spreadsheet_columns.tsv)を正�
 
 繰り返し親taskのYAMLでは、次回taskの壁時計時刻を`repetition_start_time: "HH:MM:SS"`と`repetition_deadline_time: "HH:MM:SS"`で保存します。旧YAMLは`start_time`と`deadline_time`の時刻部分から自動移行し、旧deadlineがなければ`23:59:59`を使います。繰り返し親taskに通常のdeadlineは設定できません。
 
+繰り返しの開始時刻と締切時刻は、対象論理日に割り当てます。`repetition_start_time: "01:00:00"`、`repetition_deadline_time: "05:00:00"`なら、9/21分は9/22の01:00に開始可能、05:00が締切です (`days_in_advance: 0`)。`days_in_advance`は開始日だけを前倒しします。完了後の次回生成と予定の予測はこの割り当てを共有します。`W`とMCPの`defer_routine_task`は、保存された開始と締切それぞれの論理日を反復間隔ぶん進め、親のテンプレート時刻を適用します。保存済みの各回は読み込み時に元の日時を保持します。
+
 旧dataに`fixed_start`がない場合だけ、`deadline_time == start_time + estimated_work_seconds`と完全一致するタスクを従来の予定としてfixed扱いします。明示的な`fixed_start: false`は推定で上書きしません。
 
 選択規則、slackの定義、fixed・atomic・依存関係の扱いは[予定配置policyの設計](docs/design/scheduling_policy.md)を参照してください。

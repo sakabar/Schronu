@@ -223,7 +223,7 @@ fn complete_taskは不存在の反復startをerrorにして変更しない() {
             .and_hms_opt(2, 30, 0)
             .unwrap();
         assert_complete_task_calendar_error(
-            Local.with_ymd_and_hms(2026, 3, 8, 18, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 3, 7, 18, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 2, 30, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 18, 0, 0).unwrap(),
             1,
@@ -241,7 +241,7 @@ fn complete_taskは曖昧な反復startをerrorにして変更しない() {
             .unwrap();
         let candidates = Local.from_local_datetime(&local_datetime);
         assert_complete_task_calendar_error(
-            Local.with_ymd_and_hms(2026, 11, 1, 18, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 10, 31, 18, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 1, 30, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 18, 0, 0).unwrap(),
             1,
@@ -262,7 +262,7 @@ fn complete_taskは不存在の反復deadlineをerrorにして変更しない() 
             .and_hms_opt(2, 30, 0)
             .unwrap();
         assert_complete_task_calendar_error(
-            Local.with_ymd_and_hms(2026, 3, 7, 18, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 3, 6, 18, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 9, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 2, 30, 0).unwrap(),
             0,
@@ -280,7 +280,7 @@ fn complete_taskは曖昧な反復deadlineをerrorにして変更しない() {
             .unwrap();
         let candidates = Local.from_local_datetime(&local_datetime);
         assert_complete_task_calendar_error(
-            Local.with_ymd_and_hms(2026, 10, 31, 18, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 10, 30, 18, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 9, 0, 0).unwrap(),
             Local.with_ymd_and_hms(2026, 1, 1, 1, 30, 0).unwrap(),
             0,
@@ -475,7 +475,7 @@ fn defer_routine_taskは親の不存在deadline時刻をerrorにして変更し�
             .unwrap();
         assert_defer_routine_calendar_error(
             Local.with_ymd_and_hms(2026, 3, 7, 9, 0, 0).unwrap(),
-            Local.with_ymd_and_hms(2026, 3, 7, 10, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 3, 6, 10, 0, 0).unwrap(),
             Some(Local.with_ymd_and_hms(2026, 1, 1, 2, 30, 0).unwrap()),
             ApplicationError::NonexistentLocalDateTime { local_datetime },
         );
@@ -492,7 +492,7 @@ fn defer_routine_taskは親の曖昧deadline時刻をerrorにして変更しな�
         let candidates = Local.from_local_datetime(&local_datetime);
         assert_defer_routine_calendar_error(
             Local.with_ymd_and_hms(2026, 10, 31, 9, 0, 0).unwrap(),
-            Local.with_ymd_and_hms(2026, 10, 31, 10, 0, 0).unwrap(),
+            Local.with_ymd_and_hms(2026, 10, 30, 10, 0, 0).unwrap(),
             Some(Local.with_ymd_and_hms(2026, 1, 1, 1, 30, 0).unwrap()),
             ApplicationError::AmbiguousLocalDateTime {
                 local_datetime,

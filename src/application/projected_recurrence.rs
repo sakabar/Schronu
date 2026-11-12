@@ -204,18 +204,25 @@ fn append_projected_occurrences(
 
     let next_occurrence = |anchor, interval_days| {
         record_schedule(ScheduleEvent::ProjectionStep);
-        next_repetition_occurrence_times(
+        let occurrence = next_repetition_occurrence_times(
             anchor,
             interval_days,
             repetition_start_time,
             repetition_deadline_time,
             days_in_advance,
-        )
+        )?;
+        if occurrence.deadline_time <= anchor {
+            return Err(ApplicationError::InvalidInput {
+                field: "repetition_interval_days",
+                reason: "projected repetition deadline must advance beyond the previous deadline",
+            });
+        }
+        Ok(occurrence)
     };
     let mut generated_deadlines = HashSet::new();
     for mut anchor in anchors {
         let mut occurrence = next_occurrence(anchor, interval_days)?;
-        let first_occurrence_date = try_logical_date(occurrence.deadline_time)?;
+        let first_occurrence_date = occurrence.logical_date;
         if first_occurrence_date < horizon_start {
             let projection_range_error = || ApplicationError::LogicalDateOutOfRange {
                 operation: "repetition_projection_horizon",
@@ -247,7 +254,7 @@ fn append_projected_occurrences(
 
         loop {
             anchor = occurrence.deadline_time;
-            let occurrence_date = try_logical_date(occurrence.deadline_time)?;
+            let occurrence_date = occurrence.logical_date;
             if occurrence_date >= horizon_end {
                 break;
             }
@@ -261,8 +268,8 @@ fn append_projected_occurrences(
                     &format!(
                         "{}({}/{})",
                         name,
-                        occurrence.deadline_time.month(),
-                        occurrence.deadline_time.day()
+                        occurrence_date.month(),
+                        occurrence_date.day()
                     ),
                     projected_internal_id,
                     last_synced_time,

@@ -4027,6 +4027,10 @@ fn test_execute_defer_routine_親の反復間隔と任意deadline時刻で延期
             Some(Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap()),
             Local.with_ymd_and_hms(2026, 8, 20, 18, 0, 0).unwrap(),
         ),
+        (
+            Some(Local.with_ymd_and_hms(2026, 8, 21, 5, 0, 0).unwrap()),
+            Local.with_ymd_and_hms(2026, 8, 21, 5, 0, 0).unwrap(),
+        ),
         (None, Local.with_ymd_and_hms(2026, 8, 20, 10, 0, 0).unwrap()),
     ] {
         let parent = new_test_task_handle("正常反復routine親").unwrap();
