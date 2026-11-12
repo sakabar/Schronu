@@ -13,7 +13,7 @@ use crate::application::flatten_use_case::{FlattenResult, UnresolvedReason};
 use crate::application::pack_use_case::PackResult;
 use crate::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
-    CompleteTaskInput, CreateTaskInput,
+    CompleteTaskInput, CreateRepetitionInput, CreateTaskInput,
 };
 use crate::entity::task::{TaskAttr, TaskHandle};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
@@ -87,7 +87,10 @@ pub(super) trait ProjectCommandContext {
     fn create_task(&mut self, input: CreateTaskInput) -> Result<Uuid, ApplicationError>;
     fn breakdown_task(&mut self, input: BreakdownTaskInput) -> Result<Vec<Uuid>, ApplicationError>;
     fn create_task_attr(&mut self, name: &str) -> TaskAttr;
-    fn set_estimate(&mut self, task_id: Uuid, seconds: i64) -> Result<(), ApplicationError>;
+    fn create_repetition(
+        &mut self,
+        input: CreateRepetitionInput,
+    ) -> Result<Vec<Uuid>, ApplicationError>;
     fn focused_task_id(&self) -> Option<Uuid>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
     fn completed_task_report(
@@ -567,20 +570,32 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
         CommandAction::Repeat {
             name,
             estimated_minutes,
-            day,
+            interval_days,
             start_time,
             deadline_time,
         } => {
             let mut lines = Vec::new();
-            let result = execute_create_repetition_task(
-                context,
-                name,
-                day,
-                *estimated_minutes,
-                start_time,
-                deadline_time,
-                &mut lines,
-            );
+            let result = match context.focused_task_id() {
+                Some(parent_id) => estimated_work_seconds_from_minutes(*estimated_minutes)
+                    .and_then(|estimated_work_seconds| {
+                        context.create_repetition(CreateRepetitionInput {
+                            parent_id,
+                            name: name.clone(),
+                            estimated_work_seconds,
+                            interval_days: *interval_days,
+                            start_time: *start_time,
+                            deadline_time: *deadline_time,
+                        })
+                    })
+                    .map(|ids| {
+                        lines.extend(ids.iter().map(|id| format!("{id} {name}")));
+                        context.set_focused_task_id(ids.first().copied());
+                    }),
+                None => Err(ApplicationError::InvalidInput {
+                    field: "focus",
+                    reason: "フォーカス中のタスクがありません",
+                }),
+            };
             Ok(Some(project_command_outcome(kind, lines, result.err())))
         }
         CommandAction::TimeExpression {
@@ -1188,53 +1203,6 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
     Ok(Some(new_task_id))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn execute_create_repetition_task<C: ProjectCommandContext + ?Sized>(
-    context: &mut C,
-    name: &str,
-    day: &str,
-    estimated_work_minutes: i64,
-    _start_time: &str,
-    _deadline_time: &str,
-    lines: &mut Vec<String>,
-) -> Result<Option<Uuid>, ApplicationError> {
-    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
-    let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
-        return Ok(None);
-    };
-    append_project_lines(lines, &child_ids, &[name]);
-    let repetition_parent_task_opt = context.focused_task()?;
-    if let Some(task_id) = repetition_parent_task_opt
-        .map(|task| task.get_id())
-        .transpose()
-        .map_err(ApplicationError::TaskTree)?
-    {
-        context.set_estimate(task_id, estimated_work_seconds)?;
-    }
-
-    let task_num = if day == "毎" { 7 } else { 4 };
-    if let Some(repetition_parent_task_id) = context.focused_task_id() {
-        for _ in 0..task_num {
-            let Some(child_ids) = execute_breakdown(context, &[name], &None)? else {
-                return Ok(None);
-            };
-            append_project_lines(lines, &child_ids, &[name]);
-            let child_task_opt = context.focused_task()?;
-            if let Some(task_id) = child_task_opt
-                .map(|task| task.get_id())
-                .transpose()
-                .map_err(ApplicationError::TaskTree)?
-            {
-                context.set_estimate(task_id, estimated_work_seconds)?;
-            }
-            context.set_focused_task_id(Some(repetition_parent_task_id));
-        }
-        Ok(Some(repetition_parent_task_id))
-    } else {
-        Ok(None)
-    }
-}
-
 pub(super) fn decide_time_values(
     values: &[String],
     now: &DateTime<Local>,
@@ -1447,8 +1415,11 @@ mod task_generation_context_tests {
             )
         }
 
-        fn set_estimate(&mut self, _task_id: Uuid, _seconds: i64) -> Result<(), ApplicationError> {
-            unreachable!("this contract test does not set estimates through the context")
+        fn create_repetition(
+            &mut self,
+            _input: CreateRepetitionInput,
+        ) -> Result<Vec<Uuid>, ApplicationError> {
+            unreachable!("this contract test does not create repetitions")
         }
 
         fn focused_task_id(&self) -> Option<Uuid> {

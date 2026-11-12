@@ -3,6 +3,7 @@ use crate::application::task_use_case::{
 };
 use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
+use chrono::NaiveTime;
 use regex::Regex;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -197,9 +198,9 @@ pub(super) enum CommandAction {
     Repeat {
         name: String,
         estimated_minutes: i64,
-        day: String,
-        start_time: String,
-        deadline_time: String,
+        interval_days: i64,
+        start_time: Option<NaiveTime>,
+        deadline_time: Option<NaiveTime>,
     },
     TimeExpression {
         kind: CommandKind,
@@ -761,7 +762,7 @@ fn parse_action(
             }
         }
         CommandKind::Repeat => {
-            let [name, estimated_minutes, day, start_time, deadline_time] = arguments else {
+            let [name, estimated_minutes, interval_days, times @ ..] = arguments else {
                 unreachable!("repeat arity was validated before field parsing")
             };
             CommandAction::Repeat {
@@ -771,9 +772,17 @@ fn parse_action(
                     definition,
                     "estimated_work_minutes",
                 )?,
-                day: day.clone(),
-                start_time: start_time.clone(),
-                deadline_time: deadline_time.clone(),
+                interval_days: parse_integer_field(
+                    interval_days,
+                    definition,
+                    "repetition_interval_days",
+                )?,
+                start_time: parse_repeat_time(times.first(), definition, "repetition_start_time")?,
+                deadline_time: parse_repeat_time(
+                    times.get(1),
+                    definition,
+                    "repetition_deadline_time",
+                )?,
             }
         }
         CommandKind::Appointment | CommandKind::Start | CommandKind::Defer => {
@@ -992,6 +1001,43 @@ fn optional_i64(
         .transpose()
 }
 
+fn parse_repeat_time(
+    value: Option<&String>,
+    definition: CommandDefinition,
+    field: &'static str,
+) -> Result<Option<NaiveTime>, CommandParseError> {
+    value
+        .map(|value| {
+            let padded;
+            let value = if matches!(value.as_bytes(), [b'0'..=b'9', b':', ..]) {
+                padded = format!("0{value}");
+                &padded
+            } else {
+                value
+            };
+            let format = match value.len() {
+                5 => "%H:%M",
+                8 => "%H:%M:%S",
+                _ => "",
+            };
+            NaiveTime::parse_from_str(value, format)
+                .ok()
+                .filter(|time| {
+                    time.format(format).to_string() == *value
+                        && chrono::Timelike::nanosecond(time) == 0
+                })
+                .ok_or_else(|| {
+                    parse_error(
+                        definition.canonical_name,
+                        field,
+                        "1:00 または 01:00:30 のように指定してください",
+                        definition.usage,
+                    )
+                })
+        })
+        .transpose()
+}
+
 fn parse_integer_field(
     value: &str,
     definition: CommandDefinition,
@@ -1053,8 +1099,8 @@ fn command_definition(name: &str) -> Option<CommandDefinition> {
         "繰" | "repeat" => CommandDefinition::new(
             Kind::Repeat,
             "繰",
-            "繰 <name> <minutes> <day> <start> <deadline>",
-            5,
+            "繰 <名前> <見積分> <繰返間隔> [開始時刻] [締切時刻]",
+            3,
             Some(5),
         ),
         "約" | "appointment" => {
@@ -1175,7 +1221,7 @@ pub(super) fn command_with_minimum_valid_arguments(command: &str) -> String {
     let arguments = match command {
         "新" | "new" | "遊" | "hobby" | "突" | "unplanned" => " project 15",
         "連" | "sequential" | "seq" => " task 15 1 2",
-        "繰" | "repeat" => " task 15 月 09:00 10:00",
+        "繰" | "repeat" => " task 15 2",
         "約" | "appointment" | "始" | "start" => " 今",
         "見" | "focus" | "fc" | "選" | "pick" => " 00000000-0000-0000-0000-000000000001",
         "上" | "nextup" | "nu" | "下" | "breakdown" | "bd" => " task 15",

@@ -546,6 +546,48 @@ fn get_focus_選択されたtaskが取得できなければnoneを返す() {
 }
 
 #[test]
+fn create_repetitionは無効な生成idで何も追加しない() {
+    let now = fixed_now();
+    let root = crate::test_support::new_task_handle_at("作成先", now).unwrap();
+    let before = root.snapshot().unwrap();
+    let revision = root.get_persistent_mutation_revision().unwrap();
+    let repository = TestTaskRepository::new(vec![root.clone()], now);
+    let duplicate_id = Uuid::from_u128(42);
+    for (id, error) in [
+        (
+            duplicate_id,
+            ProjectRegistrationError::DuplicateTaskId(duplicate_id),
+        ),
+        (
+            Uuid::nil(),
+            ProjectRegistrationError::NilTaskId {
+                task_path: "定期作業".to_string(),
+            },
+        ),
+    ] {
+        let mut next_id = || id;
+        let mut factory = TaskFactory::new(now, &mut next_id);
+        assert_eq!(
+            create_repetition(
+                &repository,
+                CreateRepetitionInput {
+                    parent_id: root.get_id().unwrap(),
+                    name: "定期作業".to_string(),
+                    estimated_work_seconds: 15 * 60,
+                    interval_days: 2,
+                    start_time: None,
+                    deadline_time: None,
+                },
+                &mut factory
+            ),
+            Err(ApplicationError::ProjectRegistration(error))
+        );
+        assert_eq!(root.snapshot().unwrap(), before);
+        assert_eq!(root.get_persistent_mutation_revision().unwrap(), revision);
+    }
+}
+
+#[test]
 fn create_task_属性を設定してsaveしない() {
     let pending_until = Local.with_ymd_and_hms(2026, 8, 12, 6, 0, 0).unwrap();
     let mut repository = TestTaskRepository::new(vec![], fixed_now());
@@ -1784,7 +1826,7 @@ fn complete_task_反復anchorの次論理日計算不能をerrorにして変更�
     assert_eq!(
         actual,
         Err(ApplicationError::LogicalDateOutOfRange {
-            operation: "next_logical_date_start",
+            operation: "repetition_occurrence_date",
             datetime: occurrence_anchor,
         })
     );

@@ -794,6 +794,25 @@ fn test_反復完了は親がrootでなくてもroot_revisionだけを1進める
 }
 
 #[test]
+fn 反復作成は階層を編集できない場合に何も追加しない() {
+    let root = new_test_task_handle("作成先").unwrap();
+    let before = root.snapshot().unwrap();
+    let revision = root.get_persistent_mutation_revision().unwrap();
+    let prohibition = root.node.tree().prohibit_hierarchy_edit().unwrap();
+
+    assert_eq!(
+        root.create_child_with_children(
+            new_test_task_attr("反復親"),
+            vec![new_test_task_attr("初回")],
+        ),
+        Err(TaskTreeError::HierarchyGrant)
+    );
+    drop(prohibition);
+    assert_eq!(root.snapshot().unwrap(), before);
+    assert_eq!(root.get_persistent_mutation_revision().unwrap(), revision);
+}
+
+#[test]
 fn test_反復完了はhierarchy_grant取得失敗時に何も変更しない() {
     let parent = new_test_task_handle("反復親").unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
