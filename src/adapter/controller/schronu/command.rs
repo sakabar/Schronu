@@ -1008,6 +1008,13 @@ fn parse_repeat_time(
 ) -> Result<Option<NaiveTime>, CommandParseError> {
     value
         .map(|value| {
+            let padded;
+            let value = if matches!(value.as_bytes(), [b'0'..=b'9', b':', ..]) {
+                padded = format!("0{value}");
+                &padded
+            } else {
+                value
+            };
             let format = match value.len() {
                 5 => "%H:%M",
                 8 => "%H:%M:%S",
@@ -1023,7 +1030,7 @@ fn parse_repeat_time(
                     parse_error(
                         definition.canonical_name,
                         field,
-                        "HH:MM または HH:MM:SS で指定してください",
+                        "1:00 または 01:00:30 のように指定してください",
                         definition.usage,
                     )
                 })

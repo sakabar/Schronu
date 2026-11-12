@@ -4503,6 +4503,30 @@ fn repetition_cliは保存後も各初期回を予測し完了した回だけ次
 }
 
 #[test]
+fn repetition_cliは開始と締切の時を1桁で指定できる() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for (command, start_second, deadline_second) in [
+        ("繰 定期作業 15 7 1:00 5:00", 0, 0),
+        ("repeat 定期作業 15 7 1:00:30 5:00:45", 30, 45),
+    ] {
+        let root = new_test_task_handle("作成先").unwrap();
+        let root_id = root.get_id().unwrap();
+        let result = execute_command_for_test(root, now, Some(root_id), command);
+        let parents = result.task.get_children().unwrap();
+        assert_eq!(parents.len(), 1, "{command}: {}", result.output);
+        let child = parents[0].get_children().unwrap().remove(0);
+        assert_eq!(
+            child.get_start_time().unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 12, 1, 0, start_second).unwrap()
+        );
+        assert_eq!(
+            child.get_deadline_time_opt().unwrap(),
+            Local.with_ymd_and_hms(2026, 8, 12, 5, 0, deadline_second).single()
+        );
+    }
+}
+
+#[test]
 fn repetition_cliは無効な入力やフォーカスなしでタスクを作らない() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("作成先").unwrap();
@@ -4513,6 +4537,9 @@ fn repetition_cliは無効な入力やフォーカスなしでタスクを作ら
         ("繰 定期作業 15 -1", Some(root_id), "repetition_interval_days"),
         ("繰 定期作業 15 9223372036854775807", Some(root_id), "repetition_occurrence_date"),
         ("繰 定期作業 15 2 25:00", Some(root_id), "repetition_start_time"),
+        ("繰 定期作業 15 2 1:0", Some(root_id), "repetition_start_time"),
+        ("繰 定期作業 15 2 24:00", Some(root_id), "repetition_start_time"),
+        ("繰 定期作業 15 2 06:00 1:00:60", Some(root_id), "repetition_deadline_time"),
         ("繰 定期作業 15 2 06:00 09:00:60", Some(root_id), "repetition_deadline_time"),
         ("繰 定期作業 15 2 10:00 09:00", Some(root_id), "repetition_deadline_time"),
         ("繰 定期作業 15 月 06:00 09:00", Some(root_id), "[開始時刻] [締切時刻]"),
