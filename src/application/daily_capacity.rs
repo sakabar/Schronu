@@ -219,6 +219,21 @@ pub fn try_local_date_and_time(
     resolve_local_datetime(local_datetime, Local.from_local_datetime(&local_datetime))
 }
 
+pub(crate) fn try_logical_date_and_time(
+    date: NaiveDate,
+    time: NaiveTime,
+    operation: &'static str,
+    reference: DateTime<Local>,
+) -> Result<DateTime<Local>, ApplicationError> {
+    let local_datetime = LogicalDateTimePolicy::new(END_OF_DAY_OFFSET_MINUTES)
+        .logical_date_and_time_naive(date, time)
+        .ok_or(ApplicationError::LogicalDateOutOfRange {
+            operation,
+            datetime: reference,
+        })?;
+    resolve_local_datetime(local_datetime, Local.from_local_datetime(&local_datetime))
+}
+
 pub fn try_next_logical_date_start(
     datetime: DateTime<Local>,
 ) -> Result<DateTime<Local>, ApplicationError> {

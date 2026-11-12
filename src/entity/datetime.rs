@@ -1,6 +1,6 @@
 use chrono::{
-    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, ParseError, TimeZone,
-    Timelike,
+    DateTime, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, ParseError,
+    TimeZone, Timelike,
 };
 use std::fmt;
 
@@ -212,6 +212,19 @@ impl LogicalDateTimePolicy {
                 datetime: deadline,
                 seconds: remaining_work_seconds,
             })
+    }
+
+    pub(crate) fn logical_date_and_time_naive(
+        &self,
+        date: NaiveDate,
+        time: NaiveTime,
+    ) -> Option<NaiveDateTime> {
+        let date = if time.hour() < LOGICAL_DATE_START_HOUR {
+            date.succ_opt()?
+        } else {
+            date
+        };
+        Some(date.and_time(time))
     }
 
     pub(crate) fn logical_date_start_naive(&self, date: NaiveDate) -> Option<NaiveDateTime> {
