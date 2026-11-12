@@ -848,68 +848,13 @@ fn mcp_stdio_lock_symlinkはcallでstructured_errorとなり参照先を変更�
 }
 
 #[test]
-fn mcp_stdio_preserves_estimated_work_seconds() {
-    let storage = TestStorageDirectory::new();
-    let create = call_tool(
-        storage.path(),
-        "create",
-        "create_task",
-        Some(json!({"name": "estimated task", "estimated_work_seconds": 90})),
-    );
-    assert_eq!(create["result"]["isError"], false);
-    let task_id = create["result"]["structuredContent"]["task_id"]
-        .as_str()
-        .unwrap();
-    let read_estimate = |task_id: &str| {
-        let response = call_tool(
-            storage.path(),
-            "read",
-            "get_task",
-            Some(json!({"task_id": task_id})),
-        );
-        assert_eq!(response["result"]["isError"], false);
-        response["result"]["structuredContent"]["task"]["estimated_work_seconds"]
-            .as_i64()
-            .unwrap()
-    };
-    assert_eq!(read_estimate(task_id), 90);
-
-    for (fields, expected) in [
-        (json!({"actual_work_seconds": 5}), 90),
-        (json!({"estimated_work_seconds": 0}), 0),
-        (json!({"estimated_work_seconds": 90}), 90),
-    ] {
-        let mut arguments = fields;
-        arguments["task_id"] = json!(task_id);
-        let update = call_tool(storage.path(), "update", "update_task", Some(arguments));
-        assert_eq!(update["result"]["isError"], false);
-        assert_eq!(read_estimate(task_id), expected);
-    }
-
-    for (arguments, expected) in [
-        (json!({"name": "default estimate"}), 900),
-        (
-            json!({"name": "zero estimate", "estimated_work_seconds": 0}),
-            0,
-        ),
-    ] {
-        let create = call_tool(storage.path(), "create", "create_task", Some(arguments));
-        assert_eq!(create["result"]["isError"], false);
-        let task_id = create["result"]["structuredContent"]["task_id"]
-            .as_str()
-            .unwrap();
-        assert_eq!(read_estimate(task_id), expected);
-    }
-}
-
-#[test]
 fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後も保存内容を読む() {
     let storage = TestStorageDirectory::new();
     let create = call_tool(
         storage.path(),
         "create",
         "create_task",
-        Some(json!({"name": "integration project", "estimated_work_seconds": 1800})),
+        Some(json!({"name": "integration project", "estimated_work_seconds": 90})),
     );
     let parent_id = create["result"]["structuredContent"]["task_id"]
         .as_str()
@@ -979,7 +924,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         "update_task",
         Some(json!({
             "task_id": child_id,
-            "estimated_work_seconds": 600,
+            "estimated_work_seconds": 90,
             "deadline_time": deadline.to_rfc3339(),
             "category": "recovery"
         })),
@@ -999,7 +944,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
             .unwrap(),
         pending_until.fixed_offset()
     );
-    assert_eq!(reloaded_child["estimated_work_seconds"], 10 * 60);
+    assert_eq!(reloaded_child["estimated_work_seconds"], 90);
     assert_eq!(
         chrono::DateTime::parse_from_rfc3339(reloaded_child["deadline_time"].as_str().unwrap())
             .unwrap(),
@@ -1040,6 +985,10 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
     assert_eq!(
         reloaded["result"]["structuredContent"]["task"]["original_status"],
         "done"
+    );
+    assert_eq!(
+        reloaded["result"]["structuredContent"]["task"]["estimated_work_seconds"],
+        90
     );
 }
 

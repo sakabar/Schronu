@@ -650,27 +650,33 @@ fn breakdown_task_handlerはtyped_inputの空白名をapplicationへそのまま
 }
 
 #[test]
-fn create_task_handler_accepts_the_maximum_estimate_without_a_deadline() {
-    let mut repository = RecordingRepository::new(vec![]);
-    let response = call_create_task(
-        &mut repository,
-        json!("create-max-estimate"),
-        CreateTaskInput {
-            name: NonEmptyString("maximum estimate".to_string()),
-            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(i64::MAX)),
-            pending_until: OptionalValue::Missing,
-        },
-    );
+fn create_task_handler_preserves_explicit_estimates_and_the_default() {
+    for (estimate, expected) in [
+        (OptionalValue::Missing, 900),
+        (OptionalValue::Value(NonNegativeI64(0)), 0),
+        (OptionalValue::Value(NonNegativeI64(i64::MAX)), i64::MAX),
+    ] {
+        let mut repository = RecordingRepository::new(vec![]);
+        let response = call_create_task(
+            &mut repository,
+            json!("create-estimate"),
+            CreateTaskInput {
+                name: NonEmptyString("estimated task".to_string()),
+                estimated_work_seconds: estimate,
+                pending_until: OptionalValue::Missing,
+            },
+        );
 
-    assert_eq!(response["result"]["isError"], false);
-    let task_id = Uuid::parse_str(
-        response["result"]["structuredContent"]["task_id"]
-            .as_str()
-            .unwrap(),
-    )
-    .unwrap();
-    let task = repository.get_by_id(task_id).unwrap().unwrap();
-    assert_eq!(task.get_estimated_work_seconds().unwrap(), i64::MAX);
+        assert_eq!(response["result"]["isError"], false);
+        let task_id = Uuid::parse_str(
+            response["result"]["structuredContent"]["task_id"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        let task = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(task.get_estimated_work_seconds().unwrap(), expected);
+    }
 }
 
 #[test]
@@ -981,7 +987,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         json!("typed-update-missing-patches"),
         UpdateTaskInput {
             task_id: UuidValue(task_id),
-            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(2700)),
+            estimated_work_seconds: OptionalValue::Value(NonNegativeI64(0)),
             actual_work_seconds: OptionalValue::Missing,
             deadline_time: NullablePatch::Missing,
             category: NullablePatch::Missing,
@@ -990,7 +996,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
 
     assert_eq!(response["id"], "typed-update-missing-patches");
     assert_eq!(response["result"]["isError"], false);
-    assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 45 * 60);
+    assert_eq!(task_observer.get_estimated_work_seconds().unwrap(), 0);
     assert_eq!(
         task_observer.get_deadline_time_opt().unwrap(),
         Some(deadline)
