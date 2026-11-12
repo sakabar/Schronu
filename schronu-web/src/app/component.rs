@@ -174,8 +174,8 @@ const NAVIGATION_TABS: [(ActiveTab, &str); 4] = [
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 fn adjacent_tab(active_tab: ActiveTab, key: &str) -> Option<ActiveTab> {
     let offset = match key {
-        "ArrowLeft" => NAVIGATION_TABS.len() - 1,
-        "ArrowRight" => 1,
+        "ArrowLeft" | "h" | "H" => NAVIGATION_TABS.len() - 1,
+        "ArrowRight" | "l" | "L" => 1,
         _ => return None,
     };
     let current = NAVIGATION_TABS
@@ -186,7 +186,7 @@ fn adjacent_tab(active_tab: ActiveTab, key: &str) -> Option<ActiveTab> {
 
 #[cfg(test)]
 #[test]
-fn arrow_navigation_wraps_in_display_order() {
+fn tab_navigation_shortcuts_wrap_in_display_order() {
     use ActiveTab::{Create, List, Load, Session};
 
     for (current, left, right) in [
@@ -195,8 +195,20 @@ fn arrow_navigation_wraps_in_display_order() {
         (Load, List, Create),
         (Create, Load, Session),
     ] {
-        assert_eq!(adjacent_tab(current, "ArrowLeft"), Some(left));
-        assert_eq!(adjacent_tab(current, "ArrowRight"), Some(right));
+        for key in ["ArrowLeft", "h", "H"] {
+            assert_eq!(
+                adjacent_tab(current, key),
+                Some(left),
+                "{current:?} + {key}"
+            );
+        }
+        for key in ["ArrowRight", "l", "L"] {
+            assert_eq!(
+                adjacent_tab(current, key),
+                Some(right),
+                "{current:?} + {key}"
+            );
+        }
         assert_eq!(adjacent_tab(current, "ArrowUp"), None);
     }
 }

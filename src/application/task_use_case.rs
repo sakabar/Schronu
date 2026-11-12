@@ -200,7 +200,7 @@ pub(crate) fn resolve_local_datetime(
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTaskInput {
     pub name: String,
-    pub estimated_work_minutes: Option<i64>,
+    pub estimated_work_seconds: Option<i64>,
     pub pending_until: Option<DateTime<Local>>,
 }
 
@@ -409,11 +409,9 @@ pub fn create_task(
             .map_err(ApplicationError::TaskTree)?;
     }
 
-    if let Some(estimated_work_minutes) = input.estimated_work_minutes {
+    if let Some(estimated_work_seconds) = input.estimated_work_seconds {
         root_task
-            .set_estimated_work_seconds(estimated_work_seconds_from_minutes(
-                estimated_work_minutes,
-            )?)
+            .set_estimated_work_seconds(validate_estimated_work_seconds(estimated_work_seconds)?)
             .map_err(ApplicationError::TaskTree)?;
     }
 
@@ -859,9 +857,9 @@ pub(crate) fn rename_task(
 pub fn set_estimate(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,
-    estimated_work_minutes: i64,
+    estimated_work_seconds: i64,
 ) -> Result<(), ApplicationError> {
-    let estimated_work_seconds = estimated_work_seconds_from_minutes(estimated_work_minutes)?;
+    let estimated_work_seconds = validate_estimated_work_seconds(estimated_work_seconds)?;
     let task = find_task(repository, task_id)?;
     task.set_estimated_work_seconds(estimated_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
@@ -947,6 +945,16 @@ pub fn validate_task_name(name: &str, field: &'static str) -> Result<(), Applica
         field,
         reason: violation.reason(),
     })
+}
+
+fn validate_estimated_work_seconds(seconds: i64) -> Result<i64, ApplicationError> {
+    if seconds < 0 {
+        return Err(ApplicationError::InvalidInput {
+            field: "estimated_work_seconds",
+            reason: "must not be negative",
+        });
+    }
+    Ok(seconds)
 }
 
 pub fn estimated_work_seconds_from_minutes(minutes: i64) -> Result<i64, ApplicationError> {

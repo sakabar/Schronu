@@ -56,7 +56,7 @@ rm -rf target/dx/schronu-web
 
 起動後は`http://127.0.0.1:8080`を開きます。application serverは`127.0.0.1`へ固定しており、認証は設けていません。Dioxus CLIの`serve`へ外部addressを指定しないでください。
 
-ページ内では`Ctrl+Shift+←`で左、`Ctrl+Shift+→`で右のtabへ移動します。「セッション」の左は「作成」、「作成」の右は「セッション」です。入力・選択・編集欄とIME変換中は既存のキー操作を優先します。
+ページ内では`Ctrl+Shift+←`または`Ctrl+Shift+H`で左、`Ctrl+Shift+→`または`Ctrl+Shift+L`で右のtabへ移動します。「セッション」の左は「作成」、「作成」の右は「セッション」です。入力・選択・編集欄とIME変換中は既存のキー操作を優先します。
 
 「作成」tabではタスク名と任意の見積分数から、CLIの`新`と同じルートのプロジェクトタスクを作成します。見積省略時は15分で、翌論理日06:00まで保留します。成功後はtabに留まって入力が空になり、次に一覧へ入る時に最新の予定を取得します。Webの作成はCLIのフォーカスを変更しません。
 
@@ -80,7 +80,7 @@ rm -rf target/dx/schronu-web
 
 予定・全件・完了の検索は、前後空白を除いたUnicode小文字化によるtask名の部分一致です。共有検索文字列は各一覧との往復、全件無効化後、reload後も維持します。全件一覧は検索後の先頭500行を表示し、日付区切りをtask件数に含めません。「さらに表示」で500行ずつ上限を増やすと、表示対象の先頭から日付区切りを再投影します。検索条件を変更またはclearすると表示上限を500行へ戻します。「全て」の表示中も日付入力を使用でき、妥当な日付を送信すると日付別一覧へ切り替わります。
 
-負荷tabは「日別負荷」を初期表示し、「繰返負荷」とclient内で切り替えます。両表示で上部の余白、更新button、表示切替の位置を共通にし、取得後の見出しを「今日からN日の負荷」(日別14日、繰返28日)に揃えます。日別負荷はCLIの`帯`と同じ区分・累積差分を、今日から13日後までの連続14日について表示します。共通見出しは「日付 / 余差累 / 空差累 / 超過 / 時間内訳」とし、各rowへ日付、3数値、24時間固定の帯を横並びで表示します。日付は`12/31(木)`のように1行で表示し、「今日」は表示しません。日付列は64px(幅380px以下は60px)、数値列は余差累6ch・空差累6ch・超過5chに詰めます。余差累・空差累は符号付き時間を表示します。超過は帯に収める前の利用不可・経過済み・繰返・単発の合計から24時間を引いた差で、正は`HH:MM`、負は`-HH:MM`、ゼロは`0:00`です。負値の絶対値は帯の余差と空きの合計です。丸め前の秒数が正なら赤、負なら緑で表示し、余差累と超過の0は灰色、空差累の0は緑で表示します。括弧を含む(土)は青、(日)は赤で表示します。Webの帯は隣接区分を識別しやすいよう、繰返を明るい青、余差を深緑、空きを明るい緑で表示します。正の超過は各帯の直下に右寄せの赤いレールで示し、1日全体は24時間、当日の残り枠は残り容量をそれぞれ幅の基準とします。当日だけは利用不可と経過済みを除外し、残る4区分を残り容量に対して再正規化した「残り枠」を1日全体の帯より上へ表示します。残り枠には「残り」と容量を表示し、1日全体captionと`24:00`は省略します。当日の2本の帯には4pxの間隔を置き、列幅を揃えます。月曜始まりの週単位にまとめ、日曜と月曜の間だけ通常の行間に8pxを加えます。先頭が月曜でも上端に余白は追加しません。通常のrowは48px以上、compact時は未来日36px以上、当日40px以上です。高さ60rem以下ではtoolbar、凡例、rowをcompact化し、凡例を1行(幅380px以下は2行)にします。更新時刻は表示せず、更新buttonを小さくします。数値は±99:59を上限とし、超過の実値はARIA labelへ秒まで保持します。412×760pxの成功時表示では14日分が縦scrollなしで収まります。画面高にかかわらず内容に応じた高さで表示し、高さが足りない場合やerror表示中はrowを重ねずpageを縦scrollします。下部に日付範囲・日数のsummaryは表示しません。rowを押すと対象日の一覧へ移ります。
+負荷tabは「日別負荷」を初期表示し、「繰返負荷」とclient内で切り替えます。両表示で上部の余白、更新button、表示切替の位置を共通にし、取得後の見出しを「今日からN日の負荷」(日別14日、繰返28日)に揃えます。日別負荷はCLIの`帯`と同じ区分・累積差分を、今日から13日後までの連続14日について表示します。共通見出しは「日付 / 余差累 / 空差累 / 超過 / 時間内訳」とし、各rowへ日付、3数値、24時間固定の帯を横並びで表示します。日付は`12/31(木)`のように1行で表示し、「今日」は表示しません。日付列は64px(幅380px以下は60px)、数値列は余差累6ch・空差累6ch・超過5chに詰めます。余差累・空差累は符号付き時間を表示します。超過は帯に収める前の利用不可・経過済み・繰返・単発の合計から24時間を引いた差で、正は`HH:MM`、負は`-HH:MM`、ゼロは`0:00`です。負値の絶対値は帯の余差と空きの合計です。丸め前の秒数が正なら赤、負なら緑で表示し、余差累と超過の0は灰色、空差累の0は緑で表示します。括弧を含む(土)は青、(日)は赤で表示します。Webの帯は隣接区分を識別しやすいよう、繰返を明るい青、余差を深緑、空きを明るい緑で表示します。正の超過は各帯の直下に右寄せの赤いレールで示し、1日全体は24時間、当日の残り枠は残り容量をそれぞれ幅の基準とします。当日だけは利用不可と経過済みを除外し、残る4区分を残り容量に対して再正規化した「残り枠」を1日全体の帯より上へ表示します。残り枠には「残り」と容量を表示し、1日全体captionと`24:00`は省略します。当日の2本の帯には4pxの間隔を置き、列幅を揃えます。月曜始まりの週単位にまとめ、日曜と月曜の間だけ通常の行間に8pxを加えます。先頭が月曜でも上端に余白は追加しません。今日を1日目として、7日目と8日目の間に濃いグレーの太線と「8日目以降」を1行で表示します。通常のrowは48px以上、compact時は未来日36px以上、当日40px以上です。高さ60rem以下ではtoolbar、凡例、rowをcompact化し、凡例を1行(幅380px以下は2行)にします。更新時刻は表示せず、更新buttonを小さくします。数値は±99:59を上限とし、超過の実値はARIA labelへ秒まで保持します。412×760pxの成功時表示では14日分が縦scrollなしで収まります。画面高にかかわらず内容に応じた高さで表示し、高さが足りない場合やerror表示中はrowを重ねずpageを縦scrollします。下部に日付範囲・日数のsummaryは表示しません。rowを押すと対象日の一覧へ移ります。
 
 繰返負荷は、今日から27日後までを月曜始まりの28日mapで表示します。日付cellは日付、繰返時間、可処分時間に対する割合を持ちます。今日だけは「更新」時点からlogical date終端までの残り可処分時間、未来日はlogical date全体を分母にします。100%超の数値も保持して濃度だけを100%で飽和させます。日付の100%未満は未丸めの負荷率rに対するr/(1-r)を0〜100の赤い濃度へ飽和させ、曜日見出しの100%未満は従来の中立背景を維持し、どちらも100%以上は濃赤背景と白文字へ切り替えます。曜日見出しは今日を含む場合も同じ曜日4日分の全日可処分時間に対する合計比で、閲覧時刻によって変わりません。初期の「全体」表は「間隔 / 28日合計 / 通常比 / 発生日数 / 1日平均 / プロジェクト・繰返」を表示します。曜日を選ぶと4日で割った曜日平均、曜日全体の可処分時間比、`4回中N回`へ切り替わり、日付を選ぶと当日時間、当日の可処分時間比、28日合計へ切り替わります。今日の日付表は「残り可処分時間比」と明示します。繰返行を選ぶと発生日をmap上で強調し、再選択または「全体」で解除します。これらの選択はserver通信やlocalStorage更新を行いません。日別内訳がない旧payloadはmapを表示せず、従来の全体表だけを表示します。負荷は手動の「更新」と、初回表示・reload・背景更新の再試行のbootstrap、自動セッション(通常・分数指定)、予定・完了一覧、「全て」の取得終了に連動して、表示tabにかかわらず1回取得する。bootstrap後に一覧取得が続く場合は一覧取得終了後だけ、「全て」は全page取得終了または途中失敗時だけ取得する。元の取得が失敗した場合や自動セッションの候補がない場合も負荷取得を行い、元のerrorと再試行状態は維持する。mutationは後続の一覧取得を通して連動し、全件自動再取得が続く場合は全page終了または途中失敗後だけ負荷を1回取得します。mutation失敗だけでは取得しません。古い・無効化済み・重複応答、tab切替だけ、local操作、負荷内の表示・範囲切替では取得せず、定期pollingもしない。負荷取得失敗時は直前のdataと更新時刻を保持し、inline errorと手動更新で再試行できる。
 
@@ -344,12 +344,12 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 | `get_task` | `task_id` | UUIDで指定した既存taskの詳細を返す |
 | `list_tasks` | optional: `period`、`statuses`、`categories`、`query`、`root_task_id`、`limit`、`cursor`、`unbounded` | project treeのpre-orderでtaskをpage取得し、指定したfilterで絞り込む |
 | `get_schedule` | optional: `from`、`until` | 06:00開始のローカル論理日範囲と重なるschedule segmentを返す |
-| `create_task` | `name`、optional: `estimated_work_minutes`、`pending_until` | root project taskを作成する。見積もり省略時は15分 |
+| `create_task` | `name`、optional: `estimated_work_seconds`、`pending_until` | root project taskを作成する。見積もり省略時は900秒 |
 | `breakdown_task` | `parent_id`、`names`、optional: `pending_until` | 入力順に親→子の直列taskを作り、`task_ids`を入力順に返す。指定親のdeadlineを全taskへ継承する |
 | `defer_task` | `task_id`、`pending_until` | original statusをPendingにして延期する。deadline policyにより指定時刻が早まる場合がある |
 | `defer_routine_task` | `task_id` | 親の反復間隔に従ってdeadlineと開始時刻を次周期へ移し、original statusをTodoへ戻す |
 | `complete_task` | `task_id`、optional: `finished_at`、`additional_actual_work_seconds` | 未完了の直接の子を持たないtaskを完了し、既存の実作業秒数へ指定値を加算する |
-| `update_task` | `task_id`と、`estimated_work_minutes`、`actual_work_seconds`、`deadline_time`、`category`のうち1つ以上 | 見積もり・実作業秒数・deadline・root projectのcategoryを更新する |
+| `update_task` | `task_id`と、`estimated_work_seconds`、`actual_work_seconds`、`deadline_time`、`category`のうち1つ以上 | 見積もり・実作業秒数・deadline・root projectのcategoryを更新する |
 
 `list_tasks.period`は必須の`field`、`from`、`until`からなり、RFC 3339日時の`from`以上`until`未満の半開区間です。`field`は`scheduled_start`、`created_at`、`deadline`、`completed_at`のいずれかです。`scheduled_start`では、計算されたschedule segmentの開始時刻が1つ以上この範囲に入るtaskを選びます。`statuses`は`todo`、`pending`、`done`、`categories`は上記categoryまたは未分類を表す`null`を配列で指定します。statusは現在時刻を反映した実効statusで判定します。`query`はtask名をUnicode lowercaseへ変換した部分一致で検索し、Unicode正規化は行いません。空文字列は検索filterなしとして扱います。`root_task_id`は指定task自身とそのsubtreeだけを対象にし、存在しないUUIDは`task_not_found`です。同じ配列内の値はOR、各filter間はANDです。`period`の省略、または`statuses`、`categories`の省略・空配列は、その項目では絞り込みません。
 
@@ -359,7 +359,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `get_schedule`の保存済みoccurrenceは変更操作に使える`task_id`を持ちます。繰り返しの将来回を示すread-onlyのprojected occurrenceは、一意な`occurrence_key`と繰り返し元の`source_task_id`を持ち、操作可能な`task_id`を持ちません。CLIの`全`と日付・名前filterでは既存の固定幅10列で表示し、B列へ表示専用のnil UUID(`00000000-0000-0000-0000-000000000000`)を置きます。この行はSpreadsheetのA〜J列へcopyしません。
 
-`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`breakdown_task.names`は1〜64件です。`estimated_work_minutes`は非負整数で、`create_task`では省略時に既定の15分です。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では作成する全taskへ同じ`pending_until`を設定し、指定親のdeadline継承によってその時刻が早まる場合があります。
+`create_task.name`と`breakdown_task.names`の各要素は、前後の空白を除いて空でない文字列にします。`123`、`+123`、`-123`のように、数字だけ、または先頭の`+`か`-`と数字だけからなる名前は指定できません。`breakdown_task.names`は1〜64件です。`estimated_work_seconds`は非負の整数秒です。`create_task`では省略時に900秒を使い、`update_task`では省略時に現在の見積もりを維持します。`pending_until`を省略するとoriginal statusはTodo、指定するとPendingです。ただし指定時刻が未来でなければ実効statusはTodoになり得ます。`breakdown_task`では作成する全taskへ同じ`pending_until`を設定し、指定親のdeadline継承によってその時刻が早まる場合があります。
 
 `defer_task`でも、指定した`pending_until`がdeadline policyによって早まる場合があり、時刻が未来でなければ実効statusはTodoになり得ます。`defer_routine_task`の対象には自身のdeadlineと親の反復間隔が必要で、移動後の開始時刻が未来なら実効statusはPendingになり得ます。`complete_task.finished_at`の省略時は操作時刻を使い、`additional_actual_work_seconds`の省略時は0を加算します。routine親のchildを完了すると次のoccurrenceを作成して親の見積もりを調整する場合があります。この補正では完了するoccurrenceとその全子孫を対象とし、各taskの実作業秒数が正ならその値を、0なら見積秒数を用いた合計を今回のみなし実績とします。保存済みの実作業秒数は補完値で上書きしません。`complete_task`は非idempotentであり、完了済みtaskへの再実行でも実作業秒数を再加算し、routine occurrenceを再作成する場合があります。
 
@@ -372,7 +372,7 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
   "name": "create_task",
   "arguments": {
     "name": "MCPから作成したtask",
-    "estimated_work_minutes": 30,
+    "estimated_work_seconds": 1800,
     "pending_until": "2026-08-12T09:00:00+09:00"
   }
 }
