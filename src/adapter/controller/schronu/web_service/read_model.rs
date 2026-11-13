@@ -25,7 +25,7 @@ use crate::application::task_use_case::{
     get_focus, get_task, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan, TaskView,
 };
 use chrono::{DateTime, Days, Local, NaiveDate};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 pub(in crate::adapter::controller) fn build_routine_load_report_dto(
@@ -177,9 +177,6 @@ where
     let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
     let mut totals = HashMap::<NaiveDate, i64>::new();
     let mut repetitive = HashMap::<NaiveDate, i64>::new();
-    let mut adjustable = HashMap::<NaiveDate, i64>::new();
-    let mut adjustable_occurrences = HashSet::new();
-
     for (date, segment) in logical_dates.into_iter().zip(schedule) {
         if date < today || date >= today + chrono::Duration::days(HORIZON_DAYS) {
             continue;
@@ -201,16 +198,6 @@ where
             {
                 *repetitive.entry(date).or_default() += segment.scheduled_work_seconds;
             }
-        }
-
-        let available_date = try_logical_date(segment.first_available_time)
-            .map_err(WebReadCoreError::Application)?;
-        if segment.is_leaf()
-            && !segment.task.is_on_other_side
-            && date > available_date
-            && adjustable_occurrences.insert((date, segment.occurrence))
-        {
-            *adjustable.entry(date).or_default() += segment.task.estimated_work_seconds;
         }
     }
 
@@ -240,16 +227,11 @@ where
                 repetitive_work_seconds,
                 total_work_seconds,
             );
-            let cumulative = if totals.contains_key(&date) {
-                accumulator.advance(DailyLoadDayInput {
-                    free_time_minutes,
-                    total_work_seconds,
-                    repetitive_work_seconds,
-                    adjustable_work_seconds: *adjustable.get(&date).unwrap_or(&0),
-                })
-            } else {
-                accumulator.current()
-            };
+            let cumulative = accumulator.advance(DailyLoadDayInput {
+                free_time_minutes,
+                total_work_seconds,
+                repetitive_work_seconds,
+            });
             let durations = calculate_daily_band_durations(
                 date == today,
                 full_day_free_minutes,

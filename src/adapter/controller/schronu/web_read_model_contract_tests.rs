@@ -568,34 +568,33 @@ fn listのleaf判定はtask_treeの子ではなくschedule_rank_0だけを採用
 }
 
 #[test]
-fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使う() {
+fn 負荷は空日の作業可能時間で未完了分を減らす() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let first_id = Uuid::from_u128(401);
-    let adjustable_id = Uuid::from_u128(402);
+    let delayed_id = Uuid::from_u128(402);
     let first = TaskHandle::with_identity("first load", first_id, operation_now).unwrap();
-    first.set_estimated_work_seconds(600).unwrap();
-    let adjustable =
-        TaskHandle::with_identity("adjustable load", adjustable_id, operation_now).unwrap();
-    adjustable.set_estimated_work_seconds(3_600).unwrap();
-    let repository = TestTaskRepository::new(vec![first, adjustable], operation_now);
+    first.set_estimated_work_seconds(5_400).unwrap();
+    let delayed = TaskHandle::with_identity("delayed load", delayed_id, operation_now).unwrap();
+    delayed.set_estimated_work_seconds(3_600).unwrap();
+    let repository = TestTaskRepository::new(vec![first, delayed], operation_now);
     let first_view = get_task(&repository, first_id).unwrap().unwrap();
-    let adjustable_view = get_task(&repository, adjustable_id).unwrap().unwrap();
+    let delayed_view = get_task(&repository, delayed_id).unwrap().unwrap();
     let schedule = vec![
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual { task_id: first_id },
             task: first_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now,
-            scheduled_end: operation_now + Duration::minutes(10),
-            scheduled_work_seconds: 600,
-            total_work_seconds: 600,
+            scheduled_end: operation_now + Duration::minutes(90),
+            scheduled_work_seconds: 5_400,
+            total_work_seconds: 5_400,
             rank: 0,
         },
         ScheduledTaskView {
             occurrence: ScheduleOccurrenceKey::Actual {
-                task_id: adjustable_id,
+                task_id: delayed_id,
             },
-            task: adjustable_view.into(),
+            task: delayed_view.into(),
             first_available_time: operation_now,
             scheduled_start: operation_now + Duration::days(2),
             scheduled_end: operation_now + Duration::days(2) + Duration::minutes(30),
@@ -609,14 +608,14 @@ fn 負荷は空日で累積を進めず前倒し可能量へtask見積値を使�
     let rows = build_band_days(&repository, &mut free_time, &schedule, operation_now, 120).unwrap();
 
     assert_eq!(rows.len(), 14);
-    assert_eq!(rows[0].accumulated_free_diff_seconds, -50 * 60);
-    assert_eq!(rows[1].accumulated_free_diff_seconds, -50 * 60);
-    assert_eq!(rows[2].accumulated_free_diff_seconds, -80 * 60);
+    assert_eq!(rows[0].accumulated_free_diff_seconds, 30 * 60);
+    assert_eq!(rows[1].accumulated_free_diff_seconds, -30 * 60);
+    assert_eq!(rows[2].accumulated_free_diff_seconds, -30 * 60);
     assert_eq!(rows[2].durations.non_repetitive_seconds, 30 * 60);
 }
 
 #[test]
-fn 負荷は遅延したprojected回の見積をoccurrence単位で前倒し可能量へ数える() {
+fn 負荷は分割されたprojected回の区間を繰返作業時間に含める() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let first_id = Uuid::from_u128(403);
     let source_task_id = Uuid::from_u128(404);
@@ -676,8 +675,8 @@ fn 負荷は遅延したprojected回の見積をoccurrence単位で前倒し可�
     .unwrap();
 
     assert_eq!(rows[0].accumulated_free_diff_seconds, -6_600);
-    assert_eq!(rows[1].accumulated_free_diff_seconds, -6_600);
-    assert_eq!(rows[2].accumulated_free_diff_seconds, -7_200);
+    assert_eq!(rows[1].accumulated_free_diff_seconds, -7_200);
+    assert_eq!(rows[2].accumulated_free_diff_seconds, -3_600);
     assert_eq!(rows[2].durations.repetitive_seconds, 3_600);
 }
 

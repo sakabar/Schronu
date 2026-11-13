@@ -211,7 +211,6 @@ pub(super) struct CalendarDayRow {
     pub(super) date: NaiveDate,
     pub(super) free_time_minutes: i64,
     pub(super) free_time_diff_minutes: i64,
-    pub(super) adjustable_work_seconds: i64,
     pub(super) rho_diff: f64,
     pub(super) rho_goal_diff_hours: f64,
     pub(super) accumulated_rho_goal_diff_minutes: i64,
@@ -1147,21 +1146,12 @@ pub(super) fn format_work_seconds_as_hours_minutes(work_seconds: i64) -> String 
 }
 
 fn format_calendar_day_row(row: &CalendarDayRow) -> String {
-    let adjustable_rate = if row.adjustable_work_seconds == 0 {
-        "     ".to_string()
-    } else {
-        format!(
-            "({:02.0}%)",
-            row.adjustable_work_seconds as f64 / (row.free_time_minutes as f64 * 60.0) * 100.0
-        )
-    };
     format!(
-        "{}({})\t{:4.1}時間\t{}{}\t{:5.2}\t{}\t{}\t{}\t{:5.2}\t{}\t{}\t{:5.2}\t{:02}[タスク]",
+        "{}({})\t{:4.1}時間\t{}\t{:5.2}\t{}\t{}\t{}\t{:5.2}\t{}\t{}\t{:5.2}\t{:02}[タスク]",
         row.date,
         weekday_jp(row.date.weekday()),
         row.free_time_minutes as f64 / 60.0,
         format_signed_duration(row.free_time_diff_minutes, false),
-        adjustable_rate,
         row.rho_diff,
         format_rho_goal_diff(row.rho_goal_diff_hours),
         format_signed_duration(row.accumulated_rho_goal_diff_minutes, true),

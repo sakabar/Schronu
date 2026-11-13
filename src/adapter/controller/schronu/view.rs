@@ -37,7 +37,7 @@ use crate::entity::task::{
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use regex::Regex;
 use std::cmp::{max, min};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 use unicode_width::UnicodeWidthChar;
 use uuid::Uuid;
@@ -886,10 +886,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     let mut repetitive_task_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
 
-    // 日ごとの、前倒し可能なtaskの見積もりの和
-    let mut adjustable_estimated_work_seconds_map: HashMap<NaiveDate, i64> = HashMap::new();
-    let mut adjustable_occurrences_by_date: HashSet<(NaiveDate, ScheduleOccurrenceKey)> =
-        HashSet::new();
     let mut adjustable_scheduled_work_seconds_for_capacity_alert: HashMap<NaiveDate, i64> =
         HashMap::new();
 
@@ -962,17 +958,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let adjustable_prefix_label =
             get_schedule_adjustable_prefix_label(scheduled_task, last_synced_time)?;
         if !adjustable_prefix_label.is_empty() {
-            if adjustable_occurrences_by_date
-                .insert((logical_naive_date, scheduled_task.occurrence))
-            {
-                let task_estimated_work_seconds = scheduled_task.task.estimated_work_seconds;
-                adjustable_estimated_work_seconds_map
-                    .entry(logical_naive_date)
-                    .and_modify(|estimated_work_seconds_val| {
-                        *estimated_work_seconds_val += task_estimated_work_seconds
-                    })
-                    .or_insert(task_estimated_work_seconds);
-            }
             adjustable_scheduled_work_seconds_for_capacity_alert
                 .entry(logical_naive_date)
                 .and_modify(|adjustable_seconds| *adjustable_seconds += scheduled_work_seconds)
@@ -1445,14 +1430,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
     let mut daily_summary_rows: Vec<DailySummaryRow> = vec![];
     let mut shortage_duration_by_date: HashMap<NaiveDate, Duration> = HashMap::new();
 
-    // 「それぞれの日の rho (0.7) との差」の累積和。
-    // どれくらい突発を吸収できるかの指標となる。
-    // 元々は単に0.7との差で計算していたが、それだと0.7<rho<1.0でその日のタスクがなんとかなっているのに
-    // 0.7との差の累積和が肥大化して使いものにならなかったため、以下の定義で計算するようにした。
-    // ただし、特定の日にタスクを寄せて無理矢理rho<0.7の日を作るほうが良く見えてしまうので注意が必要。
-    // rho < 0.7 : 累積和はそのぶん減る
-    // 0.7<= rho <=1.0 : ノーカウント。その日のうちに吸収できる
-    // 1.0 < rho : 累積和はそのぶん増える
     let mut daily_load_accumulator = DailyLoadAccumulator::default();
 
     let mut first_caught_up_date = unreached_daily_summary_date();
@@ -1468,7 +1445,24 @@ pub(super) fn build_show_all_tasks_display_with_config(
 
     let max_counter_days = min(counter_arr.len(), DAILY_SUMMARY_HORIZON_DAYS);
 
+    let mut next_load_date = last_synced_logical_date;
     for (date, _cnt) in &counter_arr[0..max_counter_days] {
+        while next_load_date < **date {
+            let free_time_minutes =
+                calculate_free_time_minutes_for_logical_date_with_end_of_day_offset_minutes(
+                    &next_load_date,
+                    last_synced_time,
+                    free_time_manager,
+                    config.end_of_day_offset_minutes,
+                )?;
+            daily_load_accumulator.advance(DailyLoadDayInput {
+                free_time_minutes,
+                total_work_seconds: 0,
+                repetitive_work_seconds: 0,
+            });
+            next_load_date += Duration::days(1);
+        }
+        next_load_date = **date + Duration::days(1);
         let total_estimated_work_seconds_of_the_date: i64 =
             *total_estimated_work_seconds_of_the_date_counter
                 .get(date)
@@ -1514,9 +1508,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let over_time_hours = over_time_hours_f.abs().floor() as i64;
         let over_time_minutes = (over_time_hours_f.abs() * 60.0) as i64 % 60;
 
-        let adjustable_estimated_work_seconds: i64 = *adjustable_estimated_work_seconds_map
-            .get(date)
-            .unwrap_or(&0);
         let over_time_duration = if over_time_hours_f > 0.0 {
             Duration::hours(over_time_hours) + Duration::minutes(over_time_minutes)
         } else {
@@ -1526,7 +1517,6 @@ pub(super) fn build_show_all_tasks_display_with_config(
             free_time_minutes,
             total_work_seconds: total_estimated_work_seconds_of_the_date,
             repetitive_work_seconds: total_repetitive_task_work_seconds_of_the_date,
-            adjustable_work_seconds: adjustable_estimated_work_seconds,
         });
         let accumulate_duration_diff_to_limit =
             Duration::seconds(cumulative.accumulated_free_diff_seconds);
@@ -1564,21 +1554,10 @@ pub(super) fn build_show_all_tasks_display_with_config(
         let deadline_rest_duration_seconds: i64 =
             deadline_estimated_work_seconds_map.get(date).unwrap_or(&0)
                 - (free_time_hours * 3600.0).floor() as i64;
-        // 今日より前には前倒せないため
-        let adjustable_estimated_work_hours = if daily_summary_rows.is_empty() {
-            0.0
-        } else {
-            *adjustable_estimated_work_seconds_map
-                .get(date)
-                .unwrap_or(&0) as f64
-                / 3600.0
-        };
-
         let calendar_row = CalendarDayRow {
             date: **date,
             free_time_minutes,
             free_time_diff_minutes: over_time_duration.num_minutes(),
-            adjustable_work_seconds: (adjustable_estimated_work_hours * 3600.0).round() as i64,
             rho_diff: rho_in_date - 1.0,
             rho_goal_diff_hours: diff_to_goal,
             accumulated_rho_goal_diff_minutes: accumulate_duration_diff_to_goal_rho.num_minutes(),

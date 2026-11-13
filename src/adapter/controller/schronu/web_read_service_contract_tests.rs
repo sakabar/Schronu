@@ -476,15 +476,10 @@ fn 負荷serviceは今日から空日を含む14日を返す() {
             pair[1].logical_date,
             pair[0].logical_date + Duration::days(1)
         );
-        assert_eq!(
-            pair[1].accumulated_rho_diff_seconds,
-            pair[0].accumulated_rho_diff_seconds
-        );
-        assert_eq!(
-            pair[1].accumulated_free_diff_seconds,
-            pair[0].accumulated_free_diff_seconds
-        );
     }
+    let empty_day = &response.data.band_days[1];
+    assert_eq!(empty_day.accumulated_free_diff_seconds, -19 * 60 * 60);
+    assert_eq!(empty_day.accumulated_rho_diff_seconds, -(13 * 60 + 18) * 60);
     assert_eq!(
         response.data.routine_load.start_date,
         NaiveDate::from_ymd_opt(2026, 9, 5).unwrap()

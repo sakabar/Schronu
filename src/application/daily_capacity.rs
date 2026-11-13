@@ -42,7 +42,6 @@ pub struct DailyLoadDayInput {
     pub free_time_minutes: i64,
     pub total_work_seconds: i64,
     pub repetitive_work_seconds: i64,
-    pub adjustable_work_seconds: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,31 +53,17 @@ pub struct DailyLoadCumulative {
 
 #[derive(Default)]
 pub struct DailyLoadAccumulator {
-    accumulated_rho_diff: chrono::Duration,
     accumulated_free_diff: chrono::Duration,
-    accumulated_rho_ratio: f64,
 }
 
 impl DailyLoadAccumulator {
-    pub(crate) fn current(&self) -> DailyLoadCumulative {
-        DailyLoadCumulative {
-            accumulated_rho_diff_seconds: self.accumulated_rho_diff.num_seconds(),
-            accumulated_free_diff_seconds: self.accumulated_free_diff.num_seconds(),
-            accumulated_rho_ratio: self.accumulated_rho_ratio,
-        }
-    }
-
     pub fn advance(&mut self, input: DailyLoadDayInput) -> DailyLoadCumulative {
-        let adjustable = chrono::Duration::seconds(input.adjustable_work_seconds.max(0));
-        if self.accumulated_free_diff < -adjustable {
-            self.accumulated_free_diff = -adjustable;
-        }
-
         let free_time_hours = input.free_time_minutes as f64 / 60.0;
         let total_work_hours = input.total_work_seconds as f64 / 3600.0;
         let repetitive_work_hours = input.repetitive_work_seconds as f64 / 3600.0;
         let daily_free_diff_minutes = ((total_work_hours - free_time_hours) * 60.0) as i64;
-        self.accumulated_free_diff += chrono::Duration::minutes(daily_free_diff_minutes);
+        self.accumulated_free_diff = self.accumulated_free_diff.max(chrono::Duration::zero())
+            + chrono::Duration::minutes(daily_free_diff_minutes);
 
         let non_repetitive_free_hours = free_time_hours - repetitive_work_hours;
         let non_repetitive_rho = if non_repetitive_free_hours > 0.0 {
@@ -91,7 +76,6 @@ impl DailyLoadAccumulator {
         } else {
             f64::INFINITY
         };
-        self.accumulated_rho_ratio = accumulated_rho_ratio;
         let diff_to_goal = calculate_daily_rho_diff_hours(
             input.free_time_minutes,
             input.repetitive_work_seconds,
@@ -99,18 +83,16 @@ impl DailyLoadAccumulator {
         );
         let diff_to_goal_minutes = (diff_to_goal.abs() * 60.0) as i64;
 
-        self.accumulated_rho_diff = if accumulated_rho_ratio >= 0.0 {
+        let accumulated_rho_diff = if accumulated_rho_ratio >= 0.0 {
             self.accumulated_free_diff
         } else if accumulated_rho_ratio < RHO_GOAL - 1.0 && non_repetitive_rho < RHO_GOAL {
-            self.accumulated_rho_diff - chrono::Duration::minutes(diff_to_goal_minutes)
-        } else if accumulated_rho_ratio < 0.0 {
-            chrono::Duration::zero()
+            -chrono::Duration::minutes(diff_to_goal_minutes)
         } else {
-            self.accumulated_rho_diff
+            chrono::Duration::zero()
         };
 
         DailyLoadCumulative {
-            accumulated_rho_diff_seconds: self.accumulated_rho_diff.num_seconds(),
+            accumulated_rho_diff_seconds: accumulated_rho_diff.num_seconds(),
             accumulated_free_diff_seconds: self.accumulated_free_diff.num_seconds(),
             accumulated_rho_ratio,
         }

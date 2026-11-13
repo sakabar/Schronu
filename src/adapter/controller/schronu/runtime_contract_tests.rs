@@ -5702,7 +5702,91 @@ fn projected回の後の空き時間はprojected回の終了から数える() {
 }
 
 #[test]
-fn 実taskの前倒し表示と負荷は保留解除で早められる論理日数を使う() {
+fn cli_and_web_compute_the_same_cumulative_load_across_empty_days() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
+    let root = new_test_task_handle("日別負荷fixture").unwrap();
+    root.set_start_time(now).unwrap();
+    root.set_estimated_work_seconds(0).unwrap();
+    for (offset, minutes) in [(0, 180), (2, 120), (3, 60)] {
+        let task = add_scheduled_child_for_test(
+            &root,
+            "固定作業",
+            now + Duration::days(offset),
+            minutes,
+        );
+        task.set_fixed_start(true).unwrap();
+    }
+
+    let mut repository = TestTaskRepository::new(root, now);
+    let schedule = crate::application::schedule_use_case::get_schedule(&repository).unwrap();
+    let mut free_time_manager = TestFreeTimeManagerByDate {
+        free_minutes_by_date: (0..14)
+            .map(|offset| (now.date_naive() + Duration::days(offset), 120))
+            .collect(),
+    };
+    let config = SchronuConfig::default();
+    let web_rows = crate::adapter::controller::web_service::build_band_days(
+        &repository,
+        &mut free_time_manager,
+        &schedule,
+        now,
+        config.end_of_day_offset_minutes,
+    )
+    .unwrap();
+    assert_eq!(web_rows[0].accumulated_free_diff_seconds, 3600);
+    assert_eq!(web_rows[1].accumulated_free_diff_seconds, -3600);
+    assert_eq!(web_rows[2].accumulated_free_diff_seconds, 0);
+    let mut next_id = || Uuid::nil();
+    let mut task_factory = TaskFactory::new(now, &mut next_id);
+    let mut focused_task_id_opt = None;
+    let mut context = RuntimeTaskTreeCommandContext {
+        task_repository: &mut repository,
+        free_time_manager: &mut free_time_manager,
+        focused_task_id_opt: &mut focused_task_id_opt,
+        task_factory: &mut task_factory,
+        config: &config,
+    };
+
+    for command in ["暦", "帯"] {
+        let display = context
+            .show_task_list(Some(command), TaskListOrder::ScheduledStartDesc, false)
+            .unwrap();
+        let DisplayModel::Sequence(models) = display else {
+            panic!("expected sequence, got {display:?}");
+        };
+        let rows = models
+            .iter()
+            .find_map(|model| match model {
+                DisplayModel::Calendar(calendar) => Some(
+                    calendar.rows.iter().map(|row| (
+                        row.date,
+                        row.accumulated_free_diff_minutes * 60,
+                        row.accumulated_rho_goal_diff_minutes * 60,
+                    )).collect::<Vec<_>>(),
+                ),
+                DisplayModel::Band(band) => Some(
+                    band.rows.iter().map(|row| (
+                        row.date,
+                        row.accumulated_free_diff_seconds,
+                        row.accumulated_rho_diff_seconds,
+                    )).collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .expect("daily load display");
+
+        assert_eq!(rows.len(), 3, "{command}");
+        for (date, free, rho) in rows {
+            assert_ne!(date, web_rows[1].logical_date);
+            let web_row = web_rows.iter().find(|row| row.logical_date == date).unwrap();
+            assert_eq!(free, web_row.accumulated_free_diff_seconds, "{command} {date}");
+            assert_eq!(rho, web_row.accumulated_rho_diff_seconds, "{command} {date}");
+        }
+    }
+}
+
+#[test]
+fn 実taskの前倒し表示は保留解除で早められる論理日数を使う() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     for (case, start_days, pending_minutes, other_side, is_leaf, blocker_day, expected) in [
         ("翌日まで保留", 0, Some(1440), false, true, None, "【前1】"),
@@ -5727,11 +5811,6 @@ fn 実taskの前倒し表示と負荷は保留解除で早められる論理日�
         let root = new_test_task_handle("前倒し判定fixture").unwrap();
         root.set_start_time(now).unwrap();
         root.set_estimated_work_seconds(0).unwrap();
-        // 暦は最初の予定日の前倒し負荷を0にするため、当日の予定を確保する。
-        if blocker_day != Some(0) {
-            let anchor = add_scheduled_child_for_test(&root, "当日の固定予定", now, 1);
-            anchor.set_fixed_start(true).unwrap();
-        }
         let task = root.create_as_last_child(new_test_task_attr("判定対象"));
         let task_id = task.get_id().unwrap();
         let start = now + Duration::days(start_days);
@@ -5777,9 +5856,6 @@ fn 実taskの前倒し表示と負荷は保留解除で早められる論理日�
                 "{case}"
             );
         }
-        let scheduled_date =
-            crate::application::daily_capacity::try_logical_date(scheduled.scheduled_start)
-                .unwrap();
         let mut free_time_manager = TestFreeTimeManager::with_free_minutes(24 * 60);
         let mut focused_task_id_opt = None;
         let mut next_id = || Uuid::nil();
@@ -5792,122 +5868,36 @@ fn 実taskの前倒し表示と負荷は保留解除で早められる論理日�
             task_factory: &mut task_factory,
             config: &config,
         };
-        for pattern in [None, Some("暦")] {
-            let display = context
-                .show_task_list(pattern, TaskListOrder::ScheduledStartDesc, false)
-                .unwrap();
-            let DisplayModel::Sequence(models) = display else {
-                panic!("expected sequence, got {display:?}");
-            };
-            if pattern.is_none() {
-                let task_list = models
-                    .iter()
-                    .find_map(|model| match model {
-                        DisplayModel::TaskList(list) => Some(list),
-                        _ => None,
-                    })
-                    .expect("task list");
-                let row = task_list
-                    .rows
-                    .iter()
-                    .find_map(|row| match row {
-                        super::renderer::TaskListRow::Task(row) if row.task_id == task_id => {
-                            Some(row)
-                        }
-                        _ => None,
-                    })
-                    .expect("actual task row");
-                let waiting = if other_side { "【待ち】" } else { "" };
-                assert_eq!(row.task_name, format!("{expected}{waiting}判定対象"), "{case}");
-            } else {
-                let calendar = models
-                    .iter()
-                    .find_map(|model| match model {
-                        DisplayModel::Calendar(calendar) => Some(calendar),
-                        _ => None,
-                    })
-                    .expect("calendar");
-                let row = calendar
-                    .rows
-                    .iter()
-                    .find(|row| row.date == scheduled_date)
-                    .expect("scheduled date");
-                assert_eq!(
-                    row.adjustable_work_seconds,
-                    if expected.is_empty() { 0 } else { 60 * 60 },
-                    "{case}"
-                );
-            }
-        }
+        let display = context
+            .show_task_list(None, TaskListOrder::ScheduledStartDesc, false)
+            .unwrap();
+        let DisplayModel::Sequence(models) = display else {
+            panic!("expected sequence, got {display:?}");
+        };
+        let task_list = models
+            .iter()
+            .find_map(|model| match model {
+                DisplayModel::TaskList(list) => Some(list),
+                _ => None,
+            })
+            .expect("task list");
+        let row = task_list
+            .rows
+            .iter()
+            .find_map(|row| match row {
+                super::renderer::TaskListRow::Task(row) if row.task_id == task_id => {
+                    Some(row)
+                }
+                _ => None,
+            })
+            .expect("actual task row");
+        let waiting = if other_side { "【待ち】" } else { "" };
+        assert_eq!(row.task_name, format!("{expected}{waiting}判定対象"), "{case}");
     }
 }
 
 #[test]
-fn 開始可能日より後ろへ配置されたprojected回は調整可能負荷に数える() {
-    let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
-    let projected_available_at = now + Duration::days(3);
-    let projected_scheduled_date = projected_available_at.date_naive() + Duration::days(1);
-    let recurring = new_test_task_handle("3日ごとの筋トレ").unwrap();
-    recurring.set_estimated_work_seconds(60 * 60).unwrap();
-    recurring
-        .set_repetition_interval_days_opt(Some(3))
-        .unwrap();
-    recurring
-        .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(6, 0, 0).unwrap()))
-        .unwrap();
-    recurring
-        .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()))
-        .unwrap();
-    let current = recurring.create_as_last_child(new_test_task_attr("今回の筋トレ"));
-    current.set_start_time(now).unwrap();
-    current
-        .set_deadline_time_opt(Some(now + Duration::hours(1)))
-        .unwrap();
-    current.set_estimated_work_seconds(4 * 24 * 60 * 60).unwrap();
-
-    let mut task_repository = TestTaskRepository::new(recurring, now);
-    let projected = crate::application::schedule_use_case::get_schedule(&task_repository)
-        .unwrap()
-        .into_iter()
-        .find(|scheduled| scheduled.is_projected())
-        .expect("projected occurrence");
-    assert_eq!(projected.first_available_time, projected_available_at);
-    assert_eq!(projected.scheduled_start.date_naive(), projected_scheduled_date);
-    let mut free_time_manager = TestFreeTimeManager::with_free_minutes(60);
-    let mut focused_task_id_opt = None;
-    let mut next_id = || Uuid::nil();
-    let mut task_factory = TaskFactory::new(now, &mut next_id);
-    let config = SchronuConfig::default();
-    let display = RuntimeTaskTreeCommandContext {
-        task_repository: &mut task_repository,
-        free_time_manager: &mut free_time_manager,
-        focused_task_id_opt: &mut focused_task_id_opt,
-        task_factory: &mut task_factory,
-        config: &config,
-    }
-    .show_task_list(Some("暦"), TaskListOrder::ScheduledStartDesc, false)
-    .unwrap();
-    let DisplayModel::Sequence(models) = display else {
-        panic!("expected sequence, got {display:?}");
-    };
-    let calendar = models
-        .iter()
-        .find_map(|model| match model {
-            DisplayModel::Calendar(calendar) => Some(calendar),
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("expected calendar, got {models:?}"));
-    let projected_row = calendar
-        .rows
-        .iter()
-        .find(|row| row.date == projected_scheduled_date)
-        .expect("projected scheduled date");
-
-    assert_eq!(projected_row.adjustable_work_seconds, 60 * 60);
-}
-
-#[test]
-fn 同じ日に分割されたprojected回の調整可能見積は一回だけ数える() {
+fn 同じ日に分割されたprojected回にも前倒し日数を表示する() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 6, 0, 0).unwrap();
     let projected_available_at = now + Duration::days(3);
     let projected_scheduled_at = projected_available_at + Duration::days(1);
@@ -5964,33 +5954,6 @@ fn 同じ日に分割されたprojected回の調整可能見積は一回だけ�
     let mut next_id = || Uuid::nil();
     let mut task_factory = TaskFactory::new(now, &mut next_id);
     let config = SchronuConfig::default();
-    let display = RuntimeTaskTreeCommandContext {
-        task_repository: &mut task_repository,
-        free_time_manager: &mut free_time_manager,
-        focused_task_id_opt: &mut focused_task_id_opt,
-        task_factory: &mut task_factory,
-        config: &config,
-    }
-    .show_task_list(Some("暦"), TaskListOrder::ScheduledStartDesc, false)
-    .unwrap();
-    let DisplayModel::Sequence(models) = display else {
-        panic!("expected sequence, got {display:?}");
-    };
-    let calendar = models
-        .iter()
-        .find_map(|model| match model {
-            DisplayModel::Calendar(calendar) => Some(calendar),
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("expected calendar, got {models:?}"));
-    let projected_row = calendar
-        .rows
-        .iter()
-        .find(|row| row.date == projected_scheduled_at.date_naive())
-        .expect("projected scheduled date");
-
-    assert_eq!(projected_row.adjustable_work_seconds, 60 * 60);
-
     let display = RuntimeTaskTreeCommandContext {
         task_repository: &mut task_repository,
         free_time_manager: &mut free_time_manager,
@@ -7547,7 +7510,7 @@ fn test_execute_calendar_現行出力を固定する() {
 
     let actual = execute_calendar_command_for_test("暦", now, task.clone(), 10 * 60);
     let expected = concat!(
-        "2026-08-11(火)\t10.0時間\t-9時間00分     \t-0.90\t-6時間00分\t-06時間00分\t-10時間00分\t-1.00\t-09時間00分\t 10時間00分\t-0.90\t01[タスク]\n",
+        "2026-08-11(火)\t10.0時間\t-9時間00分\t-0.90\t-6時間00分\t-06時間00分\t-10時間00分\t-1.00\t-09時間00分\t 10時間00分\t-0.90\t01[タスク]\n",
         "日          \t空          \t空差      \t空差比\t余差    \t余差累    \t〆差      \t〆差比\t空差累    \t単発余暇\t空差累比\tタスク数\n",
         "\n",
         "今のタスクが片付く日付: 4160日後の2037-12-31\n",

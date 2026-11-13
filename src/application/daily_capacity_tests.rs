@@ -68,11 +68,42 @@ fn daily_load_accumulatorは容量超過を空差累と余差累へ反映する(
         free_time_minutes: 60,
         total_work_seconds: 2 * 60 * 60,
         repetitive_work_seconds: 0,
-        adjustable_work_seconds: 0,
     });
 
     assert_eq!(actual.accumulated_free_diff_seconds, 60 * 60);
     assert_eq!(actual.accumulated_rho_diff_seconds, 60 * 60);
+}
+
+#[test]
+fn daily_load_accumulatorは不足だけを翌日に含める() {
+    let advance = |accumulator: &mut DailyLoadAccumulator, capacity_hours: i64, work_hours: i64| {
+        accumulator.advance(DailyLoadDayInput {
+            free_time_minutes: capacity_hours * 60,
+            total_work_seconds: work_hours * 3600,
+            repetitive_work_seconds: 0,
+        })
+    };
+
+    for today_capacity in [0, 2] {
+        let mut accumulator = DailyLoadAccumulator::default();
+        advance(&mut accumulator, today_capacity, 0);
+        let tomorrow = advance(&mut accumulator, 8, 9);
+        assert_eq!(tomorrow.accumulated_free_diff_seconds, 3600);
+        assert_eq!(tomorrow.accumulated_rho_diff_seconds, 3600);
+        let next_day = advance(&mut accumulator, 8, 6);
+        assert_eq!(next_day.accumulated_free_diff_seconds, -3600);
+        assert_eq!(next_day.accumulated_rho_diff_seconds, 0);
+    }
+
+    let mut accumulator = DailyLoadAccumulator::default();
+    advance(&mut accumulator, 1, 2);
+    let tomorrow = advance(&mut accumulator, 8, 8);
+    assert_eq!(tomorrow.accumulated_free_diff_seconds, 3600);
+    assert_eq!(tomorrow.accumulated_rho_diff_seconds, 3600);
+    for _ in 0..2 {
+        let empty_day = advance(&mut accumulator, 10, 0);
+        assert_eq!(empty_day.accumulated_rho_diff_seconds, -7 * 3600);
+    }
 }
 
 #[test]
