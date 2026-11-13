@@ -1,9 +1,8 @@
 use crate::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError,
 };
-use crate::entity::datetime::parse_local_datetime;
 use crate::entity::task::{read_project_category, ProjectCategory};
-use chrono::NaiveTime;
+use chrono::{NaiveDate, NaiveTime};
 use regex::Regex;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -421,10 +420,12 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
             ..
         }) => {
             let valid = match values.as_slice() {
-                [value] => value == "消" || is_deadline_date(value) || is_deadline_time(value),
+                [value] => {
+                    value == "消" || is_deadline_date(value) || parse_deadline_time(value).is_some()
+                }
                 [first, second] => {
-                    (is_deadline_date(first) && is_deadline_time(second))
-                        || (is_deadline_time(first) && is_deadline_date(second))
+                    (is_deadline_date(first) && parse_deadline_time(second).is_some())
+                        || (parse_deadline_time(first).is_some() && is_deadline_date(second))
                 }
                 _ => false,
             };
@@ -443,20 +444,34 @@ pub(super) fn validate_command_input(command: &Command) -> Result<(), CommandVal
     }
 }
 
-fn is_deadline_date(value: &str) -> bool {
-    value.starts_with('今')
-        || value.starts_with('明')
+pub(super) fn is_relative_deadline_date(value: &str) -> bool {
+    value.starts_with(['今', '明'])
         || matches!(value, "月" | "火" | "水" | "木" | "金" | "土" | "日")
+}
+
+fn is_deadline_date(value: &str) -> bool {
+    is_relative_deadline_date(value)
         || Regex::new(r"^\d{1,2}/\d{1,2}$")
             .expect("valid regex")
             .is_match(value)
-        || parse_local_datetime(&format!("{value} 23:59:59"), "%Y/%m/%d %H:%M:%S").is_ok()
+        || NaiveDate::parse_from_str(value, "%Y/%m/%d").is_ok()
 }
 
-fn is_deadline_time(value: &str) -> bool {
-    Regex::new(r"^\d{1,2}:\d{1,2}$")
-        .expect("valid regex")
-        .is_match(value)
+pub(super) fn parse_deadline_time(value: &str) -> Option<(NaiveTime, bool)> {
+    let (hour, minute) = value.split_once(':')?;
+    let parse_component = |component: &str| {
+        if (1..=2).contains(&component.len()) && component.bytes().all(|b| b.is_ascii_digit()) {
+            component.parse::<u32>().ok()
+        } else {
+            None
+        }
+    };
+    let hour = parse_component(hour)?;
+    let minute = parse_component(minute)?;
+    if hour >= 30 {
+        return None;
+    }
+    Some((NaiveTime::from_hms_opt(hour % 24, minute, 0)?, hour >= 24))
 }
 
 pub(super) fn parse_interactive_command(input: &str) -> Result<Command, CommandParseError> {

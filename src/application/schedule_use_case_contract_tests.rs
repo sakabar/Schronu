@@ -5,7 +5,7 @@ use super::schedule_use_case::{
     ScheduledTaskView,
 };
 use super::task_use_case::{
-    complete_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
+    complete_task, defer_routine_task, get_task, ApplicationError, CompleteTaskInput, TaskFactory,
 };
 use crate::entity::task::{ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
@@ -480,6 +480,72 @@ fn get_scheduleの仮想回はcompletion基準でも現在期限から一定周�
             .map(|index| NaiveDate::from_ymd_opt(2026, 8, 11).unwrap() + Duration::days(index * 3))
             .collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn overnight_daily_repetition_advances_and_matches_the_materialized_occurrence() {
+    let date_time = |day, hour| Local.with_ymd_and_hms(2026, 9, day, hour, 0, 0).unwrap();
+    let now = date_time(21, 12);
+    for (anchor, advance) in [
+        (RepetitionAnchor::Deadline, 0),
+        (RepetitionAnchor::Completion, 1),
+    ] {
+        let parent = task_with_schedule("反復タスク", now, 15 * 60, 1);
+        parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+        parent.set_repetition_anchor(anchor).unwrap();
+        parent.set_fixed_start(true).unwrap();
+        parent.set_days_in_advance(i64::from(advance)).unwrap();
+        parent
+            .set_repetition_start_time_opt(Some(NaiveTime::from_hms_opt(1, 0, 0).unwrap()))
+            .unwrap();
+        parent
+            .set_repetition_deadline_time_opt(Some(NaiveTime::from_hms_opt(5, 0, 0).unwrap()))
+            .unwrap();
+        let current = append_repeating_occurrence(&parent, now, date_time(22, 5));
+        let mut repository = TestTaskRepository::new(vec![parent.clone()], now);
+        let schedule = get_schedule(&repository).unwrap();
+        let mut projected: Vec<_> = schedule.iter().filter(|item| item.is_projected()).collect();
+        projected.sort_by_key(|item| item.task.deadline_time);
+        assert_eq!(projected.len(), 27);
+        assert_eq!(projected[0].task.start_time, date_time(23 - advance, 1));
+        assert_eq!(projected[0].task.deadline_time, Some(date_time(23, 5)));
+        assert_eq!(projected[1].task.deadline_time, Some(date_time(24, 5)));
+        assert_eq!(projected[0].task.name, "反復タスク(9/22)");
+
+        let next_id = Uuid::new_v4();
+        let mut generate_id = || next_id;
+        complete_task(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: current.get_id().unwrap(),
+                finished_at: date_time(22, 4),
+                additional_actual_work_seconds: 0,
+                expected_actual_work_seconds: None,
+            },
+            &mut TaskFactory::new(now, &mut generate_id),
+        )
+        .unwrap();
+        let next = parent.get_by_id(next_id).unwrap().unwrap();
+        assert_eq!(next.get_start_time().unwrap(), projected[0].task.start_time);
+        assert_eq!(
+            next.get_deadline_time_opt().unwrap(),
+            projected[0].task.deadline_time
+        );
+        let occurrences = get_schedule(&repository).unwrap();
+        let matching: Vec<_> = occurrences
+            .iter()
+            .filter(|item| item.task.deadline_time == Some(date_time(23, 5)))
+            .collect();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].actual_task_id(), Some(next_id));
+
+        defer_routine_task(&mut repository, next_id).unwrap();
+        assert_eq!(next.get_start_time().unwrap(), date_time(24 - advance, 1));
+        assert_eq!(
+            next.get_deadline_time_opt().unwrap(),
+            Some(date_time(24, 5))
+        );
+    }
 }
 
 #[test]

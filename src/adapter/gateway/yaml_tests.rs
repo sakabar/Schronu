@@ -484,7 +484,7 @@ create_time: '2023/05/19 01:23:45'
 start_time: '2023/05/19 01:23:45'
 repetition_interval_days: 7
 repetition_start_time: '01:23:45'
-repetition_deadline_time: '23:59:59'
+repetition_deadline_time: '05:59:59'
 ";
     let docs = YamlLoader::load_from_str(s).unwrap();
     let expected_yaml: &Yaml = &docs[0];
@@ -1313,6 +1313,9 @@ repetition_interval_days: 7
 
     // 繰り返し親taskでも通常のstatus同期は行える。
     expected.sync_clock(now).unwrap();
+
+    let canonical = task_snapshot_to_yaml(&actual.snapshot().unwrap());
+    assert_eq!(canonical["repetition_deadline_time"].as_str(), Some("05:59:59"));
 
     assert_task(&actual, &expected);
 }

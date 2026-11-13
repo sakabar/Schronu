@@ -1,5 +1,5 @@
 use crate::application::task_name;
-use crate::entity::datetime::parse_local_datetime;
+use crate::entity::datetime::{parse_local_datetime, DEFAULT_REPETITION_DEADLINE_TIME};
 use crate::entity::task::read_project_category;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
@@ -165,7 +165,7 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
         );
         let repetition_deadline_time = task
             .get_repetition_deadline_time_opt()
-            .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+            .unwrap_or(DEFAULT_REPETITION_DEADLINE_TIME);
         task_hash.insert(
             Yaml::String(String::from("repetition_deadline_time")),
             Yaml::String(repetition_deadline_time.format("%H:%M:%S").to_string()),
@@ -527,7 +527,7 @@ fn yaml_to_task_strict(
         task.set_repetition_deadline_time_opt(Some(
             repetition_deadline_time
                 .or_else(|| loaded_deadline_time.map(|value| value.time()))
-                .unwrap_or_else(|| NaiveTime::from_hms_opt(23, 59, 59).unwrap()),
+                .unwrap_or(DEFAULT_REPETITION_DEADLINE_TIME),
         ))
         .map_err(map_task_tree_error)?;
     }
