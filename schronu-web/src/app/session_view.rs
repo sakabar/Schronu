@@ -345,10 +345,10 @@ fn SessionCard(
                         "開始時実績 {actual_at_start}"
                     }
                 }
-                if let Some(percent) = session.estimate_success_percentage {
+                if let Some(overrun_percent) = session.estimate_success_percentage.map(|percent| 100_u8.saturating_sub(percent)) {
                     div { class: "session-estimate-probability",
-                        span { "今回のタスクが見積もり通り終わる確率" }
-                        strong { "{percent}%" }
+                        span { "見積もりを超過してしまう確率" }
+                        strong { "{overrun_percent}%" }
                     }
                 }
                 if obsidian_supported {

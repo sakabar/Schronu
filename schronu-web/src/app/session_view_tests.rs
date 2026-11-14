@@ -977,13 +977,20 @@ fn estimate_probability_appears_below_the_countdown_only_when_present() {
     let mut session = card("recurring");
     session.estimate_success_percentage = Some(89);
     let (html, _) = render(vec![session.clone()], false);
-    let caption = "今回のタスクが見積もり通り終わる確率";
+    let caption = "見積もりを超過してしまう確率";
     let index = html.find(caption).unwrap();
     assert!(html.find("session-countdown").unwrap() < index);
-    assert!(html[index..].contains("<strong>89%</strong>"));
+    assert!(html[index..].contains("<strong>11%</strong>"));
     session.remaining_seconds -= 60;
     assert!(render(vec![session], false)
         .0
-        .contains("<strong>89%</strong>"));
+        .contains("<strong>11%</strong>"));
+    for (success, overrun) in [(0, 100), (100, 0)] {
+        let mut session = card("recurring");
+        session.estimate_success_percentage = Some(success);
+        let (html, _) = render(vec![session], false);
+        let index = html.find(caption).unwrap();
+        assert!(html[index..].contains(&format!("<strong>{overrun}%</strong>")));
+    }
     assert!(!render(vec![card("ordinary")], false).0.contains(caption));
 }
