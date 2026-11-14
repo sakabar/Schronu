@@ -46,8 +46,8 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, complete_work_slice, create_task,
-    estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, validate_task_name,
-    CreateTaskInput, TaskFactory,
+    estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, set_estimate,
+    validate_task_name, ApplicationError, CreateTaskInput, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -65,6 +65,17 @@ pub struct WebService {
     repository_state_uncertain: bool,
     mutation_repository_factory: Box<dyn Fn(&str) -> TaskRepository>,
     all_task_snapshots: AllTaskSnapshots,
+}
+
+fn ensure_completed_estimate(
+    repository: &mut dyn TaskRepositoryTrait,
+    task_id: Uuid,
+) -> Result<(), ApplicationError> {
+    let task = get_task(repository, task_id)?.ok_or(ApplicationError::TaskNotFound(task_id))?;
+    if task.estimated_work_seconds < 1 {
+        set_estimate(repository, task_id, 1)?;
+    }
+    Ok(())
 }
 
 impl WebService {
@@ -345,7 +356,9 @@ impl WebService {
             let actual_work_seconds = input.expected_actual_work_seconds.unwrap_or_default();
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            complete_work_slice(repository, input, &mut factory)
+            let completed_child_id = complete_work_slice(repository, input, &mut factory)
+                .map_err(WebReadCoreError::Application)?;
+            ensure_completed_estimate(repository, completed_child_id)
                 .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
@@ -399,14 +412,15 @@ impl WebService {
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
+            let task_id = input.task_id;
             let completed = complete_task(repository, input, &mut factory)
+                .map_err(WebReadCoreError::Application)?;
+            ensure_completed_estimate(repository, task_id)
                 .map_err(WebReadCoreError::Application)?;
             let data = completed
                 .next_focus_task_id
                 .map(|task_id| {
-                    get_task(repository, task_id)?.ok_or(
-                        crate::application::task_use_case::ApplicationError::TaskNotFound(task_id),
-                    )
+                    get_task(repository, task_id)?.ok_or(ApplicationError::TaskNotFound(task_id))
                 })
                 .transpose()
                 .map_err(WebReadCoreError::Application)?
