@@ -14,6 +14,7 @@ const INVALID_TIME: &str = "--:--";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionCardViewModel {
+    pub estimate_success_percentage: Option<u8>,
     pub future_pending_date_label: Option<String>,
     pub task_id: String,
     pub task_name: String,
@@ -276,6 +277,7 @@ fn project_session_cards_with(
                 ),
                 completion_hh_mm: completion_label(server_committed, timing, &offset_at),
                 actual_work_seconds_at_start: session.actual_work_seconds_at_start,
+                estimate_success_percentage: session.estimate_success_percentage,
                 progress_percent: timing.progress_percent,
                 normal_bar_percent: timing.normal_bar_percent,
                 overrun_bar_percent: timing.overrun_bar_percent,

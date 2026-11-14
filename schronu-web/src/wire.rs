@@ -91,6 +91,8 @@ pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
@@ -102,6 +104,8 @@ pub struct SessionTask {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +126,7 @@ impl ScheduledTask {
             task_name: self.task_name.clone(),
             estimated_work_seconds: self.estimated_work_seconds,
             actual_work_seconds: self.actual_work_seconds,
+            estimate_success_percentage: self.estimate_success_percentage,
         })
     }
 }
@@ -135,6 +140,7 @@ impl From<SessionTask> for ScheduledTask {
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }
@@ -357,6 +363,7 @@ mod all_task_contract_tests {
 
         let row = AllTaskRow {
             task: SessionTask {
+                estimate_success_percentage: None,
                 start_time_epoch_ms: None,
                 pending_until_epoch_ms: None,
                 task_id: "task".to_owned(),

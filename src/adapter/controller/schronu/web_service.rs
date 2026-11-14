@@ -410,7 +410,9 @@ impl WebService {
                 })
                 .transpose()
                 .map_err(WebReadCoreError::Application)?
-                .map(read_model::session_task_dto_from_view);
+                .map(|task| read_model::session_task_dto_from_view(repository, task))
+                .transpose()
+                .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
                 free_time_manager,

@@ -3128,6 +3128,7 @@ dependencies = [
  "fs2",
  "jsonschema",
  "libc",
+ "libm",
  "linked-hash-map",
  "percent-encoding",
  "regex",

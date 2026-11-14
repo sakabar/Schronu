@@ -254,6 +254,7 @@ impl From<SessionTaskDto> for SessionTask {
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }
@@ -267,6 +268,7 @@ impl From<ScheduledTaskDto> for ScheduledTask {
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }

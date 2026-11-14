@@ -460,6 +460,7 @@ fn listの先送り確認はserverのplanだけから生成する() {
 fn session_row() -> ScheduledTaskRow {
     ScheduledTaskRow {
         task: SessionTask {
+            estimate_success_percentage: None,
             start_time_epoch_ms: None,
             pending_until_epoch_ms: None,
             task_id: TASK_ID.to_owned(),

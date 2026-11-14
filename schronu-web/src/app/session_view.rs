@@ -345,6 +345,12 @@ fn SessionCard(
                         "開始時実績 {actual_at_start}"
                     }
                 }
+                if let Some(percent) = session.estimate_success_percentage {
+                    div { class: "session-estimate-probability",
+                        span { "今回のタスクが見積もり通り終わる確率" }
+                        strong { "{percent}%" }
+                    }
+                }
                 if obsidian_supported {
                     if let Some(message) = obsidian_lookup_error {
                         p { class: "session-obsidian-message error", role: "alert",

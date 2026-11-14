@@ -49,6 +49,8 @@ pub struct ServerSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
@@ -60,6 +62,8 @@ pub struct SessionTaskDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

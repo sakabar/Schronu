@@ -3019,3 +3019,47 @@ fn write_use_cases_repositoryをsaveしない() {
     assert!(repository.get_by_id(created_id).unwrap().is_some());
     assert_eq!(repository.save_count(), 0);
 }
+
+#[test]
+fn recurring_estimate_probability_handles_missing_history_and_exact_boundaries() {
+    let now = fixed_now();
+    let source = TaskHandle::with_identity("routine", Uuid::new_v4(), now).unwrap();
+    source.set_repetition_interval_days_opt(Some(1)).unwrap();
+    let occurrence = source
+        .create_child(TaskAttr::with_identity("occurrence", Uuid::new_v4(), now))
+        .unwrap();
+    occurrence.set_estimated_work_seconds(1_200).unwrap();
+    let child = occurrence
+        .create_child(TaskAttr::with_identity("step", Uuid::new_v4(), now))
+        .unwrap();
+    child.set_estimated_work_seconds(600).unwrap();
+
+    source
+        .set_duration_statistics(DurationStatistics::new(1, 1_800.0, 0.0).unwrap())
+        .unwrap();
+    assert_eq!(
+        super::estimate_success_percentage(&occurrence).unwrap(),
+        None
+    );
+    source
+        .set_duration_statistics(DurationStatistics::new(2, 1_800.0, 0.0).unwrap())
+        .unwrap();
+    assert_eq!(super::estimate_success_percentage(&source).unwrap(), None);
+    assert_eq!(super::estimate_success_percentage(&child).unwrap(), None);
+    assert_eq!(
+        super::estimate_success_percentage(&occurrence).unwrap(),
+        Some(100)
+    );
+
+    child.set_actual_work_seconds(599).unwrap();
+    assert_eq!(
+        super::estimate_success_percentage(&occurrence).unwrap(),
+        Some(0)
+    );
+    child.set_actual_work_seconds(600).unwrap();
+    occurrence.set_actual_work_seconds(1_201).unwrap();
+    assert_eq!(
+        super::estimate_success_percentage(&occurrence).unwrap(),
+        Some(0)
+    );
+}

@@ -2016,3 +2016,85 @@ fn defer_taskは未完了の子を持つ親の一覧planで先送りを保存す
     let child = repository.get_by_id(child_id).unwrap().unwrap();
     assert_eq!(child.get_orig_status().unwrap(), Status::Todo);
 }
+
+#[test]
+fn recurring_session_handoff_predicts_the_same_total_that_completion_records() {
+    use crate::entity::task::DurationStatistics;
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let source = TaskHandle::with_identity("routine", Uuid::new_v4(), now).unwrap();
+    source.set_repetition_interval_days_opt(Some(1)).unwrap();
+    source
+        .set_duration_statistics(DurationStatistics::new(2, 2_100.0, 480.0_f64.powi(2)).unwrap())
+        .unwrap();
+    let body_id = Uuid::new_v4();
+    let body = source
+        .create_child(TaskAttr::with_identity("occurrence", body_id, now))
+        .unwrap();
+    body.set_estimated_work_seconds(1_200).unwrap();
+    let child_id = Uuid::new_v4();
+    let child = body
+        .create_child(TaskAttr::with_identity("step", child_id, now))
+        .unwrap();
+    child.set_estimated_work_seconds(600).unwrap();
+    assert_eq!(
+        crate::application::task_use_case::estimate_success_percentage(&child).unwrap(),
+        None
+    );
+    let source_id = source.get_id().unwrap();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(now).unwrap();
+    repository.load().unwrap();
+    repository.start_new_project(source).unwrap();
+    repository.save().unwrap();
+
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let request = |id: Uuid, seconds: i64, end: chrono::DateTime<Local>| CompleteSessionRequest {
+        task_id: id.to_string(),
+        started_at_epoch_ms: end.timestamp_millis() - seconds * 1_000,
+        ended_at_epoch_ms: None,
+        expected_actual_work_seconds: 0,
+        record_elapsed_seconds: true,
+    };
+    let next = service
+        .complete_session_at(now, request(child_id, 1_500, now))
+        .unwrap()
+        .data
+        .unwrap();
+    assert_eq!(next.task_id, body_id.to_string());
+    assert_eq!(next.estimate_success_percentage, Some(89));
+    let body_id_text = body_id.to_string();
+    let daily = service.list_tasks_at(now, now.date_naive()).unwrap();
+    assert!(daily
+        .data
+        .iter()
+        .any(|row| row.task.task_id.as_deref() == Some(&body_id_text)
+            && row.task.estimate_success_percentage == Some(89)));
+    let all = service.list_all_tasks_at(now, None).unwrap();
+    assert!(all
+        .data
+        .rows
+        .iter()
+        .any(|row| row.task.task_id.as_deref() == Some(&body_id_text)
+            && row.task.estimate_success_percentage == Some(89)));
+    let automatic = service.auto_session_at(now).unwrap().data.unwrap();
+    assert_eq!(automatic.task_id, body_id_text);
+    assert_eq!(automatic.estimate_success_percentage, Some(89));
+
+    let end = now + Duration::minutes(20);
+    service
+        .complete_session_at(end, request(body_id, 1_200, end))
+        .unwrap();
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(end).unwrap();
+    repository.load().unwrap();
+    let statistics = repository
+        .get_by_id(source_id)
+        .unwrap()
+        .unwrap()
+        .duration_statistics()
+        .unwrap();
+    // The former two samples averaged 2100 seconds; a new sample of 2700 yields 2300.
+    assert_eq!(statistics.values().0, 3);
+    assert_eq!(statistics.values().1, 2_300.0);
+}

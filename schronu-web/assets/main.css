@@ -696,6 +696,21 @@ button:disabled {
     font-size: 0.82rem;
 }
 
+.session-estimate-probability {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.75rem;
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.session-estimate-probability strong {
+    color: var(--ink);
+    font-size: 1rem;
+}
+
 .session-time-range {
     display: flex;
     align-items: baseline;
