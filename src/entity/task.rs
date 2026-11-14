@@ -258,6 +258,7 @@ impl DurationStatistics {
         )
     }
 
+    /// Welford法で平均と偏差平方和を逐次更新する
     pub(crate) fn with_sample(self, seconds: i64) -> Result<Self, &'static str> {
         if seconds <= 0 {
             return Ok(self);
