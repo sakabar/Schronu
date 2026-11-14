@@ -60,6 +60,8 @@ segmentは次の最も早いeventで閉じます。
 
 単にreleaseされた候補が現在taskに勝たなければ、frontier上のeventはそのまま保持し、次の実境界でまとめてpromoteします。そのため、固定の60分幅でtaskをsliceする規則はありません。
 
+ready taskがあっても配置できる候補がない場合は、次のrelease、fixed開始、正のslackが最初に0になる時刻のうち、最も早い時刻に進めて選び直します。
+
 ### 4. 決定論的な表示sort
 
 配置完了後、segmentを開始時刻、deadlineの有無、priority、rank、UUIDでsortします。これは表示順を安定させる処理であり、taskの選択規則ではありません。
