@@ -941,6 +941,7 @@ fn update_task_handlerはtyped_valueを公開field順に適用する() {
         json!("typed-update-values"),
         UpdateTaskInput {
             duration_statistics: OptionalValue::Missing,
+            repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
             estimated_work_seconds: OptionalValue::Value(NonNegativeI64(2700)),
             actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),
@@ -988,6 +989,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         json!("typed-update-missing-patches"),
         UpdateTaskInput {
             duration_statistics: OptionalValue::Missing,
+            repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
             estimated_work_seconds: OptionalValue::Value(NonNegativeI64(0)),
             actual_work_seconds: OptionalValue::Missing,
@@ -1029,6 +1031,7 @@ fn update_task_handlerはtyped_missingを変更せずnullを解除に変換す�
         json!("typed-update-clear"),
         UpdateTaskInput {
             duration_statistics: OptionalValue::Missing,
+            repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
             estimated_work_seconds: OptionalValue::Missing,
             actual_work_seconds: OptionalValue::Missing,
@@ -1065,6 +1068,7 @@ fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() 
         json!("typed-update-first-field-error"),
         UpdateTaskInput {
             duration_statistics: OptionalValue::Missing,
+            repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
             estimated_work_seconds: OptionalValue::Value(NonNegativeI64(i64::MAX)),
             actual_work_seconds: OptionalValue::Value(NonNegativeI64(900)),

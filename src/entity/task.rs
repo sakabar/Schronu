@@ -216,6 +216,7 @@ pub struct TaskAttr {
 
     repetition_interval_days_opt: Option<i64>,
     duration_statistics: Option<Box<DurationStatistics>>,
+    repetition_duration_updates_enabled: bool,
     repetition_start_time_opt: Option<NaiveTime>,
     repetition_deadline_time_opt: Option<NaiveTime>,
     repetition_anchor: RepetitionAnchor,
@@ -295,6 +296,7 @@ impl PartialEq for TaskAttr {
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
             && self.duration_statistics == other.duration_statistics
+            && self.repetition_duration_updates_enabled == other.repetition_duration_updates_enabled
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
             && self.repetition_start_time_opt == other.repetition_start_time_opt
             && self.repetition_deadline_time_opt == other.repetition_deadline_time_opt
@@ -361,6 +363,7 @@ impl TaskAttr {
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
             duration_statistics: None,
+            repetition_duration_updates_enabled: true,
             repetition_start_time_opt: None,
             repetition_deadline_time_opt: None,
             repetition_anchor: RepetitionAnchor::Deadline,
@@ -600,10 +603,15 @@ impl TaskAttr {
             self.deadline_time_opt = None;
         } else {
             self.duration_statistics = None;
+            self.repetition_duration_updates_enabled = true;
             self.repetition_start_time_opt = None;
             self.repetition_deadline_time_opt = None;
         }
         Ok(())
+    }
+
+    pub(crate) fn repetition_duration_updates_enabled(&self) -> bool {
+        self.repetition_duration_updates_enabled
     }
 
     pub(crate) fn duration_statistics(&self) -> DurationStatistics {
@@ -724,6 +732,7 @@ pub enum TaskTreeError {
     RepeatingTaskDeadline,
     RepetitionTemplateWithoutRepeatingTask,
     DurationStatisticsWithoutRepeatingTask,
+    RepetitionDurationUpdatesWithoutRepeatingTask,
     RepeatingTaskTemplateRequired,
 }
 
@@ -747,6 +756,9 @@ impl fmt::Display for TaskTreeError {
             }
             Self::DurationStatisticsWithoutRepeatingTask => {
                 "duration statistics require a repeating task"
+            }
+            Self::RepetitionDurationUpdatesWithoutRepeatingTask => {
+                "repetition duration updates require a repeating task"
             }
             Self::RepeatingTaskTemplateRequired => {
                 "repeating task requires both time templates"
@@ -1556,6 +1568,29 @@ impl TaskHandle {
                 attr.set_actual_work_seconds(actual_work_seconds);
                 true
             }
+        })
+    }
+
+    pub(crate) fn repetition_duration_updates_enabled(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.repetition_duration_updates_enabled())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn set_repetition_duration_updates_enabled(
+        &self,
+        enabled: bool,
+    ) -> Result<(), TaskTreeError> {
+        if !self.is_repeating_task()? {
+            return Err(TaskTreeError::RepetitionDurationUpdatesWithoutRepeatingTask);
+        }
+        self.update(|attr| {
+            if attr.repetition_duration_updates_enabled == enabled {
+                return false;
+            }
+            attr.repetition_duration_updates_enabled = enabled;
+            true
         })
     }
 

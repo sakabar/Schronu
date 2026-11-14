@@ -54,7 +54,7 @@ pub(super) fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "update_task",
-            "description": "Update an existing task's estimate, actual work seconds, deadline, project category, or recurring duration statistics. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, then duration statistics order.",
+            "description": "Update an existing task's estimate, actual work seconds, deadline, project category, recurring duration statistics, or automatic recurring duration updates. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, duration statistics, then automatic duration updates order.",
             "inputSchema": generated_input_schema::<UpdateTaskInput>()
         }),
     ]

@@ -330,7 +330,7 @@
     "name": "complete_task"
   },
   {
-    "description": "Update an existing task's estimate, actual work seconds, deadline, project category, or recurring duration statistics. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, then duration statistics order.",
+    "description": "Update an existing task's estimate, actual work seconds, deadline, project category, recurring duration statistics, or automatic recurring duration updates. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, duration statistics, then automatic duration updates order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
@@ -357,6 +357,11 @@
         {
           "required": [
             "duration_statistics"
+          ]
+        },
+        {
+          "required": [
+            "repetition_duration_updates_enabled"
           ]
         }
       ],
@@ -430,6 +435,10 @@
           "description": "Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.",
           "minimum": 0,
           "type": "integer"
+        },
+        "repetition_duration_updates_enabled": {
+          "description": "Enable or disable automatic duration statistics and estimate adjustment on a task with repetition_interval_days. Omit this field to keep the current setting.",
+          "type": "boolean"
         },
         "task_id": {
           "description": "The UUID of the existing task to update.",

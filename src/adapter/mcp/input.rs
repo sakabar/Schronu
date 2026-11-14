@@ -592,6 +592,7 @@ enum UpdateTaskField {
     DeadlineTime,
     Category,
     DurationStatistics,
+    RepetitionDurationUpdatesEnabled,
 }
 
 impl UpdateTaskField {
@@ -602,6 +603,7 @@ impl UpdateTaskField {
             Self::DeadlineTime => "deadline_time",
             Self::Category => "category",
             Self::DurationStatistics => "duration_statistics",
+            Self::RepetitionDurationUpdatesEnabled => "repetition_duration_updates_enabled",
         }
     }
 
@@ -618,16 +620,21 @@ impl UpdateTaskField {
             Self::DurationStatistics => {
                 !matches!(fields.duration_statistics, OptionalValue::Missing)
             }
+            Self::RepetitionDurationUpdatesEnabled => !matches!(
+                fields.repetition_duration_updates_enabled,
+                OptionalValue::Missing
+            ),
         }
     }
 }
 
-const UPDATE_TASK_FIELDS: [UpdateTaskField; 5] = [
+const UPDATE_TASK_FIELDS: [UpdateTaskField; 6] = [
     UpdateTaskField::EstimatedWorkSeconds,
     UpdateTaskField::ActualWorkSeconds,
     UpdateTaskField::DeadlineTime,
     UpdateTaskField::Category,
     UpdateTaskField::DurationStatistics,
+    UpdateTaskField::RepetitionDurationUpdatesEnabled,
 ];
 const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field to update";
 
@@ -648,6 +655,7 @@ pub(super) struct UpdateTaskInput {
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
     pub(super) category: NullablePatch<ProjectCategoryValue>,
     pub(super) duration_statistics: OptionalValue<DurationStatisticsInput>,
+    pub(super) repetition_duration_updates_enabled: OptionalValue<bool>,
 }
 
 pub(super) struct UpdateTaskChanges {
@@ -657,6 +665,7 @@ pub(super) struct UpdateTaskChanges {
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
     pub(super) category: Option<Option<ProjectCategory>>,
     pub(super) duration_statistics: Option<DurationStatisticsInput>,
+    pub(super) repetition_duration_updates_enabled: Option<bool>,
 }
 
 impl UpdateTaskInput {
@@ -690,6 +699,10 @@ impl UpdateTaskInput {
                 OptionalValue::Missing => None,
                 OptionalValue::Value(statistics) => Some(statistics),
             },
+            repetition_duration_updates_enabled: match self.repetition_duration_updates_enabled {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(enabled) => Some(enabled),
+            },
         }
     }
 }
@@ -715,6 +728,9 @@ struct UpdateTaskInputFields {
     /// Replace all three duration statistics on a task with repetition_interval_days. Set all values to zero to reset the statistics.
     #[serde(default)]
     duration_statistics: OptionalValue<DurationStatisticsInput>,
+    /// Enable or disable automatic duration statistics and estimate adjustment on a task with repetition_interval_days. Omit this field to keep the current setting.
+    #[serde(default)]
+    repetition_duration_updates_enabled: OptionalValue<bool>,
 }
 
 impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
@@ -737,6 +753,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
             deadline_time: fields.deadline_time,
             category: fields.category,
             duration_statistics: fields.duration_statistics,
+            repetition_duration_updates_enabled: fields.repetition_duration_updates_enabled,
         })
     }
 }

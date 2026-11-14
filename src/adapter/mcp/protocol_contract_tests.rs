@@ -985,6 +985,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             "deadline_time",
             "duration_statistics",
             "estimated_work_seconds",
+            "repetition_duration_updates_enabled",
             "task_id"
         ]
     );
@@ -1095,7 +1096,8 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             vec!["category"],
             vec!["deadline_time"],
             vec!["duration_statistics"],
-            vec!["estimated_work_seconds"]
+            vec!["estimated_work_seconds"],
+            vec!["repetition_duration_updates_enabled"]
         ]
     );
 }

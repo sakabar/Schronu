@@ -981,9 +981,10 @@ pub fn set_actual_work(
     Ok(())
 }
 
-pub(crate) fn find_duration_statistics_target(
+pub(crate) fn find_repetition_duration_update_target(
     repository: &dyn TaskRepositoryTrait,
     task_id: Uuid,
+    field: &'static str,
 ) -> Result<TaskHandle, ApplicationError> {
     let task = find_task(repository, task_id)?;
     if !task
@@ -991,7 +992,7 @@ pub(crate) fn find_duration_statistics_target(
         .map_err(ApplicationError::TaskTree)?
     {
         return Err(ApplicationError::InvalidInput {
-            field: "duration_statistics",
+            field,
             reason: "requires repetition_interval_days on the target",
         });
     }
@@ -1139,28 +1140,38 @@ fn prepare_next_repetition_task(
     let original_parent_estimated_work_seconds = parent_task
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let accounted_work_seconds = accounted_subtree_work_seconds(task, Some(actual_work_seconds))?;
-    let duration_statistics = if accounted_work_seconds > 0
-        && task.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
+    let (adjusted_parent_estimated_work_seconds, duration_statistics) = if parent_task
+        .repetition_duration_updates_enabled()
+        .map_err(ApplicationError::TaskTree)?
     {
-        Some(
-            parent_task
-                .duration_statistics()
-                .map_err(ApplicationError::TaskTree)?
-                .with_sample(accounted_work_seconds)
-                .map_err(|reason| ApplicationError::InvalidInput {
-                    field: "duration_statistics",
-                    reason,
-                })?,
+        let accounted_work_seconds =
+            accounted_subtree_work_seconds(task, Some(actual_work_seconds))?;
+        let duration_statistics = if accounted_work_seconds > 0
+            && task.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
+        {
+            Some(
+                parent_task
+                    .duration_statistics()
+                    .map_err(ApplicationError::TaskTree)?
+                    .with_sample(accounted_work_seconds)
+                    .map_err(|reason| ApplicationError::InvalidInput {
+                        field: "duration_statistics",
+                        reason,
+                    })?,
+            )
+        } else {
+            None
+        };
+        (
+            adjusted_repetition_estimate(
+                original_parent_estimated_work_seconds,
+                accounted_work_seconds,
+            )?,
+            duration_statistics,
         )
     } else {
-        None
+        (original_parent_estimated_work_seconds, None)
     };
-
-    let adjusted_parent_estimated_work_seconds = adjusted_repetition_estimate(
-        original_parent_estimated_work_seconds,
-        accounted_work_seconds,
-    )?;
     let task_attr = build_next_repetition_task_attr(
         task,
         &parent_task,
