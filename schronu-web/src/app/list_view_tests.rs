@@ -409,7 +409,7 @@ fn 日付別の空き時間行は4列を結合し検索中は表示しない() {
         unfiltered.contains("class=\"task-gap-row\""),
         "{unfiltered}"
     );
-    assert!(unfiltered.contains("colspan=\"5\""), "{unfiltered}");
+    assert!(unfiltered.contains("colspan=\"4\""), "{unfiltered}");
     assert!(unfiltered.contains("15分間の空き時間"), "{unfiltered}");
 
     let filtered = render("task");
@@ -440,7 +440,7 @@ fn 日付別のlogical_date境界は次task行のmodifierだけで表示し検�
         !unfiltered.contains("task-date-boundary-row"),
         "{unfiltered}"
     );
-    assert!(!unfiltered.contains("colspan=\"5\""), "{unfiltered}");
+    assert!(!unfiltered.contains("colspan=\"4\""), "{unfiltered}");
 
     let filtered = render("task");
     assert!(filtered.contains("class=\"task-row\""), "{filtered}");
@@ -534,15 +534,15 @@ fn listはtask種類と締切種類を親子にかかわらずclassへ反映す�
         "{html}"
     );
     assert!(
-        html.contains("class=\"deadline deadline-kind-today\""),
+        html.contains("class=\"schedule-time deadline-kind-today\""),
         "{html}"
     );
     assert!(
-        html.contains("class=\"deadline deadline-kind-future\""),
+        html.contains("class=\"schedule-time deadline-kind-future\""),
         "{html}"
     );
     assert_eq!(
-        html.matches("deadline deadline-kind-overrun").count(),
+        html.matches("schedule-time deadline-kind-overrun").count(),
         1,
         "{html}"
     );
@@ -551,10 +551,10 @@ fn listはtask種類と締切種類を親子にかかわらずclassへ反映す�
         "aria-label=\"繰返タスク: repetitive parent\"",
         "aria-label=\"単発タスク: one-shot leaf\"",
         "aria-label=\"単発タスク: overrun parent\"",
-        "aria-label=\"締切なし\"",
-        "aria-label=\"当日締切: ____-01:00\"",
-        "aria-label=\"将来締切: ____-01:00\"",
-        "aria-label=\"締切超過: ____-01:00\"",
+        "、締切なし\"",
+        "、当日締切: ____-01:00\"",
+        "、将来締切: ____-01:00\"",
+        "、締切超過: ____-01:00\"",
     ] {
         assert!(html.contains(accessible_label), "{html}");
     }
@@ -567,12 +567,20 @@ fn list配色は意味別tokenを使いleafは太字だけを担う() {
         "--task-fixed: #af00af;",
         "--task-repetitive: #0069c2;",
         "--task-non-repetitive: #a44a00;",
-        "--deadline-today: #9a5a00;",
-        "--deadline-future: #196846;",
+        "--deadline-today: #754300;",
+        "--deadline-future: #10553a;",
     ] {
         assert!(css.contains(token), "missing token: {token}");
     }
-    assert!(css.contains(".deadline.deadline-kind-overrun {\n    color: var(--red);"));
+    for palette in [
+        "--schedule-deadline-surface: #ffe1e3;",
+        "--schedule-deadline-surface: #ffeaba;",
+        "--schedule-deadline-surface: #d8f3e5;",
+        "background: var(--schedule-deadline-surface);",
+        "color: var(--schedule-deadline-ink);",
+    ] {
+        assert!(css.contains(palette), "missing palette rule: {palette}");
+    }
     assert!(css.contains(".task-kind-fixed {\n    color: var(--task-fixed);"));
     assert!(css.contains(".task-kind-repetitive {\n    color: var(--task-repetitive);"));
     assert!(css.contains(".task-kind-non-repetitive {\n    color: var(--task-non-repetitive);"));
@@ -806,12 +814,13 @@ fn 日付別一覧は500行を超えても段階描画しない() {
 }
 
 #[test]
-fn all一覧の列幅はviewportによらず固定する() {
+fn all一覧は狭いviewportで予定列を圧縮する() {
     let css = include_str!("../../assets/main.css");
     let universal = css.split_once("@media (max-width: 46rem)").unwrap().0;
     assert!(universal.contains(
-        ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 5.5rem 60px minmax(0, 1fr);"
+        ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 60px minmax(0, 1fr);"
     ));
+    assert!(universal.contains("grid-template-columns: 44px 7.125rem 60px minmax(0, 1fr);"));
     for breakpoint in ["320px", "360px", "46rem", "1024px"] {
         assert!(!css.contains(&format!(
             "@media (max-width: {breakpoint}) {{\n    .all-task-table"
@@ -853,15 +862,18 @@ fn list_renders_eight_dates_selected_row_fields_and_visual_states() {
     assert!(html.contains("date-pill is-selected"));
     assert!(html.contains("____-01:00"));
     assert!(
-        html.contains("aria-label=\"予定開始11:25、予定時間3分\""),
+        html.contains("aria-label=\"予定開始11:25、予定時間3分、締切超過: ____-01:00\""),
         "{html}"
     );
     assert!(
-        html.contains("11:25<span class=\"schedule-duration\">(3)</span>"),
+        html.contains("11:25</span><span class=\"schedule-duration\">(3)</span>"),
         "{html}"
     );
     assert!(html.contains("task-name task-kind-non-repetitive is-leaf"));
-    assert_eq!(html.matches("deadline deadline-kind-overrun").count(), 1);
+    assert_eq!(
+        html.matches("schedule-time deadline-kind-overrun").count(),
+        1
+    );
     assert_eq!(html.matches("<button class=\"session-start\"").count(), 1);
     assert!(
         html.contains("aria-label=\"task leaf: セッションに追加\""),
@@ -904,6 +916,7 @@ fn 予定表示は分数の各桁と全件日付を省略せずariaへ保持す�
     all_tasks_row.schedule_display = ScheduleDisplayViewModel::AllTasksDate {
         label: "2026/09/06(日)".to_owned(),
     };
+    all_tasks_row.deadline_display_kind = DeadlineDisplayKind::Future;
     rows.push(all_tasks_row);
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {
@@ -918,19 +931,19 @@ fn 予定表示は分数の各桁と全件日付を省略せずariaへ保持す�
     for minutes in [3_u64, 22, 125, 1_000] {
         assert!(
             html.contains(&format!(
-                "aria-label=\"予定開始23:07、予定時間{minutes}分\""
+                "aria-label=\"予定開始23:07、予定時間{minutes}分、締切なし\""
             )),
             "{html}"
         );
         assert!(
             html.contains(&format!(
-                "23:07<span class=\"schedule-duration\">({minutes})</span>"
+                "23:07</span><span class=\"schedule-duration\">({minutes})</span>"
             )),
             "{html}"
         );
     }
     assert!(
-        html.contains("aria-label=\"予定日2026/09/06(日)\""),
+        html.contains("aria-label=\"予定日2026/09/06(日)、将来締切: ____-01:00\""),
         "{html}"
     );
     assert!(html.contains(">2026/09/06(日)</span>"), "{html}");
@@ -948,15 +961,12 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     });
     let html = dioxus::ssr::render(&dom);
 
-    assert!(
-        html.contains("class=\"deadline\" data-label=\"締切\""),
-        "{html}"
-    );
+    assert!(!html.contains("data-label=\"締切\""), "{html}");
     assert!(
         html.contains("class=\"schedule-time\" data-label=\"予定\""),
         "{html}"
     );
-    assert!(html.contains("class=\"deadline-heading\""), "{html}");
+    assert!(!html.contains("class=\"deadline-heading\""), "{html}");
     assert!(html.contains("class=\"schedule-heading\""), "{html}");
     assert!(html.contains("class=\"task-heading\""), "{html}");
     assert!(html.contains("class=\"session-heading\""), "{html}");
@@ -966,23 +976,23 @@ fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
 
     let session_heading_position = html.find("class=\"session-heading\"").unwrap();
     let schedule_heading_position = html.find("class=\"schedule-heading\"").unwrap();
-    let deadline_heading_position = html.find("class=\"deadline-heading\"").unwrap();
+    let deviation_heading_position = html.find("class=\"deviation-heading\"").unwrap();
     let task_heading_position = html.find("class=\"task-heading\"").unwrap();
     assert!(
         session_heading_position < schedule_heading_position
-            && schedule_heading_position < deadline_heading_position
-            && deadline_heading_position < task_heading_position,
+            && schedule_heading_position < deviation_heading_position
+            && deviation_heading_position < task_heading_position,
         "{html}"
     );
 
     let action_position = html.find("class=\"session-cell\"").unwrap();
     let schedule_position = html.find("class=\"schedule-time\"").unwrap();
-    let deadline_position = html.find("class=\"deadline\"").unwrap();
+    let deviation_position = html.find("class=\"task-deviation\"").unwrap();
     let task_position = html.find("class=\"task-name ").unwrap();
     assert!(
         action_position < schedule_position
-            && schedule_position < deadline_position
-            && deadline_position < task_position,
+            && schedule_position < deviation_position
+            && deviation_position < task_position,
         "{html}"
     );
 }
@@ -1003,8 +1013,8 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         ".task-table {\n    display: block;\n    min-width: 0;",
         ".task-table thead {\n    display: block;",
         ".task-table thead tr,\n.task-row {\n    display: grid;",
-        "grid-template-columns: 88px 5.75rem 5.5rem 60px minmax(0, 1fr);",
-        "grid-template-areas: \"action schedule deadline deviation task\";",
+        "grid-template-columns: 88px 6rem 60px minmax(0, 1fr);",
+        "grid-template-areas: \"action schedule deviation task\";",
         ".task-row {\n    min-height: 32px;",
         ".task-row:not(:last-child) {\n    border-bottom: 1px solid var(--line);",
         ".task-row:has(+ .task-row.has-logical-date-boundary) {\n    border-bottom: 0;",
@@ -1013,7 +1023,7 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         ".task-table .task-gap-row td {\n    display: flex;\n    min-height: 32px;\n    align-items: center;\n    justify-content: center;",
         ".task-table td {\n    display: flex;\n    min-width: 0;\n    align-items: center;\n    padding: 0.125rem 0.35rem;",
         ".task-table .session-cell {\n    padding: 0;",
-        ".deadline,\n.schedule-time {\n    font-size: 0.68rem;",
+        ".schedule-time {\n    font-size: 0.68rem;",
         ".schedule-duration {\n    display: inline-block;\n    min-width: 5ch;\n    margin-left: 1ch;\n    text-align: right;",
         ".task-name {\n    overflow: hidden;\n    font-size: 0.75rem;",
         ".task-name-scroll {\n    min-width: 0;\n    overflow-x: auto;\n    overflow-y: hidden;\n    overscroll-behavior-inline: contain;\n    white-space: nowrap;",

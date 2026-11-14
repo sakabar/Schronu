@@ -171,7 +171,6 @@ pub fn ListView(
                             tr {
                                 th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
-                                th { class: "deadline-heading", "締切" }
                                 DeviationSortHeading {
                                     class: "deviation-heading",
                                     descending: deviation_order,
@@ -629,11 +628,11 @@ fn TaskRow(
             super::task_name::display_task_name(&row.display_task_name)
         };
     let mut confirming_defer = use_signal(|| false);
-    let deadline_class = match row.deadline_display_kind {
-        DeadlineDisplayKind::None => "deadline",
-        DeadlineDisplayKind::Overrun => "deadline deadline-kind-overrun",
-        DeadlineDisplayKind::Today => "deadline deadline-kind-today",
-        DeadlineDisplayKind::Future => "deadline deadline-kind-future",
+    let schedule_class = match row.deadline_display_kind {
+        DeadlineDisplayKind::None => "schedule-time",
+        DeadlineDisplayKind::Overrun => "schedule-time deadline-kind-overrun",
+        DeadlineDisplayKind::Today => "schedule-time deadline-kind-today",
+        DeadlineDisplayKind::Future => "schedule-time deadline-kind-future",
     };
     let deadline_accessible_label = match row.deadline_display_kind {
         DeadlineDisplayKind::None => "締切なし".to_owned(),
@@ -641,7 +640,6 @@ fn TaskRow(
         DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
         DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
     };
-    let deadline = &row.deadline_label;
     let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
     let task_class = if row.is_leaf {
         format!("task-name {task_kind_class} is-leaf")
@@ -709,7 +707,7 @@ fn TaskRow(
         if show_separators {
             if let Some(gap_before) = row.gap_before.as_deref() {
                 tr { class: "task-gap-row",
-                    td { colspan: "5", "{gap_before}" }
+                    td { colspan: "4", "{gap_before}" }
                 }
             }
         }
@@ -753,9 +751,9 @@ fn TaskRow(
                 }
             }
             td {
-                class: "schedule-time",
+                class: schedule_class,
                 "data-label": "予定",
-                aria_label: schedule_accessible_label,
+                aria_label: "{schedule_accessible_label}、{deadline_accessible_label}",
                 match schedule_display {
                     ScheduleDisplayViewModel::Daily { start_hh_mm, duration_minutes } => {
                         let duration_label = duration_minutes
@@ -763,17 +761,16 @@ fn TaskRow(
                             .unwrap_or_else(|| "---".to_owned());
                         rsx! {
                             span { class: "schedule-daily", aria_hidden: "true",
-                                "{start_hh_mm}"
+                                span { class: "schedule-date-time", "{start_hh_mm}" }
                                 span { class: "schedule-duration", "({duration_label})" }
                             }
                         }
                     },
                     ScheduleDisplayViewModel::AllTasksDate { label } => rsx! {
-                        span { aria_hidden: "true", "{label}" }
+                        span { class: "schedule-date-time", aria_hidden: "true", "{label}" }
                     },
                 }
             }
-            td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
             td { class: "task-deviation",
                 if let Some(seconds) = row.task.duration_stddev_seconds {
                     "{super::load_view_format::format_unsigned(seconds)}"
@@ -816,7 +813,7 @@ fn TaskRow(
         }
         if confirming_defer() {
             tr { class: "task-defer-confirmation-row",
-                td { colspan: "5",
+                td { colspan: "4",
                     div {
                         class: "task-defer-confirmation",
                         role: "group",

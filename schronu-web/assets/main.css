@@ -23,10 +23,10 @@
     --task-fixed: #af00af;
     --task-repetitive: #0069c2;
     --task-non-repetitive: #a44a00;
-    --deadline-today: #9a5a00;
+    --deadline-today: #754300;
     --session-future-surface: #fff7e7;
     --session-future-accent: #9a5a00;
-    --deadline-future: #196846;
+    --deadline-future: #10553a;
     --band-unavailable: #87afaf;
     --band-elapsed: #808080;
     --band-repetitive: #60a5fa;
@@ -1260,13 +1260,13 @@ button:disabled {
 .task-row {
     display: grid;
     width: 100%;
-    grid-template-columns: 88px 5.75rem 5.5rem 60px minmax(0, 1fr);
-    grid-template-areas: "action schedule deadline deviation task";
+    grid-template-columns: 88px 6rem 60px minmax(0, 1fr);
+    grid-template-areas: "action schedule deviation task";
 }
 
 .task-table.all-task-table thead tr,
 .task-table.all-task-table .task-row {
-    grid-template-columns: 44px 8.25rem 5.5rem 60px minmax(0, 1fr);
+    grid-template-columns: 44px 8.25rem 60px minmax(0, 1fr);
 }
 
 .all-tasks-status {
@@ -1341,11 +1341,6 @@ button:disabled {
     text-align: center;
 }
 
-.deadline-heading,
-.deadline {
-    grid-area: deadline;
-}
-
 .schedule-heading,
 .schedule-time {
     grid-area: schedule;
@@ -1401,13 +1396,26 @@ button:disabled {
     white-space: nowrap;
 }
 
+@media (max-width: 460px) {
+    .task-table.all-task-table thead tr,
+    .task-table.all-task-table .task-row {
+        grid-template-columns: 44px 7.125rem 60px minmax(0, 1fr);
+    }
+}
+
 .task-heading,
 .task-name {
     grid-area: task;
 }
 
 .task-heading {
+    overflow: hidden;
     white-space: nowrap;
+}
+
+.task-heading-count {
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .session-heading,
@@ -1424,7 +1432,6 @@ button:disabled {
     text-align: left;
 }
 
-.deadline,
 .schedule-time {
     font-size: 0.68rem;
     line-height: 1;
@@ -1545,7 +1552,6 @@ button:disabled {
     color: var(--red);
 }
 
-.deadline,
 .schedule-time {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
@@ -1574,16 +1580,27 @@ button:disabled {
     color: var(--task-non-repetitive);
 }
 
-.deadline.deadline-kind-overrun {
-    color: var(--red);
+.schedule-time.deadline-kind-overrun {
+    --schedule-deadline-ink: var(--red-dark);
+    --schedule-deadline-surface: #ffe1e3;
 }
 
-.deadline.deadline-kind-today {
-    color: var(--deadline-today);
+.schedule-time.deadline-kind-today {
+    --schedule-deadline-ink: var(--deadline-today);
+    --schedule-deadline-surface: #ffeaba;
 }
 
-.deadline.deadline-kind-future {
-    color: var(--deadline-future);
+.schedule-time.deadline-kind-future {
+    --schedule-deadline-ink: var(--deadline-future);
+    --schedule-deadline-surface: #d8f3e5;
+}
+
+.schedule-time:is(.deadline-kind-overrun, .deadline-kind-today, .deadline-kind-future) .schedule-date-time {
+    padding: 0.15em 0.2em;
+    border-radius: 0.2rem;
+    background: var(--schedule-deadline-surface);
+    color: var(--schedule-deadline-ink);
+    font-weight: 750;
 }
 
 .error {
