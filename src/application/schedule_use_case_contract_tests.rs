@@ -1028,6 +1028,37 @@ fn get_schedule_atomic_taskを分割せず連続枠へ配置する() {
 }
 
 #[test]
+fn idle_reselects_atomic_task_at_deadline_slack_boundary() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 11, 10, 0).unwrap();
+    let deadline = now + Duration::minutes(110);
+    let atomic = task_with_schedule("atomic", now, 68 * 60, 5);
+    atomic.set_atomic(true).unwrap();
+    atomic.set_deadline_time_opt(Some(deadline)).unwrap();
+    let higher_priority = task_with_schedule("higher-priority", now, 180, 13);
+    higher_priority
+        .set_pending_until(now + Duration::seconds(3212))
+        .unwrap();
+    higher_priority.set_orig_status(Status::Pending).unwrap();
+    let atomic_id = atomic.get_id().unwrap();
+    let higher_priority_id = higher_priority.get_id().unwrap();
+    let repository = TestTaskRepository::new(vec![atomic, higher_priority], now);
+
+    let schedule = get_schedule(&repository).unwrap();
+
+    assert_eq!(schedule.len(), 2);
+    let atomic_segment = schedule
+        .iter()
+        .find(|segment| segment.actual_task_id() == Some(atomic_id))
+        .unwrap();
+    assert_eq!(atomic_segment.scheduled_start, now + Duration::minutes(42));
+    assert_eq!(schedule[0].actual_task_id(), Some(atomic_id));
+    assert_eq!(atomic_segment.scheduled_end, deadline);
+    assert_eq!(atomic_segment.scheduled_work_seconds, 68 * 60);
+    assert_eq!(schedule[1].actual_task_id(), Some(higher_priority_id));
+    assert_eq!(schedule[1].scheduled_start, deadline);
+}
+
+#[test]
 fn get_scheduleはfixed_start属性をpolicyへ渡し指定開始を保持する() {
     let now = fixed_now();
     let flexible = task_with_schedule("flexible", now, 2 * 60 * 60, 99);
