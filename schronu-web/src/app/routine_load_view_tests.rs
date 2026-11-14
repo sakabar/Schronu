@@ -970,7 +970,7 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
         dispatch_click(&dom, ids[index]);
         dom.render_immediate_to_vec();
         let html = dioxus::ssr::render(&dom);
-        let forecast = html.split_once("平均残り時間").unwrap().1;
+        let forecast = html.split_once("統計的平均実績時間").unwrap().1;
         if let Some((percent, color)) = expected {
             assert!(
                 forecast.contains(&format!("<dd style=\"color:var({color});\">{percent}</dd>")),
@@ -978,7 +978,7 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
             );
             let deviation = if index == first { "00:27" } else { "00:00" };
             assert!(forecast.contains(&format!(
-                "<dt>標準偏差</dt><dd>{deviation}</dd></div><div><dt>枠の超過確率</dt>"
+                "<dt>標準偏差</dt><dd>{deviation}</dd></div><div><dt>超過確率(繰り返しタスク)</dt>"
             )));
             assert_eq!(forecast.contains("うち1件は見積で補完"), index == first);
         } else {

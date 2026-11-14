@@ -266,11 +266,11 @@ fn RoutineForecastSummary(
     rsx! {
         section { class: "routine-load-forecast", aria_label: "繰返作業の予測", aria_live: "polite",
             dl {
-                div { dt { "平均残り時間" } dd { "{mean}" } }
+                div { dt { "統計的平均実績時間" } dd { "{mean}" } }
                 div { dt { "{capacity_label}" } dd { "{capacity_text}" } }
                 div { dt { "標準偏差" } dd { "{deviation}" } }
                 div {
-                    dt { "枠の超過確率" }
+                    dt { "超過確率(繰り返しタスク)" }
                     if let Some(color) = probability_color(risk) {
                         dd { color, "{risk_text}" }
                     } else {
