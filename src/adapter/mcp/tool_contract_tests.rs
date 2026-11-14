@@ -3117,3 +3117,88 @@ fn get_scheduleは日時application_errorを情報付きinternal_errorとして�
         expected.to_string()
     );
 }
+
+#[test]
+fn update_task_toggles_repetition_duration_updates_and_validates_before_mutation() {
+    let routine = new_task_handle("routine").unwrap();
+    routine.set_repetition_interval_days_opt(Some(7)).unwrap();
+    let occurrence = routine.create_as_last_child(new_task_attr("occurrence"));
+    let routine_id = routine.get_id().unwrap();
+    let occurrence_id = occurrence.get_id().unwrap();
+    let repository = RecordingRepository::new(vec![routine.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+
+    for (task_id, enabled) in [
+        (occurrence_id, json!(false)),
+        (routine_id, json!(null)),
+        (routine_id, json!("false")),
+    ] {
+        let response = server
+            .handle_request(tool_call_request(
+                "invalid-duration-updates",
+                "update_task",
+                json!({
+                    "task_id": task_id,
+                    "actual_work_seconds": 999,
+                    "repetition_duration_updates_enabled": enabled
+                }),
+            ))
+            .unwrap();
+        let error = if task_id == occurrence_id {
+            &response["result"]["structuredContent"]["error"]
+        } else {
+            &response["error"]["data"]
+        };
+        assert_eq!(error["code"], "invalid_input", "{response}");
+        assert_eq!(routine.get_actual_work_seconds().unwrap(), 0);
+        assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 0);
+        assert!(routine.repetition_duration_updates_enabled().unwrap());
+        assert_eq!(save_count.get(), 0);
+    }
+
+    for (changes, enabled, expected_saves) in [
+        (
+            json!({"repetition_duration_updates_enabled": false}),
+            false,
+            1,
+        ),
+        (
+            json!({"repetition_duration_updates_enabled": false}),
+            false,
+            1,
+        ),
+        (
+            json!({
+                "repetition_duration_updates_enabled": true,
+                "duration_statistics": {
+                    "sample_size": 1,
+                    "mean_duration_seconds": 600,
+                    "m2_duration_seconds_squared": 0
+                }
+            }),
+            true,
+            2,
+        ),
+    ] {
+        let mut arguments = changes;
+        arguments["task_id"] = json!(routine_id);
+        let response = server
+            .handle_request(tool_call_request(
+                "duration-updates",
+                "update_task",
+                arguments,
+            ))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(
+            routine.repetition_duration_updates_enabled().unwrap(),
+            enabled
+        );
+        assert_eq!(save_count.get(), expected_saves);
+    }
+    assert_eq!(
+        routine.duration_statistics().unwrap().values(),
+        (1, 600.0, 0.0)
+    );
+}

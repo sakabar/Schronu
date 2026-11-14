@@ -158,6 +158,12 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
             Yaml::String(String::from("repetition_interval_days")),
             Yaml::Integer(repetition_interval_days),
         );
+        if !task.repetition_duration_updates_enabled() {
+            task_hash.insert(
+                Yaml::String("repetition_duration_updates_enabled".into()),
+                Yaml::Boolean(false),
+            );
+        }
         let (count, mean, m2) = task.duration_statistics().values();
         if count > 0 {
             let statistics = LinkedHashMap::from_iter([
@@ -571,6 +577,21 @@ fn yaml_to_task_strict(
         .map_err(map_task_tree_error)?;
     task.set_repetition_interval_days_opt(interval)
         .map_err(map_task_tree_error)?;
+    let field = "repetition_duration_updates_enabled";
+    if let Some(value) = yaml_field(yaml, field) {
+        if interval.is_none() {
+            return Err(strict_error(
+                path,
+                field,
+                "requires repetition_interval_days",
+            ));
+        }
+        let enabled = value
+            .as_bool()
+            .ok_or_else(|| strict_error(path, field, "must be a boolean"))?;
+        task.set_repetition_duration_updates_enabled(enabled)
+            .map_err(map_task_tree_error)?;
+    }
     if let Some(value) = yaml_field(yaml, "duration_statistics") {
         if interval.is_none() {
             return Err(strict_error(
