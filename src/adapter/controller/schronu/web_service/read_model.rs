@@ -24,6 +24,7 @@ use crate::application::schedule_use_case::{
 use crate::application::task_use_case::{
     get_focus, get_task, plan_defer_task, ApplicationError, DeferMode, DeferTaskPlan, TaskView,
 };
+use crate::entity::task::TaskHandle;
 use chrono::{DateTime, Days, Local, NaiveDate};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use uuid::Uuid;
@@ -114,8 +115,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
     last_synced_time: DateTime<Local>,
 ) -> Result<Vec<AllTaskRowDto>, WebReadCoreError> {
     let logical_dates = scheduled_logical_dates(schedule).map_err(WebReadCoreError::Application)?;
-    let mut task_kind_cache = HashMap::new();
-    let mut session_metrics_cache = HashMap::new();
+    let mut metadata_cache = HashMap::new();
     logical_dates
         .into_iter()
         .zip(schedule)
@@ -128,11 +128,11 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 last_synced_time,
             )
             .map_err(WebReadCoreError::Application)?;
-            let (task_display_kind, deadline_display_kind) =
-                classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
+            let metadata = scheduled_task_metadata(repository, segment, &mut metadata_cache)
+                .map_err(WebReadCoreError::Application)?;
+            let deadline_display_kind = classify_deadline_kind(segment, logical_date)?;
             Ok(AllTaskRowDto {
-                task: scheduled_task_dto(repository, segment, &mut session_metrics_cache)
-                    .map_err(WebReadCoreError::Application)?,
+                task: scheduled_task_dto(segment, metadata),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
                     segment.scheduled_work_seconds,
@@ -147,7 +147,7 @@ pub(in crate::adapter::controller) fn build_all_task_rows(
                 deadline_epoch_ms: deadline.map(|value| value.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
-                task_display_kind,
+                task_display_kind: metadata.display_kind,
                 deadline_display_kind,
                 is_leaf: segment.is_leaf(),
             })
@@ -360,8 +360,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
     dated_segments.retain(|(date, _)| *date == logical_date);
     dated_segments.sort_by_key(|(_, segment)| segment.scheduled_start);
 
-    let mut task_kind_cache = HashMap::new();
-    let mut session_metrics_cache = HashMap::new();
+    let mut metadata_cache = HashMap::new();
     dated_segments
         .into_iter()
         .map(|(_, segment)| {
@@ -372,11 +371,11 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 last_synced_time,
             )
             .map_err(WebReadCoreError::Application)?;
-            let (task_display_kind, deadline_display_kind) =
-                classify_display_kinds(repository, segment, logical_date, &mut task_kind_cache)?;
+            let metadata = scheduled_task_metadata(repository, segment, &mut metadata_cache)
+                .map_err(WebReadCoreError::Application)?;
+            let deadline_display_kind = classify_deadline_kind(segment, logical_date)?;
             Ok(ScheduledTaskRowDto {
-                task: scheduled_task_dto(repository, segment, &mut session_metrics_cache)
-                    .map_err(WebReadCoreError::Application)?,
+                task: scheduled_task_dto(segment, metadata),
                 display_task_name: format_scheduled_task_display_name(
                     &segment.task.name,
                     segment.scheduled_work_seconds,
@@ -391,7 +390,7 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
                 deadline_epoch_ms: deadline.map(|deadline| deadline.timestamp_millis()),
                 deadline_label,
                 misses_deadline: misses_deadline(deadline.as_ref(), segment.scheduled_end),
-                task_display_kind,
+                task_display_kind: metadata.display_kind,
                 deadline_display_kind,
                 is_leaf: segment.is_leaf(),
                 defer_plan: segment
@@ -405,22 +404,6 @@ pub(in crate::adapter::controller) fn build_scheduled_task_rows(
             })
         })
         .collect()
-}
-
-fn classify_display_kinds(
-    repository: &dyn TaskRepositoryTrait,
-    segment: &ScheduledTaskView,
-    logical_date: NaiveDate,
-    task_kind_cache: &mut HashMap<Uuid, TaskDisplayKind>,
-) -> Result<(TaskDisplayKind, DeadlineDisplayKind), WebReadCoreError> {
-    let task_display_kind = match segment.actual_task_id() {
-        Some(task_id) => classify_task_display_kind(repository, task_id, task_kind_cache)?,
-        None => TaskDisplayKind::Repetitive,
-    };
-    Ok((
-        task_display_kind,
-        classify_deadline_kind(segment, logical_date)?,
-    ))
 }
 
 fn classify_deadline_kind(
@@ -457,24 +440,28 @@ pub(in crate::adapter::controller) fn classify_task_display_kind(
             .ok_or(WebReadCoreError::Application(
                 ApplicationError::TaskNotFound(task_id),
             ))?;
-        let kind = if task
-            .fixed_start_applies_to_schedule()
-            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-        {
-            TaskDisplayKind::Fixed
-        } else if task
-            .get_inherited_repetition_interval_days_opt()
-            .map_err(|error| WebReadCoreError::Application(ApplicationError::TaskTree(error)))?
-            .is_some()
-        {
-            TaskDisplayKind::Repetitive
-        } else {
-            TaskDisplayKind::NonRepetitive
-        };
+        let kind = task_display_kind(&task).map_err(WebReadCoreError::Application)?;
         task_kind_cache.insert(task_id, kind);
         kind
     };
     Ok(task_display_kind)
+}
+
+fn task_display_kind(task: &TaskHandle) -> Result<TaskDisplayKind, ApplicationError> {
+    if task
+        .fixed_start_applies_to_schedule()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        Ok(TaskDisplayKind::Fixed)
+    } else if task
+        .get_inherited_repetition_interval_days_opt()
+        .map_err(ApplicationError::TaskTree)?
+        .is_some()
+    {
+        Ok(TaskDisplayKind::Repetitive)
+    } else {
+        Ok(TaskDisplayKind::NonRepetitive)
+    }
 }
 
 fn defer_plan_dto(plan: DeferTaskPlan) -> DeferPlanDto {
@@ -540,52 +527,67 @@ pub(super) fn session_task_dto_from_view(
     })
 }
 
-type ScheduledTaskMetricsCache = HashMap<(Uuid, bool), (Option<u8>, Option<i64>)>;
+#[derive(Clone, Copy)]
+struct ScheduledTaskMetadata {
+    display_kind: TaskDisplayKind,
+    estimate_success_percentage: Option<u8>,
+    duration_stddev_seconds: Option<i64>,
+}
 
-fn scheduled_task_dto(
+fn scheduled_task_metadata(
     repository: &dyn TaskRepositoryTrait,
     segment: &ScheduledTaskView,
-    session_metrics_cache: &mut ScheduledTaskMetricsCache,
-) -> Result<ScheduledTaskDto, ApplicationError> {
-    let task_id = segment.actual_task_id();
-    let (estimate_success_percentage, duration_stddev_seconds) = match session_metrics_cache
-        .entry((segment.source_task_id(), segment.is_projected()))
-    {
-        std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+    cache: &mut HashMap<(Uuid, bool), ScheduledTaskMetadata>,
+) -> Result<ScheduledTaskMetadata, ApplicationError> {
+    let id = segment.source_task_id();
+    match cache.entry((id, segment.is_projected())) {
+        std::collections::hash_map::Entry::Occupied(entry) => Ok(*entry.get()),
         std::collections::hash_map::Entry::Vacant(entry) => {
-            let id = segment.source_task_id();
             let task = repository
                 .get_by_id(id)
                 .map_err(ApplicationError::TaskTree)?
                 .ok_or(ApplicationError::TaskNotFound(id))?;
-            let (probability, source) = if task_id.is_some() {
-                let probability =
-                    crate::application::task_use_case::estimate_success_percentage(&task)?;
-                let source = crate::application::task_use_case::recurring_occurrence_source(&task)?;
-                (probability, source)
+            let (display_kind, estimate_success_percentage, source) = if segment.is_projected() {
+                (TaskDisplayKind::Repetitive, None, Some(task))
             } else {
-                (None, Some(task))
+                (
+                    task_display_kind(&task)?,
+                    crate::application::task_use_case::estimate_success_percentage(&task)?,
+                    crate::application::task_use_case::recurring_occurrence_source(&task)?,
+                )
             };
-            let deviation = source
+            let duration_stddev_seconds = source
                 .map(|source| source.duration_statistics())
                 .transpose()
                 .map_err(ApplicationError::TaskTree)?
                 .and_then(|stats| stats.sample_standard_deviation())
                 .map(|seconds| seconds as i64);
-            *entry.insert((probability, deviation))
+            Ok(*entry.insert(ScheduledTaskMetadata {
+                display_kind,
+                estimate_success_percentage,
+                duration_stddev_seconds,
+            }))
         }
-    };
+    }
+}
+
+fn scheduled_task_dto(
+    segment: &ScheduledTaskView,
+    metadata: ScheduledTaskMetadata,
+) -> ScheduledTaskDto {
     let task = &segment.task;
-    Ok(ScheduledTaskDto {
-        duration_stddev_seconds,
-        estimate_success_percentage,
+    ScheduledTaskDto {
+        duration_stddev_seconds: metadata.duration_stddev_seconds,
+        estimate_success_percentage: metadata.estimate_success_percentage,
         pending_until_epoch_ms: task.pending_until.map(|time| time.timestamp_millis()),
         start_time_epoch_ms: Some(task.start_time.timestamp_millis()),
-        task_id: task_id.map(|id| id.hyphenated().to_string()),
+        task_id: segment
+            .actual_task_id()
+            .map(|id| id.hyphenated().to_string()),
         task_name: task.name.clone(),
         estimated_work_seconds: task.estimated_work_seconds,
         actual_work_seconds: task.actual_work_seconds,
-    })
+    }
 }
 
 fn task_estimate_success_percentage(
