@@ -1707,9 +1707,9 @@ button.routine-load-day.is-at-capacity {
 }
 
 .routine-load-forecast dl {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.45rem 1.2rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
     margin: 0;
 }
 
@@ -1726,6 +1726,7 @@ button.routine-load-day.is-at-capacity {
 }
 
 .routine-load-forecast p {
+    min-height: 1lh;
     margin: 0.45rem 0 0;
 }
 

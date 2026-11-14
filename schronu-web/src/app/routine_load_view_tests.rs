@@ -906,7 +906,7 @@ fn url_suffix_is_hidden_in_routine_and_project_names() {
 }
 
 #[test]
-fn forecast_is_shown_only_for_the_selected_date() {
+fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
     fn root() -> Element {
         let mut report = report(Vec::new());
         report.forecast_by_date = [
@@ -938,7 +938,7 @@ fn forecast_is_shown_only_for_the_selected_date() {
     }
     let mut dom = VirtualDom::new(root);
     let ids = rebuild_with_click_listeners(&mut dom);
-    assert!(!dioxus::ssr::render(&dom).contains("枠の超過確率"));
+    assert_eq!(dioxus::ssr::render(&dom).matches("<dd>—</dd>").count(), 3);
     let after_click = |index: usize| {
         let mut candidate = VirtualDom::new(root);
         let ids = rebuild_with_click_listeners(&mut candidate);
@@ -953,11 +953,13 @@ fn forecast_is_shown_only_for_the_selected_date() {
     };
     let first = select_date("<strong>10/3</strong>");
     let second = select_date("<strong>10/4</strong>");
+    let missing = select_date("<strong>10/5</strong>");
     let weekday = select_date("<strong>月曜日</strong>");
     let overall = select_date("<strong>全体</strong>");
     for (index, expected) in [
         (first, Some("23%")),
         (second, Some("0%")),
+        (missing, None),
         (weekday, None),
         (first, Some("23%")),
         (overall, None),
@@ -965,15 +967,15 @@ fn forecast_is_shown_only_for_the_selected_date() {
         dispatch_click(&dom, ids[index]);
         dom.render_immediate_to_vec();
         let html = dioxus::ssr::render(&dom);
+        let forecast = html.split_once("平均残り時間").unwrap().1;
         if let Some(percent) = expected {
-            let forecast = html.split("平均残り時間").nth(1).unwrap();
             assert!(
                 forecast.contains(&format!("<dd>{percent}</dd>")),
                 "{forecast}"
             );
             assert_eq!(forecast.contains("うち1件は見積で補完"), index == first);
         } else {
-            assert!(!html.contains("枠の超過確率"));
+            assert_eq!(forecast.matches("<dd>—</dd>").count(), 3);
         }
     }
 }

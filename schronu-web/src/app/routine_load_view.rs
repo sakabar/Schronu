@@ -91,22 +91,24 @@ pub(super) fn RoutineLoadTable(
         RoutineLoadScope::Date(date) => format!("{}/{}", date.month(), date.day()),
     };
 
-    let forecast = if let RoutineLoadScope::Date(date) = active_scope {
-        let date = date.to_string();
-        report.forecast_by_date.get(&date).map(|forecast| {
+    let (forecast, capacity, today) = match active_scope {
+        RoutineLoadScope::Date(date) => {
+            let date = date.to_string();
             let today = date == report.start_date;
-            let capacity = if today {
-                today_remaining_available_seconds.filter(|seconds| *seconds >= 0)
-            } else {
-                report
-                    .full_day_available_seconds_by_date
-                    .get(&date)
-                    .copied()
-            };
-            rsx! { RoutineForecastSummary { forecast: *forecast, capacity, today } }
-        })
-    } else {
-        None
+            let forecast = report.forecast_by_date.get(&date).copied();
+            let capacity = forecast.and_then(|_| {
+                if today {
+                    today_remaining_available_seconds.filter(|seconds| *seconds >= 0)
+                } else {
+                    report
+                        .full_day_available_seconds_by_date
+                        .get(&date)
+                        .copied()
+                }
+            });
+            (forecast, capacity, today)
+        }
+        RoutineLoadScope::Overall | RoutineLoadScope::Weekday(_) => (None, None, false),
     };
 
     rsx! {
@@ -203,7 +205,7 @@ pub(super) fn RoutineLoadTable(
             strong { "{scope_label}" }
             span { "削減候補 {rows.len()}件" }
         }
-        {forecast}
+        RoutineForecastSummary { forecast, capacity, today }
         if rows.is_empty() {
             p { class: "load-status", "選択範囲に発生する繰返負荷はありません。" }
         } else {
@@ -231,22 +233,26 @@ pub(super) fn RoutineLoadTable(
 
 #[component]
 fn RoutineForecastSummary(
-    forecast: RoutineLoadForecast,
+    forecast: Option<RoutineLoadForecast>,
     capacity: Option<i64>,
     today: bool,
 ) -> Element {
-    let mean = format_unsigned(forecast.mean_remaining_seconds as i64);
+    let placeholder = || "—".to_owned();
+    let mean = forecast.map_or_else(placeholder, |forecast| {
+        format_unsigned(forecast.mean_remaining_seconds as i64)
+    });
     let capacity_label = if today {
         "残り可処分時間"
     } else {
         "可処分時間"
     };
-    let capacity_text = capacity.map_or_else(|| "—".to_owned(), format_unsigned);
-    let risk = capacity.map_or_else(
-        || "—".to_owned(),
-        |seconds| format!("{}%", exceedance_percentage(forecast, seconds)),
-    );
-    let estimated_count = forecast.estimated_occurrence_count;
+    let capacity_text = capacity.map_or_else(placeholder, format_unsigned);
+    let risk = forecast
+        .zip(capacity)
+        .map_or_else(placeholder, |(forecast, seconds)| {
+            format!("{}%", exceedance_percentage(forecast, seconds))
+        });
+    let estimated_count = forecast.map_or(0, |forecast| forecast.estimated_occurrence_count);
     rsx! {
         section { class: "routine-load-forecast", aria_label: "繰返作業の予測", aria_live: "polite",
             dl {
@@ -254,8 +260,10 @@ fn RoutineForecastSummary(
                 div { dt { "{capacity_label}" } dd { "{capacity_text}" } }
                 div { dt { "枠の超過確率" } dd { "{risk}" } }
             }
-            if estimated_count > 0 {
-                p { "うち{estimated_count}件は見積で補完" }
+            p {
+                if estimated_count > 0 {
+                    "うち{estimated_count}件は見積で補完"
+                }
             }
         }
     }
