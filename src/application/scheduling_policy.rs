@@ -925,6 +925,18 @@ impl SlackDemandIndex {
         self.current_time = new_now;
     }
 
+    fn next_idle_slack_boundary(
+        &self,
+        instrumentation: &mut SchedulingInstrumentation,
+    ) -> Option<DateTime<Local>> {
+        self.slack_tree
+            .range_min(0..self.deadlines.len(), instrumentation)
+            .and_then(|seconds| {
+                self.current_time
+                    .checked_add_signed(Duration::seconds(seconds))
+            })
+    }
+
     fn begin_speculative_idle(
         &mut self,
         old_now: DateTime<Local>,
@@ -2211,7 +2223,16 @@ fn advance_without_selection(
 ) -> Result<ControlFlow<()>, SchedulingPolicyError> {
     let next_release = state.frontier.next_release();
     let next_fixed = next_fixed_start(state.now, &state.fixed_slots);
-    if let Some(next_event) = [next_release, next_fixed].into_iter().flatten().min() {
+    let next_slack = if state.frontier.normal_ready.is_empty() {
+        None
+    } else {
+        state.slack_index.next_idle_slack_boundary(instrumentation)
+    };
+    if let Some(next_event) = [next_release, next_fixed, next_slack]
+        .into_iter()
+        .flatten()
+        .min()
+    {
         state
             .slack_index
             .record_idle(state.now, next_event, instrumentation);

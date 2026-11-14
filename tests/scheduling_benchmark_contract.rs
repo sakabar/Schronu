@@ -68,7 +68,8 @@ fn typical_scheduleはslot探索とsortの上限内に収まる() {
     assert_eq!(metrics.candidate_count, 1_755);
     // fixed windowとslack/実preemption境界による15分超のfragment分割を含む出力を固定する。
     // 0秒taskも通常順で配置するため、後続taskの境界到達時刻と分割数が変わる。
-    assert_eq!(metrics.segment_count, 1_769);
+    // idle中のslack境界でも再選択するため、後続taskの配置と分割数が変わる。
+    assert_eq!(metrics.segment_count, 1_772);
     assert_eq!(metrics.schedule_rebuild_count, 1);
     assert!(
         metrics.occupied_slot_probe_count <= 100_000,
