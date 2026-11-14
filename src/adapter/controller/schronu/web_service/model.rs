@@ -203,7 +203,7 @@ pub struct RoutineLoadRowDto {
     #[serde(default)]
     pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
     #[serde(default)]
-    pub estimate_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    pub historical_mean_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

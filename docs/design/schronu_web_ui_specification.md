@@ -269,7 +269,9 @@ RoutineLoadRow {
 
 日付選択に対応する繰返負荷では、削減候補行の直後に予測欄を常に表示し、平均と枠は `HH:MM`、超過確率は整数%とする。今日の枠は既存の残り可処分時間、将来日は既存の全日可処分時間とし、単発予定の時間は控除しない。今日の残り枠が欠落した場合は枠と確率を `—` とする。分散0では平均が枠を厳密に超える場合だけ100%とし、対象0件では平均と超過確率は0。曜日・全体の選択および選択日付の予測が欠ける場合は3項目を `—` とする。3列の配置と補完件数1行分の高さを全範囲で確保する。
 
-通常比はapplication行、server DTO、client wireの`estimate_difference_seconds_by_date`で輸送する。日付keyは既存mapと同じlogical date、値は符号付き秒数で、欠落は比較不能、明示的な0は差なしを表す。旧payloadでは追加mapを空mapとして補完し、このfieldの欠落だけで28日mapや既存負荷をfallbackさせない。実segmentのtaskから最寄りの繰返親とその直下の今回taskを求め、今回task自身の見積秒数、未完了の子孫の見積秒数、完了済みの子孫の実績秒数をchecked加算し、親の見積秒数をchecked減算する。子孫が`Status::Done`なら生の`actual_work_seconds`を使い、実績0秒も0秒として扱う。別の繰返親とその子孫は除外する。親自身の見積もりは子の合計ではなく自身の作業時間として加算する。比較はrepository snapshotの値を使い、今回task自身と未完了の子孫の実績、segment時間へ置き換えない。今回taskのUUIDごとに合計をcacheし、同じ回を再走査しない。日付ごとに今回taskのUUIDを照合し、同一回の複数segmentと子孫segmentを重複計算しない。複数日でも同一回の差を各日に載せる。複数回が同日にある場合、予測segmentが含まれる場合は比較値を載せない。加算・減算overflowは既存の`RoutineLoadCalculationOverflow`として返す。
+
+
+通常比はapplication行、server DTO、client wireの`historical_mean_difference_seconds_by_date`で輸送する。日付keyは既存mapと同じlogical date、値は符号付き秒数で、欠落は比較不能、明示的な0は差なしを表す。旧payloadでは追加mapを空mapとして補完し、旧見積との差分fieldは読み込まない。新fieldの欠落だけで28日mapや既存負荷をfallbackさせない。実segmentのtaskから最寄りの繰返親とその直下の今回taskを求め、今回task自身の見積秒数、未完了の子孫の見積秒数、完了済みの子孫の実績秒数をchecked加算し、繰返元の保存済み実績平均を減算する。子孫が`Status::Done`なら生の`actual_work_seconds`を使い、実績0秒も0秒として扱う。別の繰返親とその子孫は除外する。親自身の見積もりは子の合計ではなく自身の作業時間として加算する。比較はrepository snapshotの値を使い、今回task自身と未完了の子孫の実績、segment時間へ置き換えない。今回taskのUUIDごとに合計をcacheし、同じ回を再走査しない。日付ごとに今回taskのUUIDを照合し、同一回の複数segmentと子孫segmentを重複計算しない。複数日でも同一回の差を各日に載せる。複数回が同日にある場合、予測segmentが含まれる場合は比較値を載せない。加算・減算overflowは既存の`RoutineLoadCalculationOverflow`として返す。 保存済み実績が0件の場合は `—` とする。
 
 日付別projectionだけが比較値を採用し、曜日別・全体は常に`None`とする。通常比cellは共通componentで`format_signed_time`を使い、表示分数が正なら`--red`、負なら`--blue`、0なら通常色、欠落なら`—`を描画する。既存の列順を維持して先頭の数値列の直右に通常比を挿入し、fallback表も6列にする。desktopの通常比列は5rem、46rem以下では13%とし、既存の数値4列の割合は維持して名前列を45%から32%へ調整する。表全体は横scrollさせず、名前cell内だけを横scroll可能にする。通常比の追加でmapの差分、並び順、行選択、通信、localStorageは変えない。
 
@@ -990,7 +992,6 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
 - 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、日付別のrank非0の実taskでは左44pxを空けた右側の先送りと全件のrank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
-- 同じ4幅で全件tableの`44px 8.25rem 5.5rem minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
 - 320px、360px、544px、1024px幅で日付欄と検索を1行に配置し、日付欄は通常154px幅、coarse pointerでは162px幅となることをCSS contract testとbrowserで確認する。日付入力・内包する「→」button・検索欄とclear buttonは通常36px、coarse pointerでは44pxとし、`2026/11/07`が読め、検索入力中と日付error時にも重なりやpage横scrollがないことを確認する。検索clearの表示で欄の幅が変わらず、日付errorが入力行の下へ全幅表示されることを確認する。「→」の中央揃え、日付buttonの高さ36pxと横スクロール、34rem以下のbuffer圧縮を維持する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 6操作buttonのlabel、ARIA名、意味別class、全幅で左列1→2→3・右列4→5→6の3段配置を確認する。390×844pxの1セッションでは固定tab barより上に全操作が見えること、320px幅では文字切れと横はみ出しがないことを確認する。

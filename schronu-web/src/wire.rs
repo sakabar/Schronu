@@ -43,7 +43,7 @@ pub struct RoutineLoadRow {
     #[serde(default)]
     pub work_seconds_by_date: BTreeMap<String, i64>,
     #[serde(default)]
-    pub estimate_difference_seconds_by_date: BTreeMap<String, i64>,
+    pub historical_mean_difference_seconds_by_date: BTreeMap<String, i64>,
 }
 
 impl RoutineLoadRow {
@@ -402,7 +402,7 @@ mod all_task_contract_tests {
             average_work_seconds: None,
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 60,
-            estimate_difference_seconds_by_date: Default::default(),
+            historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };
 
@@ -422,7 +422,7 @@ mod all_task_contract_tests {
             average_work_seconds: Some(240),
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 300,
-            estimate_difference_seconds_by_date: Default::default(),
+            historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };
 

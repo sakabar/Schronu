@@ -551,7 +551,19 @@ fn 負荷serviceは14日目のtaskと累積を含め15日目を除外する() {
 fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 8, 0, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    fixture.seed_repetition_task(operation_now);
+    let (routine_id, _) = fixture.seed_repetition_task(operation_now);
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.sync_clock(operation_now).unwrap();
+    repository.load().unwrap();
+    repository
+        .get_by_id(routine_id)
+        .unwrap()
+        .unwrap()
+        .set_duration_statistics(
+            crate::entity::task::DurationStatistics::new(1, 420.0, 0.0).unwrap(),
+        )
+        .unwrap();
+    repository.save().unwrap();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     let response = service.load_band_at(operation_now).unwrap();
@@ -567,11 +579,9 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     assert_eq!(row.peak_date, NaiveDate::from_ymd_opt(2026, 9, 12).unwrap());
     assert_eq!(row.peak_work_seconds, 600);
     assert_eq!(row.work_seconds_by_date.len(), 4);
-    assert_eq!(row.estimate_difference_seconds_by_date.len(), 1);
     assert_eq!(
-        row.estimate_difference_seconds_by_date
-            .get(&operation_now.date_naive()),
-        Some(&0)
+        row.historical_mean_difference_seconds_by_date,
+        [(operation_now.date_naive(), 180)].into()
     );
     let forecast = &response.data.routine_load.forecast_by_date;
     assert_eq!(forecast.len(), 28);
@@ -584,12 +594,16 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
     assert_eq!(forecast[&row.peak_date].variance_seconds_squared, 0.0);
 
     let mut legacy = serde_json::to_value(row).unwrap();
-    legacy
-        .as_object_mut()
-        .unwrap()
-        .remove("estimate_difference_seconds_by_date");
-    let restored: super::RoutineLoadRowDto = serde_json::from_value(legacy).unwrap();
-    assert!(restored.estimate_difference_seconds_by_date.is_empty());
+    let legacy = legacy.as_object_mut().unwrap();
+    let difference = legacy
+        .remove("historical_mean_difference_seconds_by_date")
+        .unwrap();
+    legacy.insert("estimate_difference_seconds_by_date".to_owned(), difference);
+    let restored: super::RoutineLoadRowDto =
+        serde_json::from_value(serde_json::Value::Object(legacy.clone())).unwrap();
+    assert!(restored
+        .historical_mean_difference_seconds_by_date
+        .is_empty());
     assert_eq!(
         row.work_seconds_by_date.values().sum::<i64>(),
         row.total_work_seconds

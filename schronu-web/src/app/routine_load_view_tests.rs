@@ -50,24 +50,25 @@ fn row(
         peak_date: work[0].0.to_owned(),
         peak_work_seconds: work.iter().map(|(_, seconds)| *seconds).max().unwrap(),
         work_seconds_by_date,
-        estimate_difference_seconds_by_date: BTreeMap::new(),
+        historical_mean_difference_seconds_by_date: BTreeMap::new(),
     }
 }
 
 #[test]
 fn estimate_difference_is_transported_only_to_date_scope() {
     let mut routine = row("project", "routine", "routine-1", &[("2026-10-03", 120)]);
-    routine.estimate_difference_seconds_by_date = BTreeMap::from([("2026-10-03".to_owned(), -900)]);
+    routine.historical_mean_difference_seconds_by_date =
+        BTreeMap::from([("2026-10-03".to_owned(), -900)]);
     let projection = build_routine_load_projection(&report(vec![routine]), None).unwrap();
     for scope in [RoutineLoadScope::Overall, RoutineLoadScope::Weekday(5)] {
         assert_eq!(
-            rows_for_scope(&projection, scope)[0].estimate_difference_seconds,
+            rows_for_scope(&projection, scope)[0].historical_mean_difference_seconds,
             None
         );
     }
     assert_eq!(
         rows_for_scope(&projection, RoutineLoadScope::Date(date("2026-10-03")))[0]
-            .estimate_difference_seconds,
+            .historical_mean_difference_seconds,
         Some(-900)
     );
 }
@@ -94,7 +95,7 @@ fn estimate_difference_column_preserves_order_sign_colors_and_scope_switching() 
                 &[("2026-10-03", 120)],
             );
             if let Some(difference) = difference {
-                item.estimate_difference_seconds_by_date
+                item.historical_mean_difference_seconds_by_date
                     .insert("2026-10-03".to_owned(), difference);
             }
             item
