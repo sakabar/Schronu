@@ -186,6 +186,15 @@ fn 日別負荷の超過は余差を除き帯の余差と空きを維持する()
         .0;
     assert!(today.contains("load-metric-value is-within\">-01:30</strong>"));
     assert!(today.contains("超過マイナス1時間30分、繰返作業の失敗確率未算出。"));
+    let failure_value = today
+        .split_once("class=\"load-failure-value\"")
+        .unwrap()
+        .1
+        .split_once("</strong>")
+        .unwrap()
+        .0;
+    assert!(failure_value.ends_with(">—"));
+    assert!(!failure_value.contains("color:var("));
     assert!(today.contains("余差1時間0分、空き0時間30分"));
     assert_eq!(
         today
@@ -514,7 +523,7 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     let ids = rebuild_with_event_listeners(&mut dom, "change");
     let initial = dioxus::ssr::render(&dom);
     assert_eq!(initial.matches("繰返作業の失敗確率50%").count(), 14);
-    assert!(initial.contains("color:var(--red-dark);\">50%"));
+    assert!(initial.contains("color:var(--red);\">50%"));
     let off = ids[0];
     dispatch_platform_event(
         &dom,

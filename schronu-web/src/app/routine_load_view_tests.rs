@@ -916,7 +916,7 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
             (
                 "2026-10-03".to_owned(),
                 crate::wire::RoutineLoadForecast {
-                    mean_remaining_seconds: 9_600.0,
+                    mean_remaining_seconds: 10_800.0,
                     variance_seconds_squared: 1_620.0_f64.powi(2),
                     estimated_occurrence_count: 1,
                 },
@@ -960,22 +960,20 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
     let weekday = select_date("<strong>月曜日</strong>");
     let overall = select_date("<strong>全体</strong>");
     for (index, expected) in [
-        (first, Some("23%")),
-        (second, Some("0%")),
+        (first, Some(("50%", "--red"))),
+        (second, Some(("0%", "--green-dark"))),
         (missing, None),
         (weekday, None),
-        (first, Some("23%")),
+        (first, Some(("50%", "--red"))),
         (overall, None),
     ] {
         dispatch_click(&dom, ids[index]);
         dom.render_immediate_to_vec();
         let html = dioxus::ssr::render(&dom);
         let forecast = html.split_once("平均残り時間").unwrap().1;
-        if let Some(percent) = expected {
+        if let Some((percent, color)) = expected {
             assert!(
-                forecast.contains(&format!(
-                    "<dd style=\"color:var(--green-dark);\">{percent}</dd>"
-                )),
+                forecast.contains(&format!("<dd style=\"color:var({color});\">{percent}</dd>")),
                 "{forecast}"
             );
             let deviation = if index == first { "00:27" } else { "00:00" };

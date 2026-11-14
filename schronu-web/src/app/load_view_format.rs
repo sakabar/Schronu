@@ -4,7 +4,7 @@ pub(super) fn format_unsigned(seconds: i64) -> String {
 }
 
 // First matching minimum wins. Keep the bands in descending order and end at 0.
-const PROBABILITY_COLOR_BANDS: &[(u8, &str)] = &[(50, "var(--red-dark)"), (0, "var(--green-dark)")];
+const PROBABILITY_COLOR_BANDS: &[(u8, &str)] = &[(50, "var(--red)"), (0, "var(--green-dark)")];
 
 pub(super) fn probability_color(percent: Option<u8>) -> Option<&'static str> {
     let percent = percent?;
