@@ -263,13 +263,14 @@ RoutineLoadRow {
 
 負荷画面内は「日別負荷」「繰返負荷」の順に表示し、「日別負荷」を初期選択してlocal stateだけで切り替える。日別負荷の見出しは「今日から14日の負荷」、繰返負荷の取得後の見出しは`horizon_day_count`を使った「今日からN日の負荷」(通常28日)とし、未取得では「繰返負荷」とする。両表示はshellの上下余白とtoolbar・更新button・表示切替の位置と高さを共通にし、切替で上部を移動・折返しさせない。繰返負荷は月曜始まりの7列mapを全体表の上へ置き、先頭・末尾の範囲外cellを空欄にする。日付cellは日付、`繰返負荷 - 可処分時間`の符号付き差分、`繰返秒数 / 可処分秒数`の最寄り整数%を3行で表示する。超過は`+H:MM`、余裕は`-H:MM`、一致は`0:00`とし、分未満を切り捨てる。今日の分母は帯の`利用不可`と`経過済み`を24時間から除いた残り可処分秒数、未来日は全日可処分秒数とする。濃度だけを100%で飽和させ、日付の100%未満は繰返秒数と可処分秒数から得た未丸めの負荷率rに対するr/(1-r)を0〜100の赤い濃度へ飽和させ、曜日見出しの100%未満は`--surface-muted`の中立背景を維持し、どちらも100%以上は`--red-dark`の濃赤背景と白文字へ切り替える。0容量では差分を表示して割合文字を`--`とするが、日付cellは超過色を適用する。曜日見出しと日付選択後の表は0容量を`--`表示のままとする。曜日見出しは同じ曜日4日分の繰返秒数を、今日を含む場合は今日の残り可処分秒数と他の日の全日可処分秒数の合計、今日を含まない場合は4日分の全日可処分秒数の合計で割る。
 
-初期の全体表は「間隔 / 28日合計 / 通常比 / 発生日数 / 1日平均 / プロジェクト・繰返」の6列とする。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 通常比 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 通常比 / 可処分時間比 / 28日合計 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
+初期の全体表は「間隔 / 28日合計 / 通常比 / 発生日数 / 1日平均 / プロジェクト・繰返」の6列とする。曜日表はその曜日に負荷を持つ繰返だけを「間隔 / 曜日平均 / 通常比 / 可処分時間比 / 発生 / プロジェクト・繰返」で表示し、曜日平均を4日で割り、発生を`4回中N回`とする。日付表は当日に負荷を持つ繰返だけを「間隔 / 当日時間 / 通常比 / 可処分時間比 / 標準偏差 / プロジェクト・繰返」で表示し、今日だけは見出しとARIA labelを「残り可処分時間比」とする。曜日・日付表は選択範囲の作業秒数降順、同値はプロジェクト名、繰返名、繰返UUID順とする。行選択は該当繰返の発生日を強調し、再選択または「全体」で解除する。これらはcomponent local stateだけで処理し、server effect、localStorageを変更しない。割合計算はoverflowしない整数演算を使う。日付buttonの操作高は40px以上とし、ARIA labelへ日付、繰返負荷との差、割合、選択状態を含める。表とmapは320px幅でpageを横overflowさせず、名前cell内だけを横scroll可能にする。
 
 日付別の予測は既存の繰返負荷responseの `forecast_by_date` に追加する。値は平均残り秒数 `mean_remaining_seconds`、分散の秒二乗 `variance_seconds_squared`、見積補完回数 `estimated_occurrence_count`。旧payloadの欠落は空mapとして扱う。実体は今回taskのUUID、予測は既存の発生keyで区別し、06:00境界で区間を分ける。保存実績2回以上では平均と標本分散を使い、実体の平均から記録済み実績と完了部分の実績(0秒なら見積)を引いて0を下限とする。複数日にまたがる回の平均は予定残り秒数の比で、分散はその比の二乗で配分する。実績2回未満は予定残り秒数を固定値として加える。各回を独立と仮定して合算する。
 
-日付選択に対応する繰返負荷では、削減候補行の直後に予測欄を常に表示し、平均と枠は `HH:MM`、超過確率は整数%とする。今日の枠は既存の残り可処分時間、将来日は既存の全日可処分時間とし、単発予定の時間は控除しない。今日の残り枠が欠落した場合は枠と確率を `—` とする。分散0では平均が枠を厳密に超える場合だけ100%とし、対象0件では平均と超過確率は0。曜日・全体の選択および選択日付の予測が欠ける場合は3項目を `—` とする。3列の配置と補完件数1行分の高さを全範囲で確保する。
+日付選択に対応する繰返負荷では、削減候補行の直後に予測欄を常に表示し、平均と枠に続けて日付別分散の平方根を標準偏差として表示し、それぞれ `HH:MM`、超過確率は整数%とする。今日の枠は既存の残り可処分時間、将来日は既存の全日可処分時間とし、単発予定の時間は控除しない。今日の残り枠が欠落した場合は枠と確率を `—` とする。分散0では平均が枠を厳密に超える場合だけ100%とし、対象0件では平均と超過確率は0。曜日・全体の選択および選択日付の予測が欠ける場合は4項目を `—` とする。4列の配置と補完件数1行分の高さを全範囲で確保する。
 
 
+日付別の繰返明細の「標準偏差」は、繰返元の完了実績の標本標準偏差を分未満切り捨ての `HH:MM` で表示する。実績2件未満や旧payloadの欠落は `—` とする。見出しを押すたびに秒単位の標準偏差降順と既定順を切り替える。降順では欠落を末尾に置き、同値は既定順を保つ。降順時は下向き矢印と `aria-sort="descending"` を付ける。並び順の選択は日付間で保持し、全体・曜日には適用しない。
 
 通常比はapplication行、server DTO、client wireの`historical_mean_difference_seconds_by_date`で輸送する。日付keyは既存mapと同じlogical date、値は符号付き秒数で、欠落は比較不能、明示的な0は差なしを表す。旧payloadでは追加mapを空mapとして補完し、旧見積との差分fieldは読み込まない。新fieldの欠落だけで28日mapや既存負荷をfallbackさせない。実segmentのtaskから最寄りの繰返親とその直下の今回taskを求め、今回task自身の見積秒数、未完了の子孫の見積秒数、完了済みの子孫の実績秒数をchecked加算し、繰返元の保存済み実績平均を減算する。子孫が`Status::Done`なら生の`actual_work_seconds`を使い、実績0秒も0秒として扱う。別の繰返親とその子孫は除外する。親自身の見積もりは子の合計ではなく自身の作業時間として加算する。比較はrepository snapshotの値を使い、今回task自身と未完了の子孫の実績、segment時間へ置き換えない。今回taskのUUIDごとに合計をcacheし、同じ回を再走査しない。日付ごとに今回taskのUUIDを照合し、同一回の複数segmentと子孫segmentを重複計算しない。複数日でも同一回の差を各日に載せる。複数回が同日にある場合、予測segmentが含まれる場合は比較値を載せない。加算・減算overflowは既存の`RoutineLoadCalculationOverflow`として返す。 保存済み実績が0件の場合は `—` とする。
 
@@ -782,9 +783,9 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
 - 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に現在logical dateの進行中実績、選択日全体の実績合計、利用可能時間、記録率、予実比を`dl`相当のlabel/value構造で表示する。予実比は完了row全体の補正済み実績合計を見積合計で割り、合算後に四捨五入した整数%を100%で制限せず表示する。進行中実績は含めず、見積合計が0秒なら`--`とする。`in_progress_actual_work_seconds`が`None`の過去日と未来日では「進行中」を生成しない。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
 - 完了一覧は`完了、実績、予実差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、予実差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。予実差の正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)とし、色を符号の代替にしない。見積値はrowに保持して予実差と予実比の計算へ使用するが、表へは表示しない。記録率と予実比は整数%を100%で制限せず、それぞれ利用可能時間0秒、見積合計0秒では`--`とする。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の先頭3列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、狭幅のpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
-- rowは締切、予定`HH:MM (MMM)`、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻と予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
+- rowは予定`HH:MM (MMM)`、標準偏差、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。予定cellは開始時刻、予定分数を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
-- 締切は選択logical date内なら`HH:MM`、それ以外は`MM/DD HH:MM`とする。現在epochが締切epochを超えた場合に赤くする。
+- 締切は専用列に表示し、日時にはserverが返したlabelを使う。
 - schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
 - `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではセッションbuttonとそのclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
 - 日付別・全件一覧の`ScheduledTask`はoptionalな`start_time_epoch_ms`を持つ。serverはtask本体の`start_time`をepoch millisecondsで返し、予定segment開始時刻とは区別する。browserは既存の1秒tickの現在epoch millisecondsと比較し、`start_time_epoch_ms > now`の場合だけ黄色背景`--session-start-future`、枠線`--session-start-future-border`、文字`--ink`にし、hover時は背景を`--session-start-future-hover`にする。開始時刻前の配色の値は`main.css`の`:root`を正本とする。同値・過去は従来の緑(`--green: #27845e`、hoverは`--green-dark: #196846`)とし、緑のbuttonの文字は白を維持する。時計後退時も再判定し、通信・追加timerは不要とする。旧responseやcacheでfieldが欠落した場合は緑とし、disabled・追加済み表示・操作条件は維持する。
@@ -798,11 +799,13 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 4種類のセッション終了成功後は選択中、または未選択なら最新snapshotのlogical dateをactive modeで再取得し、表示中の一覧をresponse全体で置換する。完了modeでは完了直後のtaskが新しい完了rowとして現れる。
 - 完了成功response受理時点でin-flightのactive一覧requestを無効化する。その後に到着した無効化済みrequest、および異なるmodeのresponseは適用しない。完了成功response後に開始した再取得と、さらに後から利用者が明示した日付取得は通常どおり適用する。
 - 完了によって生成された反復taskは、終了成功後の一覧再取得responseに含まれる場合に表示する。
-- 全幅でheaderとrowを操作、予定、締切、task名の順に置き、可視headerとtable semanticsを維持する。table全体の横スクロールを解除し、viewport幅にかかわらず`88px 5.75rem 5.5rem minmax(0, 1fr)`の4列gridにする。行の文字はtask名を`0.75rem`、予定と締切を`0.68rem`とする。
-- 全件一覧は`all-task-table` modifierを付け、viewport幅にかかわらず`44px 8.25rem 5.5rem minmax(0, 1fr)`の4列gridにする。320px、360px、46rem、1024pxの各幅でこの列幅と日付別の既存列幅を維持する。
+- 全幅でheaderとrowを操作、予定、締切、標準偏差、task名の順に置き、可視headerとtable semanticsを維持する。table全体の横スクロールを解除し、日付別は`88px 5.75rem 5.5rem 60px minmax(0, 1fr)`の5列gridにする。行の文字はtask名を`0.75rem`、予定を`0.68rem`とする。
+- 予定一覧の標準偏差は繰返回本体・予測回に表示し、子工程と単発は `—` とする。見出しで降順と予定順を切り替える。降順は秒で比較し、同値は予定順、欠落は末尾とする。検索後、表示上限より前に整列し、降順では時系列の区切りを表示しない。
+
+- 全件一覧は`all-task-table` modifierを付け、幅460px超では`44px 8.25rem 5.5rem 60px minmax(0, 1fr)`の5列gridにする。
 - rowは全幅で32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0の実taskで幅44px・高さ32pxの「＋/✓」と「→」を並べる。日付別のrank非0の実taskでは左44pxを空け、右に先送りplanがあれば「→」を置く。全件のrank非0と予測行は空cellとする。
-- 空き時間行は4列を結合した32px以上の非操作rowとし、muted背景と中央寄せ文言だけを持たせる。task操作、締切、予定、task名、event listenerは生成しない。
-- 締切と予定は小さい等幅数字の固定列として折り返さず、日付別予定の3桁を超える分数と全件一覧の日付を省略しない。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
+- 空き時間行は5列を結合した32px以上の非操作rowとし、muted背景と中央寄せ文言だけを持たせる。task操作、予定、締切、標準偏差、task名、event listenerは生成しない。
+- 予定と標準偏差は小さい等幅数字の固定列として折り返さず、日付別予定の3桁を超える分数と全件一覧の日付を省略しない。締切は専用列に表示する。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
 ### 7.4 操作結果
 
@@ -993,7 +996,8 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 「全て」が曜日button群の先頭にあり、未取得、取得中、失敗と再試行、無効化後の自動再取得待ちと自動再取得、取得済みを製品orchestratorと`ListView`経路で確認する。取得中も日付入力が存在し、送信で日付別へ移ること、全件通信が全面overlayを出さないことを固定する。
 - 共有検索の前後空白、Unicode小文字化、部分一致、空検索、日付別・全件の往復、無効化後とreload後の保持を確認する。どちらの一覧で検索を変更しても描画上限が500へ戻り、「さらに表示」で500ずつ増えることを確認する。
 - 全件tableは500行だけを段階描画し、`segment_index`をkeyにすること、予定を`YYYY/MM/DD(曜)`で表示すること、親の空操作cell、葉のセッション追加だけ、同一UUID全segmentの追加済み表示を確認する。
-- 一覧は320px、360px、46rem、1024pxで確認する。全幅で操作、予定、締切、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、日付別のrank非0の実taskでは左44pxを空けた右側の先送りと全件のrank非0の空cell、固定された日付付き予定と締切、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
+- 一覧は320px、360px、412px (Pixel 7 Pro)、46rem、1024pxで確認する。全幅で操作、予定、締切、標準偏差、taskの順、可視header、32px以上の1行row、左端の各幅44pxの「＋/✓」と「→」、日付別のrank非0の実taskでは左44pxを空けた右側の先送りと全件のrank非0の空cell、固定された日付付き予定と締切色、task名cellだけの横scrollを確認する。長いtask名と複数segmentでもtask名cellの縦scrollbarとviewport全体の横scrollが発生しないことを確認する。
+- 標準幅では全件tableの`44px 8.25rem 5.5rem 60px minmax(0, 1fr)`と日付別tableの`88px 5.75rem 5.5rem 60px minmax(0, 1fr)`をCSS contract testで固定し、task名cell内の横scrollだけを許可することを確認する。
 - 320px、360px、544px、1024px幅で日付欄と検索を1行に配置し、日付欄は通常154px幅、coarse pointerでは162px幅となることをCSS contract testとbrowserで確認する。日付入力・内包する「→」button・検索欄とclear buttonは通常36px、coarse pointerでは44pxとし、`2026/11/07`が読め、検索入力中と日付error時にも重なりやpage横scrollがないことを確認する。検索clearの表示で欄の幅が変わらず、日付errorが入力行の下へ全幅表示されることを確認する。「→」の中央揃え、日付buttonの高さ36pxと横スクロール、34rem以下のbuffer圧縮を維持する。
 - touch/mobile emulationでは全buttonのタップ後にhover配色が残らず、`:active`と`:focus-visible`が機能することを確認する。desktopのhover可能なfine pointerでは既存hover表現と、選択済み日付buttonの緑背景・白文字が維持されることを確認する。
 - 6操作buttonのlabel、ARIA名、意味別class、全幅で左列1→2→3・右列4→5→6の3段配置を確認する。390×844pxの1セッションでは固定tab barより上に全操作が見えること、320px幅では文字切れと横はみ出しがないことを確認する。
@@ -1002,7 +1006,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 完了実績競合では通常の6操作をaccessibility付き確認groupへ置換し、記録方針ごとの正確な文言、`HH:MM:SS`、計測再開と再完了のtyped callbackを確認する。
 - 確認表示ではtimerが進み、終了操作のdispatch後は注入したclick時刻でcardが停止することを確認する。
 - 33%、100%、133%、見積0、buffer正負の表示を確認する。30分見積・40分実績では133%と残り20分が同時に表示されることを確認する。開始、完了予定、残り・超過が同じtiming領域にあり、semanticな`time`要素と識別可能なARIA labelを維持することをcomponent testで確認する。
-- 320px、360px、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
+- 320px、360px、412px (Pixel 7 Pro)、46rem、1024pxでsession cardのtiming領域が折り返さず、task名、timing、progress、操作の順序とdesktop layoutを維持することをCSS contract testとbrowser目視で確認する。
 - 通信matrixの各操作についてrequest件数を確認する。
 - 全件取得を除く利用者起点のserver通信では全画面待機表示と背面の`inert`が即時に有効になり、最後のresponseまで維持されることを確認する。全件取得とreload背景更新ではoverlayを出さず、前者は一覧内statusと移動中のpage継続、後者はstale表示、再試行、成功時だけの一覧置換、失敗時維持、local操作許可とserver依存操作の二重guardを確認する。
 - 持ち歩きロックbarのsticky表示、3状態、残り秒表示、`aria-live`対象、通常モードへの確認付き復帰を確認する。`Locked`では状態文言が44px以上の長押しbutton内にあり、独立した状態blockがなく、解除`details`だけが次の行にあることと、34rem以下でも汎用縦積み規則を適用しないことをcomponent testとCSS contract testで固定する。

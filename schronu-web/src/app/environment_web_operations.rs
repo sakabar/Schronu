@@ -262,6 +262,7 @@ impl From<SessionTaskDto> for SessionTask {
 impl From<ScheduledTaskDto> for ScheduledTask {
     fn from(task: ScheduledTaskDto) -> Self {
         Self {
+            duration_stddev_seconds: task.duration_stddev_seconds,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             start_time_epoch_ms: task.start_time_epoch_ms,
             task_id: task.task_id,
@@ -414,6 +415,7 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
+            duration_stddev_seconds: row.duration_stddev_seconds,
             historical_mean_difference_seconds_by_date: row
                 .historical_mean_difference_seconds_by_date
                 .into_iter()
@@ -854,6 +856,7 @@ mod tests {
                 average_work_seconds: 7_199,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
                 peak_work_seconds: 7_201,
+                duration_stddev_seconds: None,
                 historical_mean_difference_seconds_by_date: BTreeMap::from([
                     (NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(), -900),
                     (NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(), 0),

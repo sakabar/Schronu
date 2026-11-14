@@ -32,8 +32,33 @@ pub struct DateButtonViewModel {
 }
 
 #[component]
+pub(super) fn DeviationSortHeading(
+    class: &'static str,
+    descending: bool,
+    on_toggle: EventHandler<()>,
+) -> Element {
+    rsx! {
+        th { class, scope: "col",
+            aria_sort: if descending { "descending" } else { "none" },
+            label { class: "deviation-sort",
+                input {
+                    r#type: "checkbox",
+                    checked: descending,
+                    aria_label: "標準偏差の降順",
+                    onchange: move |_| on_toggle.call(()),
+                }
+                "標準偏差"
+                span { class: if descending { "deviation-arrow" } else { "deviation-arrow is-hidden" }, aria_hidden: "true", "↓" }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
+    #[props(default)] deviation_order: bool,
+    #[props(default)] on_toggle_deviation_order: EventHandler<()>,
     rows: Vec<ListRowViewModel>,
     #[props(default)] now_epoch_ms: i64,
     active_task_ids: Vec<String>,
@@ -60,12 +85,15 @@ pub fn ListView(
     let search_available = all_tasks_status
         .as_ref()
         .is_none_or(|status| matches!(status, AllTasksViewStatus::Loaded));
-    let matching_rows = rows
+    let mut matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
     let all_selected = all_tasks_status.is_some();
-    let show_separators = all_selected || filter_text.trim().is_empty();
+    let show_separators = !deviation_order && (all_selected || filter_text.trim().is_empty());
+    if deviation_order && !all_selected {
+        matching_rows.sort_by_key(|row| std::cmp::Reverse(row.task.duration_stddev_seconds));
+    }
     let visible_limit = if all_selected {
         visible_row_limit.unwrap_or(500)
     } else {
@@ -144,6 +172,11 @@ pub fn ListView(
                                 th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
                                 th { class: "deadline-heading", "締切" }
+                                DeviationSortHeading {
+                                    class: "deviation-heading",
+                                    descending: deviation_order,
+                                    on_toggle: on_toggle_deviation_order,
+                                }
                                 th { class: "task-heading", aria_label: "タスク {task_count}件",
                                     "タスク"
                                     span { class: "task-heading-count", " ({task_count})" }
@@ -608,6 +641,7 @@ fn TaskRow(
         DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
         DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
     };
+    let deadline = &row.deadline_label;
     let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
     let task_class = if row.is_leaf {
         format!("task-name {task_kind_class} is-leaf")
@@ -619,7 +653,6 @@ fn TaskRow(
     } else {
         String::new()
     };
-    let deadline = &row.deadline_label;
     let button_label = if active {
         format!("{}: セッション追加済み", task_name)
     } else {
@@ -676,7 +709,7 @@ fn TaskRow(
         if show_separators {
             if let Some(gap_before) = row.gap_before.as_deref() {
                 tr { class: "task-gap-row",
-                    td { colspan: "4", "{gap_before}" }
+                    td { colspan: "5", "{gap_before}" }
                 }
             }
         }
@@ -741,6 +774,13 @@ fn TaskRow(
                 }
             }
             td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
+            td { class: "task-deviation",
+                if let Some(seconds) = row.task.duration_stddev_seconds {
+                    "{super::load_view_format::format_unsigned(seconds)}"
+                } else {
+                    "—"
+                }
+            }
             td { class: task_class, aria_label: format!("{task_kind_label}: {}{advanceable_label}", display_task_name),
                 div {
                     class: "task-name-scroll",
@@ -776,7 +816,7 @@ fn TaskRow(
         }
         if confirming_defer() {
             tr { class: "task-defer-confirmation-row",
-                td { colspan: "4",
+                td { colspan: "5",
                     div {
                         class: "task-defer-confirmation",
                         role: "group",

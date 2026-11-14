@@ -29,6 +29,8 @@ pub struct BandDay {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadRow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
     pub project_task_id: String,
     pub project_name: String,
     pub routine_task_id: String,
@@ -105,6 +107,8 @@ pub struct SessionTask {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
@@ -134,6 +138,7 @@ impl ScheduledTask {
 impl From<SessionTask> for ScheduledTask {
     fn from(task: SessionTask) -> Self {
         Self {
+            duration_stddev_seconds: None,
             start_time_epoch_ms: task.start_time_epoch_ms,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: Some(task.task_id),
@@ -409,6 +414,7 @@ mod all_task_contract_tests {
             average_work_seconds: None,
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 60,
+            duration_stddev_seconds: None,
             historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };
@@ -429,6 +435,7 @@ mod all_task_contract_tests {
             average_work_seconds: Some(240),
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 300,
+            duration_stddev_seconds: None,
             historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };

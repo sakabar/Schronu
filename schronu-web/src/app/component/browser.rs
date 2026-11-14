@@ -70,6 +70,7 @@ fn is_editing_target(event: &DomKeyboardEvent) -> bool {
 
 #[component]
 pub(super) fn BrowserApp() -> Element {
+    let mut deviation_order = use_signal(|| false);
     let mut client = use_signal(ComponentOrchestrator::new);
     let open_link_error = use_signal(|| None::<String>);
     let mut session_links = use_signal(SessionLinks::default);
@@ -192,6 +193,7 @@ pub(super) fn BrowserApp() -> Element {
                 browser_monotonic_now_ms(),
                 client.task_name_filter(),
                 client.all_tasks_visible_limit(),
+                deviation_order(),
             )
         })
     };
@@ -416,6 +418,8 @@ pub(super) fn BrowserApp() -> Element {
                         }
                     } else {
                     ListView {
+                        deviation_order: deviation_order(),
+                        on_toggle_deviation_order: move |_| deviation_order.toggle(),
                         now_epoch_ms,
                         dates,
                         rows,

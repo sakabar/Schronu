@@ -63,6 +63,8 @@ pub struct SessionTaskDto {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
@@ -194,6 +196,8 @@ pub struct BandDayDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadRowDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
     pub project_task_id: String,
     pub project_name: String,
     pub routine_task_id: String,

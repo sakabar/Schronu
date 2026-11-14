@@ -50,6 +50,7 @@ fn row(
         peak_date: work[0].0.to_owned(),
         peak_work_seconds: work.iter().map(|(_, seconds)| *seconds).max().unwrap(),
         work_seconds_by_date,
+        duration_stddev_seconds: None,
         historical_mean_difference_seconds_by_date: BTreeMap::new(),
     }
 }
@@ -755,16 +756,15 @@ fn 日付と曜日は100パーセント以上だけ容量到達表示にする()
 #[test]
 fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強調を解除する() {
     fn root() -> Element {
+        let mut routine = row(
+            "project",
+            "routine",
+            "routine-1",
+            &[("2026-10-03", 3_600), ("2026-10-06", 7_200)],
+        );
+        routine.duration_stddev_seconds = Some(1_080);
         rsx! {
-            RoutineLoadTable {
-                report: Some(report(vec![row(
-                    "健康",
-                    "三日周期",
-                    "routine-1",
-                    &[("2026-10-03", 3_600), ("2026-10-06", 7_200)],
-                )])),
-                loading: false,
-            }
+            RoutineLoadTable { report: Some(report(vec![routine])), loading: false }
         }
     }
     let mut dom = VirtualDom::new(root);
@@ -797,7 +797,9 @@ fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強
             html.contains("当日時間").then_some(html)
         })
         .expect("日付buttonが当日表へ切り替える");
-    for heading in ["当日時間", "可処分時間比", "28日合計"] {
+    assert!(date_html.contains(">00:18</td>"));
+    assert!(!date_html.contains(">28日合計</th>"));
+    for heading in ["当日時間", "可処分時間比", "標準偏差"] {
         assert!(date_html.contains(heading), "{date_html}");
     }
 
@@ -813,7 +815,7 @@ fn 曜日と日付の選択は列と行をlocalに切り替え行再押下で強
         })
         .expect("繰返行buttonが発生日を強調する");
     assert!(selected_html.contains("routine-load-day is-emphasized"));
-    assert!(selected_html.contains("三日周期を強調"));
+    assert!(selected_html.contains("routineを強調"));
     assert!(selected_html.contains("aria-pressed=true"));
 
     dispatch_click(&selected_dom, selected_id);
@@ -939,7 +941,7 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
     }
     let mut dom = VirtualDom::new(root);
     let ids = rebuild_with_click_listeners(&mut dom);
-    assert_eq!(dioxus::ssr::render(&dom).matches("<dd>—</dd>").count(), 3);
+    assert_eq!(dioxus::ssr::render(&dom).matches("<dd>—</dd>").count(), 4);
     let after_click = |index: usize| {
         let mut candidate = VirtualDom::new(root);
         let ids = rebuild_with_click_listeners(&mut candidate);
@@ -974,9 +976,13 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
                 forecast.contains(&format!("<dd>{percent}</dd>")),
                 "{forecast}"
             );
+            let deviation = if index == first { "00:27" } else { "00:00" };
+            assert!(forecast.contains(&format!(
+                "<dt>標準偏差</dt><dd>{deviation}</dd></div><div><dt>枠の超過確率</dt>"
+            )));
             assert_eq!(forecast.contains("うち1件は見積で補完"), index == first);
         } else {
-            assert_eq!(forecast.matches("<dd>—</dd>").count(), 3);
+            assert_eq!(forecast.matches("<dd>—</dd>").count(), 4);
         }
     }
 }
@@ -994,4 +1000,90 @@ fn exceedance_respects_zero_variance_and_strict_capacity_boundaries() {
     assert_eq!(exceedance_percentage(forecast, 0.0), 100);
     forecast.variance_seconds_squared = 100.0;
     assert_eq!(exceedance_percentage(forecast, 60.0), 50);
+}
+
+#[test]
+fn date_deviation_heading_toggles_stable_descending_order_across_dates() {
+    fn root() -> Element {
+        let rows = [
+            ("missing", None, 500),
+            ("lower", Some(61), 400),
+            ("tie-first", Some(65), 300),
+            ("tie-second", Some(65), 200),
+            ("zero", Some(0), 100),
+        ]
+        .into_iter()
+        .map(|(name, deviation, work)| {
+            let mut routine = row(
+                "project",
+                name,
+                name,
+                &[("2026-10-03", work), ("2026-10-04", work)],
+            );
+            routine.duration_stddev_seconds = deviation;
+            routine
+        })
+        .collect();
+        rsx! { RoutineLoadTable { report: Some(report(rows)), loading: false } }
+    }
+
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_click_listeners(&mut dom);
+    let select = |dom: &mut VirtualDom, index| {
+        dispatch_click(dom, ids[index]);
+        dom.render_immediate_to_vec()
+    };
+    let find_date = |label: &str| {
+        (0..ids.len())
+            .find(|&index| {
+                let mut candidate = VirtualDom::new(root);
+                let candidate_ids = rebuild_with_click_listeners(&mut candidate);
+                dispatch_click(&candidate, candidate_ids[index]);
+                candidate.render_immediate_to_vec();
+                dioxus::ssr::render(&candidate).contains(label)
+            })
+            .expect("calendar date")
+    };
+    let first_date = find_date("<strong>10/3</strong>");
+    let second_date = find_date("<strong>10/4</strong>");
+    let default_order = ["missing", "lower", "tie-first", "tie-second", "zero"];
+    let descending = ["tie-first", "tie-second", "lower", "zero", "missing"];
+    let assert_order = |dom: &VirtualDom, order: [&str; 5]| {
+        let html = dioxus::ssr::render(dom);
+        let positions = order.map(|name| html.find(&format!(">{name}</")).unwrap());
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{html}");
+        html
+    };
+
+    assert!(!assert_order(&dom, default_order).contains("aria-sort"));
+    let edits = select(&mut dom, first_date);
+    let sort_id = edits
+        .edits
+        .into_iter()
+        .find_map(|edit| match edit {
+            dioxus::dioxus_core::Mutation::NewEventListener { name, id } if name == "change" => {
+                Some(id)
+            }
+            _ => None,
+        })
+        .expect("date deviation heading");
+    assert!(assert_order(&dom, default_order).contains("aria-sort=\"none\""));
+    let toggle = |dom: &mut VirtualDom| {
+        super::view_test_support::dispatch_platform_event(
+            dom,
+            "change",
+            sort_id,
+            Box::new(dioxus::html::SerializedFormData::new(
+                String::new(),
+                Vec::new(),
+            )),
+        );
+        dom.render_immediate_to_vec();
+    };
+    toggle(&mut dom);
+    assert!(assert_order(&dom, descending).contains("aria-sort=\"descending\""));
+    select(&mut dom, second_date);
+    assert!(assert_order(&dom, descending).contains("aria-sort=\"descending\""));
+    toggle(&mut dom);
+    assert!(assert_order(&dom, default_order).contains("aria-sort=\"none\""));
 }

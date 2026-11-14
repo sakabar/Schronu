@@ -1,5 +1,6 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
+use super::list_view::DeviationSortHeading;
 use super::load_view_format::format_unsigned;
 use crate::wire::RoutineLoadForecast;
 use crate::{RoutineLoadReport, RoutineLoadRow};
@@ -65,6 +66,7 @@ pub(super) fn RoutineLoadTable(
     loading: bool,
     #[props(default)] today_remaining_available_seconds: Option<i64>,
 ) -> Element {
+    let mut deviation_order = use_signal(|| false);
     let mut scope = use_signal(|| RoutineLoadScope::Overall);
     let mut selected_routine_id = use_signal(|| None::<String>);
     let Some(report) = report else {
@@ -83,7 +85,11 @@ pub(super) fn RoutineLoadTable(
     let active_scope = scope();
     let selected_id = selected_routine_id();
     let highlighted = highlighted_dates(&projection, selected_id.as_deref());
-    let rows = rows_for_scope(&projection, active_scope);
+    let mut rows = rows_for_scope(&projection, active_scope);
+    let sort_by_deviation = matches!(active_scope, RoutineLoadScope::Date(_)) && deviation_order();
+    if sort_by_deviation {
+        rows.sort_by_key(|row| std::cmp::Reverse(row.routine.duration_stddev_seconds));
+    }
     let range = report_range(&report);
     let scope_label = match active_scope {
         RoutineLoadScope::Overall => "全体".to_owned(),
@@ -212,6 +218,8 @@ pub(super) fn RoutineLoadTable(
             ScopedRoutineLoadTable {
                 rows,
                 scope: active_scope,
+                sort_by_deviation,
+                on_toggle_deviation_order: move |_| deviation_order.toggle(),
                 uses_remaining_capacity: matches!(
                     active_scope,
                     RoutineLoadScope::Date(date)
@@ -247,18 +255,24 @@ fn RoutineForecastSummary(
         "可処分時間"
     };
     let capacity_text = capacity.map_or_else(placeholder, format_unsigned);
+    let deviation = forecast.map_or_else(placeholder, |forecast| {
+        format_unsigned(forecast.variance_seconds_squared.sqrt() as i64)
+    });
     let risk = forecast
         .zip(capacity)
-        .map_or_else(placeholder, |(forecast, seconds)| {
-            format!("{}%", exceedance_percentage(forecast, seconds))
-        });
+        .map(|(forecast, seconds)| exceedance_percentage(forecast, seconds as f64));
+    let risk_text = risk.map_or_else(placeholder, |percent| format!("{percent}%"));
     let estimated_count = forecast.map_or(0, |forecast| forecast.estimated_occurrence_count);
     rsx! {
         section { class: "routine-load-forecast", aria_label: "繰返作業の予測", aria_live: "polite",
             dl {
                 div { dt { "平均残り時間" } dd { "{mean}" } }
                 div { dt { "{capacity_label}" } dd { "{capacity_text}" } }
-                div { dt { "枠の超過確率" } dd { "{risk}" } }
+                div { dt { "標準偏差" } dd { "{deviation}" } }
+                div {
+                    dt { "枠の超過確率" }
+                    dd { "{risk_text}" }
+                }
             }
             p {
                 if estimated_count > 0 {
@@ -283,6 +297,8 @@ fn ScopedRoutineLoadTable(
     rows: Vec<ScopeRoutineRow>,
     scope: RoutineLoadScope,
     uses_remaining_capacity: bool,
+    sort_by_deviation: bool,
+    on_toggle_deviation_order: EventHandler<()>,
     selected_routine_id: Option<String>,
     on_select: EventHandler<String>,
 ) -> Element {
@@ -315,7 +331,11 @@ fn ScopedRoutineLoadTable(
                                         "可処分時間比"
                                     }
                                 }
-                                th { class: "routine-load-occurrences", scope: "col", "28日合計" }
+                                DeviationSortHeading {
+                                    class: "routine-load-occurrences routine-deviation-heading",
+                                    descending: sort_by_deviation,
+                                    on_toggle: on_toggle_deviation_order,
+                                }
                             },
                         }
                         th { class: "routine-load-subject", scope: "col", "プロジェクト / 繰返" }
@@ -327,6 +347,7 @@ fn ScopedRoutineLoadTable(
                             let project_name = super::task_name::display_task_name(&display_row.routine.project_name);
                             let routine_name = super::task_name::display_task_name(&display_row.routine.routine_name);
                             let routine_id = display_row.routine.routine_task_id.clone();
+                            let deviation = display_row.routine.duration_stddev_seconds.map_or_else(|| "—".to_owned(), format_unsigned);
                             let is_selected = selected_routine_id.as_deref() == Some(&routine_id);
                             rsx! {
                                 tr { class: if is_selected { "is-selected" } else { "" },
@@ -348,7 +369,7 @@ fn ScopedRoutineLoadTable(
                                             td { class: "routine-load-average routine-load-number", "{format_unsigned(display_row.work_seconds)}" }
                                             RoutineMeanDifference { seconds: display_row.historical_mean_difference_seconds }
                                             td { class: "routine-load-total routine-load-number", "{format_percentage(display_row.percentage)}" }
-                                            td { class: "routine-load-occurrences routine-load-number", "{format_unsigned(display_row.routine.total_work_seconds)}" }
+                                            td { class: "routine-load-occurrences routine-load-number", "{deviation}" }
                                         },
                                     }
                                     th { class: "routine-load-subject", scope: "row",

@@ -698,3 +698,35 @@ fn 全件自動再取得は背景通信で入力を保持し失敗後の再試�
     assert_eq!(client.task_name_filter(), "filter");
     assert_eq!(client.date_input().text(), "9/6");
 }
+
+#[cfg(feature = "web")]
+#[test]
+fn deviation_sort_filters_and_orders_before_limiting_all_rows() {
+    use crate::client::view_projection::project_all_tasks_by_deviation;
+    let rows = [
+        ("first", "match first", Some(480)),
+        ("unknown", "match unknown", None),
+        ("higher", "match higher", Some(481)),
+        ("unmatched", "other", Some(2_000)),
+        ("tied", "match tied", Some(481)),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (id, name, deviation))| {
+        let mut row = all_row(index, id, name, true);
+        row.task.duration_stddev_seconds = deviation;
+        row
+    })
+    .collect::<Vec<_>>();
+    let result = project_all_tasks_by_deviation(&rows, "match", 2);
+    assert_eq!(result.matching_task_count, 4);
+    assert!(result.has_more);
+    assert_eq!(
+        result
+            .rows
+            .iter()
+            .map(|row| row.task.task_id.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("higher"), Some("tied")]
+    );
+}

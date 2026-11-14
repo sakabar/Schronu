@@ -2069,14 +2069,21 @@ fn recurring_session_handoff_predicts_the_same_total_that_completion_records() {
         .data
         .iter()
         .any(|row| row.task.task_id.as_deref() == Some(&body_id_text)
-            && row.task.estimate_success_percentage == Some(89)));
+            && row.task.estimate_success_percentage == Some(89)
+            && row.task.duration_stddev_seconds == Some(480)));
     let all = service.list_all_tasks_at(now, None).unwrap();
     assert!(all
         .data
         .rows
         .iter()
         .any(|row| row.task.task_id.as_deref() == Some(&body_id_text)
-            && row.task.estimate_success_percentage == Some(89)));
+            && row.task.estimate_success_percentage == Some(89)
+            && row.task.duration_stddev_seconds == Some(480)));
+    let load = service.load_band_at(now).unwrap();
+    assert_eq!(
+        load.data.routine_load.rows[0].duration_stddev_seconds,
+        Some(480)
+    );
     let automatic = service.auto_session_at(now).unwrap().data.unwrap();
     assert_eq!(automatic.task_id, body_id_text);
     assert_eq!(automatic.estimate_success_percentage, Some(89));

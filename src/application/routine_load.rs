@@ -32,6 +32,7 @@ pub struct RoutineLoadRow {
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
     pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    pub duration_stddev_seconds: Option<i64>,
     pub historical_mean_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
@@ -48,6 +49,7 @@ struct RoutineMetadata {
     routine_task_id: Uuid,
     routine_name: String,
     repetition_interval_days: i64,
+    duration_stddev_seconds: Option<i64>,
     occurrence_mean_difference: Option<(Uuid, i64)>,
 }
 
@@ -190,6 +192,9 @@ fn nearest_routine_metadata(
         routine_task_id,
         routine_name: parent.get_name().map_err(ApplicationError::TaskTree)?,
         repetition_interval_days,
+        duration_stddev_seconds: statistics
+            .sample_standard_deviation()
+            .map(|seconds| seconds as i64),
         occurrence_mean_difference,
     }))
 }
@@ -260,6 +265,11 @@ fn projected_routine_metadata(
         routine_task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
         routine_name: task.get_name().map_err(ApplicationError::TaskTree)?,
         repetition_interval_days,
+        duration_stddev_seconds: task
+            .duration_statistics()
+            .map_err(ApplicationError::TaskTree)?
+            .sample_standard_deviation()
+            .map(|seconds| seconds as i64),
         occurrence_mean_difference: None,
     }))
 }
@@ -300,6 +310,7 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         peak_date,
         peak_work_seconds,
         work_seconds_by_date: accumulator.work_seconds_by_date,
+        duration_stddev_seconds: accumulator.metadata.duration_stddev_seconds,
         historical_mean_difference_seconds_by_date: accumulator
             .occurrence_mean_difference_by_date
             .into_iter()

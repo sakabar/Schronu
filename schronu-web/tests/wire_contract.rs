@@ -465,6 +465,7 @@ fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
                 average_work_seconds: Some(3_900),
                 peak_date: "2026-10-04".to_owned(),
                 peak_work_seconds: 4_800,
+                duration_stddev_seconds: None,
                 historical_mean_difference_seconds_by_date: BTreeMap::from([
                     ("2026-10-03".to_owned(), -900),
                     ("2026-10-04".to_owned(), 0),

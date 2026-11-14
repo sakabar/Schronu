@@ -409,7 +409,7 @@ fn 日付別の空き時間行は4列を結合し検索中は表示しない() {
         unfiltered.contains("class=\"task-gap-row\""),
         "{unfiltered}"
     );
-    assert!(unfiltered.contains("colspan=\"4\""), "{unfiltered}");
+    assert!(unfiltered.contains("colspan=\"5\""), "{unfiltered}");
     assert!(unfiltered.contains("15分間の空き時間"), "{unfiltered}");
 
     let filtered = render("task");
@@ -440,7 +440,7 @@ fn 日付別のlogical_date境界は次task行のmodifierだけで表示し検�
         !unfiltered.contains("task-date-boundary-row"),
         "{unfiltered}"
     );
-    assert!(!unfiltered.contains("colspan=\"4\""), "{unfiltered}");
+    assert!(!unfiltered.contains("colspan=\"5\""), "{unfiltered}");
 
     let filtered = render("task");
     assert!(filtered.contains("class=\"task-row\""), "{filtered}");
@@ -810,7 +810,7 @@ fn all一覧の列幅はviewportによらず固定する() {
     let css = include_str!("../../assets/main.css");
     let universal = css.split_once("@media (max-width: 46rem)").unwrap().0;
     assert!(universal.contains(
-        ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 5.5rem minmax(0, 1fr);"
+        ".task-table.all-task-table thead tr,\n.task-table.all-task-table .task-row {\n    grid-template-columns: 44px 8.25rem 5.5rem 60px minmax(0, 1fr);"
     ));
     for breakpoint in ["320px", "360px", "46rem", "1024px"] {
         assert!(!css.contains(&format!(
@@ -1003,8 +1003,8 @@ fn listは全幅で可視header付きの高密度な一行tableになる() {
         ".task-table {\n    display: block;\n    min-width: 0;",
         ".task-table thead {\n    display: block;",
         ".task-table thead tr,\n.task-row {\n    display: grid;",
-        "grid-template-columns: 88px 5.75rem 5.5rem minmax(0, 1fr);",
-        "grid-template-areas: \"action schedule deadline task\";",
+        "grid-template-columns: 88px 5.75rem 5.5rem 60px minmax(0, 1fr);",
+        "grid-template-areas: \"action schedule deadline deviation task\";",
         ".task-row {\n    min-height: 32px;",
         ".task-row:not(:last-child) {\n    border-bottom: 1px solid var(--line);",
         ".task-row:has(+ .task-row.has-logical-date-boundary) {\n    border-bottom: 0;",
@@ -2159,4 +2159,63 @@ fn actual_names_are_copy_buttons_and_projected_names_are_plain_text() {
         }
         assert_eq!(*events.borrow(), ["leaf", "parent", "leaf"]);
     }
+}
+
+#[test]
+fn deviation_header_toggles_between_descending_and_schedule_order() {
+    fn root() -> Element {
+        let mut sorted = use_signal(|| false);
+        let rows = [
+            ("first fixture", Some(480)),
+            ("missing fixture", None),
+            ("largest fixture", Some(1_080)),
+            ("zero fixture", Some(0)),
+        ]
+        .into_iter()
+        .map(|(name, deviation)| {
+            let mut row = named_row(name, name, false, false);
+            row.task.duration_stddev_seconds = deviation;
+            row
+        })
+        .collect::<Vec<_>>();
+        rsx! {
+            ListView {
+                dates: Vec::new(), rows, deviation_order: sorted(),
+                on_toggle_deviation_order: move |_| sorted.toggle(),
+                active_task_ids: Vec::new(), date_input_text: String::new(),
+                date_input_error: None, filter_text: String::new(),
+                on_select_date: move |_| {}, on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {}, on_start_session: move |_| {},
+                on_filter_change: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_event_listeners(&mut dom, "change");
+    let initial = dioxus::ssr::render(&dom);
+    assert!(initial.contains("aria-sort=\"none\""));
+    let sort = *ids.last().expect("sort control");
+    let change = |dom: &VirtualDom| {
+        dispatch_platform_event(
+            dom,
+            "change",
+            sort,
+            Box::new(SerializedFormData::new(String::new(), Vec::new())),
+        );
+    };
+    change(&dom);
+    dom.render_immediate_to_vec();
+    let sorted = dioxus::ssr::render(&dom);
+    let positions = [
+        "largest fixture",
+        "first fixture",
+        "zero fixture",
+        "missing fixture",
+    ]
+    .map(|name| sorted.find(name).unwrap());
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(sorted.contains(">00:18</td>"));
+    change(&dom);
+    dom.render_immediate_to_vec();
+    assert_eq!(dioxus::ssr::render(&dom), initial);
 }

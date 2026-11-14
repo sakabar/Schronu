@@ -250,6 +250,11 @@ impl DurationStatistics {
         })
     }
 
+    pub(crate) fn sample_standard_deviation(self) -> Option<f64> {
+        (self.sample_size >= 2)
+            .then(|| (self.m2_duration_seconds_squared / (self.sample_size - 1) as f64).sqrt())
+    }
+
     pub(crate) fn values(self) -> (u64, f64, f64) {
         (
             self.sample_size,

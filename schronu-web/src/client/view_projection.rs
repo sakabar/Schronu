@@ -107,8 +107,32 @@ pub fn project_visible_all_task_rows(
     filter: &str,
     visible_limit: usize,
 ) -> VisibleAllTaskRows {
+    project_ordered_all_task_rows(rows.iter(), rows.len(), filter, visible_limit)
+}
+
+#[cfg(all(feature = "web", any(test, target_arch = "wasm32")))]
+pub(crate) fn project_all_tasks_by_deviation(
+    rows: &[AllTaskRow],
+    filter: &str,
+    visible_limit: usize,
+) -> VisibleAllTaskRows {
+    let mut matching = rows
+        .iter()
+        .filter(|row| task_name_matches(filter, &row.task.task_name))
+        .collect::<Vec<_>>();
+    matching.sort_by_key(|row| std::cmp::Reverse(row.task.duration_stddev_seconds));
+    let count = matching.len();
+    project_ordered_all_task_rows(matching, count, "", visible_limit)
+}
+
+fn project_ordered_all_task_rows<'a>(
+    rows: impl IntoIterator<Item = &'a AllTaskRow>,
+    row_count: usize,
+    filter: &str,
+    visible_limit: usize,
+) -> VisibleAllTaskRows {
     let mut previous_date = None;
-    let mut projected_rows = Vec::with_capacity(visible_limit.min(rows.len()));
+    let mut projected_rows = Vec::with_capacity(visible_limit.min(row_count));
     let mut has_more = false;
     let mut identities = HashSet::new();
     let mut matching_task_count = 0;

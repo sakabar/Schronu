@@ -3,8 +3,9 @@ use super::component_runtime::project_date_button_models;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::view_projection::{
-    project_list_rows_for_browser, project_session_cards_for_browser,
-    project_visible_all_task_rows, ListRowViewModel, SessionCardViewModel,
+    project_all_tasks_by_deviation, project_list_rows_for_browser,
+    project_session_cards_for_browser, project_visible_all_task_rows, ListRowViewModel,
+    SessionCardViewModel,
 };
 use crate::{BandDay, CompletedTaskReport, RoutineLoadReport};
 
@@ -42,7 +43,7 @@ pub(crate) struct BrowserPageModel {
 impl BrowserPageModel {
     #[cfg(test)]
     pub fn from_state(state: &ClientState) -> Self {
-        Self::from_state_at(state, 0, "", 500)
+        Self::from_state_at(state, 0, "", 500, false)
     }
 
     pub fn from_state_at(
@@ -50,17 +51,19 @@ impl BrowserPageModel {
         monotonic_now_ms: u64,
         all_task_filter: &str,
         all_tasks_visible_limit: usize,
+        deviation_order: bool,
     ) -> Self {
         let (rows, has_more_rows, matching_task_count) =
             if state.list_selection() == ListSelection::All {
                 state
                     .all_task_rows()
                     .map(|rows| {
-                        let projection = project_visible_all_task_rows(
-                            rows,
-                            all_task_filter,
-                            all_tasks_visible_limit,
-                        );
+                        let project = if deviation_order {
+                            project_all_tasks_by_deviation
+                        } else {
+                            project_visible_all_task_rows
+                        };
+                        let projection = project(rows, all_task_filter, all_tasks_visible_limit);
                         (
                             projection.rows,
                             projection.has_more,

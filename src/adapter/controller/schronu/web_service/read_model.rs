@@ -82,6 +82,7 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
                 peak_date: row.peak_date,
                 peak_work_seconds: row.peak_work_seconds,
                 work_seconds_by_date: row.work_seconds_by_date,
+                duration_stddev_seconds: row.duration_stddev_seconds,
                 historical_mean_difference_seconds_by_date: row
                     .historical_mean_difference_seconds_by_date,
             })
@@ -539,7 +540,7 @@ pub(super) fn session_task_dto_from_view(
     })
 }
 
-type ScheduledTaskMetricsCache = HashMap<Uuid, Option<u8>>;
+type ScheduledTaskMetricsCache = HashMap<(Uuid, bool), (Option<u8>, Option<i64>)>;
 
 fn scheduled_task_dto(
     repository: &dyn TaskRepositoryTrait,
@@ -547,18 +548,36 @@ fn scheduled_task_dto(
     session_metrics_cache: &mut ScheduledTaskMetricsCache,
 ) -> Result<ScheduledTaskDto, ApplicationError> {
     let task_id = segment.actual_task_id();
-    let estimate_success_percentage = if let Some(id) = task_id {
-        match session_metrics_cache.entry(id) {
-            std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                *entry.insert(task_estimate_success_percentage(repository, id)?)
-            }
+    let (estimate_success_percentage, duration_stddev_seconds) = match session_metrics_cache
+        .entry((segment.source_task_id(), segment.is_projected()))
+    {
+        std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+        std::collections::hash_map::Entry::Vacant(entry) => {
+            let id = segment.source_task_id();
+            let task = repository
+                .get_by_id(id)
+                .map_err(ApplicationError::TaskTree)?
+                .ok_or(ApplicationError::TaskNotFound(id))?;
+            let (probability, source) = if task_id.is_some() {
+                let probability =
+                    crate::application::task_use_case::estimate_success_percentage(&task)?;
+                let source = crate::application::task_use_case::recurring_occurrence_source(&task)?;
+                (probability, source)
+            } else {
+                (None, Some(task))
+            };
+            let deviation = source
+                .map(|source| source.duration_statistics())
+                .transpose()
+                .map_err(ApplicationError::TaskTree)?
+                .and_then(|stats| stats.sample_standard_deviation())
+                .map(|seconds| seconds as i64);
+            *entry.insert((probability, deviation))
         }
-    } else {
-        None
     };
     let task = &segment.task;
     Ok(ScheduledTaskDto {
+        duration_stddev_seconds,
         estimate_success_percentage,
         pending_until_epoch_ms: task.pending_until.map(|time| time.timestamp_millis()),
         start_time_epoch_ms: Some(task.start_time.timestamp_millis()),
