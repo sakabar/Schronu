@@ -12,7 +12,7 @@ pub use wire::{
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, CreateTaskRequest,
     CreateTaskResult, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
     ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, RoutineLoadRow,
-    ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskDisplayKind, WebError, WebSuccess,
+    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadForecast, RoutineLoadReport,
+    RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };

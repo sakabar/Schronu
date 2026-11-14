@@ -16,7 +16,7 @@ use crate::application::daily_capacity::{
     try_logical_date, DailyLoadAccumulator, DailyLoadDayInput,
 };
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
-use crate::application::routine_load::build_routine_load_report;
+use crate::application::routine_load::{build_routine_load_forecasts, build_routine_load_report};
 use crate::application::schedule_use_case::{
     format_scheduled_task_display_name, get_schedule, scheduled_logical_dates,
     select_scheduled_task_within_minutes, ScheduledTaskView,
@@ -59,11 +59,14 @@ pub(in crate::adapter::controller) fn build_routine_load_report_dto(
             Ok((date, seconds))
         })
         .collect::<Result<BTreeMap<_, _>, WebReadCoreError>>()?;
+    let forecast_by_date = build_routine_load_forecasts(repository, schedule, &report)
+        .map_err(WebReadCoreError::Application)?;
     Ok(RoutineLoadReportDto {
         start_date: report.start_date,
         end_date: report.end_date,
         horizon_day_count: report.horizon_day_count,
         full_day_available_seconds_by_date,
+        forecast_by_date,
         rows: report
             .rows
             .into_iter()

@@ -133,6 +133,7 @@ fn 繰返report開始日の帯から残り可処分秒数を導く() {
         start_date: "2026-10-03".to_owned(),
         end_date: "2026-10-30".to_owned(),
         horizon_day_count: 28,
+        forecast_by_date: Default::default(),
         full_day_available_seconds_by_date: Default::default(),
         rows: Vec::new(),
     };
@@ -248,6 +249,7 @@ fn 負荷viewは日別負荷を初期表示して繰返集計表へlocal切替�
                     start_date: "2026-10-03".to_owned(),
                     end_date: "2026-10-30".to_owned(),
                     horizon_day_count: 28,
+                    forecast_by_date: Default::default(),
                     full_day_available_seconds_by_date: Default::default(),
                     rows: vec![
                         RoutineLoadRow {
@@ -436,6 +438,7 @@ fn 負荷viewは繰返集計の取得中と取得済み空状態を区別する(
                     start_date: "2026-10-03".to_owned(),
                     end_date: "2026-10-05".to_owned(),
                     horizon_day_count: 3,
+                    forecast_by_date: Default::default(),
                     full_day_available_seconds_by_date: Default::default(),
                     rows: Vec::new(),
                 }),
@@ -1140,6 +1143,7 @@ fn 負荷取得は14日帯と28日繰返負荷を同時に置換する() {
                     start_date: "2026-10-03".to_owned(),
                     end_date: "2026-10-30".to_owned(),
                     horizon_day_count: 28,
+                    forecast_by_date: Default::default(),
                     full_day_available_seconds_by_date: Default::default(),
                     rows: vec![RoutineLoadRow {
                         project_task_id: "project".to_owned(),
@@ -1254,6 +1258,7 @@ fn load_data(band_days: Vec<BandDay>) -> LoadData {
             start_date: "2026-09-27".to_owned(),
             end_date: "2026-10-24".to_owned(),
             horizon_day_count: 28,
+            forecast_by_date: Default::default(),
             full_day_available_seconds_by_date: Default::default(),
             rows: Vec::new(),
         },

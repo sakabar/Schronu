@@ -141,7 +141,7 @@ impl WebGateway for ServerFunctionGateway {
     }
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum ClientResponse {
     CreateTask {
         request_id: u64,

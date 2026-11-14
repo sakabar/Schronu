@@ -491,3 +491,66 @@ fn routine_loadは同じuuidのactualとprojectedを別の規則で解決する(
     assert_eq!(projected_row.repetition_interval_days, 3);
     assert_eq!(projected_row.total_work_seconds, 20 * 60);
 }
+
+#[test]
+fn daily_forecast_combines_remaining_work_across_occurrences_and_dates() {
+    use super::routine_load::{build_routine_load_forecasts, RoutineLoadForecast};
+    use crate::entity::task::DurationStatistics;
+
+    let start = at(3).date_naive();
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(32_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 32_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(3, 1_000.0, 80_000.0).unwrap())
+        .unwrap();
+    let occurrence = child(&routine, "occurrence", 32_003, at(3));
+    occurrence.set_actual_work_seconds(100).unwrap();
+    let finished_part = child(&occurrence, "completed part", 32_004, at(3));
+    finished_part.set_estimated_work_seconds(100).unwrap();
+    finished_part.set_orig_status(Status::Done).unwrap();
+    let part = child(&occurrence, "pending part", 32_005, at(3));
+    let other_routine = child(&project, "sparse history", 32_006, at(3));
+    other_routine
+        .set_repetition_interval_days_opt(Some(1))
+        .unwrap();
+    other_routine
+        .set_duration_statistics(DurationStatistics::new(1, 8_000.0, 0.0).unwrap())
+        .unwrap();
+    let estimated = child(&other_routine, "estimated occurrence", 32_007, at(3));
+    let standalone = child(&project, "standalone", 32_008, at(3));
+    let finished = child(&routine, "completed occurrence", 32_009, at(3));
+    finished.set_orig_status(Status::Done).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let crossing = Local.with_ymd_and_hms(2026, 10, 4, 5, 57, 30).unwrap();
+    let schedule = vec![
+        segment(&occurrence, at(3), 100),
+        segment(&part, crossing, 400),
+        projected_segment(&routine, at(6), at(3), 900),
+        projected_segment(&routine, at(7), at(3), 50),
+        segment(&estimated, at(3), 120),
+        segment(&estimated, at(3) + Duration::hours(1), 80),
+        segment(&standalone, at(3), 400),
+        segment(&finished, at(3), 100),
+    ];
+    let report = build_routine_load_report(&repository, &schedule, start).unwrap();
+    let forecast = build_routine_load_forecasts(&repository, &schedule, &report).unwrap();
+    assert_eq!(forecast.len(), 28);
+    assert_eq!(
+        forecast[&start],
+        RoutineLoadForecast {
+            mean_remaining_seconds: 2_600.0,
+            variance_seconds_squared: 90_000.0,
+            estimated_occurrence_count: 1,
+        }
+    );
+    assert_eq!(
+        forecast[&at(4).date_naive()],
+        RoutineLoadForecast {
+            mean_remaining_seconds: 400.0,
+            variance_seconds_squared: 10_000.0,
+            estimated_occurrence_count: 0,
+        }
+    );
+    assert_eq!(forecast[&report.end_date], RoutineLoadForecast::default());
+}

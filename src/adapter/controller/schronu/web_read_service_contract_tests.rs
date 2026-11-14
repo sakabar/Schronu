@@ -573,6 +573,16 @@ fn 負荷serviceはactualとprojectedを同じ繰返負荷へ集計する() {
             .get(&operation_now.date_naive()),
         Some(&0)
     );
+    let forecast = &response.data.routine_load.forecast_by_date;
+    assert_eq!(forecast.len(), 28);
+    assert_eq!(
+        forecast[&operation_now.date_naive()].mean_remaining_seconds,
+        300.0
+    );
+    assert_eq!(forecast[&row.peak_date].mean_remaining_seconds, 600.0);
+    assert_eq!(forecast[&row.peak_date].estimated_occurrence_count, 1);
+    assert_eq!(forecast[&row.peak_date].variance_seconds_squared, 0.0);
+
     let mut legacy = serde_json::to_value(row).unwrap();
     legacy
         .as_object_mut()
