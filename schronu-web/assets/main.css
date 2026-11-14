@@ -1795,8 +1795,14 @@ button.routine-load-day.is-at-capacity {
 .routine-load-forecast dl {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 0.45rem;
+    column-gap: 0.45rem;
     margin: 0;
+}
+
+.routine-load-forecast dl > div {
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
 }
 
 .routine-load-forecast dt,
