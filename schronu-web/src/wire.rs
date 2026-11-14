@@ -56,7 +56,7 @@ impl RoutineLoadRow {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadReport {
     pub start_date: String,
     pub end_date: String,
@@ -64,14 +64,23 @@ pub struct RoutineLoadReport {
     pub horizon_day_count: u64,
     #[serde(default)]
     pub full_day_available_seconds_by_date: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub forecast_by_date: BTreeMap<String, RoutineLoadForecast>,
     pub rows: Vec<RoutineLoadRow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadForecast {
+    pub mean_remaining_seconds: f64,
+    pub variance_seconds_squared: f64,
+    pub estimated_occurrence_count: usize,
 }
 
 fn legacy_routine_load_horizon_day_count() -> u64 {
     8
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoadData {
     pub band_days: Vec<BandDay>,
     pub routine_load: RoutineLoadReport,

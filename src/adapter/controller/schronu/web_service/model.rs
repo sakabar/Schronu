@@ -206,7 +206,7 @@ pub struct RoutineLoadRowDto {
     pub estimate_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadReportDto {
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
@@ -214,6 +214,9 @@ pub struct RoutineLoadReportDto {
     pub horizon_day_count: u64,
     #[serde(default)]
     pub full_day_available_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    #[serde(default)]
+    pub forecast_by_date:
+        BTreeMap<NaiveDate, crate::application::routine_load::RoutineLoadForecast>,
     pub rows: Vec<RoutineLoadRowDto>,
 }
 
@@ -252,7 +255,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoadDataDto {
     pub band_days: Vec<BandDayDto>,
     pub routine_load: RoutineLoadReportDto,

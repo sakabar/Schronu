@@ -437,6 +437,20 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
                 .into_iter()
                 .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
                 .collect(),
+            forecast_by_date: report
+                .forecast_by_date
+                .into_iter()
+                .map(|(date, forecast)| {
+                    (
+                        date.to_string(),
+                        crate::wire::RoutineLoadForecast {
+                            mean_remaining_seconds: forecast.mean_remaining_seconds,
+                            variance_seconds_squared: forecast.variance_seconds_squared,
+                            estimated_occurrence_count: forecast.estimated_occurrence_count,
+                        },
+                    )
+                })
+                .collect(),
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
     }
@@ -822,6 +836,7 @@ mod tests {
             start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
             horizon_day_count: 28,
+            forecast_by_date: Default::default(),
             full_day_available_seconds_by_date: BTreeMap::from([
                 (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 36_000),
                 (NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(), 40_000),

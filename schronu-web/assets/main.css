@@ -1698,6 +1698,37 @@ button.routine-load-day.is-at-capacity {
     font-size: 0.78rem;
 }
 
+.routine-load-forecast {
+    margin-bottom: 0.65rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 0.7rem;
+    background: var(--surface);
+}
+
+.routine-load-forecast dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem 1.2rem;
+    margin: 0;
+}
+
+.routine-load-forecast dt,
+.routine-load-forecast p {
+    color: var(--muted);
+    font-size: 0.78rem;
+}
+
+.routine-load-forecast dd {
+    margin: 0.1rem 0 0;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+.routine-load-forecast p {
+    margin: 0.45rem 0 0;
+}
+
 .routine-load-table-wrap {
     max-width: 100%;
     overflow-x: visible;

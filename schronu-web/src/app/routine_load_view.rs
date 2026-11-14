@@ -1,6 +1,7 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
 use super::load_view_format::format_unsigned;
+use crate::wire::RoutineLoadForecast;
 use crate::{RoutineLoadReport, RoutineLoadRow};
 use chrono::{Datelike, Duration, NaiveDate};
 use dioxus::prelude::*;
@@ -88,6 +89,24 @@ pub(super) fn RoutineLoadTable(
         RoutineLoadScope::Overall => "全体".to_owned(),
         RoutineLoadScope::Weekday(index) => format!("{}曜日", WEEKDAY_LABELS[index]),
         RoutineLoadScope::Date(date) => format!("{}/{}", date.month(), date.day()),
+    };
+
+    let forecast = if let RoutineLoadScope::Date(date) = active_scope {
+        let date = date.to_string();
+        report.forecast_by_date.get(&date).map(|forecast| {
+            let today = date == report.start_date;
+            let capacity = if today {
+                today_remaining_available_seconds.filter(|seconds| *seconds >= 0)
+            } else {
+                report
+                    .full_day_available_seconds_by_date
+                    .get(&date)
+                    .copied()
+            };
+            rsx! { RoutineForecastSummary { forecast: *forecast, capacity, today } }
+        })
+    } else {
+        None
     };
 
     rsx! {
@@ -184,6 +203,7 @@ pub(super) fn RoutineLoadTable(
             strong { "{scope_label}" }
             span { "削減候補 {rows.len()}件" }
         }
+        {forecast}
         if rows.is_empty() {
             p { class: "load-status", "選択範囲に発生する繰返負荷はありません。" }
         } else {
@@ -207,6 +227,47 @@ pub(super) fn RoutineLoadTable(
             }
         }
     }
+}
+
+#[component]
+fn RoutineForecastSummary(
+    forecast: RoutineLoadForecast,
+    capacity: Option<i64>,
+    today: bool,
+) -> Element {
+    let mean = format_unsigned(forecast.mean_remaining_seconds as i64);
+    let capacity_label = if today {
+        "残り可処分時間"
+    } else {
+        "可処分時間"
+    };
+    let capacity_text = capacity.map_or_else(|| "—".to_owned(), format_unsigned);
+    let risk = capacity.map_or_else(
+        || "—".to_owned(),
+        |seconds| format!("{}%", exceedance_percentage(forecast, seconds)),
+    );
+    let estimated_count = forecast.estimated_occurrence_count;
+    rsx! {
+        section { class: "routine-load-forecast", aria_label: "繰返作業の予測", aria_live: "polite",
+            dl {
+                div { dt { "平均残り時間" } dd { "{mean}" } }
+                div { dt { "{capacity_label}" } dd { "{capacity_text}" } }
+                div { dt { "枠の超過確率" } dd { "{risk}" } }
+            }
+            if estimated_count > 0 {
+                p { "うち{estimated_count}件は見積で補完" }
+            }
+        }
+    }
+}
+
+pub(super) fn exceedance_percentage(forecast: RoutineLoadForecast, capacity_seconds: i64) -> u8 {
+    let threshold = capacity_seconds as f64 - forecast.mean_remaining_seconds;
+    if forecast.variance_seconds_squared == 0.0 {
+        return if threshold < 0.0 { 100 } else { 0 };
+    }
+    let scale = forecast.variance_seconds_squared.sqrt() * std::f64::consts::SQRT_2;
+    (50.0 * libm::erfc(threshold / scale)).round() as u8
 }
 
 #[component]

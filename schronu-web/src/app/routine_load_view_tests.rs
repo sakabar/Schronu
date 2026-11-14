@@ -21,6 +21,7 @@ fn report(rows: Vec<RoutineLoadRow>) -> RoutineLoadReport {
         start_date: start.to_string(),
         end_date: (start + Duration::days(27)).to_string(),
         horizon_day_count: 28,
+        forecast_by_date: Default::default(),
         full_day_available_seconds_by_date,
         rows,
     }
@@ -459,6 +460,7 @@ fn 旧payloadはmapと範囲選択を出さず全体表へfallbackする() {
         start_date: "2026-10-03".to_owned(),
         end_date: "2026-10-10".to_owned(),
         horizon_day_count: 8,
+        forecast_by_date: Default::default(),
         full_day_available_seconds_by_date: BTreeMap::new(),
         rows: vec![row("健康", "運動", "routine-1", &[("2026-10-03", 600)])],
     };
@@ -472,6 +474,7 @@ fn 旧payloadはmapと範囲選択を出さず全体表へfallbackする() {
             start_date: "2026-10-03".to_owned(),
             end_date: "2026-10-10".to_owned(),
             horizon_day_count: 8,
+            forecast_by_date: Default::default(),
             full_day_available_seconds_by_date: BTreeMap::new(),
             rows: vec![row("健康", "運動", "routine-1", &[("2026-10-03", 600)])],
         }
@@ -900,4 +903,92 @@ fn url_suffix_is_hidden_in_routine_and_project_names() {
             );
         }
     }
+}
+
+#[test]
+fn forecast_is_shown_only_for_the_selected_date() {
+    fn root() -> Element {
+        let mut report = report(Vec::new());
+        report.forecast_by_date = [
+            (
+                "2026-10-03".to_owned(),
+                crate::wire::RoutineLoadForecast {
+                    mean_remaining_seconds: 9_600.0,
+                    variance_seconds_squared: 1_620.0_f64.powi(2),
+                    estimated_occurrence_count: 1,
+                },
+            ),
+            (
+                "2026-10-04".to_owned(),
+                crate::wire::RoutineLoadForecast {
+                    mean_remaining_seconds: 0.0,
+                    variance_seconds_squared: 0.0,
+                    estimated_occurrence_count: 0,
+                },
+            ),
+        ]
+        .into();
+        rsx! {
+            RoutineLoadTable {
+                report: Some(report),
+                loading: false,
+                today_remaining_available_seconds: Some(10_800),
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_click_listeners(&mut dom);
+    assert!(!dioxus::ssr::render(&dom).contains("枠の超過確率"));
+    let after_click = |index: usize| {
+        let mut candidate = VirtualDom::new(root);
+        let ids = rebuild_with_click_listeners(&mut candidate);
+        dispatch_click(&candidate, ids[index]);
+        candidate.render_immediate_to_vec();
+        dioxus::ssr::render(&candidate)
+    };
+    let select_date = |label: &str| {
+        (0..ids.len())
+            .find(|&index| after_click(index).contains(label))
+            .unwrap_or_else(|| panic!("missing date selection {label}"))
+    };
+    let first = select_date("<strong>10/3</strong>");
+    let second = select_date("<strong>10/4</strong>");
+    let weekday = select_date("<strong>月曜日</strong>");
+    let overall = select_date("<strong>全体</strong>");
+    for (index, expected) in [
+        (first, Some("23%")),
+        (second, Some("0%")),
+        (weekday, None),
+        (first, Some("23%")),
+        (overall, None),
+    ] {
+        dispatch_click(&dom, ids[index]);
+        dom.render_immediate_to_vec();
+        let html = dioxus::ssr::render(&dom);
+        if let Some(percent) = expected {
+            let forecast = html.split("平均残り時間").nth(1).unwrap();
+            assert!(
+                forecast.contains(&format!("<dd>{percent}</dd>")),
+                "{forecast}"
+            );
+            assert_eq!(forecast.contains("うち1件は見積で補完"), index == first);
+        } else {
+            assert!(!html.contains("枠の超過確率"));
+        }
+    }
+}
+
+#[test]
+fn exceedance_respects_zero_variance_and_strict_capacity_boundaries() {
+    use super::routine_load_view::exceedance_percentage;
+    use crate::wire::RoutineLoadForecast;
+    let mut forecast = RoutineLoadForecast {
+        mean_remaining_seconds: 60.0,
+        variance_seconds_squared: 0.0,
+        estimated_occurrence_count: 1,
+    };
+    assert_eq!(exceedance_percentage(forecast, 60), 0);
+    assert_eq!(exceedance_percentage(forecast, 0), 100);
+    forecast.variance_seconds_squared = 100.0;
+    assert_eq!(exceedance_percentage(forecast, 60), 50);
 }
