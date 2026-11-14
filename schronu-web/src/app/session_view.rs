@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use super::load_view_format::probability_color;
 use crate::client::time_model::{format_hh_mm_ss, format_mm_ss};
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
 
@@ -348,7 +349,7 @@ fn SessionCard(
                 if let Some(overrun_percent) = session.estimate_success_percentage.map(|percent| 100_u8.saturating_sub(percent)) {
                     div { class: "session-estimate-probability",
                         span { "見積もりを超過してしまう確率" }
-                        strong { "{overrun_percent}%" }
+                        strong { color: probability_color(Some(overrun_percent)), "{overrun_percent}%" }
                     }
                 }
                 if obsidian_supported {
