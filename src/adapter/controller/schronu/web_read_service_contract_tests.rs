@@ -199,9 +199,20 @@ impl WebReadServiceFixture {
         actual_work_seconds: i64,
         completed: bool,
     ) -> Uuid {
+        self.seed_fixed_task_with_work(now, 30 * 60, actual_work_seconds, completed)
+    }
+
+    fn seed_fixed_task_with_work(
+        &self,
+        now: chrono::DateTime<Local>,
+        estimated_work_seconds: i64,
+        actual_work_seconds: i64,
+        completed: bool,
+    ) -> Uuid {
         let task_id = Uuid::from_u128(0x2026_0905);
         let task = TaskHandle::with_identity("service task", task_id, now).unwrap();
-        task.set_estimated_work_seconds(30 * 60).unwrap();
+        task.set_estimated_work_seconds(estimated_work_seconds)
+            .unwrap();
         task.set_actual_work_seconds(actual_work_seconds).unwrap();
         task.set_start_time(Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap())
             .unwrap();
@@ -1222,7 +1233,7 @@ fn complete_work_sliceは完了子を1回だけ保存し再送を拒否する() 
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(seeded_at);
+    let task_id = fixture.seed_fixed_task_with_work(seeded_at, 0, 300, false);
     let request = RecordSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: operation_now.timestamp_millis() - 15 * 60 * 1_000,
@@ -1242,9 +1253,11 @@ fn complete_work_sliceは完了子を1回だけ保存し再送を拒否する() 
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();
     let parent = repository.get_by_id(task_id).unwrap().unwrap();
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 0);
     assert_eq!(parent.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(parent.get_children().unwrap().len(), 1);
     let child = parent.get_children().unwrap().remove(0);
+    assert_eq!(child.get_estimated_work_seconds().unwrap(), 1);
     assert_eq!(child.get_actual_work_seconds().unwrap(), 900);
     assert_eq!(child.get_status().unwrap(), Status::Done);
 }
@@ -1582,7 +1595,7 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映して親
     let operation_now =
         Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap() + Duration::milliseconds(999);
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(seeded_at);
+    let task_id = fixture.seed_fixed_task_with_work(seeded_at, 0, 300, false);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     let started_at_epoch_ms = operation_now.timestamp_millis() - 65_999;
@@ -1611,6 +1624,7 @@ fn complete_sessionは経過秒加算と完了を1回の保存で反映して親
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
     assert_eq!(completed.get_actual_work_seconds().unwrap(), 360);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(completed.get_estimated_work_seconds().unwrap(), 1);
     assert_eq!(
         completed
             .get_end_time_opt()
@@ -1646,6 +1660,7 @@ fn complete_sessionはbrowser時計がserverより進んでいても未来の完
         let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
         repository.reload_if_changed(operation_now).unwrap();
         let completed = repository.get_by_id(task_id).unwrap().unwrap();
+        assert_eq!(completed.get_estimated_work_seconds().unwrap(), 30 * 60);
         assert_eq!(
             completed.get_actual_work_seconds().unwrap(),
             expected_actual_work_seconds
@@ -1665,7 +1680,7 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
     let seeded_at = Local.with_ymd_and_hms(2026, 9, 5, 18, 0, 0).unwrap();
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(seeded_at);
+    let task_id = fixture.seed_fixed_task_with_work(seeded_at, 0, 300, false);
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
     service
@@ -1686,6 +1701,7 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
     assert_eq!(completed.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(completed.get_estimated_work_seconds().unwrap(), 1);
     assert_eq!(
         completed
             .get_end_time_opt()
@@ -1699,7 +1715,8 @@ fn complete_sessionは計測破棄指定時に実績を加算せずtaskを完了
 fn complete_sessionは計測破棄指定でも期待実績競合時に状態を変更しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let task_id =
+        fixture.seed_fixed_task_with_work(operation_now - Duration::hours(1), 0, 300, false);
     let before = fixture.persisted_bytes();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
@@ -1729,7 +1746,8 @@ fn complete_sessionは計測破棄指定でも期待実績競合時に状態を�
 fn complete_sessionは期待実績競合時にtaskと永続dataを変更しない() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let task_id =
+        fixture.seed_fixed_task_with_work(operation_now - Duration::hours(1), 0, 300, false);
     let before = fixture.persisted_bytes();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
@@ -1842,7 +1860,9 @@ fn complete_sessionは計測破棄指定でも未完了childがあれば保存�
 fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requestを再試行できる() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
     let fixture = WebReadServiceFixture::new();
-    let task_id = fixture.seed_fixed_task(operation_now - Duration::hours(1));
+    let task_id =
+        fixture.seed_fixed_task_with_work(operation_now - Duration::hours(1), 0, 300, false);
+    let before = fixture.persisted_bytes();
     let request = CompleteSessionRequest {
         task_id: task_id.to_string(),
         started_at_epoch_ms: i64::MAX,
@@ -1866,6 +1886,7 @@ fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requ
         service.complete_session_at(operation_now, request.clone()),
         Err(WebReadError::RepositorySaveFailed(_))
     ));
+    assert_eq!(fixture.persisted_bytes(), before);
     service.complete_session_at(operation_now, request).unwrap();
 
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
@@ -1873,6 +1894,7 @@ fn complete_sessionは計測破棄指定のcommit前保存失敗後に同一requ
     let completed = repository.get_by_id(task_id).unwrap().unwrap();
     assert_eq!(completed.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(completed.get_status().unwrap(), Status::Done);
+    assert_eq!(completed.get_estimated_work_seconds().unwrap(), 1);
 }
 
 #[test]

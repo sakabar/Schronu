@@ -1493,6 +1493,10 @@ button:disabled {
     text-align: right;
 }
 
+.schedule-duration.is-zero-estimate {
+    color: var(--red);
+}
+
 .task-name.is-leaf {
     font-weight: 750;
 }

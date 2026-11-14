@@ -936,6 +936,49 @@ fn 予定表示は分数の各桁と全件日付を省略せずariaへ保持す�
 }
 
 #[test]
+fn 日付別一覧は見積もり0秒の予定分数だけ括弧ごと赤くする() {
+    let rows = [
+        ("zero", "10:00", 0, 0),
+        ("positive", "11:00", 1, 0),
+        ("scheduled", "12:00", 0, 1),
+    ]
+    .into_iter()
+    .map(|(id, start, estimate, minutes)| {
+        let mut row = row(id, false, true);
+        row.task.estimated_work_seconds = estimate;
+        row.schedule_display = ScheduleDisplayViewModel::Daily {
+            start_hh_mm: start.to_owned(),
+            duration_minutes: Some(minutes),
+        };
+        row
+    })
+    .collect();
+    let (dom, _) = build(RootProps {
+        dates: Vec::new(),
+        rows,
+        active_task_ids: Vec::new(),
+        filter_text: String::new(),
+        events: Arc::new(Mutex::new(Vec::new())),
+    });
+    let html = dioxus::ssr::render(&dom);
+
+    assert!(
+        html.contains("10:00<span class=\"schedule-duration is-zero-estimate\">(0)</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("11:00<span class=\"schedule-duration\">(0)</span>"),
+        "{html}"
+    );
+    assert!(
+        html.contains("12:00<span class=\"schedule-duration\">(1)</span>"),
+        "{html}"
+    );
+    assert!(include_str!("../../assets/main.css")
+        .contains(".schedule-duration.is-zero-estimate {\n    color: var(--red);"));
+}
+
+#[test]
 fn list_rowはresponsive表示用の意味別cellとlabelを持つ() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let (dom, _) = build(RootProps {

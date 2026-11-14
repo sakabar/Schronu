@@ -654,6 +654,7 @@ fn TaskRow(
     let is_leaf = row.is_leaf;
     let is_projected = row.occurrence.is_projected();
     let source_task_id = row.occurrence.source_task_id().map(str::to_owned);
+    let zero_estimate = row.task.estimated_work_seconds == 0;
     let schedule_display = row.schedule_display.clone();
     let schedule_accessible_label = match &schedule_display {
         ScheduleDisplayViewModel::Daily {
@@ -725,13 +726,18 @@ fn TaskRow(
                 aria_label: schedule_accessible_label,
                 match schedule_display {
                     ScheduleDisplayViewModel::Daily { start_hh_mm, duration_minutes } => {
+                        let duration_class = if zero_estimate && duration_minutes == Some(0) {
+                            "schedule-duration is-zero-estimate"
+                        } else {
+                            "schedule-duration"
+                        };
                         let duration_label = duration_minutes
                             .map(|minutes| minutes.to_string())
                             .unwrap_or_else(|| "---".to_owned());
                         rsx! {
                             span { class: "schedule-daily", aria_hidden: "true",
                                 "{start_hh_mm}"
-                                span { class: "schedule-duration", "({duration_label})" }
+                                span { class: duration_class, "({duration_label})" }
                             }
                         }
                     },
