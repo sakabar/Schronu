@@ -983,6 +983,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             "actual_work_seconds",
             "category",
             "deadline_time",
+            "duration_statistics",
             "estimated_work_seconds",
             "task_id"
         ]
@@ -1093,6 +1094,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             vec!["actual_work_seconds"],
             vec!["category"],
             vec!["deadline_time"],
+            vec!["duration_statistics"],
             vec!["estimated_work_seconds"]
         ]
     );

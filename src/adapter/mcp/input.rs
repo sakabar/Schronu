@@ -591,6 +591,7 @@ enum UpdateTaskField {
     ActualWorkSeconds,
     DeadlineTime,
     Category,
+    DurationStatistics,
 }
 
 impl UpdateTaskField {
@@ -600,6 +601,7 @@ impl UpdateTaskField {
             Self::ActualWorkSeconds => "actual_work_seconds",
             Self::DeadlineTime => "deadline_time",
             Self::Category => "category",
+            Self::DurationStatistics => "duration_statistics",
         }
     }
 
@@ -613,17 +615,29 @@ impl UpdateTaskField {
             }
             Self::DeadlineTime => !matches!(fields.deadline_time, NullablePatch::Missing),
             Self::Category => !matches!(fields.category, NullablePatch::Missing),
+            Self::DurationStatistics => {
+                !matches!(fields.duration_statistics, OptionalValue::Missing)
+            }
         }
     }
 }
 
-const UPDATE_TASK_FIELDS: [UpdateTaskField; 4] = [
+const UPDATE_TASK_FIELDS: [UpdateTaskField; 5] = [
     UpdateTaskField::EstimatedWorkSeconds,
     UpdateTaskField::ActualWorkSeconds,
     UpdateTaskField::DeadlineTime,
     UpdateTaskField::Category,
+    UpdateTaskField::DurationStatistics,
 ];
 const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field to update";
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct DurationStatisticsInput {
+    pub(super) sample_size: u64,
+    pub(super) mean_duration_seconds: f64,
+    pub(super) m2_duration_seconds_squared: f64,
+}
 
 #[derive(Deserialize, JsonSchema)]
 #[serde(try_from = "UpdateTaskInputFields")]
@@ -633,6 +647,7 @@ pub(super) struct UpdateTaskInput {
     pub(super) actual_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
     pub(super) category: NullablePatch<ProjectCategoryValue>,
+    pub(super) duration_statistics: OptionalValue<DurationStatisticsInput>,
 }
 
 pub(super) struct UpdateTaskChanges {
@@ -641,6 +656,7 @@ pub(super) struct UpdateTaskChanges {
     pub(super) actual_work_seconds: Option<i64>,
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
     pub(super) category: Option<Option<ProjectCategory>>,
+    pub(super) duration_statistics: Option<DurationStatisticsInput>,
 }
 
 impl UpdateTaskInput {
@@ -670,6 +686,10 @@ impl UpdateTaskInput {
             actual_work_seconds,
             deadline_time,
             category,
+            duration_statistics: match self.duration_statistics {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(statistics) => Some(statistics),
+            },
         }
     }
 }
@@ -692,6 +712,9 @@ struct UpdateTaskInputFields {
     /// Set the root project's category to one of the supported values, or pass null to clear it. Omit this field to leave the category unchanged.
     #[serde(default)]
     category: NullablePatch<ProjectCategoryValue>,
+    /// Replace all three duration statistics on a task with repetition_interval_days. Set all values to zero to reset the statistics.
+    #[serde(default)]
+    duration_statistics: OptionalValue<DurationStatisticsInput>,
 }
 
 impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
@@ -713,6 +736,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
             actual_work_seconds: fields.actual_work_seconds,
             deadline_time: fields.deadline_time,
             category: fields.category,
+            duration_statistics: fields.duration_statistics,
         })
     }
 }

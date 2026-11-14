@@ -981,6 +981,23 @@ pub fn set_actual_work(
     Ok(())
 }
 
+pub(crate) fn find_duration_statistics_target(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+) -> Result<TaskHandle, ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    if !task
+        .is_repeating_task()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        return Err(ApplicationError::InvalidInput {
+            field: "duration_statistics",
+            reason: "requires repetition_interval_days on the target",
+        });
+    }
+    Ok(task)
+}
+
 pub fn set_deadline(
     repository: &mut dyn TaskRepositoryTrait,
     task_id: Uuid,

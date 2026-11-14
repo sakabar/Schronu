@@ -11,9 +11,11 @@ use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
-    defer_task as defer_task_use_case, get_focus, get_task, list_tasks_page, set_actual_work,
-    set_category, set_deadline, set_estimate, ApplicationError, TaskFactory, TaskView,
+    defer_task as defer_task_use_case, find_duration_statistics_target, get_focus, get_task,
+    list_tasks_page, set_actual_work, set_category, set_deadline, set_estimate, ApplicationError,
+    TaskFactory, TaskView,
 };
+use crate::entity::task::DurationStatistics;
 use chrono::{DateTime, Local};
 use serde_json::{json, Value};
 use uuid::Uuid;
@@ -344,6 +346,24 @@ fn call_update_task<R: TaskRepositoryTrait>(
 ) -> Value {
     let input = input.into_changes();
 
+    let statistics_update = if let Some(statistics) = input.duration_statistics {
+        let statistics = match DurationStatistics::new(
+            statistics.sample_size,
+            statistics.mean_duration_seconds,
+            statistics.m2_duration_seconds_squared,
+        ) {
+            Ok(statistics) => statistics,
+            Err(reason) => return invalid_input_response(id, "duration_statistics", reason),
+        };
+        let target = match find_duration_statistics_target(repository, input.task_id) {
+            Ok(task) => task,
+            Err(error) => return update_task_application_error_response(id, error),
+        };
+        Some((target, statistics))
+    } else {
+        None
+    };
+
     if let Some(estimated_work_seconds) = input.estimated_work_seconds {
         if let Err(error) = set_estimate(repository, input.task_id, estimated_work_seconds) {
             return update_task_application_error_response(id, error);
@@ -362,6 +382,12 @@ fn call_update_task<R: TaskRepositoryTrait>(
     if let Some(category) = input.category {
         if let Err(error) = set_category(repository, input.task_id, category) {
             return update_task_application_error_response(id, error);
+        }
+    }
+
+    if let Some((target, statistics)) = statistics_update {
+        if let Err(error) = target.set_duration_statistics(statistics) {
+            return update_task_application_error_response(id, ApplicationError::TaskTree(error));
         }
     }
 
