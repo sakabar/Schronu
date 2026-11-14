@@ -807,7 +807,7 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件一覧は`all-task-table` modifierを付け、幅460px超では`44px 8.25rem 60px minmax(0, 1fr)`の4列gridにする。幅460px以下の全件一覧は予定列を7.125remとする。
 - rowは全幅で32px以上の1行とし、row間を罫線だけで区切る。cellの上下paddingは`0.125rem`とし、card用の行間、角丸、影は使用しない。操作cellはrank 0の実taskで幅44px・高さ32pxの「＋/✓」と「→」を並べる。日付別のrank非0の実taskでは左44pxを空け、右に先送りplanがあれば「→」を置く。全件のrank非0と予測行は空cellとする。
 - 空き時間行は4列を結合した32px以上の非操作rowとし、muted背景と中央寄せ文言だけを持たせる。task操作、予定、標準偏差、task名、event listenerは生成しない。
-- 予定と標準偏差は小さい等幅数字の固定列として折り返さず、日付別予定の3桁を超える分数と全件一覧の日付を省略しない。締切超過・当日締切・将来締切は予定列の時刻または日付をそれぞれ濃い赤・黄・緑の太字と淡い同系色の背景で表示する。予定セルのaccessible labelに締切の状態と日時を加える。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
+- 予定と標準偏差は小さい等幅数字の固定列として折り返さず、日付別予定の3桁を超える分数と全件一覧の日付を省略しない。締切超過・当日締切・将来締切は予定列の時刻または日付をそれぞれ濃い赤・黄・緑の太字と淡い同系色の背景で表示する。締切なしは同じ余白と角丸で白い背景を付け、通常の文字色と太さを使う。日付別の開始時刻は通常ウェイトの5chに左右の余白を加えた固定幅とし、後続の予定分数の横位置を揃える。予定セルのaccessible labelに締切の状態と日時を加える。task名だけを`min-width: 0`、`white-space: nowrap`、`overflow-x: auto`、`overflow-y: hidden`としてcell内で横スクロール可能にし、縦scrollbarを生成せず全文をDOMへ保持する。task名のscroll領域はkeyboard focusとfocus-visible表示を持ち、横panがpage全体の横移動へ伝播しないようにする。
 
 ### 7.4 操作結果
 

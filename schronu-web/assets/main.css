@@ -1557,6 +1557,12 @@ button:disabled {
     font-variant-numeric: tabular-nums;
 }
 
+.schedule-daily {
+    display: inline-grid;
+    grid-template-columns: calc(5ch + 0.4em) auto;
+    align-items: center;
+}
+
 .schedule-duration {
     display: inline-block;
     min-width: 5ch;
@@ -1599,10 +1605,13 @@ button:disabled {
     --schedule-deadline-surface: #d8f3e5;
 }
 
-.schedule-time:is(.deadline-kind-overrun, .deadline-kind-today, .deadline-kind-future) .schedule-date-time {
+.schedule-date-time {
     padding: 0.15em 0.2em;
     border-radius: 0.2rem;
-    background: var(--schedule-deadline-surface);
+    background: var(--schedule-deadline-surface, var(--surface));
+}
+
+.schedule-time:is(.deadline-kind-overrun, .deadline-kind-today, .deadline-kind-future) .schedule-date-time {
     color: var(--schedule-deadline-ink);
     font-weight: 750;
 }

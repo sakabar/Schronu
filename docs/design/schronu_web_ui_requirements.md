@@ -142,7 +142,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-004**: 選択したlogical dateのschedule segmentを開始時刻の昇順で表示すること。
 - **REQ-LIST-005**: 各行に予定時間、標準偏差、task名、セッション追加buttonを表示すること。viewport幅にかかわらずbuttonは左端の幅44pxかつ高さ32pxの「＋」とし、assistive technologyがtask名とセッション追加操作を識別できるlabelを持つこと。左スワイプによる直接発火は行わないこと。
 - **REQ-LIST-006**: 日付別一覧の予定時間はlocal timeの開始時刻と予定区間の分数を`HH:MM (MMM)`で表示すること。分数は`ceil((schedule_end_epoch_ms - schedule_start_epoch_ms) / 60000)`とし、括弧付きの分数全体をゼロ埋めせず5文字幅で右寄せし、開始時刻との間に最低1文字幅を維持すること。1000分以上も省略しないこと。taskの見積が0秒で予定分数が`(0)`の場合は、括弧を含む`(0)`全体を赤字にすること。assistive technologyには開始時刻と予定分数を識別できるlabelを付けること。
-- **REQ-LIST-007**: 日付別・全件一覧の予定時刻・予定日の色は締切のserver分類に従い、予定終了が締切を超える場合を赤、超過せず表示logical date内に締切が来る場合を黄、それより先を緑で表示し、締切ありは状態別の淡い背景と太字で表示する。締切なしは通常色とすること。旧保存payloadで分類が欠けても`misses_deadline`が真なら赤を優先すること。
+- **REQ-LIST-007**: 日付別・全件一覧の予定時刻・予定日の色は締切のserver分類に従い、予定終了が締切を超える場合を赤、超過せず表示logical date内に締切が来る場合を黄、それより先を緑で表示し、締切ありは状態別の淡い背景と太字で表示する。締切なしは通常色とし、予定時刻・予定日には締切ありと同じ余白と角丸で白い縁取りを付けること。日付別一覧で開始時刻と予定分数の横位置を締切の有無にかかわらず揃えること。旧保存payloadで分類が欠けても`misses_deadline`が真なら赤を優先すること。
 - **REQ-LIST-008**: 日付別・全件一覧のtask名はserver分類に従い、固定をCLIのANSI 256色127に相当する濃いマゼンタ`#af00af`、繰返を青`#0069c2`、単発を橙`#a44a00`で親rowにも表示すること。schedule rank 0は色分類から分離して太字とセッション追加可否だけに用いること。1つのtaskが複数segmentへ分割される場合、application層がCLIと共通の判定・分切り上げ・文字列生成で確定した`<segment分/total分>task名`をserverから受け取り、clientは再計算せずtask名cellへそのまま表示すること。検索、セッション、先送り操作にはprefixを含まない正規task名を用いること。
 - **REQ-LIST-009**: 一覧の「セッション」buttonは対象taskをlocalの`work_sessions`へ追加し、追加に成功した場合はセッションtabへ切り替えること。server通信は行わないこと。
 - **REQ-LIST-010**: 対象task UUIDのセッションが存在する場合、同じtaskを表すすべてのschedule segmentの「セッション」buttonを無効化すること。
