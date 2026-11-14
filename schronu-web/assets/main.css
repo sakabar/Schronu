@@ -1865,6 +1865,37 @@ button.routine-load-day.is-at-capacity {
     background: var(--green-soft);
 }
 
+.load-single-buffer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    margin: 0 0 4px;
+    padding: 0;
+    border: 0;
+    font-size: 12px;
+}
+
+.load-single-buffer legend {
+    float: left;
+    margin-right: 8px;
+    padding: 0;
+    font-weight: 650;
+}
+
+.load-single-buffer label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 44px;
+    white-space: nowrap;
+}
+
+.load-single-buffer input {
+    margin: 0;
+    accent-color: var(--green-dark);
+}
+
 .band-legend {
     display: flex;
     flex-wrap: wrap;
@@ -1899,7 +1930,7 @@ button.routine-load-day.is-at-capacity {
 .is-overflow { background: var(--band-overflow); }
 
 .load-grid {
-    --load-columns: 64px 6ch 6ch 6ch minmax(0, 1fr);
+    --load-columns: 64px 6ch 6ch minmax(0, 1fr) 4.5ch;
     --load-column-gap: 4px;
     min-width: 0;
     font-size: 12px;
@@ -1916,7 +1947,10 @@ button.routine-load-day.is-at-capacity {
     font-size: inherit;
 }
 
-.load-column-headings > span:nth-child(n+2):nth-child(-n+4) {
+.load-column-headings > span:nth-child(2),
+.load-column-headings > span:nth-child(3),
+.load-column-headings > span:last-child,
+.load-failure-value {
     text-align: right;
 }
 
@@ -2084,7 +2118,7 @@ button.routine-load-day.is-at-capacity {
 
 @media (max-width: 380px) {
     .load-grid {
-        --load-columns: 60px 6ch 6ch 6ch minmax(0, 1fr);
+        --load-columns: 60px 6ch 6ch minmax(0, 1fr) 4.5ch;
         --load-column-gap: 3px;
         font-size: 11px;
     }
@@ -2311,10 +2345,16 @@ button.routine-load-day.is-at-capacity {
     }
 
     .load-days { --load-row-gap: 2px; }
-    .load-day { min-height: 36px; padding-block: 2px; }
+    .load-day { min-height: 34px; padding-block: 2px; }
     .load-day.is-today { min-height: 40px; }
     .load-band { height: 5px; }
     .load-overflow-rail { height: 2px; }
+}
+
+@media (min-width: 381px) and (max-height: 60rem) {
+    .shell:has(.load-view:not(.is-routine)) {
+        padding-bottom: calc(var(--bottom-navigation-height) + env(safe-area-inset-bottom) + 3px);
+    }
 }
 
 @media (max-width: 380px) {

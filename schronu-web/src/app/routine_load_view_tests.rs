@@ -989,8 +989,8 @@ fn exceedance_respects_zero_variance_and_strict_capacity_boundaries() {
         variance_seconds_squared: 0.0,
         estimated_occurrence_count: 1,
     };
-    assert_eq!(exceedance_percentage(forecast, 60), 0);
-    assert_eq!(exceedance_percentage(forecast, 0), 100);
+    assert_eq!(exceedance_percentage(forecast, 60.0), 0);
+    assert_eq!(exceedance_percentage(forecast, 0.0), 100);
     forecast.variance_seconds_squared = 100.0;
-    assert_eq!(exceedance_percentage(forecast, 60), 50);
+    assert_eq!(exceedance_percentage(forecast, 60.0), 50);
 }

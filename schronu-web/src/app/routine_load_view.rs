@@ -250,7 +250,7 @@ fn RoutineForecastSummary(
     let risk = forecast
         .zip(capacity)
         .map_or_else(placeholder, |(forecast, seconds)| {
-            format!("{}%", exceedance_percentage(forecast, seconds))
+            format!("{}%", exceedance_percentage(forecast, seconds as f64))
         });
     let estimated_count = forecast.map_or(0, |forecast| forecast.estimated_occurrence_count);
     rsx! {
@@ -269,8 +269,8 @@ fn RoutineForecastSummary(
     }
 }
 
-pub(super) fn exceedance_percentage(forecast: RoutineLoadForecast, capacity_seconds: i64) -> u8 {
-    let threshold = capacity_seconds as f64 - forecast.mean_remaining_seconds;
+pub(super) fn exceedance_percentage(forecast: RoutineLoadForecast, capacity_seconds: f64) -> u8 {
+    let threshold = capacity_seconds - forecast.mean_remaining_seconds;
     if forecast.variance_seconds_squared == 0.0 {
         return if threshold < 0.0 { 100 } else { 0 };
     }
