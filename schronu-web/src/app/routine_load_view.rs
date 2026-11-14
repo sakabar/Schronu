@@ -1,7 +1,7 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
 use super::list_view::DeviationSortHeading;
-use super::load_view_format::format_unsigned;
+use super::load_view_format::{format_unsigned, probability_color};
 use crate::wire::RoutineLoadForecast;
 use crate::{RoutineLoadReport, RoutineLoadRow};
 use chrono::{Datelike, Duration, NaiveDate};
@@ -271,7 +271,11 @@ fn RoutineForecastSummary(
                 div { dt { "標準偏差" } dd { "{deviation}" } }
                 div {
                     dt { "枠の超過確率" }
-                    dd { "{risk_text}" }
+                    if let Some(color) = probability_color(risk) {
+                        dd { color, "{risk_text}" }
+                    } else {
+                        dd { "{risk_text}" }
+                    }
                 }
             }
             p {

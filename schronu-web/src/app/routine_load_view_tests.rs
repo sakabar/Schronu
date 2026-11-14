@@ -973,7 +973,9 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
         let forecast = html.split_once("平均残り時間").unwrap().1;
         if let Some(percent) = expected {
             assert!(
-                forecast.contains(&format!("<dd>{percent}</dd>")),
+                forecast.contains(&format!(
+                    "<dd style=\"color:var(--green-dark);\">{percent}</dd>"
+                )),
                 "{forecast}"
             );
             let deviation = if index == first { "00:27" } else { "00:00" };

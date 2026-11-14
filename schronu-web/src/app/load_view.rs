@@ -1,6 +1,6 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
-use super::load_view_format::format_unsigned;
+use super::load_view_format::{format_unsigned, probability_color};
 use super::routine_load_view::{exceedance_percentage, RoutineLoadTable};
 use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{BandDay, BandDurations, RoutineLoadForecast, RoutineLoadReport};
@@ -403,7 +403,7 @@ fn BandDayRow(
                     BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: SECONDS_PER_DAY }
                 }
             }
-            strong { class: "load-failure-value", "{failure_text}" }
+            strong { class: "load-failure-value", color: probability_color(failure), "{failure_text}" }
         }
     }
 }

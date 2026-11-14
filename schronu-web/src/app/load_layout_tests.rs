@@ -514,6 +514,7 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     let ids = rebuild_with_event_listeners(&mut dom, "change");
     let initial = dioxus::ssr::render(&dom);
     assert_eq!(initial.matches("繰返作業の失敗確率50%").count(), 14);
+    assert!(initial.contains("color:var(--red-dark);\">50%"));
     let off = ids[0];
     dispatch_platform_event(
         &dom,
@@ -527,6 +528,7 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     dom.render_immediate_to_vec();
     let changed = dioxus::ssr::render(&dom);
     assert_eq!(changed.matches("繰返作業の失敗確率0%").count(), 14);
+    assert!(changed.contains("color:var(--green-dark);\">0%"));
     let bands = |html: &str| html.matches("class=\"load-band-segment").count();
     assert_eq!(bands(&initial), bands(&changed));
 }
