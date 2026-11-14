@@ -576,7 +576,6 @@ fn list配色は意味別tokenを使いleafは太字だけを担う() {
         "--schedule-deadline-surface: #ffe1e3;",
         "--schedule-deadline-surface: #ffeaba;",
         "--schedule-deadline-surface: #d8f3e5;",
-        "background: var(--schedule-deadline-surface);",
         "color: var(--schedule-deadline-ink);",
     ] {
         assert!(css.contains(palette), "missing palette rule: {palette}");
@@ -593,6 +592,22 @@ fn list配色は意味別tokenを使いleafは太字だけを担う() {
         .0;
     assert!(leaf_rule.contains("font-weight: 750;"));
     assert!(!leaf_rule.contains("color:"), "{leaf_rule}");
+}
+
+#[test]
+fn 締切なしにも白い縁取りを付けて日付別の予定分数の位置を揃える() {
+    let css = include_str!("../../assets/main.css");
+    assert!(css.contains(concat!(
+        ".schedule-date-time {\n",
+        "    padding: 0.15em 0.2em;\n",
+        "    border-radius: 0.2rem;\n",
+        "    background: var(--schedule-deadline-surface, var(--surface));",
+    )));
+    assert!(css.contains(concat!(
+        ".schedule-daily {\n",
+        "    display: inline-grid;\n",
+        "    grid-template-columns: calc(5ch + 0.4em) auto;",
+    )));
 }
 
 fn confirmation_row(task_id: &str, kind: DeferConfirmationKind) -> ListRowViewModel {
