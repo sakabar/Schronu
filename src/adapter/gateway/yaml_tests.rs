@@ -1597,3 +1597,44 @@ fn duration_statistics_round_trip_preserves_unsigned_count_and_fractional_values
     let restored = yaml_to_task(&decoded[0], yaml_test_now()).unwrap();
     assert_eq!(restored.duration_statistics().unwrap(), statistics);
 }
+
+#[test]
+fn repetition_duration_updates_round_trip_and_validate_boolean() {
+    let field = "repetition_duration_updates_enabled";
+    let routine = "name: routine\nrepetition_interval_days: 7";
+    for (suffix, enabled) in [
+        (String::new(), true),
+        (format!("\n{field}: true"), true),
+        (format!("\n{field}: false"), false),
+    ] {
+        let yaml = YamlLoader::load_from_str(&format!("{routine}{suffix}")).unwrap();
+        let task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+        assert_eq!(task.repetition_duration_updates_enabled().unwrap(), enabled);
+
+        let statistics = DurationStatistics::new(1, 600.0, 0.0).unwrap();
+        task.set_duration_statistics(statistics).unwrap();
+        let encoded = task_snapshot_to_yaml(&task.snapshot().unwrap());
+        if enabled {
+            assert_eq!(encoded[field], Yaml::BadValue);
+        } else {
+            assert_eq!(encoded[field], Yaml::Boolean(false));
+        }
+        let restored = yaml_to_task(&encoded, yaml_test_now()).unwrap();
+        assert_eq!(restored.repetition_duration_updates_enabled().unwrap(), enabled);
+        assert_eq!(restored.duration_statistics().unwrap(), statistics);
+
+        restored.set_repetition_interval_days_opt(None).unwrap();
+        restored.set_repetition_interval_days_opt(Some(7)).unwrap();
+        assert!(restored.repetition_duration_updates_enabled().unwrap());
+    }
+
+    for source in [
+        format!("{routine}\n{field}: null"),
+        format!("{routine}\n{field}: 'false'"),
+        format!("name: task\n{field}: false"),
+    ] {
+        let yaml = YamlLoader::load_from_str(&source).unwrap();
+        let error = yaml_to_task(&yaml[0], yaml_test_now()).unwrap_err();
+        assert!(error.to_string().contains(field), "{error}");
+    }
+}

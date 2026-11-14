@@ -3063,3 +3063,56 @@ fn recurring_estimate_probability_handles_missing_history_and_exact_boundaries()
         Some(0)
     );
 }
+
+#[test]
+fn complete_task_resumes_repetition_duration_updates_when_reenabled() {
+    let parent = crate::test_support::new_task_handle("routine").unwrap();
+    parent.set_repetition_interval_days_opt(Some(7)).unwrap();
+    parent.set_estimated_work_seconds(600).unwrap();
+    parent
+        .set_repetition_duration_updates_enabled(false)
+        .unwrap();
+    let statistics = DurationStatistics::new(1, 600.0, 0.0).unwrap();
+    parent.set_duration_statistics(statistics).unwrap();
+
+    let occurrence = parent.create_as_last_child(crate::test_support::new_task_attr("occurrence"));
+    let mut child_attr = crate::test_support::new_task_attr("completed child");
+    child_attr.set_actual_work_seconds(i64::MAX);
+    child_attr.set_orig_status(Status::Done);
+    occurrence.create_as_last_child(child_attr);
+    let mut repository = TestTaskRepository::new(vec![parent.clone()], fixed_now());
+
+    let complete = |repository: &mut TestTaskRepository, task_id| {
+        complete_task_with_fresh_factory(
+            repository,
+            CompleteTaskInput {
+                task_id,
+                finished_at: fixed_now(),
+                additional_actual_work_seconds: 1000,
+                expected_actual_work_seconds: None,
+            },
+        )
+        .unwrap()
+        .next_repetition_task_id
+        .unwrap()
+    };
+    let next_id = complete(&mut repository, occurrence.get_id().unwrap());
+    let next = repository.get_by_id(next_id).unwrap().unwrap();
+    assert_eq!(occurrence.get_status().unwrap(), Status::Done);
+    assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 1000);
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(next.get_estimated_work_seconds().unwrap(), 600);
+    assert_eq!(parent.duration_statistics().unwrap(), statistics);
+
+    parent
+        .set_repetition_duration_updates_enabled(true)
+        .unwrap();
+    let following_id = complete(&mut repository, next_id);
+    let following = repository.get_by_id(following_id).unwrap().unwrap();
+    assert_eq!(parent.get_estimated_work_seconds().unwrap(), 900);
+    assert_eq!(following.get_estimated_work_seconds().unwrap(), 900);
+    assert_eq!(
+        parent.duration_statistics().unwrap().values(),
+        (2, 800.0, 80000.0)
+    );
+}
