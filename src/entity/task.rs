@@ -215,12 +215,64 @@ pub struct TaskAttr {
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
 
     repetition_interval_days_opt: Option<i64>,
+    duration_statistics: Option<Box<DurationStatistics>>,
     repetition_start_time_opt: Option<NaiveTime>,
     repetition_deadline_time_opt: Option<NaiveTime>,
     repetition_anchor: RepetitionAnchor,
     days_in_advance: i64, // 繰り返しタスクについて、何日前から着手開始可能とするか
     project_category_opt: Option<ProjectCategory>,
     persistent_mutation_revision: u64,
+}
+
+/// Running statistics for completed occurrences of a recurring task.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct DurationStatistics {
+    sample_size: u64,
+    mean_duration_seconds: f64,
+    m2_duration_seconds_squared: f64,
+}
+
+impl DurationStatistics {
+    pub(crate) fn new(sample_size: u64, mean: f64, m2: f64) -> Result<Self, &'static str> {
+        if !mean.is_finite() || mean < 0.0 || !m2.is_finite() || m2 < 0.0 {
+            return Err("mean and M2 must be finite and non-negative");
+        }
+        if (sample_size == 0 && mean != 0.0)
+            || (sample_size > 0 && mean <= 0.0)
+            || (sample_size < 2 && m2 != 0.0)
+        {
+            return Err("mean and M2 must match the sample size");
+        }
+        Ok(Self {
+            sample_size,
+            mean_duration_seconds: mean,
+            m2_duration_seconds_squared: m2,
+        })
+    }
+
+    pub(crate) fn values(self) -> (u64, f64, f64) {
+        (
+            self.sample_size,
+            self.mean_duration_seconds,
+            self.m2_duration_seconds_squared,
+        )
+    }
+
+    /// Welford法で平均と偏差平方和を逐次更新する
+    pub(crate) fn with_sample(self, seconds: i64) -> Result<Self, &'static str> {
+        if seconds <= 0 {
+            return Ok(self);
+        }
+        let count = self
+            .sample_size
+            .checked_add(1)
+            .ok_or("sample size overflow")?;
+        let sample = seconds as f64;
+        let delta = sample - self.mean_duration_seconds;
+        let mean = self.mean_duration_seconds + delta / count as f64;
+        let m2 = self.m2_duration_seconds_squared + delta * (sample - mean);
+        Self::new(count, mean, m2)
+    }
 }
 
 // 生成するタイミングで結果が変わってしまうid, create_time, start_timeは
@@ -242,6 +294,7 @@ impl PartialEq for TaskAttr {
             && self.deadline_time_opt == other.deadline_time_opt
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
+            && self.duration_statistics == other.duration_statistics
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
             && self.repetition_start_time_opt == other.repetition_start_time_opt
             && self.repetition_deadline_time_opt == other.repetition_deadline_time_opt
@@ -307,6 +360,7 @@ impl TaskAttr {
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
             repetition_interval_days_opt: None,
+            duration_statistics: None,
             repetition_start_time_opt: None,
             repetition_deadline_time_opt: None,
             repetition_anchor: RepetitionAnchor::Deadline,
@@ -545,10 +599,18 @@ impl TaskAttr {
                 .get_or_insert(DEFAULT_REPETITION_DEADLINE_TIME);
             self.deadline_time_opt = None;
         } else {
+            self.duration_statistics = None;
             self.repetition_start_time_opt = None;
             self.repetition_deadline_time_opt = None;
         }
         Ok(())
+    }
+
+    pub(crate) fn duration_statistics(&self) -> DurationStatistics {
+        self.duration_statistics
+            .as_deref()
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn get_repetition_interval_days_opt(&self) -> Option<i64> {
@@ -661,6 +723,7 @@ pub enum TaskTreeError {
     },
     RepeatingTaskDeadline,
     RepetitionTemplateWithoutRepeatingTask,
+    DurationStatisticsWithoutRepeatingTask,
     RepeatingTaskTemplateRequired,
 }
 
@@ -681,6 +744,9 @@ impl fmt::Display for TaskTreeError {
             }
             Self::RepetitionTemplateWithoutRepeatingTask => {
                 "repetition time template requires a repeating task"
+            }
+            Self::DurationStatisticsWithoutRepeatingTask => {
+                "duration statistics require a repeating task"
             }
             Self::RepeatingTaskTemplateRequired => {
                 "repeating task requires both time templates"
@@ -856,6 +922,7 @@ impl TaskHandle {
         finished_at: DateTime<Local>,
         adjusted_parent_estimated_work_seconds: i64,
         next_task_attr: TaskAttr,
+        duration_statistics: Option<DurationStatistics>,
     ) -> Result<Self, TaskTreeError> {
         let parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
         let root = self.root()?;
@@ -882,11 +949,17 @@ impl TaskHandle {
             .try_borrow_data_mut()
             .map_err(|_| TaskTreeError::Borrow)?;
 
+        if duration_statistics.is_some() && parent_attr.repetition_interval_days_opt.is_none() {
+            return Err(TaskTreeError::DurationStatisticsWithoutRepeatingTask);
+        }
         let child_node = parent.node.create_as_last_child(&grant, next_task_attr);
         attr.set_actual_work_seconds(actual_work_seconds);
         attr.set_orig_status(Status::Done);
         attr.set_end_time_opt(Some(finished_at));
         parent_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
+        if let Some(statistics) = duration_statistics {
+            parent_attr.duration_statistics = Some(Box::new(statistics));
+        }
         match &mut root_attr {
             Some(root_attr) => root_attr.mark_persistent_mutation(),
             None => parent_attr.mark_persistent_mutation(),
@@ -1483,6 +1556,29 @@ impl TaskHandle {
                 attr.set_actual_work_seconds(actual_work_seconds);
                 true
             }
+        })
+    }
+
+    pub(crate) fn duration_statistics(&self) -> Result<DurationStatistics, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.duration_statistics())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn set_duration_statistics(
+        &self,
+        statistics: DurationStatistics,
+    ) -> Result<(), TaskTreeError> {
+        if !self.is_repeating_task()? {
+            return Err(TaskTreeError::DurationStatisticsWithoutRepeatingTask);
+        }
+        self.update(|attr| {
+            if attr.duration_statistics() == statistics {
+                return false;
+            }
+            attr.duration_statistics = (statistics.sample_size > 0).then(|| Box::new(statistics));
+            true
         })
     }
 

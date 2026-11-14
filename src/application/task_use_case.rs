@@ -12,7 +12,8 @@ use crate::entity::datetime::{
     LogicalDateTimePolicy, DEFAULT_END_OF_DAY_OFFSET_MINUTES, DEFAULT_REPETITION_DEADLINE_TIME,
 };
 use crate::entity::task::{
-    ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle, TaskTreeError,
+    DurationStatistics, ProjectCategory, RepetitionAnchor, Status, TaskAttr, TaskHandle,
+    TaskTreeError,
 };
 use chrono::{
     DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
@@ -903,6 +904,7 @@ pub fn complete_task(
                 input.finished_at,
                 prepared.adjusted_parent_estimated_work_seconds,
                 prepared.task_attr,
+                prepared.duration_statistics,
             )
             .map_err(ApplicationError::TaskTree)?;
             Some(prepared.task_id)
@@ -977,6 +979,23 @@ pub fn set_actual_work(
     task.set_actual_work_seconds(actual_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
     Ok(())
+}
+
+pub(crate) fn find_duration_statistics_target(
+    repository: &dyn TaskRepositoryTrait,
+    task_id: Uuid,
+) -> Result<TaskHandle, ApplicationError> {
+    let task = find_task(repository, task_id)?;
+    if !task
+        .is_repeating_task()
+        .map_err(ApplicationError::TaskTree)?
+    {
+        return Err(ApplicationError::InvalidInput {
+            field: "duration_statistics",
+            reason: "requires repetition_interval_days on the target",
+        });
+    }
+    Ok(task)
 }
 
 pub fn set_deadline(
@@ -1088,6 +1107,7 @@ fn create_next_repetition_task(
         finished_at,
         prepared.adjusted_parent_estimated_work_seconds,
         prepared.task_attr,
+        prepared.duration_statistics,
     )
     .map_err(ApplicationError::TaskTree)?;
     Ok(Some(task_id))
@@ -1097,6 +1117,7 @@ struct PreparedRepetitionTask {
     task_attr: TaskAttr,
     task_id: Uuid,
     adjusted_parent_estimated_work_seconds: i64,
+    duration_statistics: Option<DurationStatistics>,
 }
 
 fn prepare_next_repetition_task(
@@ -1119,6 +1140,23 @@ fn prepare_next_repetition_task(
         .get_estimated_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
     let accounted_work_seconds = accounted_subtree_work_seconds(task, Some(actual_work_seconds))?;
+    let duration_statistics = if accounted_work_seconds > 0
+        && task.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
+    {
+        Some(
+            parent_task
+                .duration_statistics()
+                .map_err(ApplicationError::TaskTree)?
+                .with_sample(accounted_work_seconds)
+                .map_err(|reason| ApplicationError::InvalidInput {
+                    field: "duration_statistics",
+                    reason,
+                })?,
+        )
+    } else {
+        None
+    };
+
     let adjusted_parent_estimated_work_seconds = adjusted_repetition_estimate(
         original_parent_estimated_work_seconds,
         accounted_work_seconds,
@@ -1136,6 +1174,7 @@ fn prepare_next_repetition_task(
         task_attr,
         task_id,
         adjusted_parent_estimated_work_seconds,
+        duration_statistics,
     }))
 }
 

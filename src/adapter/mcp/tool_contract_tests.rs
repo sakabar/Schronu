@@ -2531,6 +2531,98 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
 }
 
 #[test]
+fn update_task_replaces_routine_statistics_before_next_completion() {
+    let routine = new_task_handle("routine").unwrap();
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    let occurrence = routine.create_as_last_child(new_task_attr("occurrence"));
+    let routine_id = routine.get_id().unwrap();
+    let occurrence_id = occurrence.get_id().unwrap();
+    let repository = RecordingRepository::new(vec![routine.clone()]);
+    let save_count = Rc::clone(&repository.save_count);
+    let mut server = initialized_server(repository);
+    let seed = json!({
+        "sample_size": 2,
+        "mean_duration_seconds": 600,
+        "m2_duration_seconds_squared": 7200
+    });
+    for (task_id, statistics) in [
+        (occurrence_id, seed.clone()),
+        (
+            routine_id,
+            json!({
+                "sample_size": 1,
+                "mean_duration_seconds": 600,
+                "m2_duration_seconds_squared": 7200
+            }),
+        ),
+    ] {
+        let response = server
+            .handle_request(tool_call_request(
+                "invalid-statistics",
+                "update_task",
+                json!({
+                    "task_id": task_id,
+                    "actual_work_seconds": 999,
+                    "duration_statistics": statistics
+                }),
+            ))
+            .unwrap();
+        assert_eq!(
+            response["result"]["structuredContent"]["error"]["code"],
+            "invalid_input"
+        );
+        assert_eq!(routine.get_actual_work_seconds().unwrap(), 0);
+        assert_eq!(occurrence.get_actual_work_seconds().unwrap(), 0);
+        assert_eq!(save_count.get(), 0);
+    }
+    for expected_saves in [1, 1] {
+        let response = server
+            .handle_request(tool_call_request(
+                "seed-statistics",
+                "update_task",
+                json!({"task_id": routine_id, "duration_statistics": seed}),
+            ))
+            .unwrap();
+        assert_eq!(response["result"]["isError"], false, "{response}");
+        assert_eq!(save_count.get(), expected_saves);
+    }
+    let response = server
+        .handle_request(tool_call_request(
+            "complete-occurrence",
+            "complete_task",
+            json!({"task_id": occurrence_id, "additional_actual_work_seconds": 600}),
+        ))
+        .unwrap();
+    assert_eq!(response["result"]["isError"], false, "{response}");
+    assert_eq!(
+        routine.duration_statistics().unwrap().values(),
+        (3, 600.0, 7200.0)
+    );
+    assert_eq!(save_count.get(), 2);
+
+    let response = server
+        .handle_request(tool_call_request(
+            "reset-statistics",
+            "update_task",
+            json!({
+                "task_id": routine_id,
+                "duration_statistics": {
+                    "sample_size": 0,
+                    "mean_duration_seconds": 0,
+                    "m2_duration_seconds_squared": 0
+                }
+            }),
+        ))
+        .unwrap();
+    assert_eq!(response["result"]["isError"], false);
+    assert_eq!(
+        routine.duration_statistics().unwrap().values(),
+        (0, 0.0, 0.0)
+    );
+    assert_eq!(save_count.get(), 3);
+}
+
+#[test]
 fn update_task_同じ値ならsaveしない() {
     let task = new_task_handle("unchanged task").unwrap();
     task.set_actual_work_seconds(900).unwrap();

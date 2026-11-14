@@ -1581,3 +1581,19 @@ children:
 
     assert_task(&actual_task, &grand_child_task);
 }
+
+#[test]
+fn duration_statistics_round_trip_preserves_unsigned_count_and_fractional_values() {
+    let yaml = YamlLoader::load_from_str("name: routine\nrepetition_interval_days: 7").unwrap();
+    let task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+    assert_eq!(task.duration_statistics().unwrap().values(), (0, 0.0, 0.0));
+
+    let statistics = DurationStatistics::new(u64::MAX, 660.25, 7200.125).unwrap();
+    task.set_duration_statistics(statistics).unwrap();
+    let encoded = task_snapshot_to_yaml(&task.snapshot().unwrap());
+    let mut document = String::new();
+    yaml_rust::YamlEmitter::new(&mut document).dump(&encoded).unwrap();
+    let decoded = YamlLoader::load_from_str(&document).unwrap();
+    let restored = yaml_to_task(&decoded[0], yaml_test_now()).unwrap();
+    assert_eq!(restored.duration_statistics().unwrap(), statistics);
+}

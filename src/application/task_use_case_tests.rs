@@ -2232,6 +2232,45 @@ fn complete_task_繰り返しtaskはsubtreeのみなし実績で見積もりを�
     assert_eq!(measured_child.get_actual_work_seconds().unwrap(), 100);
     assert_eq!(unmeasured_child.get_actual_work_seconds().unwrap(), 0);
     assert_eq!(unmeasured_grandchild.get_actual_work_seconds().unwrap(), 0);
+    assert_eq!(
+        parent.duration_statistics().unwrap().values(),
+        (1, 560.0, 0.0)
+    );
+
+    for (task, additional_actual_work_seconds, expected) in [
+        (&next_occurrence, 680, (2, 620.0, 7200.0)),
+        (&next_occurrence, 1, (2, 620.0, 7200.0)),
+    ] {
+        complete_task_with_fresh_factory(
+            &mut repository,
+            CompleteTaskInput {
+                task_id: task.get_id().unwrap(),
+                finished_at: fixed_now(),
+                additional_actual_work_seconds,
+                expected_actual_work_seconds: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(parent.duration_statistics().unwrap().values(), expected);
+    }
+
+    let mut zero_attr = crate::test_support::new_task_attr("zero duration");
+    zero_attr.set_estimated_work_seconds(0);
+    let zero_occurrence = parent.create_as_last_child(zero_attr);
+    complete_task_with_fresh_factory(
+        &mut repository,
+        CompleteTaskInput {
+            task_id: zero_occurrence.get_id().unwrap(),
+            finished_at: fixed_now(),
+            additional_actual_work_seconds: 0,
+            expected_actual_work_seconds: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        parent.duration_statistics().unwrap().values(),
+        (2, 620.0, 7200.0)
+    );
 }
 
 #[test]
@@ -2315,6 +2354,8 @@ fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更�
     let parent = crate::test_support::new_task_handle("ルーチン").unwrap();
     parent.set_repetition_interval_days_opt(Some(7)).unwrap();
     parent.set_estimated_work_seconds(600).unwrap();
+    let statistics = DurationStatistics::new(2, 600.0, 7200.0).unwrap();
+    parent.set_duration_statistics(statistics).unwrap();
     let child = parent.create_as_last_child(crate::test_support::new_task_attr("今回"));
     child.set_actual_work_seconds(100).unwrap();
     let child_id = child.get_id().unwrap();
@@ -2373,6 +2414,7 @@ fn complete_task_反復child追加のhierarchy_grant失敗で全状態を変更�
         parent.get_persistent_mutation_revision().unwrap(),
         revision_before
     );
+    assert_eq!(parent.duration_statistics().unwrap(), statistics);
 }
 
 #[test]

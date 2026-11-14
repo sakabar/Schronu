@@ -330,7 +330,7 @@
     "name": "complete_task"
   },
   {
-    "description": "Update an existing task's estimate, actual work seconds, deadline, or project category. Include at least one update field; when multiple fields are supplied, they are applied in estimate, actual work, deadline, then category order.",
+    "description": "Update an existing task's estimate, actual work seconds, deadline, project category, or recurring duration statistics. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, then duration statistics order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
@@ -352,6 +352,11 @@
         {
           "required": [
             "category"
+          ]
+        },
+        {
+          "required": [
+            "duration_statistics"
           ]
         }
       ],
@@ -395,6 +400,31 @@
               "type": "null"
             }
           ]
+        },
+        "duration_statistics": {
+          "additionalProperties": false,
+          "description": "Replace all three duration statistics on a task with repetition_interval_days. Set all values to zero to reset the statistics.",
+          "properties": {
+            "m2_duration_seconds_squared": {
+              "format": "double",
+              "type": "number"
+            },
+            "mean_duration_seconds": {
+              "format": "double",
+              "type": "number"
+            },
+            "sample_size": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "sample_size",
+            "mean_duration_seconds",
+            "m2_duration_seconds_squared"
+          ],
+          "type": "object"
         },
         "estimated_work_seconds": {
           "description": "Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.",

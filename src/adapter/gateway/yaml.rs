@@ -3,7 +3,9 @@ use crate::entity::datetime::{parse_local_datetime, DEFAULT_REPETITION_DEADLINE_
 use crate::entity::task::read_project_category;
 use crate::entity::task::read_status;
 use crate::entity::task::Status;
-use crate::entity::task::{RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError};
+use crate::entity::task::{
+    DurationStatistics, RepetitionAnchor, TaskAttr, TaskHandle, TaskSnapshot, TaskTreeError,
+};
 use chrono::LocalResult;
 #[cfg(test)]
 use chrono::TimeZone;
@@ -156,6 +158,29 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
             Yaml::String(String::from("repetition_interval_days")),
             Yaml::Integer(repetition_interval_days),
         );
+        let (count, mean, m2) = task.duration_statistics().values();
+        if count > 0 {
+            let statistics = LinkedHashMap::from_iter([
+                (
+                    Yaml::String("sample_size".into()),
+                    i64::try_from(count)
+                        .map(Yaml::Integer)
+                        .unwrap_or_else(|_| Yaml::Real(count.to_string())),
+                ),
+                (
+                    Yaml::String("mean_duration_seconds".into()),
+                    Yaml::Real(mean.to_string()),
+                ),
+                (
+                    Yaml::String("m2_duration_seconds_squared".into()),
+                    Yaml::Real(m2.to_string()),
+                ),
+            ]);
+            task_hash.insert(
+                Yaml::String("duration_statistics".into()),
+                Yaml::Hash(statistics),
+            );
+        }
         let repetition_start_time = task
             .get_repetition_start_time_opt()
             .unwrap_or_else(|| task.get_start_time().time());
@@ -270,6 +295,35 @@ fn map_task_field_error(
 
 fn yaml_field<'a>(yaml: &'a Yaml, key: &str) -> Option<&'a Yaml> {
     yaml.as_hash()?.get(&Yaml::String(key.to_string()))
+}
+
+fn read_duration_statistics(
+    yaml: &Yaml,
+    path: &str,
+) -> Result<DurationStatistics, YamlConversionError> {
+    let error = |reason| strict_error(path, "duration_statistics", reason);
+    if yaml.as_hash().is_none_or(|fields| fields.len() != 3) {
+        return Err(error(
+            "must contain sample_size, mean_duration_seconds and m2_duration_seconds_squared",
+        ));
+    }
+    let count = match yaml_field(yaml, "sample_size") {
+        Some(Yaml::Integer(value)) => u64::try_from(*value).ok(),
+        // yaml-rust represents integers outside the i64 range as Real text.
+        Some(Yaml::Real(value)) => value.parse::<u64>().ok(),
+        _ => None,
+    }
+    .ok_or_else(|| error("sample_size must be an unsigned integer"))?;
+    let number = |key| match yaml_field(yaml, key) {
+        Some(Yaml::Integer(value)) => Some(*value as f64),
+        Some(Yaml::Real(value)) => value.parse::<f64>().ok(),
+        _ => None,
+    };
+    let mean = number("mean_duration_seconds")
+        .ok_or_else(|| error("mean_duration_seconds must be numeric"))?;
+    let m2 = number("m2_duration_seconds_squared")
+        .ok_or_else(|| error("m2_duration_seconds_squared must be numeric"))?;
+    DurationStatistics::new(count, mean, m2).map_err(error)
 }
 
 fn matches_legacy_fixed_start_shape(
@@ -517,6 +571,18 @@ fn yaml_to_task_strict(
         .map_err(map_task_tree_error)?;
     task.set_repetition_interval_days_opt(interval)
         .map_err(map_task_tree_error)?;
+    if let Some(value) = yaml_field(yaml, "duration_statistics") {
+        if interval.is_none() {
+            return Err(strict_error(
+                path,
+                "duration_statistics",
+                "requires repetition_interval_days",
+            ));
+        }
+        task.set_duration_statistics(read_duration_statistics(value, path)?)
+            .map_err(map_task_tree_error)?;
+    }
+
     if interval.is_some() {
         task.set_repetition_start_time_opt(Some(
             repetition_start_time
