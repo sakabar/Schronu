@@ -904,6 +904,120 @@ button:disabled {
     font-weight: 750;
 }
 
+.list-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    align-items: stretch;
+    gap: 0.5rem;
+}
+
+.display-timezone-settings {
+    position: relative;
+    min-width: 0;
+}
+
+.display-timezone-settings > summary {
+    display: grid;
+    height: 100%;
+    place-items: center;
+    list-style: none;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 1.15rem;
+}
+
+.display-timezone-settings > summary::-webkit-details-marker {
+    display: none;
+}
+
+.display-timezone-settings[open] > summary {
+    background: var(--surface-muted);
+    color: var(--green-dark);
+}
+
+.display-timezone-menu {
+    position: absolute;
+    z-index: 20;
+    inset-block-start: calc(100% + 0.25rem);
+    inset-inline-end: 0;
+    width: min(18rem, calc(100vw - 1rem));
+    padding: 0.35rem;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+}
+
+.display-timezone-menu h2 {
+    margin: 0 0 0.25rem;
+    padding: 0.25rem 0.55rem 0.45rem;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.display-timezone-menu p {
+    margin: 0;
+    padding: 0.4rem 0.55rem;
+    font-size: 0.85rem;
+}
+
+.display-timezone-menu button {
+    display: block;
+    width: 100%;
+    padding: 0.4rem 0.55rem;
+    border-color: transparent;
+    font-size: 0.85rem;
+    text-align: start;
+    overflow-wrap: anywhere;
+}
+
+.display-timezone-menu button[aria-pressed="true"] {
+    background: var(--surface-muted);
+    color: var(--green-dark);
+}
+
+.display-timezone-menu button[aria-pressed="true"]::after {
+    content: " ✓";
+}
+
+.display-timezone-menu .task-name-filter-input {
+    margin-block: 0.25rem;
+    padding-inline-end: 0.55rem;
+}
+
+.display-timezone-regions {
+    max-height: min(8rem, 25vh);
+    overflow: auto;
+}
+
+.display-timezone-error {
+    color: var(--red);
+}
+
+.list-date-basis {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.75rem;
+    overflow-wrap: anywhere;
+}
+
+.list-clock-date {
+    display: block;
+    margin-block-end: 0.18rem;
+    color: var(--muted);
+}
+
+@media (pointer: coarse) {
+    .display-timezone-menu button {
+        min-height: 44px;
+    }
+}
+
 .list-controls {
     display: grid;
     grid-template-columns: 154px minmax(0, 1fr);

@@ -239,6 +239,7 @@ fn named_row(
         occurrence: crate::ScheduleOccurrence::Actual {
             task_id: task_id.to_owned(),
         },
+        deadline_time: None,
         deadline_label: "____-01:00".to_owned(),
         schedule_display: ScheduleDisplayViewModel::Daily {
             start_hh_mm: "11:25".to_owned(),

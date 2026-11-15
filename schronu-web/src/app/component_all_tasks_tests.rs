@@ -748,3 +748,67 @@ fn deviation_sort_filters_and_orders_before_limiting_all_rows() {
         [Some("higher"), Some("tied")]
     );
 }
+
+#[test]
+fn 表示タイムゾーンで予定と締切を変換しても日本時間の一覧日は維持する() {
+    use crate::client::state::load_client_state;
+    use crate::client::view_projection::{project_list_rows_for_display, ScheduleDisplayViewModel};
+    use chrono::DateTime;
+
+    let epoch = DateTime::parse_from_rfc3339("2026-09-05T09:00:00+09:00")
+        .unwrap()
+        .timestamp_millis();
+    let storage = MemoryStorage::default();
+    let mut state = load_client_state(&storage, epoch).unwrap();
+    let ClientEffect::Bootstrap { request_id } = state.request_bootstrap() else {
+        panic!("expected a bootstrap request");
+    };
+    let _ = state.apply_bootstrap_result(request_id, Ok(snapshot(epoch)));
+    let ClientEffect::ListTasks { request_id, .. } = state.request_list("2026-09-05") else {
+        panic!("expected a scheduled list request");
+    };
+    let row = all_row(0, "sample-task", "確認", true);
+    let _ = state.apply_list_result(
+        request_id,
+        "2026-09-05",
+        Ok(WebSuccess {
+            snapshot: snapshot(epoch),
+            data: vec![crate::ScheduledTaskRow {
+                task: row.task,
+                display_task_name: None,
+                advanceable_days: 0,
+                occurrence: row.occurrence,
+                schedule_start_epoch_ms: epoch,
+                schedule_end_epoch_ms: epoch + 30 * 60_000,
+                deadline_epoch_ms: Some(epoch + 60 * 60_000),
+                deadline_label: "____-00:30".to_owned(),
+                misses_deadline: false,
+                task_display_kind: row.task_display_kind,
+                deadline_display_kind: crate::DeadlineDisplayKind::Today,
+                is_leaf: true,
+                defer_plan: None,
+            }],
+        }),
+    );
+
+    for (offset, start, deadline) in [
+        (540, "09:00", "10:00"),
+        (-420, "09/04 17:00", "09/04 18:00"),
+    ] {
+        let rows = project_list_rows_for_display(&state, &|_| Some(offset));
+        assert_eq!(state.selected_logical_date(), Some("2026-09-05"));
+        assert_eq!(
+            rows[0].schedule_display,
+            ScheduleDisplayViewModel::Daily {
+                start_hh_mm: start.to_owned(),
+                duration_minutes: Some(30),
+            }
+        );
+        assert_eq!(rows[0].deadline_time.as_deref(), Some(deadline));
+        assert_eq!(rows[0].deadline_label, "____-00:30");
+        assert_eq!(
+            rows[0].deadline_display_kind,
+            crate::DeadlineDisplayKind::Today
+        );
+    }
+}

@@ -600,3 +600,12 @@ fn future_session_start_uses_shared_palette_with_dark_text_on_hover() {
     assert!(hover.contains("background: var(--session-start-future-hover);"));
     assert!(hover.contains("border-color: var(--session-start-future-border);"));
 }
+
+#[test]
+fn timezone_settings_share_the_list_mode_row_without_increasing_its_height() {
+    let toolbar = block_body(MAIN_CSS, ".list-toolbar");
+    assert!(toolbar.contains("grid-template-columns: minmax(0, 1fr) 44px;"));
+    assert!(block_body(MAIN_CSS, ".list-mode-button {").contains("min-height: 36px;"));
+    assert!(block_body(MAIN_CSS, ".display-timezone-settings > summary").contains("height: 100%;"));
+    assert!(block_body(MAIN_CSS, ".display-timezone-menu").contains("position: absolute;"));
+}

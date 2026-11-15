@@ -35,9 +35,10 @@ session cardのtask名はURLを確認できた場合だけ読み取り専用の�
 - 時刻: Unix epoch millisecondsの整数
 - 時間量: 秒の整数
 - logical date: `YYYY-MM-DD`文字列
-- 曜日・時刻表示: epoch millisecondsをbrowserのlocal timezoneへ変換して生成する
+- 曜日・日付: serverのlogical dateを使用する
+- 表示時刻: epoch millisecondsをbrowserで選択したtimezoneへ変換する
 
-browserとserverは同じlocal machine timezoneで動作することを実行前提とする。logical dateはbrowserでepochから再判定せず、serverの`ServerSnapshot.logical_date`を正とする。browserとserverのtimezone設定が異なる構成、または利用者がbrowserだけ異なるtimezoneで表示する構成は対象外とする。
+serverは日本時間(Asia/Tokyo)で稼働する。現在logical dateはserverの`ServerSnapshot.logical_date`を正とし、表示timezoneを使って再判定しない。
 
 ### 3.2 Success and error envelope
 
@@ -313,7 +314,7 @@ keyは`schronu_web.work_sessions.v1`とする。valueはversion付きobjectと�
 
 `buffer_credit_start_epoch_ms`は任意の相殺開始epochで、欠落・nullなら従来の開始時刻を使う。完了実績競合からの「計測を再開」で開始時刻を補正する際、初回clickまでに相殺対象外だったmillisecondを補正後の開始時刻へ加えて保存する。これにより前倒し分を後から相殺しない。versionは1を維持し、通常開始・親への引き継ぎ・「計測を破棄して再開」では設定しない。値が開始時刻より前または変換不能なepochなら不正entryとして扱う。
 
-cardの`future_pending_date_label`はbrowserの現在時刻と保存した`start_time_epoch_ms`、`pending_until_epoch_ms`を、それぞれの時刻のbrowser local offsetで06:00境界のlogical dateへ変換して判定する。開始日が今日より後なら開始日の`YYYY/MM/DD 開始可能`を優先する。それ以外で保留期限日が今日より後なら保留期限日の`YYYY/MM/DD 着手予定`を使う。どちらも該当しなければ通常表示とする。旧sessionで開始時刻がない場合は従来のpending情報だけで判定し、自動補完は行わない。情報なし・変換不能な予定日時はその判定から除外し、現在日時が変換不能なら通常表示とする。両labelともtask名の直下へ括弧なしで表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、開始日になると保留期限に応じて「着手予定」へ切り替えるか注意表示を解除し、「着手予定」は保留期限日になると注意表示を解除する。この判定のlogical date変換をbufferの未送信進捗区間と共通化する。DTO・server API・作業の計測・server通信・task更新・操作guardは変えない。
+cardの`future_pending_date_label`はbrowserの現在時刻と保存した`start_time_epoch_ms`、`pending_until_epoch_ms`を、日本時間で06:00境界のlogical dateへ変換して判定する。開始日が今日より後なら開始日の`YYYY/MM/DD 開始可能`を優先する。それ以外で保留期限日が今日より後なら保留期限日の`YYYY/MM/DD 着手予定`を使う。どちらも該当しなければ通常表示とする。旧sessionで開始時刻がない場合は従来のpending情報だけで判定し、自動補完は行わない。情報なし・変換不能な予定日時はその判定から除外し、現在日時が変換不能なら通常表示とする。両labelともtask名の直下へ括弧なしで表示し、`session-card is-future-pending`を付ける。背景は`--session-future-surface`(`#fff7e7`)、左線とlabelは専用の`--session-future-accent`(`#9a5a00`)とし、超過時間の赤やprogress barの色と区別する。`2027/01/01 01:00`は`2026/12/31`、`2027/01/01 06:00`は`2027/01/01`となる。既存tickで日付を再判定し、開始日になると保留期限に応じて「着手予定」へ切り替えるか注意表示を解除し、「着手予定」は保留期限日になると注意表示を解除する。この判定のlogical date変換をbufferの未送信進捗区間と共通化する。DTO・server API・作業の計測・server通信・task更新・操作guardは変えない。
 
 読込規則:
 
@@ -674,7 +675,7 @@ display_sleep = BASE_SLEEP_MINUTES * 60 + display_buffer
 
 `protected_until`は定義できる終端のうち最も早い時刻とする。完了実績競合の確認中と再送中は、初回clickが補正後の完了予定への到達以前なら相殺開始時刻と初回clickの早い方から競合解消までを連続して加算し、補正後の完了予定への到達後なら通常の未送信進捗と初回click以後の相殺時間を分けて加算する。これにより初回click時点のbuffer表示を固定し、click以前に減算済みのbufferを巻き戻さない。補正後の完了予定時刻がepoch範囲外で算出不能かつ`stopped_at`もない場合は終端なしとし、終了まで未送信進捗を加算する。
 
-- `eligible_at`はカードと共通のlogical date変換を使い、有効な開始日と保留期限日の遅い方の日付で06:00を迎えた瞬間とする。情報なし・変換不能な予定日時は除外し、有効な日付がなければ区間を制限しない。現在日時が変換不能な場合も通常の相殺を使う。各時点のbrowser local offsetを使って境界を求め、DSTをまたいでも固定offsetで代用しない。
+- `eligible_at`はカードと共通のlogical date変換を使い、有効な開始日と保留期限日の遅い方の日付で06:00を迎えた瞬間とする。情報なし・変換不能な予定日時は除外し、有効な日付がなければ区間を制限しない。現在日時が変換不能な場合も通常の相殺を使う。日本時間(UTC+09:00)で境界を求める。
 - 未来日注意表示中の通常作業は壁時計減算を相殺しない。06:00以降も、それ以前の前倒し作業を後から加算しない。完了予定時刻は従来の開始時刻を基準とし、相殺開始時刻へずらさない。完了実績競合中の初回click以後の表示固定は前倒し作業と別に維持する。
 - 前倒し分を除外したsessionの完了実績競合では、初回click時点の丸め済み補正値へ`現在のsnapshot_elapsed - click時点のsnapshot_elapsed`を加えて表示を固定する。clickからの区間を独立に秒切り捨てして1秒揺らさない。
 - `snapshot_elapsed`はserver観測時刻からbrowser現在時刻までのbuffer減算として1回だけ差し引く。
@@ -784,11 +785,12 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 - 全件検索は日付別検索と共有する文字列と同じ純粋helperを使い、取得完了時だけ表示する。両一覧の往復、全件無効化後、reload後も文字列を維持する。どちらの一覧で検索入力またはclearしても描画上限を500へ戻し、絞り込み後の先頭500行だけを描画する。「さらに表示」で500行ずつ上限を増やす。
 - 生の入力が空でない間だけ「×」のclear buttonを表示し、`aria-label`を「検索文字列をクリア」とする。検索欄は`min-width: 0`で残り幅へ伸縮させる。高さとclear buttonは通常36px、coarse pointerでは44pxとし、タッチ時の入力文字は16pxにする。clear buttonは検索欄右端へ絶対配置して内包し、入力にはbutton幅の右paddingを常時確保する。曜日・操作領域・table間は8pxにする。clearは検索文字列を空にして全rowを再表示し、DOMから消えるclear buttonにあったkeyboard focusを検索欄へ戻す。検索条件が空でなく一致rowが0件なら、tableの代わりに`role=status`で「一致するタスクがありません。」と表示する。
 - 検索入力とclearはclient component内だけで処理し、server通信、task更新を行わない。共有検索文字列をview stateとしてlocalStorageへ保存する。持ち歩きロック中と背景更新中も利用できるが、通常通信中overlayの`inert`はほかの背面操作と同様に適用する。
+- 「予定」「完了」と同じ行の右端に44px幅の歯車を置く。行の高さは既存のsegmented controlと同じとする。歯車で開く設定内では「表示時刻」を小さな見出しとし、区切り線の下で「端末に合わせる」「日本時間」「タイムゾーンを選ぶ…」を選択できる。地域はbrowserが提供するIANA IDから検索し、台湾(Asia/Taipei)、主要都市、UTCを候補として表示する。設定は`schronu_web.display_timezone.v1`に保存する。未設定・無効値は端末のtimezoneへfallbackし、端末設定が取得できない場合は日本時間を使用する。切り替えはbrowser内で即時に適用し、下部tab、一覧日付、server操作に影響しない。日本時間以外では一覧に日付の基準と表示timezoneを明示する。
 - 完了modeでは「全て」、セッション追加、先送りをDOMへ生成しない。`M月D日の完了`と検索後の件数を表示し、見出しとtableの間に現在logical dateの進行中実績、選択日全体の実績合計、利用可能時間、記録率、予実比を`dl`相当のlabel/value構造で表示する。予実比は完了row全体の補正済み実績合計を見積合計で割り、合算後に四捨五入した整数%を100%で制限せず表示する。進行中実績は含めず、見積合計が0秒なら`--`とする。`in_progress_actual_work_seconds`が`None`の過去日と未来日では「進行中」を生成しない。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとする。検索はtableと件数だけを絞り、集計値を変更しない。0件でも集計値と「この日に完了したタスクはありません。」を表示する。report未取得時は集計値を表示しない。
 - 完了一覧は`完了、実績、予実差、タスク / Project`のsemantic tableとする。最終cellは`th scope="row"`とし、1段目のtask名を`strong`、2段目のProject名をmutedな補助表示にする。完了時刻は秒を切り捨てたlocal `HH:MM`の`time`要素、実績・実績合計・利用可能時間は秒精度で100時間以上を保持する`HH:MM:SS`、予実差は`i128(actual) - i128(estimated)`を`+`または`-`付きで表示する。予実差の正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)とし、色を符号の代替にしない。見積値はrowに保持して予実差と予実比の計算へ使用するが、表へは表示しない。記録率と予実比は整数%を100%で制限せず、それぞれ利用可能時間0秒、見積合計0秒では`--`とする。数値列はtabular digitsで右寄せする。tableは`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の先頭3列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、狭幅のpaddingを圧縮する。Projectとtask名はtruncateせず、可変長の最終cell内だけを横scroll可能にする。集計は狭幅で折り返し、320px幅でもtable全体とpage全体を横overflowさせない。
 - rowは予定`HH:MM (MMM)`、標準偏差、task名を表示し、開始可能なrowには全幅で「＋」のセッション追加buttonも表示する。予定の`HH:MM`はschedule segmentの開始時刻、`MMM`は終了epochと開始epochの差を分へ切り上げた値とする。括弧付きの分数全体はゼロ埋めせず`min-width: 5ch`で右寄せし、開始時刻との間に`1ch`を置く。1000分以上もそのまま表示する。taskの見積秒数が0かつ予定分数が0なら、`schedule-duration`要素全体を`--red`で表示する。予定cellは開始時刻、予定分数、締切を識別できるARIA labelを持つ。セッション追加buttonのARIA labelはtask名と操作を表す。左スワイプは追加操作として扱わず、buttonのclickだけで追加する。
 - 日付別一覧は選択日が現在logical dateの場合だけsnapshot観測時刻を初期cursorとし、各taskの終了時刻でcursorを最大値へ進める。cursorから次task開始までが1分以上なら、秒の端数を切り捨てて「N分間の空き時間」を次taskの直前へ表示する。現在日以外の初期cursorは最初のtask終了時刻とし、先頭task前と最終task後は表示しない。
-- 読み上げに使う締切の日時はserverが返したlabelを使う。
+- 予定開始・締切・完了の時刻は表示timezoneへ変換し、変換後のcalendar日付が一覧のlogical dateと異なる場合は`MM/DD`を添える。全件の予定日はserverの`schedule_date`を表示する。締切時刻とserverの相対値は予定cellの補足と読み上げに使用し、締切epochのない行では従来のserver labelを使用する。締切の色はserver分類を使用する。
 - schedule rankが0のとき`is_leaf`をtrueとし、task名を太字にする。task名の色はserverが返す`Fixed`、`Repetitive`、`NonRepetitive`の分類に従い、rankと`is_leaf`から再分類しない。
 - `is_leaf == true`の実task rowだけに「セッション」buttonを表示する。`is_leaf == false`のrowとprojected rowではセッションbuttonとそのclick listenerを生成せず、client stateへ手動追加要求が直接渡されても拒否する。projected rowはrankと`is_leaf`にかかわらず操作不可とする。
 - 日付別・全件一覧の`ScheduledTask`はoptionalな`start_time_epoch_ms`を持つ。serverはtask本体の`start_time`をepoch millisecondsで返し、予定segment開始時刻とは区別する。browserは既存の1秒tickの現在epoch millisecondsと比較し、`start_time_epoch_ms > now`の場合だけ黄色背景`--session-start-future`、枠線`--session-start-future-border`、文字`--ink`にし、hover時は背景を`--session-start-future-hover`にする。開始時刻前の配色の値は`main.css`の`:root`を正本とする。同値・過去は従来の緑(`--green: #27845e`、hoverは`--green-dark: #196846`)とし、緑のbuttonの文字は白を維持する。時計後退時も再判定し、通信・追加timerは不要とする。旧responseやcacheでfieldが欠落した場合は緑とし、disabled・追加済み表示・操作条件は維持する。
@@ -1016,7 +1018,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - pointer・Space・Enterの1.0秒長押し成立と、pointerup・leave・cancel・blur・window scroll・短いkeyupでの中断を確認する。
 - ロック中も画面表示・更新、scroll、tab切替、日付選択、一覧取得が機能し、全変更操作が無効になることを確認する。破棄完了の確認は一時許可を消費せず確定時に消費し、完了実績競合の再完了・計測再開は新たな許可を消費することを確認する。
 - 2件以上の同時計測とreload復元を確認する。
-- serverと同じlocal timezoneでepoch表示と曜日labelを確認し、logical dateがserver返却値を起点に生成されることを確認する。
+- 端末設定、日本時間、地域の切り替えでepochの表示時刻が変わり、日をまたぐ表示に月日がつくことを確認する。reload後の設定復元と、一覧の日付が日本時間のserver返却値に従うことを確認する。
 - UI表示文字列を検索し、「フォーカス」が存在しないことを確認する。
 - server featureのtest・clippy、wasm32 check、Dioxus web buildを実行する。
 - rootで`cargo fmt --check`、`cargo clippy --locked --all-targets -- -D warnings`、`cargo test --locked`を実行する。

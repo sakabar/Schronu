@@ -1,3 +1,5 @@
+mod display_timezone;
+
 use super::super::carry_lock_view::CarryLockBar;
 use super::super::component_dispatch::{
     dispatch_action, dispatch_action_effect, dispatch_session_action,
@@ -20,6 +22,7 @@ use super::{
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::BrowserLocalStorage;
 use dioxus::prelude::*;
+use display_timezone::{DisplayTimezone, DisplayTimezoneSettings};
 use std::rc::Rc;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{Element as DomElement, HtmlElement, KeyboardEvent as DomKeyboardEvent, Window};
@@ -72,6 +75,8 @@ fn is_editing_target(event: &DomKeyboardEvent) -> bool {
 pub(super) fn BrowserApp() -> Element {
     let mut deviation_order = use_signal(|| false);
     let mut client = use_signal(ComponentOrchestrator::new);
+    let display_timezone = use_signal(DisplayTimezone::restore);
+    let display_offset = use_callback(move |epoch_ms| display_timezone.read().offset_at(epoch_ms));
     let open_link_error = use_signal(|| None::<String>);
     let mut session_links = use_signal(SessionLinks::default);
     let mut session_obsidian = use_signal(SessionLinks::obsidian);
@@ -185,6 +190,8 @@ pub(super) fn BrowserApp() -> Element {
         }
     });
 
+    let timezone = display_timezone.read();
+    let date_basis = timezone.list_date_label();
     let model = {
         let client = client.read();
         client.state().map(|state| {
@@ -194,9 +201,11 @@ pub(super) fn BrowserApp() -> Element {
                 client.task_name_filter(),
                 client.all_tasks_visible_limit(),
                 deviation_order(),
+                &|epoch_ms| timezone.offset_at(epoch_ms),
             )
         })
     };
+    drop(timezone);
     let Some(model) = model else {
         return rsx! { RestoringShell {} };
     };
@@ -384,16 +393,23 @@ pub(super) fn BrowserApp() -> Element {
                 }
             } else if active_tab == ActiveTab::List {
                 section { class: "list-screen",
-                    ListModeControl {
-                        selected_mode: list_mode,
-                        on_switch_list_mode: move |mode| {
-                            dispatch_action(client, ComponentAction::SwitchListMode(mode));
-                        },
+                    div { class: "list-toolbar",
+                        ListModeControl {
+                            selected_mode: list_mode,
+                            on_switch_list_mode: move |mode| {
+                                dispatch_action(client, ComponentAction::SwitchListMode(mode));
+                            },
+                        }
+                        DisplayTimezoneSettings { timezone: display_timezone }
+                    }
+                    if let Some(date_basis) = date_basis {
+                        p { class: "list-date-basis", "{date_basis}" }
                     }
                     if list_mode == ListMode::Completed {
                         CompletedListView {
                             dates,
                             report: completed_report,
+                            display_offset,
                             selected_logical_date,
                             date_input_text,
                             date_input_error,

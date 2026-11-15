@@ -8,7 +8,7 @@ use super::carry_lock::{load_carry_lock, CarryLockMode, CarryLockState};
 use super::date_buttons::LogicalDateButton;
 pub use super::effect::ClientEffect;
 pub use super::invocation::{Operation, ServerActionInvocation};
-use super::local_time::local_utc_offset_minutes;
+use super::local_time::JAPAN_UTC_OFFSET_MINUTES;
 use super::safety_state::{load_mutation_safety, MutationSafetyState};
 use super::time_model::{
     buffer_timing_with_sessions, session_credit_start_epoch_ms, session_timing,
@@ -371,7 +371,7 @@ impl ClientState {
     }
 
     pub fn display_buffer_seconds(&self) -> Option<i128> {
-        self.display_buffer_seconds_with(local_utc_offset_minutes)
+        self.display_buffer_seconds_with(|_| Some(JAPAN_UTC_OFFSET_MINUTES))
     }
 
     fn display_buffer_seconds_with(&self, offset_at: impl Fn(i64) -> Option<i32>) -> Option<i128> {

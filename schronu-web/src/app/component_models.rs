@@ -3,9 +3,9 @@ use super::component_runtime::project_date_button_models;
 use super::list_view::DateButtonViewModel;
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::view_projection::{
-    project_all_tasks_by_deviation, project_list_rows_for_browser,
-    project_session_cards_for_browser, project_visible_all_task_rows, ListRowViewModel,
-    SessionCardViewModel,
+    project_all_tasks_by_deviation_with_timezone, project_list_rows_for_display,
+    project_session_cards_for_display, project_visible_all_task_rows_with_timezone,
+    ListRowViewModel, SessionCardViewModel,
 };
 use crate::{BandDay, CompletedTaskReport, RoutineLoadReport};
 
@@ -43,7 +43,9 @@ pub(crate) struct BrowserPageModel {
 impl BrowserPageModel {
     #[cfg(test)]
     pub fn from_state(state: &ClientState) -> Self {
-        Self::from_state_at(state, 0, "", 500, false)
+        Self::from_state_at(state, 0, "", 500, false, &|_| {
+            Some(crate::client::local_time::JAPAN_UTC_OFFSET_MINUTES)
+        })
     }
 
     pub fn from_state_at(
@@ -52,6 +54,7 @@ impl BrowserPageModel {
         all_task_filter: &str,
         all_tasks_visible_limit: usize,
         deviation_order: bool,
+        offset_at: &dyn Fn(i64) -> Option<i32>,
     ) -> Self {
         let (rows, has_more_rows, matching_task_count) =
             if state.list_selection() == ListSelection::All {
@@ -59,11 +62,16 @@ impl BrowserPageModel {
                     .all_task_rows()
                     .map(|rows| {
                         let project = if deviation_order {
-                            project_all_tasks_by_deviation
+                            project_all_tasks_by_deviation_with_timezone
                         } else {
-                            project_visible_all_task_rows
+                            project_visible_all_task_rows_with_timezone
                         };
-                        let projection = project(rows, all_task_filter, all_tasks_visible_limit);
+                        let projection = project(
+                            rows,
+                            all_task_filter,
+                            all_tasks_visible_limit,
+                            Some(offset_at),
+                        );
                         (
                             projection.rows,
                             projection.has_more,
@@ -72,7 +80,7 @@ impl BrowserPageModel {
                     })
                     .unwrap_or((Vec::new(), false, None))
             } else if state.has_scheduled_list() {
-                (project_list_rows_for_browser(state), false, None)
+                (project_list_rows_for_display(state, offset_at), false, None)
             } else {
                 (Vec::new(), false, None)
             };
@@ -80,7 +88,7 @@ impl BrowserPageModel {
             now_epoch_ms: state.tick_now_epoch_ms(),
             active_tab: state.active_tab(),
             buffer: state.display_buffer_seconds(),
-            sessions: project_session_cards_for_browser(state),
+            sessions: project_session_cards_for_display(state, offset_at),
             rows,
             completed_report: project_active_completed_report(state),
             list_mode: state.list_mode(),

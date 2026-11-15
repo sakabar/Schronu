@@ -28,6 +28,8 @@ CLIとWebで共有する副作用のない処理は、外部crateへ依存しな
 
 `schronu-web`は、複数の作業セッション、予定・完了を切り替える8 logical dates分の一覧、全schedule segmentのオンデマンド一覧、今日から14日間の負荷帯と今日から27日後までの繰返負荷集計を扱うDioxus fullstack applicationです。Web UIのセッションはSchronu本体のcurrent taskとは独立しており、複数taskのtimerを同時に進められます。セッションと1日のbufferはbrowser内で1秒ごとに再計算し、このtickだけではserver通信を行いません。
 
+一覧の「予定／完了」右端の歯車から表示時刻を選べます。初期値は端末のタイムゾーンです。選択はブラウザに保存され、サーバーと一覧の日付は日本時間を使います。
+
 Webのタスク名・プロジェクト名・繰返名は、CLIの保存先directory名生成と共有する規則で、小文字の最初の`http`から行末までを表示時に除去する。除去した場合だけ末尾の空白を整え、空白だけになる場合は「(タスク名なし)」を表示する。確認文とARIA labelも同じ表示名を使う。保存名、入力値、検索・並び順、通信payload、リンク先は元の名前を保持する。
 
 開発環境にはDioxus CLI 0.7.10とWASM targetが必要です。
@@ -40,11 +42,12 @@ cargo install dioxus-cli --version 0.7.10 --locked
 
 `~/.cargo/bin/dx --version`が`dioxus 0.7.10`を表示することを確認してください。Homebrew版Denoも`dx`という名前の`deno x`commandを提供するため、PATHの順序によっては裸の`dx`がDioxus CLIを指しません。以下では名前の衝突を避けるため、CargoがinstallしたDioxus CLIをabsolute pathで実行します。
 
-repository rootから次のように起動します。task storageと設定はCLI・MCPと同じ`SCHRONU_STORAGE_DIR`、`SCHRONU_CONFIG_PATH`で指定し、相対pathの解釈違いを避けるためabsolute pathを推奨します。
+repository rootから日本時間で起動します。task storageと設定はCLI・MCPと同じ`SCHRONU_STORAGE_DIR`、`SCHRONU_CONFIG_PATH`で指定し、相対pathの解釈違いを避けるためabsolute pathを推奨します。
 
 ```shell
 SCHRONU_STORAGE_DIR=/absolute/path/to/tasks \
 SCHRONU_CONFIG_PATH=/absolute/path/to/schronu.yaml \
+TZ=Asia/Tokyo \
 ~/.cargo/bin/dx serve --locked --web --package schronu-web
 ```
 

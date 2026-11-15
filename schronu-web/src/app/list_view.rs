@@ -7,7 +7,9 @@ use crate::client::time_model::format_hh_mm_ss;
 #[cfg(test)]
 pub(crate) use crate::client::view_projection::DeferConfirmationViewModel;
 use crate::client::view_projection::ScheduleDisplayViewModel;
-use crate::client::view_projection::{count_unique_list_tasks, task_name_matches};
+use crate::client::view_projection::{
+    count_unique_list_tasks, format_display_time, task_name_matches,
+};
 pub(crate) use crate::client::view_projection::{DeferConfirmationKind, ListRowViewModel};
 use crate::{
     CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferPlan, SessionTask,
@@ -240,6 +242,7 @@ pub fn ListModeControl(
 pub fn CompletedListView(
     dates: Vec<DateButtonViewModel>,
     report: Option<CompletedTaskReport>,
+    #[props(default)] display_offset: Option<Callback<i64, Option<i32>>>,
     selected_logical_date: Option<String>,
     date_input_text: String,
     date_input_error: Option<String>,
@@ -282,6 +285,7 @@ pub fn CompletedListView(
             }
             CompletedTaskTable {
                 logical_date: selected_logical_date,
+                display_offset,
                 rows: matching_rows,
                 summary,
                 empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
@@ -397,13 +401,15 @@ fn ListModeButton(
 #[component]
 fn CompletedTaskTable(
     logical_date: Option<String>,
+    display_offset: Option<Callback<i64, Option<i32>>>,
     rows: Vec<CompletedTaskRow>,
     summary: Option<CompletedReportSummary>,
     empty_message: Option<String>,
 ) -> Element {
-    let title = logical_date
+    let list_date = logical_date
         .as_deref()
-        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
+    let title = list_date
         .map(|date| format!("{}月{}日の完了", date.month(), date.day()))
         .unwrap_or_else(|| "完了タスク".to_owned());
     let count = rows.len();
@@ -448,7 +454,7 @@ fn CompletedTaskTable(
                     }
                     tbody {
                         for row in rows {
-                            CompletedTaskTableRow { row }
+                            CompletedTaskTableRow { row, list_date, display_offset }
                         }
                     }
                 }
@@ -527,16 +533,38 @@ fn CompletedReportSummaryView(summary: CompletedReportSummary) -> Element {
 }
 
 #[component]
-fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
+fn ClockLabel(label: String) -> Element {
+    if let Some((date, clock)) = label.split_once(' ') {
+        rsx! {
+            span { class: "list-clock-date", "{date}" }
+            "{clock}"
+        }
+    } else {
+        rsx! { "{label}" }
+    }
+}
+
+#[component]
+fn CompletedTaskTableRow(
+    row: CompletedTaskRow,
+    list_date: Option<NaiveDate>,
+    display_offset: Option<Callback<i64, Option<i32>>>,
+) -> Element {
     let task_name = super::task_name::display_task_name(&row.task_name);
     let project_name = super::task_name::display_task_name(&row.project_name);
     let completed_at = Local
         .timestamp_millis_opt(row.completed_at_epoch_ms)
         .single();
-    let completed_time = completed_at
-        .as_ref()
-        .map(|date| date.format("%H:%M").to_string())
-        .unwrap_or_else(|| "--:--".to_owned());
+    let completed_time = if let Some(offset) = display_offset {
+        offset
+            .call(row.completed_at_epoch_ms)
+            .and_then(|offset| format_display_time(row.completed_at_epoch_ms, offset, list_date))
+    } else {
+        completed_at
+            .as_ref()
+            .map(|date| date.format("%H:%M").to_string())
+    }
+    .unwrap_or_else(|| "--:--".to_owned());
     let completed_datetime = completed_at.map(|date| date.to_rfc3339());
     let actual = format_hh_mm_ss(i128::from(row.actual_work_seconds));
     let difference = i128::from(row.actual_work_seconds) - i128::from(row.estimated_work_seconds);
@@ -560,7 +588,7 @@ fn CompletedTaskTableRow(row: CompletedTaskRow) -> Element {
                 time {
                     datetime: completed_datetime,
                     aria_label: format!("完了時刻 {completed_time}"),
-                    "{completed_time}"
+                    ClockLabel { label: completed_time.clone() }
                 }
             }
             td { class: "completed-actual completed-number", "{actual}" }
@@ -634,11 +662,21 @@ fn TaskRow(
         DeadlineDisplayKind::Today => "schedule-time deadline-kind-today",
         DeadlineDisplayKind::Future => "schedule-time deadline-kind-future",
     };
+    let deadline = row.deadline_time.as_deref().unwrap_or(&row.deadline_label);
+    let deadline_detail = row
+        .deadline_time
+        .as_ref()
+        .map(|_| row.deadline_label.as_str());
+    let deadline_readout = deadline_detail.map_or_else(
+        || deadline.to_owned(),
+        |detail| format!("{deadline} ({detail})"),
+    );
     let deadline_accessible_label = match row.deadline_display_kind {
-        DeadlineDisplayKind::None => "締切なし".to_owned(),
-        DeadlineDisplayKind::Overrun => format!("締切超過: {}", row.deadline_label),
-        DeadlineDisplayKind::Today => format!("当日締切: {}", row.deadline_label),
-        DeadlineDisplayKind::Future => format!("将来締切: {}", row.deadline_label),
+        DeadlineDisplayKind::None if row.deadline_time.is_none() => "締切なし".to_owned(),
+        DeadlineDisplayKind::None => format!("締切: {deadline_readout}"),
+        DeadlineDisplayKind::Overrun => format!("締切超過: {deadline_readout}"),
+        DeadlineDisplayKind::Today => format!("当日締切: {deadline_readout}"),
+        DeadlineDisplayKind::Future => format!("将来締切: {deadline_readout}"),
     };
     let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
     let task_class = if row.is_leaf {
@@ -755,6 +793,7 @@ fn TaskRow(
                 class: schedule_class,
                 "data-label": "予定",
                 aria_label: "{schedule_accessible_label}、{deadline_accessible_label}",
+                title: row.deadline_time.as_ref().map(|_| deadline_accessible_label.clone()),
                 match schedule_display {
                     ScheduleDisplayViewModel::Daily { start_hh_mm, duration_minutes } => {
                         let duration_class = if zero_estimate && duration_minutes == Some(0) {
@@ -767,7 +806,7 @@ fn TaskRow(
                             .unwrap_or_else(|| "---".to_owned());
                         rsx! {
                             span { class: "schedule-daily", aria_hidden: "true",
-                                span { class: "schedule-date-time", "{start_hh_mm}" }
+                                span { class: "schedule-date-time", ClockLabel { label: start_hh_mm } }
                                 span { class: duration_class, "({duration_label})" }
                             }
                         }

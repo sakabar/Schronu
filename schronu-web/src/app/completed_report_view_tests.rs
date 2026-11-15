@@ -100,6 +100,10 @@ fn 完了一覧は日付送信と検索を分離して共通操作領域を表�
 }
 
 fn completed_root() -> Element {
+    completed_root_with_offset(None)
+}
+
+fn completed_root_with_offset(display_offset: Option<Callback<i64, Option<i32>>>) -> Element {
     rsx! {
         div {
             ListModeControl {
@@ -107,6 +111,7 @@ fn completed_root() -> Element {
                 on_switch_list_mode: move |_| {},
             }
             CompletedListView {
+                display_offset,
                 dates: vec![DateButtonViewModel {
                     logical_date: "2026-09-16".to_owned(),
                     label: "水 今日".to_owned(),
@@ -848,4 +853,23 @@ fn completed_name_click_copies_the_exact_id() {
     assert!(!html.contains("https://example.com"), "{html}");
     dispatch_click(&dom, listeners[0]);
     assert_eq!(*events.borrow(), ["00000000-0000-4000-8000-000000000001"]);
+}
+
+#[test]
+fn 完了時刻は設定したタイムゾーンで表示し一覧日は維持する() {
+    let mut dom = VirtualDom::new(|| {
+        let offset = use_callback(|_| Some(-600));
+        completed_root_with_offset(Some(offset))
+    });
+    dom.rebuild_in_place();
+    let html = dioxus::ssr::render(&dom);
+
+    let completed = chrono::DateTime::from_timestamp_millis(1_789_551_723_000)
+        .unwrap()
+        .with_timezone(&chrono::FixedOffset::west_opt(10 * 3_600).unwrap());
+    assert!(html.contains("9月16日の完了"), "{html}");
+    assert!(
+        html.contains(&format!("完了時刻 {}", completed.format("%m/%d %H:%M"))),
+        "{html}"
+    );
 }
