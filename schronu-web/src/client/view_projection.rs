@@ -1,5 +1,5 @@
 #[cfg(feature = "web")]
-use super::local_time::local_utc_offset_minutes;
+use super::local_time::JAPAN_UTC_OFFSET_MINUTES;
 use super::local_time::{local_datetime, logical_date_with_offset};
 use super::state::ClientState;
 use super::time_model::{session_plan_dates, session_timing, SessionTiming};
@@ -46,6 +46,7 @@ pub struct ListRowViewModel {
     pub advanceable_days: i64,
     pub occurrence: ScheduleOccurrence,
     pub deadline_label: String,
+    pub deadline_time: Option<String>,
     pub schedule_display: ScheduleDisplayViewModel,
     pub gap_before: Option<String>,
     pub date_boundary_before: bool,
@@ -91,11 +92,15 @@ pub fn project_session_cards(
     state: &ClientState,
     utc_offset_minutes: i32,
 ) -> Vec<SessionCardViewModel> {
-    project_session_cards_with(state, |_| Some(utc_offset_minutes))
+    project_session_cards_with(
+        state,
+        |_| Some(utc_offset_minutes),
+        |_| Some(utc_offset_minutes),
+    )
 }
 
 pub fn project_list_rows(state: &ClientState, utc_offset_minutes: i32) -> Vec<ListRowViewModel> {
-    project_list_rows_with(state, |_| Some(utc_offset_minutes))
+    project_list_rows_with(state, &|_| Some(utc_offset_minutes), false)
 }
 
 pub fn project_all_task_rows(rows: &[AllTaskRow]) -> Vec<ListRowViewModel> {
@@ -107,14 +112,33 @@ pub fn project_visible_all_task_rows(
     filter: &str,
     visible_limit: usize,
 ) -> VisibleAllTaskRows {
-    project_ordered_all_task_rows(rows.iter(), rows.len(), filter, visible_limit)
+    project_visible_all_task_rows_with_timezone(rows, filter, visible_limit, None)
 }
 
-#[cfg(all(feature = "web", any(test, target_arch = "wasm32")))]
+pub(crate) fn project_visible_all_task_rows_with_timezone(
+    rows: &[AllTaskRow],
+    filter: &str,
+    visible_limit: usize,
+    offset_at: Option<&dyn Fn(i64) -> Option<i32>>,
+) -> VisibleAllTaskRows {
+    project_ordered_all_task_rows(rows.iter(), rows.len(), filter, visible_limit, offset_at)
+}
+
+#[cfg(all(feature = "web", test))]
 pub(crate) fn project_all_tasks_by_deviation(
     rows: &[AllTaskRow],
     filter: &str,
     visible_limit: usize,
+) -> VisibleAllTaskRows {
+    project_all_tasks_by_deviation_with_timezone(rows, filter, visible_limit, None)
+}
+
+#[cfg(all(feature = "web", any(test, target_arch = "wasm32")))]
+pub(crate) fn project_all_tasks_by_deviation_with_timezone(
+    rows: &[AllTaskRow],
+    filter: &str,
+    visible_limit: usize,
+    offset_at: Option<&dyn Fn(i64) -> Option<i32>>,
 ) -> VisibleAllTaskRows {
     let mut matching = rows
         .iter()
@@ -122,7 +146,7 @@ pub(crate) fn project_all_tasks_by_deviation(
         .collect::<Vec<_>>();
     matching.sort_by_key(|row| std::cmp::Reverse(row.task.duration_stddev_seconds));
     let count = matching.len();
-    project_ordered_all_task_rows(matching, count, "", visible_limit)
+    project_ordered_all_task_rows(matching, count, "", visible_limit, offset_at)
 }
 
 fn project_ordered_all_task_rows<'a>(
@@ -130,6 +154,7 @@ fn project_ordered_all_task_rows<'a>(
     row_count: usize,
     filter: &str,
     visible_limit: usize,
+    offset_at: Option<&dyn Fn(i64) -> Option<i32>>,
 ) -> VisibleAllTaskRows {
     let mut previous_date = None;
     let mut projected_rows = Vec::with_capacity(visible_limit.min(row_count));
@@ -160,7 +185,12 @@ fn project_ordered_all_task_rows<'a>(
                 .unwrap_or(date)
         });
 
-        projected_rows.push(project_all_task_row(row, gap_before, date_boundary_before));
+        projected_rows.push(project_all_task_row(
+            row,
+            gap_before,
+            date_boundary_before,
+            deadline_time(row.deadline_epoch_ms, current_date, offset_at),
+        ));
     }
     VisibleAllTaskRows {
         rows: projected_rows,
@@ -199,6 +229,7 @@ fn project_all_task_row(
     row: &AllTaskRow,
     gap_before: Option<String>,
     date_boundary_before: bool,
+    deadline_time: Option<String>,
 ) -> ListRowViewModel {
     ListRowViewModel {
         row_key: format!(
@@ -218,6 +249,7 @@ fn project_all_task_row(
         advanceable_days: row.advanceable_days,
         occurrence: row.occurrence.clone(),
         deadline_label: row.deadline_label.clone(),
+        deadline_time,
         schedule_display: ScheduleDisplayViewModel::AllTasksDate {
             label: all_task_schedule_label(&row.schedule_date),
         },
@@ -239,18 +271,25 @@ pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
 }
 
 #[cfg(feature = "web")]
-pub fn project_session_cards_for_browser(state: &ClientState) -> Vec<SessionCardViewModel> {
-    project_session_cards_with(state, local_utc_offset_minutes)
+pub(crate) fn project_session_cards_for_display(
+    state: &ClientState,
+    offset_at: &dyn Fn(i64) -> Option<i32>,
+) -> Vec<SessionCardViewModel> {
+    project_session_cards_with(state, offset_at, |_| Some(JAPAN_UTC_OFFSET_MINUTES))
 }
 
-#[cfg(feature = "web")]
-pub fn project_list_rows_for_browser(state: &ClientState) -> Vec<ListRowViewModel> {
-    project_list_rows_with(state, local_utc_offset_minutes)
+#[cfg(any(test, feature = "web"))]
+pub(crate) fn project_list_rows_for_display(
+    state: &ClientState,
+    offset_at: &dyn Fn(i64) -> Option<i32>,
+) -> Vec<ListRowViewModel> {
+    project_list_rows_with(state, offset_at, true)
 }
 
 fn project_session_cards_with(
     state: &ClientState,
     offset_at: impl Fn(i64) -> Option<i32>,
+    logical_offset_at: impl Fn(i64) -> Option<i32>,
 ) -> Vec<SessionCardViewModel> {
     state
         .sessions()
@@ -278,13 +317,13 @@ fn project_session_cards_with(
             SessionCardViewModel {
                 future_pending_date_label: logical_date_with_offset(
                     state.tick_now_epoch_ms(),
-                    &offset_at,
+                    &logical_offset_at,
                 )
                 .and_then(|today| {
                     let [start, pending] = session_plan_dates(
                         session.start_time_epoch_ms,
                         session.pending_until_epoch_ms,
-                        &offset_at,
+                        &logical_offset_at,
                     );
                     if let Some(start) = start.filter(|start| *start > today) {
                         return Some(format!("{} 開始可能", start.format("%Y/%m/%d")));
@@ -342,8 +381,12 @@ fn completion_label(
 
 fn project_list_rows_with(
     state: &ClientState,
-    offset_at: impl Fn(i64) -> Option<i32>,
+    offset_at: &dyn Fn(i64) -> Option<i32>,
+    use_display_timezone: bool,
 ) -> Vec<ListRowViewModel> {
+    let list_date = state
+        .selected_logical_date()
+        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
     let mut display_cursor_epoch_ms = match (state.selected_logical_date(), state.snapshot()) {
         (Some(selected_date), Some(snapshot)) if selected_date == snapshot.logical_date => {
             Some(snapshot.observed_at_epoch_ms)
@@ -402,11 +445,18 @@ fn project_list_rows_with(
                 advanceable_days: row.advanceable_days,
                 occurrence: row.occurrence.clone(),
                 deadline_label: row.deadline_label.clone(),
+                deadline_time: deadline_time(
+                    row.deadline_epoch_ms,
+                    list_date,
+                    use_display_timezone.then_some(offset_at),
+                ),
                 schedule_display: ScheduleDisplayViewModel::Daily {
-                    start_hh_mm: format_with_offset_provider(
-                        row.schedule_start_epoch_ms,
-                        &offset_at,
-                    ),
+                    start_hh_mm: if use_display_timezone {
+                        display_time_with_offset(row.schedule_start_epoch_ms, list_date, offset_at)
+                            .unwrap_or_else(|| INVALID_TIME.to_owned())
+                    } else {
+                        format_with_offset_provider(row.schedule_start_epoch_ms, &offset_at)
+                    },
                     duration_minutes: schedule_duration_minutes(
                         row.schedule_start_epoch_ms,
                         row.schedule_end_epoch_ms,
@@ -426,6 +476,39 @@ fn project_list_rows_with(
             }
         })
         .collect()
+}
+
+fn deadline_time(
+    epoch_ms: Option<i64>,
+    list_date: Option<NaiveDate>,
+    offset_at: Option<&dyn Fn(i64) -> Option<i32>>,
+) -> Option<String> {
+    display_time_with_offset(epoch_ms?, list_date, offset_at?)
+}
+
+fn display_time_with_offset(
+    epoch_ms: i64,
+    list_date: Option<NaiveDate>,
+    offset_at: &dyn Fn(i64) -> Option<i32>,
+) -> Option<String> {
+    format_display_time(epoch_ms, offset_at(epoch_ms)?, list_date)
+}
+
+pub(crate) fn format_display_time(
+    epoch_ms: i64,
+    offset_minutes: i32,
+    list_date: Option<NaiveDate>,
+) -> Option<String> {
+    let datetime = local_datetime(epoch_ms, offset_minutes)?;
+    let datetime = datetime
+        .naive_utc()
+        .checked_add_offset(*datetime.offset())?;
+    let format = if list_date.is_some_and(|date| date != datetime.date()) {
+        "%m/%d %H:%M"
+    } else {
+        "%H:%M"
+    };
+    Some(datetime.format(format).to_string())
 }
 
 fn schedule_duration_minutes(start_epoch_ms: i64, end_epoch_ms: i64) -> Option<u64> {
@@ -507,4 +590,31 @@ fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option
     offset_at(epoch_ms)
         .map(|offset| format_local_hh_mm(epoch_ms, offset))
         .unwrap_or_else(|| INVALID_TIME.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_display_time;
+    use chrono::{DateTime, NaiveDate};
+
+    #[test]
+    fn 時刻だけを変換し日本時間の日付と異なる表示には月日を添える() {
+        let epoch = DateTime::parse_from_rfc3339("2026-11-15T09:00:00+09:00")
+            .unwrap()
+            .timestamp_millis();
+        let list_date = NaiveDate::from_ymd_opt(2026, 11, 15);
+        assert_eq!(
+            format_display_time(epoch, 540, list_date).as_deref(),
+            Some("09:00")
+        );
+        assert_eq!(
+            format_display_time(epoch, -480, list_date).as_deref(),
+            Some("11/14 16:00")
+        );
+        assert_eq!(
+            format_display_time(epoch, 330, list_date).as_deref(),
+            Some("05:30")
+        );
+        assert_eq!(format_display_time(i64::MAX, 540, list_date), None);
+    }
 }

@@ -565,7 +565,7 @@ impl ClientState {
             session.start_time_epoch_ms,
             session.pending_until_epoch_ms,
             conflict.ended_at_epoch_ms,
-            &local_utc_offset_minutes,
+            &|_| Some(JAPAN_UTC_OFFSET_MINUTES),
         )
         .max(
             session

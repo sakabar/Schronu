@@ -15,7 +15,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - taskの取得・更新にはSchronuのapplication層とrepository transactionを使用する。
 - CLIおよびMCPの外部契約は、REQ-COMPAT-002で明示するCLI`働`の変更を除いて維持する。
 - 認証、外部公開、端末間同期、別browser tab間の即時同期は対象外とする。
-- browserとserverは同じlocal machine timezoneで実行する。異なるtimezone設定を持つclient/server構成は対象外とする。
+- serverは日本時間(Asia/Tokyo)で実行する。browserの端末設定と表示時刻は利用者のtimezoneを使用できる。
 
 ## 3. 用語
 
@@ -164,10 +164,11 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-LIST-026**: 全件endpointはcursorなしでschedule snapshotを開始し、以後はresponseのopaque cursorをそのまま返送すること。serverはUUID、offset、500行境界、期待する次offset、snapshot範囲を検証し、最大8個の未完了snapshotをFIFO保持すること。最終page返却時にsnapshotを解放し、9個目の開始時は最古を失効させること。無効・失効cursorは`invalid_cursor`と再試行可能なmessageへ変換すること。
 - **REQ-LIST-027**: 日付別一覧は、選択日が現在logical dateならsnapshot観測時刻から先頭task/occurrenceまで、および先行task/occurrenceの最遅終了時刻から次task/occurrence開始までの1分以上を「N分間の空き時間」として次行の直前へ表示すること。現在日以外の先頭行前と最終行後は表示せず、trim後の検索文字列が空でない間は分単位の空き時間を表示しないこと。全件一覧はtask名検索後に表示上限内となる表示対象のtask/occurrenceを予定順で投影し、隣接する表示行の日付間にある予定のないlogical date数を「N日間の空き時間」として後続行の直前へ表示すること。空き日がなく翌logical dateへ変わる場合は後続行の上へ全幅の境界線を表示し、検索中も両方を表示すること。検索不一致のtask/occurrenceの日付は差分に含めず、空き時間行と境界線を500件の表示上限、cursor、`segment_index`に含めないこと。
 - **REQ-LIST-028**: 一覧画面上部に均等幅の「予定」「完了」segmented controlを表示し、active modeを`aria-selected`と`aria-pressed`で識別すること。初期modeは予定とし、切替時は選択中の日付を対応endpointへ1回送る。「全て」から完了へ切り替える場合だけ最新snapshotの現在logical dateへ戻すこと。完了modeからセッション、作成、負荷のいずれかを経て一覧tabへ戻る時は、選択日を維持して予定modeへ戻り`list_tasks`を1回送ること。一覧tabの再選択と一覧tabを表示したままのreloadではactive modeを維持すること。
+- **REQ-LIST-028A**: 「予定」「完了」と同じ行の右端に歯車の設定操作を置き、スマホでもこの行の高さを維持すること。設定を開いた場合だけ表示timezoneの選択肢を表示し、下部tabは4つとすること。初期値は端末のtimezoneとし、日本時間または選択した地域へ固定できること。選択はbrowserに保存して即時反映し、通信を伴わないこと。日本時間以外では一覧の日付の基準と表示timezoneを表示すること。
 - **REQ-LIST-029**: 完了modeではsnapshotの現在logical dateから今日、昨日、7日前までの8buttonを降順表示すること。年省略の`M/D`は現在logical date以前の直近有効日へ解決し、閏日は直近の有効年まで安全に遡ること。Chrono下限を越える場合はvalidation errorとし、`YYYY/M/D`は将来日を含め指定年を維持すること。
 - **REQ-LIST-030**: 完了modeは`完了、実績、予実差、タスク / Project`のsemantic tableとし、最終列を行見出しにして1段目へtask名、2段目へProject名を表示すること。task名は予定・全件と同じserver分類、意味label、`task-kind-*` classを使い、固定`#af00af`、継承した繰返`#0069c2`、単発`#a44a00`で表示すること。分類は固定、繰返、単発の優先順とし、clientで再分類しないこと。additiveな`task_display_kind`がない旧payloadは単発へfallbackすること。見出しを`M月D日の完了`、補助表示を検索後の件数とする。見出しとtableの間には選択日全体の実績合計、`busy_time_slot`を除いた利用可能時間、記録率、予実比をsemanticなlabel/value構造で常時表示すること。予実比はその日に完了した全taskの実績合計を見積合計で割り、合算後に四捨五入した整数%を100%で制限せず、見積合計0秒では`--`とすること。進行中実績は予実比へ含めないこと。現在logical dateの利用可能時間は06:00からserver観測時刻と日次終端の早い方まで、過去日と明示した未来日は06:00から日次終端までとし、記録率もこの利用可能時間を分母にすること。検索はtableと件数だけを絞り、集計値を変更しないこと。0件は集計値と「この日に完了したタスクはありません。」を表示すること。
 - **REQ-LIST-030A**: 現在logical dateの完了modeは、当日のschedule segmentを1つ以上持つTodo/Pendingの実taskをUUIDで重複排除し、見積補完しない生の`actual_work_seconds`合計を「進行中」としてsemanticなlabel/value構造へ表示すること。実績合計と記録率の分子に進行中実績を含め、過去日と明示した未来日では表示または合計しないこと。
-- **REQ-LIST-031**: 完了時刻はepoch millisecondsの秒を切り捨て、browser local timeの`HH:MM`としてsemanticな`time`要素で表示し、実績・実績合計・利用可能時間は秒精度`HH:MM:SS`で100時間以上も省略しないこと。見積値は表へ表示せず、予実差の計算には保持すること。実績0秒は見積時間を有効実績として行、予実差、合計へ使用すること。予実差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)で表示し、色を符号の代替にしないこと。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とすること。数値列はtabular digitsで右寄せすること。
+- **REQ-LIST-031**: 完了時刻はepoch millisecondsの秒を切り捨て、選択したtimezoneの`HH:MM`としてsemanticな`time`要素で表示し、一覧の表示日と異なる場合は月日を添え、実績・実績合計・利用可能時間は秒精度`HH:MM:SS`で100時間以上も省略しないこと。見積値は表へ表示せず、予実差の計算には保持すること。実績0秒は見積時間を有効実績として行、予実差、合計へ使用すること。予実差は`actual - estimated`をoverflowしない算術で求め、0以上に`+`、負値に`-`を必ず表示すること。正値は赤、負値は`--blue-dark`(`#255d99`)、zeroは`--muted`(`#687a72`)で表示し、色を符号の代替にしないこと。記録率は整数%を100%で制限せず、利用可能時間0秒では`--`とすること。数値列はtabular digitsで右寄せすること。
 - **REQ-LIST-032**: 完了modeのProjectとtask名はtruncateせずDOMへ全量保持し、可変長の最終cell内だけを横scroll可能にすること。表全体は`width: 100%`、`min-width: 0`、固定layoutとし、通常幅の`完了、実績、予実差`列を`4.25rem、5.5rem、6rem`、46rem以下を`13%、21%、23%`として最終列へ`43%`を割り当て、paddingを圧縮すること。集計表示は狭幅で折り返し、320px幅でもpage全体と表全体を横overflowさせないこと。
 - **REQ-LIST-033**: 完了modeはread-onlyとし、「全て」、セッション追加、先送りをDOMへ描画しないこと。task名検索は予定・全件・完了で共有し、完了modeでも前後trimとUnicode小文字化の部分一致をtask名だけへ適用し、Project名は検索対象にしないこと。
 - **REQ-LIST-034**: 予定行と完了行はactive mode付きで保持し、異なるmodeまたは古いrequestのresponseで表示を上書きしないこと。mutation後の一覧再取得はactive modeのendpointを使い、完了modeでtaskを完了した直後は同じ完了一覧へ新しいrowを反映できること。
@@ -241,7 +242,7 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-NFR-004**: errorは原因を識別可能な型付きerrorとし、競合、再試行可能なrepository error、repository状態が不確実で再送できないerrorを区別できること。
 - **REQ-NFR-005**: serverの成功responseはserver観測時刻、現在logical date、buffer秒を含み、clientが同じ基準時刻から表示を更新できること。error responseはsnapshotを含めず、code、message、再試行方針を含むこと。
 - **REQ-NFR-006**: UIの自動更新はbrowser内の計算に限定し、意図しないtask dataの読み書きを発生させないこと。
-- **REQ-NFR-007**: epoch millisecondsの表示はbrowserのlocal timezoneを使用し、logical dateの判定はserverが返す値を使用すること。browserとserverは同じlocal machine timezoneで動作することを実行前提とする。
+- **REQ-NFR-007**: 予定開始、締切、完了時刻、セッションの時計時刻は選択した表示timezoneを使用すること。一覧の日付、繰返し、日次集計およびbuffer相殺の日付境界は日本時間を基準とし、一覧の日付はserverが返すlogical dateを使用すること。
 
 ## 6. 受入条件
 

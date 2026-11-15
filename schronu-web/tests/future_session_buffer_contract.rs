@@ -1,26 +1,23 @@
-use chrono::{Local, NaiveDateTime, TimeZone};
+use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use schronu_web::client::state::{load_client_state, ClientState};
 use schronu_web::client::view_projection::project_session_cards;
 
 mod client_state_support;
 use client_state_support::*;
 
-fn local_epoch(text: &str) -> i64 {
+const JST_OFFSET_MINUTES: i32 = 9 * 60;
+
+fn japan_offset() -> FixedOffset {
+    FixedOffset::east_opt(JST_OFFSET_MINUTES * 60).unwrap()
+}
+
+fn japan_epoch(text: &str) -> i64 {
     let time = NaiveDateTime::parse_from_str(text, "%Y-%m-%dT%H:%M:%S").unwrap();
-    Local
+    japan_offset()
         .from_local_datetime(&time)
         .single()
         .unwrap()
         .timestamp_millis()
-}
-
-fn offset_minutes(epoch_ms: i64) -> i32 {
-    chrono::DateTime::from_timestamp_millis(epoch_ms)
-        .unwrap()
-        .with_timezone(&Local)
-        .offset()
-        .local_minus_utc()
-        / 60
 }
 
 fn planned_session(
@@ -41,8 +38,8 @@ fn planned_session(
 
 #[test]
 fn future_start_or_pending_work_does_not_cancel_sleep_countdown() {
-    let now = local_epoch("2026-12-30T12:00:00");
-    let future = local_epoch("2027-01-02T12:00:00");
+    let now = japan_epoch("2026-12-30T12:00:00");
+    let future = japan_epoch("2027-01-02T12:00:00");
     for (start, pending, label) in [
         (Some(future), None, "2027/01/02 開始可能"),
         (None, Some(future), "2027/01/02 着手予定"),
@@ -50,7 +47,7 @@ fn future_start_or_pending_work_does_not_cancel_sleep_countdown() {
         let storage = FakeStorage::default();
         let mut state = planned_session(&storage, now, start, pending);
         assert_eq!(
-            project_session_cards(&state, offset_minutes(state.tick_now_epoch_ms()))[0]
+            project_session_cards(&state, JST_OFFSET_MINUTES)[0]
                 .future_pending_date_label
                 .as_deref(),
             Some(label)
@@ -62,20 +59,19 @@ fn future_start_or_pending_work_does_not_cancel_sleep_countdown() {
 
 #[test]
 fn same_day_metadata_and_legacy_or_invalid_metadata_keep_normal_credit() {
-    let now = local_epoch("2026-12-30T12:00:00");
+    let now = japan_epoch("2026-12-30T12:00:00");
     for (start, pending) in [
         (None, None),
         (
-            Some(local_epoch("2026-12-30T23:00:00")),
-            Some(local_epoch("2026-12-31T05:59:59")),
+            Some(japan_epoch("2026-12-30T23:00:00")),
+            Some(japan_epoch("2026-12-31T05:59:59")),
         ),
         (Some(i64::MAX), Some(i64::MIN)),
     ] {
         let storage = FakeStorage::default();
         let mut state = planned_session(&storage, now, start, pending);
         assert_eq!(
-            project_session_cards(&state, offset_minutes(state.tick_now_epoch_ms()))[0]
-                .future_pending_date_label,
+            project_session_cards(&state, JST_OFFSET_MINUTES)[0].future_pending_date_label,
             None
         );
         state.tick(now + 600_000);
@@ -85,10 +81,10 @@ fn same_day_metadata_and_legacy_or_invalid_metadata_keep_normal_credit() {
 
 #[test]
 fn six_oclock_only_credits_work_after_the_boundary_and_keeps_original_completion() {
-    let now = local_epoch("2026-12-31T05:50:00");
+    let now = japan_epoch("2026-12-31T05:50:00");
     for (start, pending) in [
-        (Some(local_epoch("2026-12-31T23:00:00")), None),
-        (None, Some(local_epoch("2027-01-01T01:00:00"))),
+        (Some(japan_epoch("2026-12-31T23:00:00")), None),
+        (None, Some(japan_epoch("2027-01-01T01:00:00"))),
     ] {
         let storage = FakeStorage::default();
         let mut state = planned_session(&storage, now, start, pending);
@@ -101,7 +97,7 @@ fn six_oclock_only_credits_work_after_the_boundary_and_keeps_original_completion
         ] {
             state.tick(now + elapsed * 1_000);
             assert_eq!(
-                project_session_cards(&state, offset_minutes(state.tick_now_epoch_ms()))[0]
+                project_session_cards(&state, JST_OFFSET_MINUTES)[0]
                     .future_pending_date_label
                     .is_some(),
                 attention
@@ -113,26 +109,25 @@ fn six_oclock_only_credits_work_after_the_boundary_and_keeps_original_completion
 
 #[test]
 fn start_label_can_expire_while_pending_still_excludes_credit() {
-    let now = local_epoch("2026-12-31T05:50:00");
+    let now = japan_epoch("2026-12-31T05:50:00");
     let storage = FakeStorage::default();
     let mut state = planned_session(
         &storage,
         now,
-        Some(local_epoch("2026-12-31T06:00:00")),
-        Some(local_epoch("2027-01-01T06:00:00")),
+        Some(japan_epoch("2026-12-31T06:00:00")),
+        Some(japan_epoch("2027-01-01T06:00:00")),
     );
     state.tick(now + 600_000);
     assert_eq!(
-        project_session_cards(&state, offset_minutes(state.tick_now_epoch_ms()))[0]
+        project_session_cards(&state, JST_OFFSET_MINUTES)[0]
             .future_pending_date_label
             .as_deref(),
         Some("2027/01/01 着手予定")
     );
     assert_eq!(state.display_buffer_seconds(), Some(-540));
-    state.tick(local_epoch("2027-01-01T06:00:00"));
+    state.tick(japan_epoch("2027-01-01T06:00:00"));
     assert_eq!(
-        project_session_cards(&state, offset_minutes(state.tick_now_epoch_ms()))[0]
-            .future_pending_date_label,
+        project_session_cards(&state, JST_OFFSET_MINUTES)[0].future_pending_date_label,
         None
     );
     // The original completion was before eligibility; no work can be credited later.
@@ -142,13 +137,13 @@ fn start_label_can_expire_while_pending_still_excludes_credit() {
 #[test]
 fn reload_and_list_refresh_keep_pre_boundary_work_excluded() {
     use schronu_web::{ServerSnapshot, WebSuccess};
-    let now = local_epoch("2026-12-31T05:50:00");
+    let now = japan_epoch("2026-12-31T05:50:00");
     let storage = FakeStorage::default();
     let mut state = planned_session(
         &storage,
         now,
         None,
-        Some(local_epoch("2026-12-31T06:00:00")),
+        Some(japan_epoch("2026-12-31T06:00:00")),
     );
     state.tick(now + 840_000);
     assert_eq!(state.display_buffer_seconds(), Some(-540));
@@ -177,10 +172,10 @@ fn reload_and_list_refresh_keep_pre_boundary_work_excluded() {
 
 #[test]
 fn simultaneous_sessions_only_credit_the_normal_session() {
-    let now = local_epoch("2026-12-30T12:00:00");
+    let now = japan_epoch("2026-12-30T12:00:00");
     for both_future in [false, true] {
         let storage = FakeStorage::default();
-        let future = local_epoch("2027-01-02T12:00:00");
+        let future = japan_epoch("2027-01-02T12:00:00");
         let mut state = planned_session(&storage, now, None, Some(future));
         let mut other = row(OTHER_TASK_ID, 0);
         other.task.start_time_epoch_ms = both_future.then_some(future);
@@ -195,13 +190,13 @@ fn simultaneous_sessions_only_credit_the_normal_session() {
 
 #[test]
 fn stop_before_boundary_does_not_start_credit_when_the_label_expires() {
-    let now = local_epoch("2026-12-31T05:50:00");
+    let now = japan_epoch("2026-12-31T05:50:00");
     let storage = FakeStorage::default();
     let mut state = planned_session(
         &storage,
         now,
         None,
-        Some(local_epoch("2026-12-31T06:00:00")),
+        Some(japan_epoch("2026-12-31T06:00:00")),
     );
     state.tick(now + 300_000);
     record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -212,14 +207,14 @@ fn stop_before_boundary_does_not_start_credit_when_the_label_expires() {
 #[test]
 fn future_work_completion_conflict_freezes_at_click_even_across_boundary() {
     use schronu_web::client::state::ServerFailure;
-    let now = local_epoch("2026-12-31T05:50:00");
+    let now = japan_epoch("2026-12-31T05:50:00");
     for elapsed in [300, 960] {
         let storage = FakeStorage::default();
         let mut state = planned_session(
             &storage,
             now,
             None,
-            Some(local_epoch("2027-01-02T06:00:00")),
+            Some(japan_epoch("2027-01-02T06:00:00")),
         );
         state.tick(now + elapsed * 1_000);
         let (request_id, _) = complete_effect(state.begin_complete_session(&storage, TASK_ID));
@@ -234,7 +229,7 @@ fn future_work_completion_conflict_freezes_at_click_even_across_boundary() {
             Some(60 - i128::from(elapsed))
         );
         complete_effect(state.confirm_completion_conflict(&storage, TASK_ID));
-        state.tick(local_epoch("2027-01-02T06:00:00"));
+        state.tick(japan_epoch("2027-01-02T06:00:00"));
         assert_eq!(
             state.display_buffer_seconds(),
             Some(60 - i128::from(elapsed))
@@ -245,13 +240,13 @@ fn future_work_completion_conflict_freezes_at_click_even_across_boundary() {
 #[test]
 fn committed_future_session_is_excluded_even_if_local_deletion_fails() {
     use schronu_web::{RecordSessionResult, WebSuccess};
-    let now = local_epoch("2026-12-30T12:00:00");
+    let now = japan_epoch("2026-12-30T12:00:00");
     let storage = FakeStorage::default();
     let mut state = planned_session(
         &storage,
         now,
         None,
-        Some(local_epoch("2027-01-02T06:00:00")),
+        Some(japan_epoch("2027-01-02T06:00:00")),
     );
     state.tick(now + 300_000);
     let (request_id, _) = record_effect(state.begin_record_session(&storage, TASK_ID));
@@ -274,11 +269,11 @@ fn committed_future_session_is_excluded_even_if_local_deletion_fails() {
 #[test]
 fn conflict_resume_across_six_keeps_excluded_work_after_reload() {
     use schronu_web::client::state::ServerFailure;
-    let now = Local
+    let now = japan_offset()
         .with_ymd_and_hms(2026, 12, 31, 5, 50, 0)
         .unwrap()
         .timestamp_millis();
-    let pending = Local
+    let pending = japan_offset()
         .with_ymd_and_hms(2026, 12, 31, 6, 0, 0)
         .unwrap()
         .timestamp_millis();
@@ -308,14 +303,14 @@ fn conflict_resume_across_six_keeps_excluded_work_after_reload() {
 #[test]
 fn future_completion_conflict_freezes_fractional_click_without_second_jitter() {
     use schronu_web::client::state::ServerFailure;
-    let now = local_epoch("2026-12-30T12:00:00");
+    let now = japan_epoch("2026-12-30T12:00:00");
     for elapsed_ms in [6_500, 960_500] {
         let storage = FakeStorage::default();
         let mut state = planned_session(
             &storage,
             now,
             None,
-            Some(local_epoch("2027-01-02T06:00:00")),
+            Some(japan_epoch("2027-01-02T06:00:00")),
         );
         state.tick(now + elapsed_ms);
         let expected = state.display_buffer_seconds();
