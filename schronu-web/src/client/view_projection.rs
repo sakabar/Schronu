@@ -166,8 +166,66 @@ fn task_count_identity<'a>(
 }
 
 pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
-    let normalized_filter = filter.trim().to_lowercase();
-    normalized_filter.is_empty() || task_name.to_lowercase().contains(&normalized_filter)
+    let filter = filter.trim();
+    if filter.is_empty() {
+        return true;
+    }
+
+    let filter = normalize_task_search_text(filter);
+    let task_name = normalize_task_search_text(task_name);
+    task_name.match_indices(&filter).any(|(start, matched)| {
+        // Some voiced kana have no precomposed hiragana form.
+        !task_name[start + matched.len()..].starts_with(['\u{3099}', '\u{309A}'])
+    })
+}
+
+fn normalize_task_search_text(text: &str) -> String {
+    // Full-width equivalents of U+FF66 through U+FF9F, in code point order.
+    const HALFWIDTH_KANA: &str =
+        "ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン\u{3099}\u{309A}";
+
+    let lowercase = text.to_lowercase();
+    let mut kana = lowercase
+        .chars()
+        .map(|ch| match ch {
+            'ｦ'..='ﾟ' => HALFWIDTH_KANA
+                .chars()
+                .nth((ch as u32 - 'ｦ' as u32) as usize)
+                .expect("half-width kana table covers U+FF66 through U+FF9F"),
+            _ => ch,
+        })
+        .peekable();
+    let mut normalized = String::with_capacity(lowercase.len());
+    while let Some(ch) = kana.next() {
+        let hiragana = match ch {
+            'ァ'..='ヶ' | 'ヽ'..='ヾ' => char::from_u32(ch as u32 - 0x60).unwrap(),
+            'ヷ'..='ヺ' => {
+                normalized.push(['わ', 'ゐ', 'ゑ', 'を'][(ch as u32 - 'ヷ' as u32) as usize]);
+                normalized.push('\u{3099}');
+                continue;
+            }
+            _ => ch,
+        };
+        let composed = match (hiragana, kana.peek().copied()) {
+            ('う', Some('\u{3099}')) => Some('ゔ'),
+            (base, Some('\u{3099}'))
+                if "かきくけこさしすせそたちつてとはひふへほゝ".contains(base) =>
+            {
+                char::from_u32(base as u32 + 1)
+            }
+            (base, Some('\u{309A}')) if "はひふへほ".contains(base) => {
+                char::from_u32(base as u32 + 2)
+            }
+            _ => None,
+        };
+        if let Some(composed) = composed {
+            kana.next();
+            normalized.push(composed);
+        } else {
+            normalized.push(hiragana);
+        }
+    }
+    normalized
 }
 
 fn project_all_task_row(
@@ -481,4 +539,46 @@ fn format_with_offset_provider(epoch_ms: i64, offset_at: &impl Fn(i64) -> Option
     offset_at(epoch_ms)
         .map(|offset| format_local_hh_mm(epoch_ms, offset))
         .unwrap_or_else(|| INVALID_TIME.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_task_search_text, task_name_matches};
+
+    #[test]
+    fn normalizes_kana_search_text() {
+        for (input, expected) in [
+            ("資料れびゅー2", "資料れびゅー2"),
+            ("資料レビュー2", "資料れびゅー2"),
+            ("資料ﾚﾋﾞｭｰ2", "資料れびゅー2"),
+            ("がぱゔ", "がぱゔ"),
+            ("ガパヴ", "がぱゔ"),
+            ("ｶﾞﾊﾟｳﾞ", "がぱゔ"),
+            ("カ\u{3099}ハ\u{309A}ウ\u{3099}", "がぱゔ"),
+            ("か\u{3099}は\u{309A}う\u{3099}", "がぱゔ"),
+            ("ヷヸヹヺヾ", "わ\u{3099}ゐ\u{3099}ゑ\u{3099}を\u{3099}ゞ"),
+            ("ヲンヵヶヽ", "をんゕゖゝ"),
+            ("確認2２、､。｡・･ABC", "確認2２、､。｡・･abc"),
+            ("カガハパュユｰ", "かがはぱゅゆー"),
+        ] {
+            assert_eq!(normalize_task_search_text(input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn search_keeps_kana_and_non_kana_distinctions() {
+        for (filter, name) in [
+            ("か", "ガ"),
+            ("は", "ﾊﾟ"),
+            ("わ", "ヷ"),
+            ("ゆ", "ュ"),
+            ("こー", "コ"),
+            ("確認２", "確認2"),
+            ("か、", "カ､"),
+            ("かくにん", "確認"),
+        ] {
+            assert!(!task_name_matches(filter, name), "{filter:?} in {name:?}");
+        }
+        assert!(task_name_matches("わ\u{3099}", "ヷ"));
+    }
 }

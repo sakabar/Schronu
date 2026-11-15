@@ -551,7 +551,7 @@ tick_now_epoch_ms: i64
 
 `list_mode`は`Scheduled`を初期値とする。active一覧のrequest IDとrowはmodeごとに分離し、異なるmodeまたは最新でないresponseをactive表示へ適用しない。mode切替、日付button、日付入力、mutation成功後の再取得はactive modeに応じて`list_tasks`または`list_completed_tasks`を1回生成する。`Completed`の一覧から別の上位tabへ移動した後に一覧tabへ再進入した場合は、選択日を維持して`Scheduled`へ切り替え、`list_tasks`を1回生成する。一覧tabを表示中の再選択と、一覧tabを表示したまま復元したview stateではmodeを維持する。
 
-`task_name_filter`は日付別一覧、全件一覧、完了一覧で共有し、view stateへ保存する。各一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は前後空白を除外してUnicode小文字化したqueryがUnicode小文字化したtask名へ部分一致する同じ純粋helperを使い、完了modeでもProject名は検索しない。
+`task_name_filter`は日付別一覧、全件一覧、完了一覧で共有し、view stateへ保存する。各一覧の往復と`Invalidated`後、reload後も保持する。変更時は選択中の一覧にかかわらず`all_tasks_visible_limit`を500へ戻し、「さらに表示」ごとに500を加算する。検索は3一覧で共通の純粋helperを使う。queryの前後空白を除外し、queryと元のtask名をUnicode小文字化して全角・半角カナをひらがなにそろえ、部分一致を判定する。濁点・半濁点の合成済み文字と結合形式を同一視し、半角長音は全角長音へそろえる。濁点・半濁点・長音の有無、小書きかなの大小、数字や句読点の文字幅は区別する。検索欄とview stateは生の入力を保持する。完了modeでもProject名は検索しない。
 
 予定modeのtask列見出しは`タスク (N)`とし、選択中の日付別一覧または取得完了済みの全件一覧で検索に一致する予定を数える。実taskはtask ID、繰り返し予測はoccurrence keyを識別子とし、同じ予定の複数segmentを1件とする。全件では描画上限より後の一致行も数えるが、投影・描画は上限内だけに保つ。見出し全体を他の列と同じ左寄せの1行に保ち、空の操作列見出しを含む全列の見出しを行の高さへ伸ばして下罫線を揃える。検索一致が0件でもtable見出しと空結果案内を表示し、全件の取得中・失敗・無効化中はtableと件数を表示しない。件数のためのserver通信や保存項目は追加しない。
 
@@ -976,7 +976,7 @@ server操作ごとに`operation_now`は1回だけ取得し、経過秒算出、�
 - 完了modeの日付buttonが今日から7日前までの8件であること、年省略入力の直近過去日・閏年・Chrono下限、明示年の将来日を確認する。mode切替、日付操作、mutation後再取得がactive endpointを1回だけ選び、異なるmodeとstale responseを無視することを確認する。
 - 完了表の4列、見積列の非表示、task名とProject名の上下順、行見出し、件数、空結果、localの分精度完了時刻、100時間以上、正・負・zeroの符号付き差と赤・青・muted色、task名だけの検索、read-only DOM、Project/task全文、320pxでの表全体の収まりと最終cell内scrollをcomponent/CSS contract testで確認する。集計はapplicationとserviceのtestで、現在logical dateの開始・現在時刻・日次終端、過去日の全日、現在時刻以前の`busy_time_slot`控除、利用可能時間0秒を確認する。
 - 現在logical dateの完了集計は、Todo/Pending、同一taskの複数segment、実績0秒、予定外task、overflowをapplication testで確認する。CLI/Webでは「進行中」の秒精度表示と、過去・未来日での非表示を確認する。
-- 一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
+- 正規化の単体testは全角・半角カナ、濁点・半濁点の結合形式、長音、漢字・数字・句読点を含む入力の変換結果を確認する。3一覧の検索testはひらがな、全角カナ、半角カナによる一致を確認する。一覧検索は日本語の部分一致、ASCII大小無視、前後空白、空白だけ、不一致、同一taskの複数segmentをcomponent testで確認する。検索欄が日付buttonとtableの間にあること、入力callback、入力中だけのclear button、clear callback、空結果のstatus、非表示rowの操作listener不在を確認する。keyboardでclearした後に検索欄へfocusが戻ることをbrowserで確認する。
 - 分割task表示はapplication層の共通関数で分割判定、秒から分への切り上げ、`<segment分/total分>task名`の生成を固定する。日付別・全件のserver rowが生成済み表示名を運び、clientが無加工で表示すること、旧payloadは正規task名へfallbackすること、検索・セッション・先送り操作は正規task名を維持することをcontract testで確認する。
 - 日付別は今日の先頭空き、task間の1分・秒端数・1分未満、重複segment、未来日の先頭非表示、末尾非表示をprojection testで確認する。全件は同日、翌日、1日以上の空き、複数日、不正日付、非昇順、検索不一致taskを挟んだ日付差、500/501件境界と再投影を確認する。日付別は検索中の分単位空き行非表示、全件は検索中の日単位空き行と境界線表示をcomponent testで固定し、4列結合と非操作性を維持する。
 - storage version 3でactive modeとtaggedな予定・完了一覧、空成功、選択tab、共有検索文字列、日付入力がround-tripすることを確認する。version 2は予定modeへ移行し、version 1・未知version・破損値を復元しないこと、保存済み完了modeがbootstrap後に同じ日を`list_completed_tasks`で背景更新することを確認する。「全て」の行・cursor・選択は復元しない。
