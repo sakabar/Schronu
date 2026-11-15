@@ -428,16 +428,16 @@ fn all検索は全角と半角のカナをひらがなと同じ扱いにする()
     use crate::client::view_projection::project_visible_all_task_rows;
 
     let rows = [
-        all_row(0, "katakana", "資料レビュー2", true),
-        all_row(1, "hiragana", "れびゅー確認", true),
+        all_row(0, "katakana", "資料レビュー2 メガネ", true),
+        all_row(1, "hiragana", "れびゅー確認 めがね", true),
         all_row(2, "unmatched", "資料整理", true),
     ];
 
-    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ"] {
+    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ", "れひゅー", "めか"] {
         let projected = project_visible_all_task_rows(&rows, query, 500);
         assert_eq!(projected.matching_task_count, 2, "{query}");
-        assert_eq!(projected.rows[0].task.task_name, "資料レビュー2");
-        assert_eq!(projected.rows[1].task.task_name, "れびゅー確認");
+        assert_eq!(projected.rows[0].task.task_name, "資料レビュー2 メガネ");
+        assert_eq!(projected.rows[1].task.task_name, "れびゅー確認 めがね");
     }
 }
 

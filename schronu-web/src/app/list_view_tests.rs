@@ -1451,12 +1451,13 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
     );
     assert!(!html.contains("実装"), "{html}");
 
-    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ", "資料"] {
+    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ", "れひゅー", "めか", "資料"]
+    {
         let (japanese_dom, _) = build(RootProps {
             dates: Vec::new(),
             rows: vec![
-                named_row("review", "資料レビュー2", false, true),
-                named_row("check", "資料れびゅー確認", false, true),
+                named_row("review", "資料レビュー2 メガネ", false, true),
+                named_row("check", "資料れびゅー確認 めがね", false, true),
                 named_row("implementation", "実装", false, true),
             ],
             active_task_ids: Vec::new(),
@@ -1464,8 +1465,8 @@ fn task_name_filterは前後空白を除いた大小無視の部分一致で全s
             events: Arc::new(Mutex::new(Vec::new())),
         });
         let html = dioxus::ssr::render(&japanese_dom);
-        assert!(html.contains("資料レビュー2"), "{query}: {html}");
-        assert!(html.contains("資料れびゅー確認"), "{query}: {html}");
+        assert!(html.contains("資料レビュー2 メガネ"), "{query}: {html}");
+        assert!(html.contains("資料れびゅー確認 めがね"), "{query}: {html}");
         assert!(!html.contains("実装"), "{query}: {html}");
     }
 }

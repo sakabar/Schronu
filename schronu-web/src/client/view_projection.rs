@@ -198,9 +198,39 @@ pub fn task_name_matches(filter: &str, task_name: &str) -> bool {
 
     let filter = normalize_task_search_text(filter);
     let task_name = normalize_task_search_text(task_name);
-    task_name.match_indices(&filter).any(|(start, matched)| {
-        // Some voiced kana have no precomposed hiragana form.
-        !task_name[start + matched.len()..].starts_with(['\u{3099}', '\u{309A}'])
+    let filter: Vec<_> = task_search_chars(&filter).collect();
+    let task_name: Vec<_> = task_search_chars(&task_name).collect();
+    task_name.windows(filter.len()).any(|window| {
+        filter
+            .iter()
+            .zip(window)
+            .all(|(&(filter_base, filter_mark), &(task_base, task_mark))| {
+                filter_base == task_base && filter_mark.is_none_or(|mark| task_mark == Some(mark))
+            })
+    })
+}
+
+fn task_search_chars(text: &str) -> impl Iterator<Item = (char, Option<char>)> + '_ {
+    let mut chars = text.chars().peekable();
+    std::iter::from_fn(move || {
+        let ch = chars.next()?;
+        let (base, mark) = match ch {
+            'ゔ' => ('う', Some('\u{3099}')),
+            'が' | 'ぎ' | 'ぐ' | 'げ' | 'ご' | 'ざ' | 'じ' | 'ず' | 'ぜ' | 'ぞ' | 'だ' | 'ぢ'
+            | 'づ' | 'で' | 'ど' | 'ば' | 'び' | 'ぶ' | 'べ' | 'ぼ' | 'ゞ' => {
+                (char::from_u32(ch as u32 - 1).unwrap(), Some('\u{3099}'))
+            }
+            'ぱ' | 'ぴ' | 'ぷ' | 'ぺ' | 'ぽ' => {
+                (char::from_u32(ch as u32 - 2).unwrap(), Some('\u{309A}'))
+            }
+            // Kana such as わ with a combining mark have no precomposed hiragana.
+            'ぁ'..='ゖ' | 'ゝ' => (
+                ch,
+                chars.next_if(|mark| matches!(mark, '\u{3099}' | '\u{309A}')),
+            ),
+            _ => (ch, None),
+        };
+        Some((base, mark))
     })
 }
 
@@ -592,11 +622,33 @@ mod tests {
     }
 
     #[test]
-    fn search_keeps_kana_and_non_kana_distinctions() {
+    fn search_allows_omitted_kana_marks_at_each_position() {
         for (filter, name) in [
-            ("か", "ガ"),
+            ("めか", "メガネ"),
+            ("めか", "メカ"),
+            ("は", "バ"),
             ("は", "ﾊﾟ"),
             ("わ", "ヷ"),
+            ("めかぱ", "メガパ"),
+            ("めがは", "ﾒｶﾞﾊﾟ"),
+            ("わ\u{3099}", "ヷ"),
+            ("めか\u{3099}", "メガネ"),
+            ("かか", "カガカ"),
+        ] {
+            assert!(task_name_matches(filter, name), "{filter:?} in {name:?}");
+        }
+    }
+
+    #[test]
+    fn search_keeps_kana_and_non_kana_distinctions() {
+        for (filter, name) in [
+            ("めが", "メカ"),
+            ("ば", "ハ"),
+            ("ば", "パ"),
+            ("ぱ", "バ"),
+            ("わ\u{3099}", "ワ"),
+            ("めかぱ", "メガバ"),
+            ("めか\u{3099}", "メカ"),
             ("ゆ", "ュ"),
             ("こー", "コ"),
             ("確認２", "確認2"),
@@ -605,6 +657,5 @@ mod tests {
         ] {
             assert!(!task_name_matches(filter, name), "{filter:?} in {name:?}");
         }
-        assert!(task_name_matches("わ\u{3099}", "ヷ"));
     }
 }

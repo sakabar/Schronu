@@ -585,7 +585,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
                 report: Some(CompletedTaskReport {
                     rows: vec![CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-                        task_name: "資料レビュー2".to_owned(),
+                        task_name: "資料レビュー2 メガネ".to_owned(),
                         project_name: "SCHRONU".to_owned(),
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 1,
@@ -622,7 +622,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
     assert!(html.contains("0件"), "{html}");
     assert!(!html.contains(">SCHRONU<"), "{html}");
 
-    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ"] {
+    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ", "れひゅー", "めか"] {
         let mut dom = VirtualDom::new_with_props(
             FilteredRoot,
             FilteredRootProps {
@@ -632,7 +632,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
         dom.rebuild_in_place();
         let html = dioxus::ssr::render(&dom);
         assert!(html.contains("1件"), "{query}: {html}");
-        assert!(html.contains("資料レビュー2"), "{query}: {html}");
+        assert!(html.contains("資料レビュー2 メガネ"), "{query}: {html}");
     }
 }
 
