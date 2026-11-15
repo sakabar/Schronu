@@ -14,3 +14,11 @@ target/
 
 /target
 docs/plans
+
+# Local opam switch and Rocq build artifacts
+/verification/_opam/
+/verification/**/*.vo
+/verification/**/*.vos
+/verification/**/*.vok
+/verification/**/*.glob
+/verification/**/.*.aux
