@@ -589,6 +589,7 @@ remaining_seconds = remaining_at_start - elapsed_seconds
 
 - `remaining_work_seconds`は予定生成と共有する。`actual_at_start <= estimated_at_start`なら`max(estimated_at_start - actual_at_start, 0)`、超過していれば`max(2 * estimated_at_start - actual_at_start, 0)`とし、中間計算は`i128`で行う。自動追加と一覧からの追加に同じ規則を適用する。
 - 進捗率の分母は元の見積秒のままとし、見積秒が0なら除算せず`--%`とする。
+- 進捗率の表示欄は`100%`の表示幅を最小幅とし、値を右寄せする。4桁以上の値も省略せず表示する。
 - `remaining_seconds >= 0`は通常色の`MM:SS`、負なら絶対値を赤い`MM:SS`で表示する。
 - `MM`は総分数とし、2桁へ制限しない。`SS`は常に2桁とする。
 - 残り・超過`MM:SS`は「残り」または「超過」と組み合わせた大きな主表示とする。開始`HH:MM`、矢印、完了予定`HH:MM`、開始時実績`MM:SS`はその下の補助情報領域へ置き、必要なら項目単位で折り返して320px幅でもcardを横へ超過させない。開始と完了予定は`time`要素とし、残り・超過および開始時実績を含む各値へ意味を識別できるARIA labelを付ける。完了予定を算出できない場合も同じ位置へ`--:--`を表示する。

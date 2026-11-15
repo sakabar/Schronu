@@ -281,7 +281,9 @@ fn SessionCard(
                         span { class: "session-pending-date", "{label}" }
                     }
                 }
-                span { class: "session-progress-label", "{progress}" }
+                span { class: "session-progress-label",
+                    span { "{progress}" }
+                }
             }
             div { class: "session-timing",
                 span { class: "session-countdown",
