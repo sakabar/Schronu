@@ -254,6 +254,7 @@ pub(super) fn BrowserApp() -> Element {
         all_tasks_visible_limit,
         create_name,
         create_minutes,
+        creation_day,
         create_error,
         create_success,
     ) = {
@@ -270,6 +271,7 @@ pub(super) fn BrowserApp() -> Element {
             client.all_tasks_visible_limit(),
             client.create_name().to_owned(),
             client.create_minutes().to_owned(),
+            client.creation_day(),
             client.create_error().map(str::to_owned),
             client.create_success().map(str::to_owned),
         )
@@ -498,11 +500,13 @@ pub(super) fn BrowserApp() -> Element {
                 CreateTaskView {
                     name: create_name,
                     minutes: create_minutes,
+                    creation_day,
                     error: create_error,
                     success: create_success,
                     blocked: mutations_locked || global_blocked || server_actions_blocked,
                     on_name_change: move |value| client.write().edit_create_name(value),
                     on_minutes_change: move |value| client.write().edit_create_minutes(value),
+                    on_creation_day_change: move |value| client.write().edit_creation_day(value),
                     on_submit: move |_| {
                         let effect = client.write().submit_create_task(
                             &BrowserLocalStorage,

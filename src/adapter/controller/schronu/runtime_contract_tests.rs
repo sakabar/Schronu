@@ -2999,28 +2999,27 @@ fn test_execute_今_plain出力の全文を固定する() {
 }
 
 #[test]
-fn test_execute_new_新規projectを翌朝までpendingで作成する() {
-    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
-    let original_task = new_test_task_handle("既存タスク").unwrap();
-    let result = execute_command_for_test(
-        original_task.clone(),
-        now,
-        Some(original_task.get_id().unwrap()),
-        "新 新規project 30",
-    );
+fn test_execute_new_新規projectを7日後の論理日までpendingで作成する() {
+    for (command, hour, minute, expected_day) in [("新", 5, 59, 17), ("new", 6, 0, 18)] {
+        let now = Local.with_ymd_and_hms(2026, 8, 11, hour, minute, 0).unwrap();
+        let original_task = new_test_task_handle("existing task").unwrap();
+        let result = execute_command_for_test(
+            original_task.clone(),
+            now,
+            Some(original_task.get_id().unwrap()),
+            &format!("{command} project 30"),
+        );
 
-    assert_eq!(result.task.get_name().unwrap(), "新規project");
-    assert_eq!(result.task.get_priority().unwrap(), 5);
-    assert_eq!(result.task.get_estimated_work_seconds().unwrap(), 30 * 60);
-    assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
-    assert_eq!(
-        result.task.get_pending_until().unwrap(),
-        try_next_logical_date_start(now).unwrap()
-    );
-    assert_eq!(
-        result.focused_task_id_opt,
-        Some(result.task.get_id().unwrap())
-    );
+        assert_eq!(result.task.get_name().unwrap(), "project");
+        assert_eq!(result.task.get_priority().unwrap(), 5);
+        assert_eq!(result.task.get_estimated_work_seconds().unwrap(), 30 * 60);
+        assert_eq!(result.task.get_orig_status().unwrap(), Status::Pending);
+        assert_eq!(
+            result.task.get_pending_until().unwrap(),
+            Local.with_ymd_and_hms(2026, 8, expected_day, 6, 0, 0).unwrap()
+        );
+        assert_eq!(result.focused_task_id_opt, Some(result.task.get_id().unwrap()));
+    }
 }
 
 #[test]

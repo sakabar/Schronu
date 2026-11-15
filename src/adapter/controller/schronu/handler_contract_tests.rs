@@ -362,7 +362,7 @@ fn project作成commandはhandlerがtyped_fieldを直接matchして所有する(
         [CreateTaskInput {
             name: "typed project".to_string(),
             estimated_work_seconds: Some(45 * 60),
-            pending_until: Some(Local.with_ymd_and_hms(2026, 8, 24, 6, 0, 0).unwrap()),
+            pending_until: Some(Local.with_ymd_and_hms(2026, 8, 30, 6, 0, 0).unwrap()),
         }]
     );
     assert_eq!(context.focused_task_id, Some(Uuid::from_u128(2)));

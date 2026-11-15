@@ -316,11 +316,6 @@ button:disabled {
     margin: 0 0 0.4rem;
 }
 
-.create-task-help {
-    margin: 0 0 1.5rem;
-    color: var(--muted);
-}
-
 .create-task-view form {
     display: grid;
     gap: 0.55rem;
@@ -331,7 +326,8 @@ button:disabled {
     font-weight: 600;
 }
 
-.create-task-view input {
+.create-task-view input[type="text"],
+.create-task-view input[type="number"] {
     width: 100%;
     min-height: 44px;
     border: 1px solid var(--line);
@@ -340,6 +336,27 @@ button:disabled {
     color: var(--ink);
     font: inherit;
     padding: 0.65rem 0.75rem;
+}
+
+.create-task-day {
+    display: grid;
+    margin: 0.5rem 0 0;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    padding: 0.25rem 0.75rem;
+}
+
+.create-task-day label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0;
+    min-height: 44px;
+}
+
+.create-task-day input {
+    margin: 0;
+    accent-color: var(--green-dark);
 }
 
 .create-task-view button[type="submit"] {

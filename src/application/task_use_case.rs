@@ -200,6 +200,31 @@ pub(crate) fn resolve_local_datetime(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TaskCreationDay {
+    Today,
+    SevenDaysLater,
+}
+
+impl TaskCreationDay {
+    pub(crate) fn pending_until(
+        self,
+        now: DateTime<Local>,
+    ) -> Result<DateTime<Local>, ApplicationError> {
+        let days = match self {
+            Self::Today => 0,
+            Self::SevenDaysLater => 7,
+        };
+        let date = try_logical_date(now)?
+            .checked_add_days(chrono::Days::new(days))
+            .ok_or(ApplicationError::LogicalDateOutOfRange {
+                operation: "task_creation_logical_date",
+                datetime: now,
+            })?;
+        try_logical_date_start(date)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTaskInput {
     pub name: String,

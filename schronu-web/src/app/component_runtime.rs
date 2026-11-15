@@ -4,7 +4,7 @@ use crate::client::state::{
 };
 use crate::client::view_state::{load_view_state, store_view_state, StoredActiveList, ViewState};
 use crate::client::work_sessions::KeyValueStorage;
-use crate::{CreateTaskRequest, DeferPlan, SessionTask};
+use crate::{CreateTaskRequest, DeferPlan, SessionTask, TaskCreationDay};
 
 use super::effect_dispatcher::{apply_response, ClientResponse};
 use super::list_view::DateButtonViewModel;
@@ -151,6 +151,7 @@ pub(crate) struct ComponentOrchestrator {
     all_tasks_visible_limit: usize,
     create_name: String,
     create_minutes: String,
+    creation_day: TaskCreationDay,
     create_error: Option<String>,
     create_success: Option<String>,
 }
@@ -177,6 +178,7 @@ impl ComponentOrchestrator {
             all_tasks_visible_limit: 500,
             create_name: String::new(),
             create_minutes: String::new(),
+            creation_day: TaskCreationDay::default(),
             create_error: None,
             create_success: None,
         }
@@ -243,6 +245,10 @@ impl ComponentOrchestrator {
     pub fn create_minutes(&self) -> &str {
         &self.create_minutes
     }
+    pub fn creation_day(&self) -> TaskCreationDay {
+        self.creation_day
+    }
+
     pub fn create_error(&self) -> Option<&str> {
         self.create_error.as_deref()
     }
@@ -258,6 +264,12 @@ impl ComponentOrchestrator {
 
     pub fn edit_create_minutes(&mut self, value: String) {
         self.create_minutes = value;
+        self.create_error = None;
+        self.create_success = None;
+    }
+
+    pub fn edit_creation_day(&mut self, value: TaskCreationDay) {
+        self.creation_day = value;
         self.create_error = None;
         self.create_success = None;
     }
@@ -295,6 +307,7 @@ impl ComponentOrchestrator {
             ComponentAction::CreateTask(CreateTaskRequest {
                 name: self.create_name.clone(),
                 estimated_work_minutes,
+                creation_day: self.creation_day,
             }),
         )
     }
@@ -465,7 +478,14 @@ impl ComponentOrchestrator {
         response: ClientResponse,
     ) -> ClientEffect {
         let created_name = match &response {
-            ClientResponse::CreateTask { result: Ok(_), .. } => Some(self.create_name.clone()),
+            ClientResponse::CreateTask {
+                request_id,
+                result: Ok(_),
+            } => self
+                .state
+                .as_ref()
+                .and_then(|state| state.pending_create_task(*request_id))
+                .map(|request| request.name.clone()),
             _ => None,
         };
         let refresh_result = match (&self.refresh_state, &response) {
@@ -523,9 +543,8 @@ impl ComponentOrchestrator {
             let name = super::task_name::display_task_name(&name);
             self.create_name.clear();
             self.create_minutes.clear();
-            self.create_success = Some(format!(
-                "「{name}」を作成しました。翌論理日06:00から有効です。"
-            ));
+            self.creation_day = TaskCreationDay::default();
+            self.create_success = Some(format!("「{name}」を作成しました。"));
         }
         if let Some(succeeded) = refresh_result {
             self.refresh_state = if succeeded {

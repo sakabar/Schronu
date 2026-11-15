@@ -339,16 +339,47 @@ pub struct ListAllTasksRequest {
     pub cursor: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskCreationDay {
+    Today,
+    #[default]
+    SevenDaysLater,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateTaskRequest {
     pub name: String,
     pub estimated_work_minutes: Option<i64>,
+    #[serde(default)]
+    pub creation_day: TaskCreationDay,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateTaskResult {
     pub task_id: String,
     pub pending_until_epoch_ms: i64,
+}
+
+#[cfg(test)]
+#[test]
+fn 作成日のwireは省略時に7日後を選び両方の値を受理する() {
+    let omitted: CreateTaskRequest =
+        serde_json::from_value(serde_json::json!({ "name": "task" })).unwrap();
+    assert_eq!(omitted.creation_day, TaskCreationDay::SevenDaysLater);
+    for (value, expected) in [
+        ("today", TaskCreationDay::Today),
+        ("seven_days_later", TaskCreationDay::SevenDaysLater),
+    ] {
+        let request: CreateTaskRequest =
+            serde_json::from_value(serde_json::json!({ "name": "task", "creation_day": value }))
+                .unwrap();
+        assert_eq!(request.creation_day, expected);
+        assert_eq!(
+            serde_json::to_value(request).unwrap()["creation_day"],
+            value
+        );
+    }
 }
 
 #[cfg(test)]

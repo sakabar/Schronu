@@ -151,7 +151,12 @@ fn successful_mutations_publish_committed_cache() {
             }
             "create" => {
                 f.service
-                    .create_task_at(f.now, "created-cache-target".to_owned(), Some(10))
+                    .create_task_at(
+                        f.now,
+                        "created-cache-target".to_owned(),
+                        Some(10),
+                        super::TaskCreationDay::SevenDaysLater,
+                    )
                     .unwrap();
             }
             "slice" => {

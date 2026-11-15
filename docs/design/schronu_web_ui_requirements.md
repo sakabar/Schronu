@@ -39,8 +39,8 @@ Schronu-webを、1日の余力と複数taskの作業状況を同時に把握で�
 - **REQ-COMMON-003**: URL routingを必要とせず、単一ページ内で選択中の1画面だけをDOMへ表示すること。持ち歩きロックbarとbufferはセッションtabだけに表示すること。ただし、持ち歩きロックのstateとmutation guardは4画面で共通に有効とし、本文末尾は固定tab barとsafe areaに覆われないこと。
 - **REQ-COMMON-010**: `Ctrl+Shift+←`または`Ctrl+Shift+H`で左、`Ctrl+Shift+→`または`Ctrl+Shift+L`で右の下部tabへ表示順に1つずつ切り替え、両端で回り込むこと。入力・選択・編集欄とIME変換中は既存のキー操作を優先し、復元中と全面の通信中overlay表示中は切り替えを受け付けないこと。
 
-- **REQ-CREATE-001**: 作成tabはタスク名と任意の非負整数の見積分数を受け付け、省略時は15分とすること。CLI`新`と同じapplicationの`create_task`でルートのプロジェクトタスクを作り、翌論理日06:00までPendingとする。WebからCLIのフォーカスは変更しない。
-- **REQ-CREATE-002**: 作成成功時は作成tabに留まり、成功内容を表示して入力を空にすること。失敗時は入力を保持する。成功後は古い一覧と全件取得を無効化し、次の一覧進入時に日付別一覧を取得する。作成は持ち歩きロック、背景更新、repository状態不確実の変更guardに従う。
+- **REQ-CREATE-001**: 作成tabはタスク名と任意の非負整数の見積分数を受け付け、省略時は15分とすること。CLI`新`と同じapplicationの`create_task`でルートのプロジェクトタスクを作る。作成日は「今日の論理日で作成」と「7日後の論理日で作成」からラジオボタンで選び、7日後を初期値とする。選択した論理日の06:00を保留解除時刻とする。WebからCLIのフォーカスは変更しない。
+- **REQ-CREATE-002**: 作成成功時は作成tabに留まり、成功内容を表示して名前と見積を空にし、作成日を初期値に戻すこと。失敗時は入力と選択を保持する。成功後は古い一覧と全件取得を無効化し、次の一覧進入時に日付別一覧を取得する。作成は持ち歩きロック、背景更新、repository状態不確実の変更guardに従う。
 - **REQ-COMMON-004**: 利用者に見える名称には「フォーカス」を使用せず、「セッション」を使用すること。既存core APIの`get_focus`は内部の選定処理として利用してよい。
 - **REQ-COMMON-005**: browser mount直後にlocalStorageから作業中セッションと保存済みview stateを復元し、`schronu-web-ready`の通常shellを表示すること。保存snapshotがあれば選択した時間表示modeに従って確定値を`schronu-buffer-ready`へ表示し、なければ時間領域と一覧を未取得として示すこと。`Hidden`では時間領域を描画しないこと。続けて`bootstrap`を1度送り、保存済みのactive一覧があればそのlogical dateを予定modeでは`list_tasks`、完了modeでは`list_completed_tasks`で再取得すること。view stateが破損・未知version・不正行・読込失敗で復元されなかった場合は、`bootstrap`が返した現在logical dateを予定modeの`list_tasks`で新規取得すること。「全て」の選択、取得結果、取得状態は復元せず、active mode、選択日、予定・全件・完了で共有する検索文字列を復元すること。
 - **REQ-COMMON-006**: server操作に失敗した場合、直前の表示データと`work_sessions`を保持したまま、errorの再試行可否を識別し、再試行または手動確認を案内すること。repository状態が不確実な場合は再送を案内しないこと。
