@@ -2497,6 +2497,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
             "update_task",
             json!({
                 "task_id": task_id.to_string(),
+                "name": "  更新後のタスク  ",
                 "estimated_work_seconds": 2700,
                 "actual_work_seconds": 900,
                 "deadline_time": deadline.to_rfc3339(),
@@ -2523,6 +2524,7 @@ fn update_task_指定fieldをまとめて更新して1回saveする() {
         ))
         .unwrap();
     let updated = &task_response["result"]["structuredContent"]["task"];
+    assert_eq!(updated["name"], "  更新後のタスク  ");
     assert_eq!(updated["estimated_work_seconds"], 45 * 60);
     assert_eq!(updated["actual_work_seconds"], 900);
     assert_eq!(updated["deadline_time"], deadline.to_rfc3339());
@@ -2637,6 +2639,7 @@ fn update_task_同じ値ならsaveしない() {
             "update_task",
             json!({
                 "task_id": task_id.to_string(),
+                "name": "unchanged task",
                 "estimated_work_seconds": 900,
                 "actual_work_seconds": 900
             }),
@@ -2778,6 +2781,24 @@ fn update_task_入力不正では変更もsaveもしない() {
             "task_id",
         ),
         (
+            "blank-name",
+            json!({"task_id": task_id.to_string(), "name": "  ", "estimated_work_seconds": 3600}),
+            None,
+            "name",
+        ),
+        (
+            "numeric-name",
+            json!({"task_id": task_id.to_string(), "name": " -123 ", "estimated_work_seconds": 3600}),
+            None,
+            "name",
+        ),
+        (
+            "control-character-in-name",
+            json!({"task_id": task_id.to_string(), "name": "task\nname", "estimated_work_seconds": 3600}),
+            None,
+            "name",
+        ),
+        (
             "negative-estimate",
             json!({"task_id": task_id.to_string(), "estimated_work_seconds": -1}),
             Some(-32602),
@@ -2867,6 +2888,7 @@ fn update_task_入力不正では変更もsaveもしない() {
             ))
             .unwrap();
         let unchanged = &task_response["result"]["structuredContent"]["task"];
+        assert_eq!(unchanged["name"], "unchanged update task");
         assert_eq!(unchanged["estimated_work_seconds"], 30 * 60);
         assert_eq!(unchanged["actual_work_seconds"], 900);
         assert_eq!(unchanged["deadline_time"], deadline.to_rfc3339());
