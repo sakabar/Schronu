@@ -1,4 +1,4 @@
-#[cfg(feature = "web")]
+#[cfg(all(feature = "web", any(test, target_arch = "wasm32")))]
 use super::local_time::JAPAN_UTC_OFFSET_MINUTES;
 use super::local_time::{local_datetime, logical_date_with_offset};
 use super::state::ClientState;
@@ -358,7 +358,7 @@ pub fn format_local_hh_mm(epoch_ms: i64, utc_offset_minutes: i32) -> String {
         .unwrap_or_else(|| INVALID_TIME.to_owned())
 }
 
-#[cfg(feature = "web")]
+#[cfg(all(feature = "web", any(test, target_arch = "wasm32")))]
 pub(crate) fn project_session_cards_for_display(
     state: &ClientState,
     offset_at: &dyn Fn(i64) -> Option<i32>,
@@ -366,7 +366,10 @@ pub(crate) fn project_session_cards_for_display(
     project_session_cards_with(state, offset_at, |_| Some(JAPAN_UTC_OFFSET_MINUTES))
 }
 
-#[cfg(any(test, feature = "web"))]
+#[cfg(any(
+    all(test, any(feature = "server", feature = "web")),
+    all(feature = "web", target_arch = "wasm32")
+))]
 pub(crate) fn project_list_rows_for_display(
     state: &ClientState,
     offset_at: &dyn Fn(i64) -> Option<i32>,
