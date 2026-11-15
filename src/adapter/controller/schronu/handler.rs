@@ -15,7 +15,7 @@ use crate::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
     CompleteTaskInput, CreateRepetitionInput, CreateTaskInput,
 };
-use crate::entity::task::{TaskAttr, TaskHandle};
+use crate::entity::task::{Status, TaskAttr, TaskHandle, TaskTreeError};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
 use regex::Regex;
 use std::cmp::min;
@@ -644,7 +644,7 @@ pub(super) fn handle_breakdown_split_command<C: ProjectCommandContext + ?Sized>(
         CommandAction::TaskNames { names } => {
             if !names.is_empty() && !names.iter().any(|name| name.parse::<i64>().is_ok()) {
                 let names = names.iter().map(String::as_str).collect::<Vec<_>>();
-                match execute_breakdown(context, &names, &None) {
+                match execute_breakdown(context, &names) {
                     Ok(Some(task_ids)) => append_project_lines(&mut lines, &task_ids, &names),
                     Ok(None) => {}
                     Err(error) => reported_error = Some(error),
@@ -1124,13 +1124,34 @@ fn execute_breakdown_sequentially<C: ProjectCommandContext + ?Sized>(
     Ok(None)
 }
 
+fn inherited_pending_until(
+    task: &TaskHandle,
+    now: DateTime<Local>,
+) -> Result<Option<DateTime<Local>>, TaskTreeError> {
+    if task.get_status()? != Status::Pending {
+        return Ok(None);
+    }
+    if task.get_orig_status()? == Status::Pending {
+        let pending_until = task.get_pending_until()?;
+        if pending_until >= now {
+            return Ok(Some(pending_until));
+        }
+    }
+    let start_time = task.get_start_time()?;
+    Ok((start_time > now).then_some(start_time))
+}
+
 fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
     context: &mut C,
     new_task_names: &[&str],
-    pending_until_opt: &Option<DateTime<Local>>,
 ) -> Result<Option<Vec<Uuid>>, ApplicationError> {
     let Some(parent_id) = context.focused_task_id() else {
         return Ok(None);
+    };
+    let pending_until = match context.focused_task()? {
+        Some(task) => inherited_pending_until(&task, context.last_synced_time())
+            .map_err(ApplicationError::TaskTree)?,
+        None => None,
     };
     let names = new_task_names
         .iter()
@@ -1139,7 +1160,7 @@ fn execute_breakdown<C: ProjectCommandContext + ?Sized>(
     let task_ids = context.breakdown_task(BreakdownTaskInput {
         parent_id,
         names,
-        pending_until: *pending_until_opt,
+        pending_until,
     })?;
     context.set_focused_task_id(task_ids.last().copied());
     Ok(Some(task_ids))
@@ -1180,6 +1201,8 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
         }
     };
 
+    let pending_until = inherited_pending_until(focused_task, context.last_synced_time())
+        .map_err(ApplicationError::TaskTree)?;
     focused_task
         .set_estimated_work_seconds(focused_estimated_work_seconds - splitted_work_seconds)
         .map_err(ApplicationError::TaskTree)?;
@@ -1193,6 +1216,10 @@ fn execute_split<C: ProjectCommandContext + ?Sized>(
         new_task_attr
             .set_deadline_time_opt(Some(deadline_time))
             .map_err(ApplicationError::TaskTree)?;
+    }
+    if let Some(pending_until) = pending_until {
+        new_task_attr.set_orig_status(Status::Pending);
+        new_task_attr.set_pending_until(pending_until);
     }
 
     let new_task = focused_task

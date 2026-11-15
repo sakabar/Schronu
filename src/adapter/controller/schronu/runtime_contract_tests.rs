@@ -3186,6 +3186,69 @@ fn test_execute_breakdown_直列の子を作り締切を継承して末端へfoc
 }
 
 #[test]
+fn breakdownとsplitは親の実効pendingから保留期限を決める() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    let past = now - Duration::hours(1);
+    let future = now + Duration::hours(2);
+    let later = future + Duration::hours(1);
+    let deadline = now + Duration::hours(1);
+    let cases = [
+        (Status::Pending, future, later, None, Some(future)),
+        (Status::Pending, now, past, None, Some(now)),
+        (Status::Todo, past, future, None, Some(future)),
+        (Status::Todo, later, future, None, Some(future)),
+        (Status::Pending, past, future, None, Some(future)),
+        (Status::Pending, past, past, None, None),
+        (Status::Todo, future, past, None, None),
+        (Status::Done, future, future, None, None),
+        (
+            Status::Todo,
+            past,
+            future,
+            Some(deadline),
+            Some(deadline - Duration::minutes(20)),
+        ),
+    ];
+
+    for (command, child_count) in [
+        ("下 段階A 段階B", 2),
+        ("breakdown 段階A 段階B", 2),
+        ("bd 段階A 段階B", 2),
+        ("割 15 段階A", 1),
+        ("split 15 段階A", 1),
+        ("sp 15 段階A", 1),
+    ] {
+        for (parent_status, pending_until, start, deadline, expected_pending_until) in cases {
+            let parent = new_test_task_handle("親タスク").unwrap();
+            parent.sync_clock(now).unwrap();
+            parent.set_start_time(start).unwrap();
+            parent.set_deadline_time_opt(deadline).unwrap();
+            parent.set_pending_until(pending_until).unwrap();
+            parent.set_orig_status(parent_status).unwrap();
+            let expected_status = if expected_pending_until.is_some() {
+                Status::Pending
+            } else {
+                Status::Todo
+            };
+            let result =
+                execute_command_for_test(parent.clone(), now, Some(parent.get_id().unwrap()), command);
+            let mut task = result.task;
+            for _ in 0..child_count {
+                let children = task.get_children().unwrap();
+                assert_eq!(children.len(), 1, "{command}");
+                task = children[0].clone();
+                assert_eq!(task.get_orig_status().unwrap(), expected_status, "{command}");
+                task.sync_clock(now).unwrap();
+                assert_eq!(task.get_status().unwrap(), expected_status, "{command}");
+                if let Some(expected) = expected_pending_until {
+                    assert_eq!(task.get_pending_until().unwrap(), expected, "{command}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn breakdownの別名も直列の子を作る() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     for command in ["breakdown", "bd"] {
