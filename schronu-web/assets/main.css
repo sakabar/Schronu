@@ -951,7 +951,15 @@ button:disabled {
     box-shadow: var(--shadow);
 }
 
-.display-timezone-menu h2,
+.display-timezone-menu h2 {
+    margin: 0 0 0.25rem;
+    padding: 0.25rem 0.55rem 0.45rem;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
 .display-timezone-menu p {
     margin: 0;
     padding: 0.4rem 0.55rem;
