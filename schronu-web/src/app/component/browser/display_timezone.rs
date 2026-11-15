@@ -15,6 +15,7 @@ const FEATURED_ZONES: &[(&str, &str)] = &[
     ("America/New_York", "ニューヨーク"),
     ("Europe/London", "ロンドン"),
     ("Europe/Paris", "パリ"),
+    ("Asia/Taipei", "台湾"),
     ("Asia/Singapore", "シンガポール"),
     ("UTC", "UTC"),
 ];
