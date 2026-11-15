@@ -11,6 +11,7 @@ use client_state_support::{row, snapshot, FakeStorage, TASK_ID};
 fn all_row(segment_index: usize) -> AllTaskRow {
     AllTaskRow {
         task: SessionTask {
+            estimate_success_percentage: None,
             start_time_epoch_ms: None,
             pending_until_epoch_ms: None,
             task_id: TASK_ID.to_owned(),

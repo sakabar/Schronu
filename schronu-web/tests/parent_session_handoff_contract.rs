@@ -33,6 +33,7 @@ fn handoff() -> CompleteSessionResponse {
     WebSuccess {
         snapshot: snapshot("2026-09-05", 65_000),
         data: Some(SessionTask {
+            estimate_success_percentage: Some(89),
             start_time_epoch_ms: None,
             pending_until_epoch_ms: None,
             task_id: PARENT_ID.to_owned(),
@@ -89,6 +90,7 @@ fn completion_atomically_replaces_child_with_parent_at_receipt_time() {
         assert_eq!(parent.started_at_epoch_ms, 70_123);
         assert_eq!(parent.estimated_work_seconds_at_start, 600);
         assert_eq!(parent.actual_work_seconds_at_start, 120);
+        assert_eq!(parent.estimate_success_percentage, Some(89));
         let restored = load_client_state(&storage, 80_000).unwrap();
         assert_eq!(restored.sessions(), state.sessions());
         assert_eq!(

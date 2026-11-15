@@ -109,7 +109,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     assert!(row.contains("min-width: 0;"));
 
     let grid = block_body(MAIN_CSS, ".load-grid");
-    assert!(grid.contains("--load-columns: 64px 6ch 6ch 6ch minmax(0, 1fr);"));
+    assert!(grid.contains("--load-columns: 64px 6ch 6ch minmax(0, 1fr) 4.5ch;"));
     assert!(row.contains("font-weight: inherit;"));
     let heading = block_body(MAIN_CSS, ".load-column-headings");
     for block in [heading, row] {
@@ -118,7 +118,7 @@ fn load_rows_fit_320_360_46rem_and_1024px_viewports() {
     }
     let narrow = block_body(MAIN_CSS, "@media (max-width: 380px)");
     assert!(block_body(narrow, ".load-grid")
-        .contains("--load-columns: 60px 6ch 6ch 6ch minmax(0, 1fr);"));
+        .contains("--load-columns: 60px 6ch 6ch minmax(0, 1fr) 4.5ch;"));
     assert!(block_body(MAIN_CSS, ".load-bands").contains("gap: 4px;"));
     assert!(
         block_body(MAIN_CSS, ".load-metric-value.is-within").contains("color: var(--green-dark);")
@@ -278,7 +278,7 @@ fn load_rows_keep_readable_heights_with_page_scrolling() {
     let legend = block_body(compact, ".band-legend");
     assert!(legend.contains("flex-wrap: nowrap;"));
     let row = block_body(compact, ".load-day {");
-    assert!(row.contains("min-height: 36px;"));
+    assert!(row.contains("min-height: 34px;"));
     let stack = block_body(MAIN_CSS, ".load-band-stack");
     assert!(stack.contains("min-width: 0;"));
     assert!(stack.contains("overflow: hidden;"));
@@ -566,9 +566,15 @@ fn daily_load_compact_layout_retains_zero_and_weekend_colors_and_touch_target() 
 #[test]
 fn load_views_share_shell_padding_and_reserve_wrapped_navigation_height() {
     let selector = ".shell:has(.load-view)";
-    assert!(!MAIN_CSS.contains(":not(.is-routine)"));
     let compact = block_body(MAIN_CSS, "@media (max-height: 60rem)");
     assert!(block_body(compact, selector).contains("+ 8px)"));
+    let compact_daily = block_body(
+        MAIN_CSS,
+        "@media (min-width: 381px) and (max-height: 60rem)",
+    );
+    assert!(
+        block_body(compact_daily, ".shell:has(.load-view:not(.is-routine))").contains("+ 3px)")
+    );
     let narrow = MAIN_CSS.rsplit("@media (max-width: 380px)").next().unwrap();
     assert!(block_body(narrow, selector).contains("+ 32px)"));
 }

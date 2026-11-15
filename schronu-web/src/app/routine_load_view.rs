@@ -1,6 +1,8 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
-use super::load_view_format::format_unsigned;
+use super::list_view::DeviationSortHeading;
+use super::load_view_format::{format_unsigned, probability_color};
+use crate::wire::RoutineLoadForecast;
 use crate::{RoutineLoadReport, RoutineLoadRow};
 use chrono::{Datelike, Duration, NaiveDate};
 use dioxus::prelude::*;
@@ -55,7 +57,7 @@ pub(super) struct ScopeRoutineRow {
     pub(super) average_work_seconds: Option<i64>,
     pub(super) percentage: Option<i128>,
     pub(super) occurrence_count: usize,
-    pub(super) estimate_difference_seconds: Option<i64>,
+    pub(super) historical_mean_difference_seconds: Option<i64>,
 }
 
 #[component]
@@ -64,6 +66,7 @@ pub(super) fn RoutineLoadTable(
     loading: bool,
     #[props(default)] today_remaining_available_seconds: Option<i64>,
 ) -> Element {
+    let mut deviation_order = use_signal(|| false);
     let mut scope = use_signal(|| RoutineLoadScope::Overall);
     let mut selected_routine_id = use_signal(|| None::<String>);
     let Some(report) = report else {
@@ -82,12 +85,36 @@ pub(super) fn RoutineLoadTable(
     let active_scope = scope();
     let selected_id = selected_routine_id();
     let highlighted = highlighted_dates(&projection, selected_id.as_deref());
-    let rows = rows_for_scope(&projection, active_scope);
+    let mut rows = rows_for_scope(&projection, active_scope);
+    let sort_by_deviation = matches!(active_scope, RoutineLoadScope::Date(_)) && deviation_order();
+    if sort_by_deviation {
+        rows.sort_by_key(|row| std::cmp::Reverse(row.routine.duration_stddev_seconds));
+    }
     let range = report_range(&report);
     let scope_label = match active_scope {
         RoutineLoadScope::Overall => "全体".to_owned(),
         RoutineLoadScope::Weekday(index) => format!("{}曜日", WEEKDAY_LABELS[index]),
         RoutineLoadScope::Date(date) => format!("{}/{}", date.month(), date.day()),
+    };
+
+    let (forecast, capacity, today) = match active_scope {
+        RoutineLoadScope::Date(date) => {
+            let date = date.to_string();
+            let today = date == report.start_date;
+            let forecast = report.forecast_by_date.get(&date).copied();
+            let capacity = forecast.and_then(|_| {
+                if today {
+                    today_remaining_available_seconds.filter(|seconds| *seconds >= 0)
+                } else {
+                    report
+                        .full_day_available_seconds_by_date
+                        .get(&date)
+                        .copied()
+                }
+            });
+            (forecast, capacity, today)
+        }
+        RoutineLoadScope::Overall | RoutineLoadScope::Weekday(_) => (None, None, false),
     };
 
     rsx! {
@@ -184,12 +211,15 @@ pub(super) fn RoutineLoadTable(
             strong { "{scope_label}" }
             span { "削減候補 {rows.len()}件" }
         }
+        RoutineForecastSummary { forecast, capacity, today }
         if rows.is_empty() {
             p { class: "load-status", "選択範囲に発生する繰返負荷はありません。" }
         } else {
             ScopedRoutineLoadTable {
                 rows,
                 scope: active_scope,
+                sort_by_deviation,
+                on_toggle_deviation_order: move |_| deviation_order.toggle(),
                 uses_remaining_capacity: matches!(
                     active_scope,
                     RoutineLoadScope::Date(date)
@@ -210,10 +240,69 @@ pub(super) fn RoutineLoadTable(
 }
 
 #[component]
+fn RoutineForecastSummary(
+    forecast: Option<RoutineLoadForecast>,
+    capacity: Option<i64>,
+    today: bool,
+) -> Element {
+    let placeholder = || "—".to_owned();
+    let mean = forecast.map_or_else(placeholder, |forecast| {
+        format_unsigned(forecast.mean_remaining_seconds as i64)
+    });
+    let capacity_label = if today {
+        "残り可処分時間"
+    } else {
+        "可処分時間"
+    };
+    let capacity_text = capacity.map_or_else(placeholder, format_unsigned);
+    let deviation = forecast.map_or_else(placeholder, |forecast| {
+        format_unsigned(forecast.variance_seconds_squared.sqrt() as i64)
+    });
+    let risk = forecast
+        .zip(capacity)
+        .map(|(forecast, seconds)| exceedance_percentage(forecast, seconds as f64));
+    let risk_text = risk.map_or_else(placeholder, |percent| format!("{percent}%"));
+    let estimated_count = forecast.map_or(0, |forecast| forecast.estimated_occurrence_count);
+    rsx! {
+        section { class: "routine-load-forecast", aria_label: "繰返作業の予測", aria_live: "polite",
+            dl {
+                div { dt { "統計的平均実績時間" } dd { "{mean}" } }
+                div { dt { "{capacity_label}" } dd { "{capacity_text}" } }
+                div { dt { "標準偏差" } dd { "{deviation}" } }
+                div {
+                    dt { "超過確率(繰り返しタスク)" }
+                    if let Some(color) = probability_color(risk) {
+                        dd { color, "{risk_text}" }
+                    } else {
+                        dd { "{risk_text}" }
+                    }
+                }
+            }
+            p {
+                if estimated_count > 0 {
+                    "うち{estimated_count}件は見積で補完"
+                }
+            }
+        }
+    }
+}
+
+pub(super) fn exceedance_percentage(forecast: RoutineLoadForecast, capacity_seconds: f64) -> u8 {
+    let threshold = capacity_seconds - forecast.mean_remaining_seconds;
+    if forecast.variance_seconds_squared == 0.0 {
+        return if threshold < 0.0 { 100 } else { 0 };
+    }
+    let scale = forecast.variance_seconds_squared.sqrt() * std::f64::consts::SQRT_2;
+    (50.0 * libm::erfc(threshold / scale)).round() as u8
+}
+
+#[component]
 fn ScopedRoutineLoadTable(
     rows: Vec<ScopeRoutineRow>,
     scope: RoutineLoadScope,
     uses_remaining_capacity: bool,
+    sort_by_deviation: bool,
+    on_toggle_deviation_order: EventHandler<()>,
     selected_routine_id: Option<String>,
     on_select: EventHandler<String>,
 ) -> Element {
@@ -246,7 +335,11 @@ fn ScopedRoutineLoadTable(
                                         "可処分時間比"
                                     }
                                 }
-                                th { class: "routine-load-occurrences", scope: "col", "28日合計" }
+                                DeviationSortHeading {
+                                    class: "routine-load-occurrences routine-deviation-heading",
+                                    descending: sort_by_deviation,
+                                    on_toggle: on_toggle_deviation_order,
+                                }
                             },
                         }
                         th { class: "routine-load-subject", scope: "col", "プロジェクト / 繰返" }
@@ -258,6 +351,7 @@ fn ScopedRoutineLoadTable(
                             let project_name = super::task_name::display_task_name(&display_row.routine.project_name);
                             let routine_name = super::task_name::display_task_name(&display_row.routine.routine_name);
                             let routine_id = display_row.routine.routine_task_id.clone();
+                            let deviation = display_row.routine.duration_stddev_seconds.map_or_else(|| "—".to_owned(), format_unsigned);
                             let is_selected = selected_routine_id.as_deref() == Some(&routine_id);
                             rsx! {
                                 tr { class: if is_selected { "is-selected" } else { "" },
@@ -265,21 +359,21 @@ fn ScopedRoutineLoadTable(
                                     match scope {
                                         RoutineLoadScope::Overall => rsx! {
                                             td { class: "routine-load-total routine-load-number", "{format_unsigned(display_row.routine.total_work_seconds)}" }
-                                            RoutineEstimateDifference { seconds: display_row.estimate_difference_seconds }
+                                            RoutineMeanDifference { seconds: display_row.historical_mean_difference_seconds }
                                             td { class: "routine-load-occurrences routine-load-number", "{display_row.routine.occurrence_day_count}日" }
                                             td { class: "routine-load-average routine-load-number", "{format_optional_time(display_row.average_work_seconds)}" }
                                         },
                                         RoutineLoadScope::Weekday(_) => rsx! {
                                             td { class: "routine-load-average routine-load-number", "{format_optional_time(display_row.average_work_seconds)}" }
-                                            RoutineEstimateDifference { seconds: display_row.estimate_difference_seconds }
+                                            RoutineMeanDifference { seconds: display_row.historical_mean_difference_seconds }
                                             td { class: "routine-load-total routine-load-number", "{format_percentage(display_row.percentage)}" }
                                             td { class: "routine-load-occurrences routine-load-number", "4回中{display_row.occurrence_count}回" }
                                         },
                                         RoutineLoadScope::Date(_) => rsx! {
                                             td { class: "routine-load-average routine-load-number", "{format_unsigned(display_row.work_seconds)}" }
-                                            RoutineEstimateDifference { seconds: display_row.estimate_difference_seconds }
+                                            RoutineMeanDifference { seconds: display_row.historical_mean_difference_seconds }
                                             td { class: "routine-load-total routine-load-number", "{format_percentage(display_row.percentage)}" }
-                                            td { class: "routine-load-occurrences routine-load-number", "{format_unsigned(display_row.routine.total_work_seconds)}" }
+                                            td { class: "routine-load-occurrences routine-load-number", "{deviation}" }
                                         },
                                     }
                                     th { class: "routine-load-subject", scope: "row",
@@ -347,7 +441,7 @@ fn LegacyRoutineLoadTableRow(row: RoutineLoadRow) -> Element {
         tr {
             td { class: "routine-load-interval", "{row.repetition_interval_days}日" }
             td { class: "routine-load-total routine-load-number", "{format_unsigned(row.total_work_seconds)}" }
-            RoutineEstimateDifference { seconds: None }
+            RoutineMeanDifference { seconds: None }
             td { class: "routine-load-occurrences routine-load-number", "{row.occurrence_day_count}日" }
             td { class: "routine-load-average routine-load-number",
                 if let Some(average_work_seconds) = row.display_average_work_seconds() {
@@ -367,7 +461,7 @@ fn LegacyRoutineLoadTableRow(row: RoutineLoadRow) -> Element {
 }
 
 #[component]
-fn RoutineEstimateDifference(seconds: Option<i64>) -> Element {
+fn RoutineMeanDifference(seconds: Option<i64>) -> Element {
     let class = match seconds.map(|value| value / 60) {
         Some(minutes) if minutes > 0 => "routine-load-difference routine-load-number is-positive",
         Some(minutes) if minutes < 0 => "routine-load-difference routine-load-number is-negative",
@@ -522,7 +616,7 @@ pub(super) fn rows_for_scope(
                 average_work_seconds: routine.row.display_average_work_seconds(),
                 percentage: None,
                 occurrence_count: routine.row.occurrence_day_count,
-                estimate_difference_seconds: None,
+                historical_mean_difference_seconds: None,
             }),
             RoutineLoadScope::Weekday(weekday_index) => {
                 let matching = routine.work_seconds_by_date.iter().filter(|(date, _)| {
@@ -540,7 +634,7 @@ pub(super) fn rows_for_scope(
                         rounded_percentage(work_seconds, weekday.available_seconds)
                     }),
                     occurrence_count,
-                    estimate_difference_seconds: None,
+                    historical_mean_difference_seconds: None,
                 })
             }
             RoutineLoadScope::Date(date) => {
@@ -556,9 +650,9 @@ pub(super) fn rows_for_scope(
                     average_work_seconds: None,
                     percentage: rounded_percentage(work_seconds, available_seconds),
                     occurrence_count: 1,
-                    estimate_difference_seconds: routine
+                    historical_mean_difference_seconds: routine
                         .row
-                        .estimate_difference_seconds_by_date
+                        .historical_mean_difference_seconds_by_date
                         .get(&date.to_string())
                         .copied(),
                 })

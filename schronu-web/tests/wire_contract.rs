@@ -2,9 +2,9 @@ use schronu_web::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, DeadlineDisplayKind, DeferMode,
     DeferPlan, DeferTaskRequest, ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest,
-    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport,
-    RoutineLoadRow, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskDisplayKind, WebError, WebSuccess,
+    LoadData, RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadForecast,
+    RoutineLoadReport, RoutineLoadRow, ScheduleOccurrence, ScheduledTaskRow, ServerSnapshot,
+    SessionTask, TaskDisplayKind, WebError, WebSuccess,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::json;
@@ -18,6 +18,7 @@ fn seven_operationsのrequestとsuccessは仕様どおりのjson形式を持つ(
         buffer_seconds: -61,
     };
     let task = SessionTask {
+        estimate_success_percentage: None,
         start_time_epoch_ms: None,
         pending_until_epoch_ms: None,
         task_id: "00000000-0000-0000-0000-000000000001".to_owned(),
@@ -441,6 +442,14 @@ fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
             start_date: "2026-10-03".to_owned(),
             end_date: "2026-10-30".to_owned(),
             horizon_day_count: 28,
+            forecast_by_date: BTreeMap::from([(
+                "2026-10-03".to_owned(),
+                RoutineLoadForecast {
+                    mean_remaining_seconds: 1_800.25,
+                    variance_seconds_squared: 600.5,
+                    estimated_occurrence_count: 1,
+                },
+            )]),
             full_day_available_seconds_by_date: BTreeMap::from([
                 ("2026-10-03".to_owned(), 36_000),
                 ("2026-10-04".to_owned(), 40_000),
@@ -456,7 +465,8 @@ fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
                 average_work_seconds: Some(3_900),
                 peak_date: "2026-10-04".to_owned(),
                 peak_work_seconds: 4_800,
-                estimate_difference_seconds_by_date: BTreeMap::from([
+                duration_stddev_seconds: None,
+                historical_mean_difference_seconds_by_date: BTreeMap::from([
                     ("2026-10-03".to_owned(), -900),
                     ("2026-10-04".to_owned(), 0),
                     ("2026-10-05".to_owned(), 900),
@@ -488,6 +498,13 @@ fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
                 "start_date": "2026-10-03",
                 "end_date": "2026-10-30",
                 "horizon_day_count": 28,
+                "forecast_by_date": {
+                    "2026-10-03": {
+                        "mean_remaining_seconds": 1_800.25,
+                        "variance_seconds_squared": 600.5,
+                        "estimated_occurrence_count": 1
+                    }
+                },
                 "full_day_available_seconds_by_date": {
                     "2026-10-03": 36_000,
                     "2026-10-04": 40_000
@@ -503,7 +520,7 @@ fn load_dataは14日帯と28日繰返負荷を同じpayloadで保持する() {
                     "average_work_seconds": 3_900,
                     "peak_date": "2026-10-04",
                     "peak_work_seconds": 4_800,
-                    "estimate_difference_seconds_by_date": {"2026-10-03": -900, "2026-10-04": 0, "2026-10-05": 900},
+                    "historical_mean_difference_seconds_by_date": {"2026-10-03": -900, "2026-10-04": 0, "2026-10-05": 900},
                     "work_seconds_by_date": {
                         "2026-10-03": 3_600,
                         "2026-10-04": 4_800
@@ -537,6 +554,7 @@ fn 旧8日繰返負荷payloadは追加fieldを補完してdeserializeできる()
     .unwrap();
 
     assert_eq!(data.routine_load.horizon_day_count, 8);
+    assert!(data.routine_load.forecast_by_date.is_empty());
     assert!(data
         .routine_load
         .full_day_available_seconds_by_date
@@ -547,7 +565,7 @@ fn 旧8日繰返負荷payloadは追加fieldを補完してdeserializeできる()
     assert_eq!(row.peak_date, "2026-10-04");
     assert_eq!(row.peak_work_seconds, 4_800);
     assert!(row.work_seconds_by_date.is_empty());
-    assert!(row.estimate_difference_seconds_by_date.is_empty());
+    assert!(row.historical_mean_difference_seconds_by_date.is_empty());
 }
 
 #[test]
@@ -724,7 +742,7 @@ fn 未知のweb_error_codeもerror全体を壊さず保持する() {
 
 fn assert_json_round_trip<T>(value: &T, expected_json: serde_json::Value)
 where
-    T: Clone + std::fmt::Debug + Eq + Serialize + DeserializeOwned,
+    T: Clone + std::fmt::Debug + PartialEq + Serialize + DeserializeOwned,
 {
     let encoded = serde_json::to_value(value).unwrap();
     assert_eq!(encoded, expected_json);

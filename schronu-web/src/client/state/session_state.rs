@@ -794,6 +794,7 @@ fn session_from_task(task: &SessionTask, started_at_epoch_ms: i64) -> WorkSessio
         started_at_epoch_ms,
         estimated_work_seconds_at_start: task.estimated_work_seconds,
         actual_work_seconds_at_start: task.actual_work_seconds,
+        estimate_success_percentage: task.estimate_success_percentage,
     }
 }
 

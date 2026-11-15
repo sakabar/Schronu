@@ -29,6 +29,8 @@ pub struct BandDay {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadRow {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
     pub project_task_id: String,
     pub project_name: String,
     pub routine_task_id: String,
@@ -43,7 +45,7 @@ pub struct RoutineLoadRow {
     #[serde(default)]
     pub work_seconds_by_date: BTreeMap<String, i64>,
     #[serde(default)]
-    pub estimate_difference_seconds_by_date: BTreeMap<String, i64>,
+    pub historical_mean_difference_seconds_by_date: BTreeMap<String, i64>,
 }
 
 impl RoutineLoadRow {
@@ -56,7 +58,7 @@ impl RoutineLoadRow {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadReport {
     pub start_date: String,
     pub end_date: String,
@@ -64,14 +66,23 @@ pub struct RoutineLoadReport {
     pub horizon_day_count: u64,
     #[serde(default)]
     pub full_day_available_seconds_by_date: BTreeMap<String, i64>,
+    #[serde(default)]
+    pub forecast_by_date: BTreeMap<String, RoutineLoadForecast>,
     pub rows: Vec<RoutineLoadRow>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct RoutineLoadForecast {
+    pub mean_remaining_seconds: f64,
+    pub variance_seconds_squared: f64,
+    pub estimated_occurrence_count: usize,
 }
 
 fn legacy_routine_load_horizon_day_count() -> u64 {
     8
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoadData {
     pub band_days: Vec<BandDay>,
     pub routine_load: RoutineLoadReport,
@@ -81,6 +92,8 @@ pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -93,6 +106,10 @@ pub struct SessionTask {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTask {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113,6 +130,7 @@ impl ScheduledTask {
             task_name: self.task_name.clone(),
             estimated_work_seconds: self.estimated_work_seconds,
             actual_work_seconds: self.actual_work_seconds,
+            estimate_success_percentage: self.estimate_success_percentage,
         })
     }
 }
@@ -120,12 +138,14 @@ impl ScheduledTask {
 impl From<SessionTask> for ScheduledTask {
     fn from(task: SessionTask) -> Self {
         Self {
+            duration_stddev_seconds: None,
             start_time_epoch_ms: task.start_time_epoch_ms,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             task_id: Some(task.task_id),
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }
@@ -348,6 +368,7 @@ mod all_task_contract_tests {
 
         let row = AllTaskRow {
             task: SessionTask {
+                estimate_success_percentage: None,
                 start_time_epoch_ms: None,
                 pending_until_epoch_ms: None,
                 task_id: "task".to_owned(),
@@ -393,7 +414,8 @@ mod all_task_contract_tests {
             average_work_seconds: None,
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 60,
-            estimate_difference_seconds_by_date: Default::default(),
+            duration_stddev_seconds: None,
+            historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };
 
@@ -413,7 +435,8 @@ mod all_task_contract_tests {
             average_work_seconds: Some(240),
             peak_date: "2026-10-03".to_owned(),
             peak_work_seconds: 300,
-            estimate_difference_seconds_by_date: Default::default(),
+            duration_stddev_seconds: None,
+            historical_mean_difference_seconds_by_date: Default::default(),
             work_seconds_by_date: Default::default(),
         };
 

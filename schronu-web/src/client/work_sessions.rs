@@ -11,6 +11,8 @@ const STORAGE_VERSION: u64 = 1;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct WorkSession {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     /// Retain excluded early work when conflict resume shifts the timer origin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub buffer_credit_start_epoch_ms: Option<i64>,

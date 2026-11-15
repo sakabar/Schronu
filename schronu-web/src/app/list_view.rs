@@ -32,8 +32,33 @@ pub struct DateButtonViewModel {
 }
 
 #[component]
+pub(super) fn DeviationSortHeading(
+    class: &'static str,
+    descending: bool,
+    on_toggle: EventHandler<()>,
+) -> Element {
+    rsx! {
+        th { class, scope: "col",
+            aria_sort: if descending { "descending" } else { "none" },
+            label { class: "deviation-sort",
+                input {
+                    r#type: "checkbox",
+                    checked: descending,
+                    aria_label: "標準偏差の降順",
+                    onchange: move |_| on_toggle.call(()),
+                }
+                "標準偏差"
+                span { class: if descending { "deviation-arrow" } else { "deviation-arrow is-hidden" }, aria_hidden: "true", "↓" }
+            }
+        }
+    }
+}
+
+#[component]
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
+    #[props(default)] deviation_order: bool,
+    #[props(default)] on_toggle_deviation_order: EventHandler<()>,
     rows: Vec<ListRowViewModel>,
     #[props(default)] now_epoch_ms: i64,
     active_task_ids: Vec<String>,
@@ -60,12 +85,15 @@ pub fn ListView(
     let search_available = all_tasks_status
         .as_ref()
         .is_none_or(|status| matches!(status, AllTasksViewStatus::Loaded));
-    let matching_rows = rows
+    let mut matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task.task_name))
         .collect::<Vec<_>>();
     let all_selected = all_tasks_status.is_some();
-    let show_separators = all_selected || filter_text.trim().is_empty();
+    let show_separators = !deviation_order && (all_selected || filter_text.trim().is_empty());
+    if deviation_order && !all_selected {
+        matching_rows.sort_by_key(|row| std::cmp::Reverse(row.task.duration_stddev_seconds));
+    }
     let visible_limit = if all_selected {
         visible_row_limit.unwrap_or(500)
     } else {
@@ -143,7 +171,11 @@ pub fn ListView(
                             tr {
                                 th { class: "session-heading", aria_label: "task操作", "" }
                                 th { class: "schedule-heading", "予定" }
-                                th { class: "deadline-heading", "締切" }
+                                DeviationSortHeading {
+                                    class: "deviation-heading",
+                                    descending: deviation_order,
+                                    on_toggle: on_toggle_deviation_order,
+                                }
                                 th { class: "task-heading", aria_label: "タスク {task_count}件",
                                     "タスク"
                                     span { class: "task-heading-count", " ({task_count})" }
@@ -596,11 +628,11 @@ fn TaskRow(
             super::task_name::display_task_name(&row.display_task_name)
         };
     let mut confirming_defer = use_signal(|| false);
-    let deadline_class = match row.deadline_display_kind {
-        DeadlineDisplayKind::None => "deadline",
-        DeadlineDisplayKind::Overrun => "deadline deadline-kind-overrun",
-        DeadlineDisplayKind::Today => "deadline deadline-kind-today",
-        DeadlineDisplayKind::Future => "deadline deadline-kind-future",
+    let schedule_class = match row.deadline_display_kind {
+        DeadlineDisplayKind::None => "schedule-time",
+        DeadlineDisplayKind::Overrun => "schedule-time deadline-kind-overrun",
+        DeadlineDisplayKind::Today => "schedule-time deadline-kind-today",
+        DeadlineDisplayKind::Future => "schedule-time deadline-kind-future",
     };
     let deadline_accessible_label = match row.deadline_display_kind {
         DeadlineDisplayKind::None => "締切なし".to_owned(),
@@ -619,7 +651,6 @@ fn TaskRow(
     } else {
         String::new()
     };
-    let deadline = &row.deadline_label;
     let button_label = if active {
         format!("{}: セッション追加済み", task_name)
     } else {
@@ -721,9 +752,9 @@ fn TaskRow(
                 }
             }
             td {
-                class: "schedule-time",
+                class: schedule_class,
                 "data-label": "予定",
-                aria_label: schedule_accessible_label,
+                aria_label: "{schedule_accessible_label}、{deadline_accessible_label}",
                 match schedule_display {
                     ScheduleDisplayViewModel::Daily { start_hh_mm, duration_minutes } => {
                         let duration_class = if zero_estimate && duration_minutes == Some(0) {
@@ -736,17 +767,23 @@ fn TaskRow(
                             .unwrap_or_else(|| "---".to_owned());
                         rsx! {
                             span { class: "schedule-daily", aria_hidden: "true",
-                                "{start_hh_mm}"
+                                span { class: "schedule-date-time", "{start_hh_mm}" }
                                 span { class: duration_class, "({duration_label})" }
                             }
                         }
                     },
                     ScheduleDisplayViewModel::AllTasksDate { label } => rsx! {
-                        span { aria_hidden: "true", "{label}" }
+                        span { class: "schedule-date-time", aria_hidden: "true", "{label}" }
                     },
                 }
             }
-            td { class: deadline_class, "data-label": "締切", aria_label: deadline_accessible_label, "{deadline}" }
+            td { class: "task-deviation",
+                if let Some(seconds) = row.task.duration_stddev_seconds {
+                    "{super::load_view_format::format_unsigned(seconds)}"
+                } else {
+                    "—"
+                }
+            }
             td { class: task_class, aria_label: format!("{task_kind_label}: {}{advanceable_label}", display_task_name),
                 div {
                     class: "task-name-scroll",

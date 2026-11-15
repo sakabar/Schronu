@@ -1,14 +1,59 @@
 #![cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
 
-use super::load_view_format::format_unsigned;
-use super::routine_load_view::RoutineLoadTable;
-use crate::{BandDay, BandDurations, RoutineLoadReport};
+use super::load_view_format::{format_unsigned, probability_color};
+use super::routine_load_view::{exceedance_percentage, RoutineLoadTable};
+use crate::client::work_sessions::{KeyValueStorage, StorageError};
+use crate::{BandDay, BandDurations, RoutineLoadForecast, RoutineLoadReport};
 use chrono::{Datelike, Local, TimeZone, Timelike, Weekday};
 use dioxus::prelude::*;
 use std::cmp::Ordering;
 
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 const MAX_VISIBLE_SECONDS: i64 = 99 * 3600 + 59 * 60;
+
+const SINGLE_TASK_BUFFER_FACTOR: f64 = 0.30;
+const SINGLE_TASK_BUFFER_KEY: &str = "schronu_web.single_task_buffer.v1";
+
+pub(super) fn load_single_task_buffer(storage: &impl KeyValueStorage) -> bool {
+    storage
+        .get(SINGLE_TASK_BUFFER_KEY)
+        .ok()
+        .flatten()
+        .as_deref()
+        != Some("false")
+}
+
+pub(super) fn store_single_task_buffer(
+    storage: &impl KeyValueStorage,
+    enabled: bool,
+) -> Result<(), StorageError> {
+    storage.set(
+        SINGLE_TASK_BUFFER_KEY,
+        if enabled { "true" } else { "false" },
+    )
+}
+
+pub(super) fn failure_percentage(
+    durations: BandDurations,
+    forecast: Option<RoutineLoadForecast>,
+    buffer_enabled: bool,
+) -> Option<u8> {
+    let forecast = forecast?;
+    let factor = if buffer_enabled {
+        SINGLE_TASK_BUFFER_FACTOR
+    } else {
+        0.0
+    };
+    let capacity = SECONDS_PER_DAY as f64
+        - durations.unavailable_seconds.max(0) as f64
+        - durations.elapsed_seconds.max(0) as f64
+        - durations.non_repetitive_seconds.max(0) as f64 * (1.0 + factor);
+    Some(if capacity < 0.0 {
+        100
+    } else {
+        exceedance_percentage(forecast, capacity)
+    })
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum LoadMode {
@@ -28,6 +73,24 @@ pub(crate) fn LoadView(
     on_select_date: EventHandler<String>,
 ) -> Element {
     let mut mode = use_signal(|| LoadMode::Band);
+    let mut buffer_enabled = use_signal(|| {
+        #[cfg(all(feature = "web", target_arch = "wasm32"))]
+        return load_single_task_buffer(&crate::client::work_sessions::BrowserLocalStorage);
+        #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
+        true
+    });
+    let mut buffer_save_failed = use_signal(|| false);
+    let mut set_buffer = move |enabled: bool| {
+        buffer_enabled.set(enabled);
+        #[cfg(all(feature = "web", target_arch = "wasm32"))]
+        buffer_save_failed.set(
+            store_single_task_buffer(&crate::client::work_sessions::BrowserLocalStorage, enabled)
+                .is_err(),
+        );
+        #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
+        buffer_save_failed.set(false);
+    };
+    let buffer_percentage = (SINGLE_TASK_BUFFER_FACTOR * 100.0).round();
     let today_remaining_available_seconds =
         routine_today_remaining_available_seconds(&rows, routine_load_report.as_ref());
     let view_class = match (mode(), error.is_some()) {
@@ -113,6 +176,26 @@ pub(crate) fn LoadView(
                     today_remaining_available_seconds,
                 }
             } else {
+                fieldset { class: "load-single-buffer",
+                    legend { "単発バッファ" }
+                    label {
+                        input {
+                            r#type: "radio", name: "single-task-buffer", value: "off",
+                            checked: !buffer_enabled(), onchange: move |_| set_buffer(false),
+                        }
+                        "OFF"
+                    }
+                    label {
+                        input {
+                            r#type: "radio", name: "single-task-buffer", value: "on",
+                            checked: buffer_enabled(), onchange: move |_| set_buffer(true),
+                        }
+                        "ON (+{buffer_percentage}%)"
+                    }
+                }
+                if buffer_save_failed() {
+                    p { class: "load-error", role: "alert", "単発バッファの設定を保存できませんでした。" }
+                }
                 BandLegend {}
                 if rows.is_empty() && loading {
                     p { class: "load-status", role: "status", "負荷を取得しています…" }
@@ -123,9 +206,9 @@ pub(crate) fn LoadView(
                         div { class: "load-column-headings", aria_hidden: "true",
                             span { "日付" }
                             span { "余差累" }
-                            span { "空差累" }
                             span { "超過" }
                             span { "時間内訳" }
+                            span { "失敗" }
                         }
                         div { class: "load-days",
                             for (week_start, week) in weeks {
@@ -135,6 +218,13 @@ pub(crate) fn LoadView(
                                             div { class: "load-horizon-divider", "8日目以降" }
                                         }
                                         BandDayRow {
+                                            failure: failure_percentage(
+                                                row.durations,
+                                                routine_load_report.as_ref()
+                                                    .and_then(|report| report.forecast_by_date.get(&row.logical_date))
+                                                    .copied(),
+                                                buffer_enabled(),
+                                            ),
                                             row,
                                             today: week_start == 0 && day_index == 0,
                                             disabled: server_actions_blocked,
@@ -189,6 +279,7 @@ fn LegendItem(class: &'static str, symbol: &'static str, label: &'static str) ->
 #[component]
 fn BandDayRow(
     row: BandDay,
+    failure: Option<u8>,
     today: bool,
     disabled: bool,
     on_select_date: EventHandler<String>,
@@ -225,8 +316,10 @@ fn BandDayRow(
     } else {
         String::new()
     };
+    let failure_text = failure.map_or_else(|| "—".to_owned(), |value| format!("{value}%"));
+    let failure_aria = failure.map_or("未算出", |_| failure_text.as_str());
     let aria_label = format!(
-        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、空差累{}、超過{}。{remaining_aria}押すと一覧を表示します。",
+        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、超過{}、繰返作業の失敗確率{failure_aria}。{remaining_aria}押すと一覧を表示します。",
         format_duration(row.durations.unavailable_seconds),
         format_duration(row.durations.elapsed_seconds),
         format_duration(row.durations.repetitive_seconds),
@@ -234,7 +327,6 @@ fn BandDayRow(
         format_duration(row.durations.rho_leeway_seconds),
         format_duration(segments.free_seconds),
         format_signed(row.accumulated_rho_diff_seconds),
-        format_signed(row.accumulated_free_diff_seconds),
         format_day_difference_for_aria(day_difference_seconds),
     );
     let class = if today {
@@ -278,14 +370,6 @@ fn BandDayRow(
                 "{format_signed(row.accumulated_rho_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
             }
             strong {
-                class: if row.accumulated_free_diff_seconds > 0 {
-                    "load-metric-value is-over"
-                } else {
-                    "load-metric-value is-within"
-                },
-                "{format_signed(row.accumulated_free_diff_seconds.clamp(-MAX_VISIBLE_SECONDS, MAX_VISIBLE_SECONDS))}"
-            }
-            strong {
                 class: signed_metric_class(day_difference_seconds),
                 "{visible_difference}"
             }
@@ -319,6 +403,7 @@ fn BandDayRow(
                     BandSegment { class: "is-free", seconds: segments.free_seconds, capacity_seconds: SECONDS_PER_DAY }
                 }
             }
+            strong { class: "load-failure-value", color: probability_color(failure), "{failure_text}" }
         }
     }
 }
