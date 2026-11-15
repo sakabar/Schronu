@@ -3,7 +3,8 @@ use schronu_web::{
     CompletedTaskReport, CreateTaskRequest, CreateTaskResult, DeferTaskRequest,
     ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, ScheduledTaskRow,
-    ServerSnapshot, SessionTask, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    ServerSnapshot, SessionTask, TaskCreationDay, WebError, WebOperations, WebSuccess,
+    WebWorkerHandle,
 };
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -48,6 +49,7 @@ fn workerは10操作を送信順に専用threadで実行してpayloadを保持�
                 .create_task(CreateTaskRequest {
                     name: "contract task".to_owned(),
                     estimated_work_minutes: Some(25),
+                    creation_day: TaskCreationDay::Today,
                 })
                 .await,
             Ok(WebSuccess {
@@ -147,7 +149,7 @@ fn workerは10操作を送信順に専用threadで実行してpayloadを保持�
         &events[1..],
         &[
             Event::Bootstrap,
-            Event::Create("contract task".to_owned(), Some(25)),
+            Event::Create("contract task".to_owned(), Some(25), TaskCreationDay::Today),
             Event::List("2026-09-05".to_owned()),
             Event::ListCompleted("2026-09-04".to_owned()),
             Event::LoadBand,
@@ -214,7 +216,7 @@ fn workerは32mib_stackを要する操作を完了する() {
 enum Event {
     Factory(thread::ThreadId),
     Bootstrap,
-    Create(String, Option<i64>),
+    Create(String, Option<i64>, TaskCreationDay),
     List(String),
     ListCompleted(String),
     ListAll(Option<String>),
@@ -350,10 +352,11 @@ impl WebOperations for RecordingOperations {
         &mut self,
         request: CreateTaskRequest,
     ) -> Result<WebSuccess<CreateTaskResult>, WebError> {
-        self.events
-            .lock()
-            .unwrap()
-            .push(Event::Create(request.name, request.estimated_work_minutes));
+        self.events.lock().unwrap().push(Event::Create(
+            request.name,
+            request.estimated_work_minutes,
+            request.creation_day,
+        ));
         Ok(WebSuccess {
             snapshot: snapshot(10),
             data: CreateTaskResult {

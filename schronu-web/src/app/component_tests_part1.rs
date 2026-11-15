@@ -21,7 +21,7 @@ use crate::client::work_sessions::{KeyValueStorage, StorageError};
 use crate::{
     web_error_codes, BandDay, BandDurations, CompletedTaskRow, CreateTaskResult, LoadData, RecordSessionResult,
     RetryAdvice, RoutineLoadReport, RoutineLoadRow, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    WebError, WebSuccess,
+    TaskCreationDay, WebError, WebSuccess,
 };
 #[cfg(feature = "web")]
 use crate::CompletedTaskReport;
@@ -1318,10 +1318,13 @@ fn 作成formは成功時だけ入力を消して作成tabに留まる() {
     orchestrator.action(&storage, 1_000, ComponentAction::SwitchTab(ActiveTab::Create));
     orchestrator.edit_create_name("contract task https://example.com/created".to_owned());
     orchestrator.edit_create_minutes("25".to_owned());
+    assert_eq!(orchestrator.creation_day(), TaskCreationDay::SevenDaysLater);
+    orchestrator.edit_creation_day(TaskCreationDay::Today);
     let request_id = match orchestrator.submit_create_task(&storage, 1_000) {
         ClientEffect::CreateTask { request_id, request } => {
             assert_eq!(request.name, "contract task https://example.com/created");
             assert_eq!(request.estimated_work_minutes, Some(25));
+            assert_eq!(request.creation_day, TaskCreationDay::Today);
             request_id
         }
         other => panic!("unexpected effect: {other:?}"),
@@ -1342,11 +1345,12 @@ fn 作成formは成功時だけ入力を消して作成tabに留まる() {
     });
     assert_eq!(orchestrator.create_name(), "");
     assert_eq!(orchestrator.create_minutes(), "");
-    assert!(orchestrator.create_success().unwrap().contains("「contract task」を作成しました。"));
-    assert!(!orchestrator.create_success().unwrap().contains("https://example.com"));
+    assert_eq!(orchestrator.creation_day(), TaskCreationDay::SevenDaysLater);
+    assert_eq!(orchestrator.create_success(), Some("「contract task」を作成しました。"));
     assert_eq!(orchestrator.state().unwrap().active_tab(), ActiveTab::Create);
 
     orchestrator.edit_create_name("second contract task".to_owned());
+    orchestrator.edit_creation_day(TaskCreationDay::Today);
     let request_id = match orchestrator.submit_create_task(&storage, 2_000) {
         ClientEffect::CreateTask { request_id, .. } => request_id,
         other => panic!("unexpected effect: {other:?}"),
@@ -1362,6 +1366,7 @@ fn 作成formは成功時だけ入力を消して作成tabに留まる() {
     });
     assert_eq!(orchestrator.create_name(), "second contract task");
     assert_eq!(orchestrator.create_minutes(), "");
+    assert_eq!(orchestrator.creation_day(), TaskCreationDay::Today);
     assert!(orchestrator.create_success().is_none());
 }
 

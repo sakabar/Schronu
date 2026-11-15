@@ -14,5 +14,5 @@ pub use wire::{
     ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadForecast, RoutineLoadReport,
     RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, TaskDisplayKind, WebError, WebSuccess,
+    SessionTask, TaskCreationDay, TaskDisplayKind, WebError, WebSuccess,
 };

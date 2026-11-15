@@ -17,6 +17,7 @@ fn 作成成功は一覧を無効化して次の一覧進入時に再取得す�
     let request = CreateTaskRequest {
         name: "contract task".to_owned(),
         estimated_work_minutes: Some(25),
+        creation_day: Default::default(),
     };
     let request_id = match state.request_create_task(&storage, request.clone()) {
         ClientEffect::CreateTask {
@@ -59,6 +60,7 @@ fn 作成の通信結果不明は後続変更を止める() {
     let request = CreateTaskRequest {
         name: "contract task".to_owned(),
         estimated_work_minutes: None,
+        creation_day: Default::default(),
     };
     let request_id = match state.request_create_task(&storage, request.clone()) {
         ClientEffect::CreateTask { request_id, .. } => request_id,

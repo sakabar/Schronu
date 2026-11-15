@@ -51,6 +51,18 @@ impl ReadState {
 }
 
 impl ClientState {
+    #[cfg(any(
+        all(test, any(feature = "web", feature = "server")),
+        all(feature = "web", target_arch = "wasm32")
+    ))]
+    pub(crate) fn pending_create_task(&self, request_id: u64) -> Option<&CreateTaskRequest> {
+        self.read
+            .pending_create_task
+            .as_ref()
+            .filter(|(expected_id, _)| *expected_id == request_id)
+            .map(|(_, request)| request)
+    }
+
     pub fn request_create_task<S: KeyValueStorage>(
         &mut self,
         storage: &S,

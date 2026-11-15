@@ -11,7 +11,7 @@ use crate::adapter::gateway::task_repository::TaskRepository;
 #[cfg(feature = "benchmarking")]
 use crate::application::capture_schedule_metrics;
 use crate::application::interface::TaskRepositoryTrait;
-use crate::application::task_use_case::DeferMode;
+use crate::application::task_use_case::{DeferMode, TaskCreationDay};
 use crate::entity::task::{Status, TaskAttr, TaskHandle};
 use chrono::{Duration, Local, NaiveDate, NaiveTime, TimeZone};
 use std::fs;
@@ -1000,14 +1000,24 @@ fn serviceはbusy_time_slot読込失敗を元情報付きtyped_errorで返す() 
 }
 
 #[test]
-fn create_taskはcli新と同じ翌論理日まで保留して保存する() {
-    for (hour, expected_day) in [(5, 5), (6, 6)] {
-        let operation_now = Local.with_ymd_and_hms(2026, 9, 5, hour, 0, 0).unwrap();
+fn create_taskは選択した論理日の06時を保留解除時刻として保存する() {
+    for (creation_day, hour, minute, expected_day) in [
+        (TaskCreationDay::Today, 5, 59, 4),
+        (TaskCreationDay::Today, 6, 0, 5),
+        (TaskCreationDay::SevenDaysLater, 5, 59, 11),
+        (TaskCreationDay::SevenDaysLater, 6, 0, 12),
+    ] {
+        let operation_now = Local.with_ymd_and_hms(2026, 9, 5, hour, minute, 0).unwrap();
         let fixture = WebReadServiceFixture::new();
         let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
         let (snapshot, task_id, pending_until_epoch_ms) = service
-            .create_task_at(operation_now, "contract task".to_owned(), Some(25))
+            .create_task_at(
+                operation_now,
+                "contract task".to_owned(),
+                Some(25),
+                creation_day,
+            )
             .unwrap();
 
         let pending_until = Local
@@ -1039,7 +1049,12 @@ fn create_taskは不正な名前と見積で保存しない() {
 
     for (name, minutes) in [(" ", None), ("123", None), ("contract task", Some(-1))] {
         assert!(matches!(
-            service.create_task_at(operation_now, name.to_owned(), minutes),
+            service.create_task_at(
+                operation_now,
+                name.to_owned(),
+                minutes,
+                TaskCreationDay::SevenDaysLater
+            ),
             Err(WebReadError::Application(_))
         ));
     }
@@ -1052,7 +1067,12 @@ fn create_taskは見積省略で15分にする() {
     let fixture = WebReadServiceFixture::new();
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
     let (_, task_id, _) = service
-        .create_task_at(operation_now, "default estimate task".to_owned(), None)
+        .create_task_at(
+            operation_now,
+            "default estimate task".to_owned(),
+            None,
+            TaskCreationDay::SevenDaysLater,
+        )
         .unwrap();
     let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
     repository.reload_if_changed(operation_now).unwrap();

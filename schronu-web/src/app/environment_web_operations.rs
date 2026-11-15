@@ -5,7 +5,7 @@ use crate::{
     ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
     RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, RoutineLoadRow,
     ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    TaskCreationDay, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
@@ -19,7 +19,9 @@ use schronu::adapter::controller::{
     WebService, WebSuccess as CoreWebSuccess,
 };
 use schronu::adapter::gateway::schronu_config::load_schronu_config;
-use schronu::application::task_use_case::DeferMode as CoreDeferMode;
+use schronu::application::task_use_case::{
+    DeferMode as CoreDeferMode, TaskCreationDay as CoreTaskCreationDay,
+};
 use std::env;
 use std::ffi::OsString;
 use uuid::Uuid;
@@ -91,7 +93,15 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
         let operation_now = self.clock.now();
         let (snapshot, task_id, pending_until_epoch_ms) = self
             .service()?
-            .create_task_at(operation_now, request.name, request.estimated_work_minutes)
+            .create_task_at(
+                operation_now,
+                request.name,
+                request.estimated_work_minutes,
+                match request.creation_day {
+                    TaskCreationDay::Today => CoreTaskCreationDay::Today,
+                    TaskCreationDay::SevenDaysLater => CoreTaskCreationDay::SevenDaysLater,
+                },
+            )
             .map_err(WebError::from)?;
         Ok(WebSuccess {
             snapshot: snapshot.into(),

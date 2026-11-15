@@ -37,7 +37,6 @@ use crate::adapter::gateway::schronu_config::SchronuConfig;
 use crate::adapter::gateway::storage_lock::{LockMode, StorageLock, StorageLockError};
 use crate::adapter::gateway::task_repository::TaskRepository;
 use crate::application::completed_task_report::build_completed_task_report;
-use crate::application::daily_capacity::try_next_logical_date_start;
 use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
@@ -47,7 +46,7 @@ use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
     add_actual_work, complete_task, complete_work_slice, create_task,
     estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, set_estimate,
-    validate_task_name, ApplicationError, CreateTaskInput, TaskFactory,
+    validate_task_name, ApplicationError, CreateTaskInput, TaskCreationDay, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -110,9 +109,11 @@ impl WebService {
         operation_now: DateTime<Local>,
         name: String,
         estimated_work_minutes: Option<i64>,
+        creation_day: TaskCreationDay,
     ) -> Result<(ServerSnapshot, String, i64), WebReadError> {
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
-            let pending_until = try_next_logical_date_start(operation_now)
+            let pending_until = creation_day
+                .pending_until(operation_now)
                 .map_err(WebReadCoreError::Application)?;
             validate_task_name(&name, "name").map_err(WebReadCoreError::Application)?;
             let estimated_work_seconds = estimated_work_minutes

@@ -13,7 +13,7 @@ use crate::application::flatten_use_case::{FlattenResult, UnresolvedReason};
 use crate::application::pack_use_case::PackResult;
 use crate::application::task_use_case::{
     estimated_work_seconds_from_minutes, validate_task_name, ApplicationError, BreakdownTaskInput,
-    CompleteTaskInput, CreateRepetitionInput, CreateTaskInput,
+    CompleteTaskInput, CreateRepetitionInput, CreateTaskInput, TaskCreationDay,
 };
 use crate::entity::task::{TaskAttr, TaskHandle};
 use chrono::{DateTime, Datelike, Days, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime};
@@ -21,7 +21,6 @@ use regex::Regex;
 use std::cmp::min;
 use uuid::Uuid;
 
-const NEW_PROJECT_INITIAL_DEFER_DAYS: i64 = 1;
 const HOBBY_PROJECT_INITIAL_DEFER_DAYS: i64 = 1400;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -527,13 +526,13 @@ pub(super) fn handle_project_command<C: ProjectCommandContext + ?Sized>(
             estimated_minutes,
             ..
         } => {
-            let defer_days_opt = match kind {
-                CommandKind::NewProject => Some(NEW_PROJECT_INITIAL_DEFER_DAYS),
-                CommandKind::HobbyProject => Some(HOBBY_PROJECT_INITIAL_DEFER_DAYS),
-                CommandKind::UnplannedProject => None,
-                _ => return Ok(None),
-            };
-            execute_start_new_project(context, name, defer_days_opt, *estimated_minutes)?;
+            if !matches!(
+                kind,
+                CommandKind::NewProject | CommandKind::HobbyProject | CommandKind::UnplannedProject
+            ) {
+                return Ok(None);
+            }
+            execute_start_new_project(context, *kind, name, *estimated_minutes)?;
             Ok(Some(project_command_outcome(*kind, Vec::new(), None)))
         }
         CommandAction::Sequential {
@@ -1040,37 +1039,27 @@ fn outcome_from_reported_defer_result(
 
 fn execute_start_new_project<C: ProjectCommandContext + ?Sized>(
     context: &mut C,
+    kind: CommandKind,
     name: &str,
-    defer_days_opt: Option<i64>,
     estimated_work_minutes_opt: Option<i64>,
 ) -> Result<(), ApplicationError> {
     validate_task_name(name, "name")?;
     let estimated_work_seconds = estimated_work_minutes_opt
         .map(estimated_work_seconds_from_minutes)
         .transpose()?;
-    let pending_until = if let Some(defer_days) = defer_days_opt {
-        let now = context.last_synced_time();
-        let next_logical_date_start = try_next_logical_date_start(now)?;
-        let offset_days =
-            defer_days
-                .checked_sub(1)
+    let now = context.last_synced_time();
+    let pending_until = match kind {
+        CommandKind::NewProject => Some(TaskCreationDay::SevenDaysLater.pending_until(now)?),
+        CommandKind::HobbyProject => Some(
+            try_next_logical_date_start(now)?
+                .checked_add_signed(Duration::days(HOBBY_PROJECT_INITIAL_DEFER_DAYS - 1))
                 .ok_or(ApplicationError::LogicalDateOutOfRange {
                     operation: "next_logical_date_start",
                     datetime: now,
-                })?;
-        let offset =
-            Duration::try_days(offset_days).ok_or(ApplicationError::LogicalDateOutOfRange {
-                operation: "next_logical_date_start",
-                datetime: now,
-            })?;
-        Some(next_logical_date_start.checked_add_signed(offset).ok_or(
-            ApplicationError::LogicalDateOutOfRange {
-                operation: "next_logical_date_start",
-                datetime: now,
-            },
-        )?)
-    } else {
-        None
+                })?,
+        ),
+        CommandKind::UnplannedProject => None,
+        _ => unreachable!("only project creation commands are handled here"),
     };
     let task_id = context.create_task(CreateTaskInput {
         name: name.to_string(),
@@ -1445,7 +1434,7 @@ mod task_generation_context_tests {
     }
 
     #[test]
-    fn project作成は次の論理日境界を算出できない場合に副作用なくerrorを返す() {
+    fn project作成は対象の論理日を算出できない場合に副作用なくerrorを返す() {
         let local_datetime = chrono::NaiveDate::MAX
             .and_hms_opt(6, 0, 0)
             .expect("maximum date at 06:00 must be valid");
@@ -1467,7 +1456,7 @@ mod task_generation_context_tests {
         assert_eq!(
             actual,
             Err(ApplicationError::LogicalDateOutOfRange {
-                operation: "next_logical_date_start",
+                operation: "task_creation_logical_date",
                 datetime: now,
             })
         );
