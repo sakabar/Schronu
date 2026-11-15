@@ -593,11 +593,13 @@ enum UpdateTaskField {
     Category,
     DurationStatistics,
     RepetitionDurationUpdatesEnabled,
+    Name,
 }
 
 impl UpdateTaskField {
     fn name(self) -> &'static str {
         match self {
+            Self::Name => "name",
             Self::EstimatedWorkSeconds => "estimated_work_seconds",
             Self::ActualWorkSeconds => "actual_work_seconds",
             Self::DeadlineTime => "deadline_time",
@@ -609,6 +611,7 @@ impl UpdateTaskField {
 
     fn is_provided(self, fields: &UpdateTaskInputFields) -> bool {
         match self {
+            Self::Name => !matches!(fields.name, OptionalValue::Missing),
             Self::EstimatedWorkSeconds => {
                 !matches!(fields.estimated_work_seconds, OptionalValue::Missing)
             }
@@ -628,13 +631,14 @@ impl UpdateTaskField {
     }
 }
 
-const UPDATE_TASK_FIELDS: [UpdateTaskField; 6] = [
+const UPDATE_TASK_FIELDS: [UpdateTaskField; 7] = [
     UpdateTaskField::EstimatedWorkSeconds,
     UpdateTaskField::ActualWorkSeconds,
     UpdateTaskField::DeadlineTime,
     UpdateTaskField::Category,
     UpdateTaskField::DurationStatistics,
     UpdateTaskField::RepetitionDurationUpdatesEnabled,
+    UpdateTaskField::Name,
 ];
 const UPDATE_TASK_FIELD_REQUIRED_REASON: &str = "must include at least one field to update";
 
@@ -650,6 +654,7 @@ pub(super) struct DurationStatisticsInput {
 #[serde(try_from = "UpdateTaskInputFields")]
 pub(super) struct UpdateTaskInput {
     pub(super) task_id: UuidValue,
+    pub(super) name: OptionalValue<NonEmptyString>,
     pub(super) estimated_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) actual_work_seconds: OptionalValue<NonNegativeI64>,
     pub(super) deadline_time: NullablePatch<Rfc3339DateTime>,
@@ -660,6 +665,7 @@ pub(super) struct UpdateTaskInput {
 
 pub(super) struct UpdateTaskChanges {
     pub(super) task_id: Uuid,
+    pub(super) name: Option<String>,
     pub(super) estimated_work_seconds: Option<i64>,
     pub(super) actual_work_seconds: Option<i64>,
     pub(super) deadline_time: Option<Option<DateTime<Local>>>,
@@ -691,6 +697,10 @@ impl UpdateTaskInput {
 
         UpdateTaskChanges {
             task_id: self.task_id.0,
+            name: match self.name {
+                OptionalValue::Missing => None,
+                OptionalValue::Value(name) => Some(name.0),
+            },
             estimated_work_seconds,
             actual_work_seconds,
             deadline_time,
@@ -713,6 +723,9 @@ impl UpdateTaskInput {
 struct UpdateTaskInputFields {
     /// The UUID of the existing task to update.
     task_id: UuidValue,
+    /// Set the task's name without trimming or normalization. Blank names, optionally signed ASCII-integer-only names, and Unicode control characters are rejected.
+    #[serde(default)]
+    name: OptionalValue<NonEmptyString>,
     /// Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.
     #[serde(default)]
     estimated_work_seconds: OptionalValue<NonNegativeI64>,
@@ -748,6 +761,7 @@ impl TryFrom<UpdateTaskInputFields> for UpdateTaskInput {
 
         Ok(Self {
             task_id: fields.task_id,
+            name: fields.name,
             estimated_work_seconds: fields.estimated_work_seconds,
             actual_work_seconds: fields.actual_work_seconds,
             deadline_time: fields.deadline_time,

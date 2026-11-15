@@ -12,8 +12,8 @@ use crate::application::task_use_case::{
     breakdown_task as breakdown_task_use_case, complete_task as complete_task_use_case,
     create_task as create_task_use_case, defer_routine_task as defer_routine_task_use_case,
     defer_task as defer_task_use_case, find_repetition_duration_update_target, get_focus, get_task,
-    list_tasks_page, set_actual_work, set_category, set_deadline, set_estimate, ApplicationError,
-    TaskFactory, TaskView,
+    list_tasks_page, rename_task, set_actual_work, set_category, set_deadline, set_estimate,
+    validate_task_name, ApplicationError, TaskFactory, TaskView,
 };
 use crate::entity::task::DurationStatistics;
 use chrono::{DateTime, Local};
@@ -346,6 +346,12 @@ fn call_update_task<R: TaskRepositoryTrait>(
 ) -> Value {
     let input = input.into_changes();
 
+    if let Some(name) = input.name.as_deref() {
+        if let Err(error) = validate_task_name(name, "name") {
+            return update_task_application_error_response(id, error);
+        }
+    }
+
     let statistics = if let Some(statistics) = input.duration_statistics {
         match DurationStatistics::new(
             statistics.sample_size,
@@ -412,6 +418,12 @@ fn call_update_task<R: TaskRepositoryTrait>(
                     ApplicationError::TaskTree(error),
                 );
             }
+        }
+    }
+
+    if let Some(name) = input.name.as_deref() {
+        if let Err(error) = rename_task(repository, input.task_id, name) {
+            return update_task_application_error_response(id, error);
         }
     }
 

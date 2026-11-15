@@ -330,7 +330,7 @@
     "name": "complete_task"
   },
   {
-    "description": "Update an existing task's estimate, actual work seconds, deadline, project category, recurring duration statistics, or automatic recurring duration updates. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, duration statistics, then automatic duration updates order.",
+    "description": "Update an existing task's name, estimate, actual work seconds, deadline, project category, recurring duration statistics, or automatic recurring duration updates. Include at least one update field. Updates are applied in estimate, actual work, deadline, category, duration statistics, automatic duration updates, then name order.",
     "inputSchema": {
       "additionalProperties": false,
       "anyOf": [
@@ -362,6 +362,11 @@
         {
           "required": [
             "repetition_duration_updates_enabled"
+          ]
+        },
+        {
+          "required": [
+            "name"
           ]
         }
       ],
@@ -435,6 +440,11 @@
           "description": "Set the estimated work duration to a non-negative integer number of seconds. Omit this field to leave the estimate unchanged.",
           "minimum": 0,
           "type": "integer"
+        },
+        "name": {
+          "description": "Set the task's name without trimming or normalization. Blank names, optionally signed ASCII-integer-only names, and Unicode control characters are rejected.",
+          "minLength": 1,
+          "type": "string"
         },
         "repetition_duration_updates_enabled": {
           "description": "Enable or disable automatic duration statistics and estimate adjustment on a task with repetition_interval_days. Omit this field to keep the current setting.",

@@ -551,6 +551,22 @@ fn update_task_input_cases() -> Vec<ContractCase> {
     let task_id = "80d7db87-324e-4e8d-a5b7-ff78cd5bf39a";
     vec![
         valid_case(
+            "update name only",
+            json!({"task_id": task_id, "name": "  updated task  "}),
+        ),
+        schema_case(
+            "update name cannot be null",
+            json!({"task_id": task_id, "name": null}),
+            "name",
+            "must be a string",
+        ),
+        schema_case(
+            "update name cannot be empty",
+            json!({"task_id": task_id, "name": ""}),
+            "name",
+            "must not be empty",
+        ),
+        valid_case(
             "update estimate",
             json!({"task_id": task_id, "estimated_work_seconds": 0}),
         ),

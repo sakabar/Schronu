@@ -915,6 +915,14 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
     );
     assert_eq!(deferred["result"]["isError"], false);
 
+    let renamed = call_tool(
+        storage.path(),
+        "rename",
+        "update_task",
+        Some(json!({"task_id": child_id, "name": "  更新後のタスク  "})),
+    );
+    assert_eq!(renamed["result"]["isError"], false);
+
     let deadline = (Local::now() + chrono::Duration::days(10))
         .with_nanosecond(0)
         .unwrap();
@@ -938,6 +946,7 @@ fn mcp_stdio_10個のtoolをfilesystem上のrepositoryで実行し再起動後�
         Some(json!({"task_id": child_id})),
     );
     let reloaded_child = &reloaded_child["result"]["structuredContent"]["task"];
+    assert_eq!(reloaded_child["name"], "  更新後のタスク  ");
     assert_eq!(reloaded_child["original_status"], "pending");
     assert_eq!(
         chrono::DateTime::parse_from_rfc3339(reloaded_child["pending_until"].as_str().unwrap())

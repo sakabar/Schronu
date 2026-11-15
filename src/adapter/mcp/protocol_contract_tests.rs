@@ -985,6 +985,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             "deadline_time",
             "duration_statistics",
             "estimated_work_seconds",
+            "name",
             "repetition_duration_updates_enabled",
             "task_id"
         ]
@@ -1036,6 +1037,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
         "A non-negative number of seconds to add to the task's existing actual work. Omit it to add 0; the request fails if the resulting total overflows the supported integer range."
     );
     assert_string_property(tools, "update_task", "task_id", Some("uuid"));
+    assert_string_property(tools, "update_task", "name", None);
     assert_non_negative_integer_property(tools, "update_task", "estimated_work_seconds");
     assert_non_negative_integer_property(tools, "update_task", "actual_work_seconds");
     assert_nullable_string_property(tools, "update_task", "deadline_time", Some("date-time"));
@@ -1097,6 +1099,7 @@ fn tools_list_initialized通知後に10個のtoolのschemaを返す() {
             vec!["deadline_time"],
             vec!["duration_statistics"],
             vec!["estimated_work_seconds"],
+            vec!["name"],
             vec!["repetition_duration_updates_enabled"]
         ]
     );
