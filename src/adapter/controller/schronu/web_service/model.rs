@@ -49,6 +49,8 @@ pub struct ServerSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct SessionTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub start_time_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
@@ -60,6 +62,10 @@ pub struct SessionTaskDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScheduledTaskDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimate_success_percentage: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_until_epoch_ms: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -190,6 +196,8 @@ pub struct BandDayDto {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadRowDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_stddev_seconds: Option<i64>,
     pub project_task_id: String,
     pub project_name: String,
     pub routine_task_id: String,
@@ -203,10 +211,10 @@ pub struct RoutineLoadRowDto {
     #[serde(default)]
     pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
     #[serde(default)]
-    pub estimate_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    pub historical_mean_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoutineLoadReportDto {
     pub start_date: NaiveDate,
     pub end_date: NaiveDate,
@@ -214,6 +222,9 @@ pub struct RoutineLoadReportDto {
     pub horizon_day_count: u64,
     #[serde(default)]
     pub full_day_available_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    #[serde(default)]
+    pub forecast_by_date:
+        BTreeMap<NaiveDate, crate::application::routine_load::RoutineLoadForecast>,
     pub rows: Vec<RoutineLoadRowDto>,
 }
 
@@ -252,7 +263,7 @@ mod tests {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LoadDataDto {
     pub band_days: Vec<BandDayDto>,
     pub routine_load: RoutineLoadReportDto,

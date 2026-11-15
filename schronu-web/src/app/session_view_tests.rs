@@ -253,6 +253,7 @@ fn build_dom(
 
 fn card(task_id: &str) -> SessionCardViewModel {
     SessionCardViewModel {
+        estimate_success_percentage: None,
         future_pending_date_label: None,
         task_id: task_id.to_owned(),
         task_name: "コピーをせん".to_owned(),
@@ -969,4 +970,34 @@ fn url_suffix_is_hidden_in_session_text_and_labels_without_changing_open_target(
         dispatch_click(&dom, ids[0]);
         assert_eq!(*events.lock().unwrap(), ["open:url-task"]);
     }
+}
+
+#[test]
+fn estimate_probability_appears_below_the_countdown_only_when_present() {
+    let mut session = card("recurring");
+    session.estimate_success_percentage = Some(89);
+    let (html, _) = render(vec![session.clone()], false);
+    let caption = "見積もりを超過してしまう確率";
+    let index = html.find(caption).unwrap();
+    assert!(html.find("session-countdown").unwrap() < index);
+    assert!(html[index..].contains("<strong style=\"color:var(--green-dark);\">11%</strong>"));
+    session.remaining_seconds -= 60;
+    assert!(render(vec![session], false)
+        .0
+        .contains("<strong style=\"color:var(--green-dark);\">11%</strong>"));
+    for (success, overrun, color) in [
+        (0, 100, "--red"),
+        (50, 50, "--red"),
+        (51, 49, "--green-dark"),
+        (100, 0, "--green-dark"),
+    ] {
+        let mut session = card("recurring");
+        session.estimate_success_percentage = Some(success);
+        let (html, _) = render(vec![session], false);
+        let index = html.find(caption).unwrap();
+        assert!(html[index..].contains(&format!(
+            "<strong style=\"color:var({color});\">{overrun}%</strong>"
+        )));
+    }
+    assert!(!render(vec![card("ordinary")], false).0.contains(caption));
 }

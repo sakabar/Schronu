@@ -47,6 +47,7 @@ impl KeyValueStorage for FakeStorage {
 
 fn session(task_id: &str, task_name: &str) -> WorkSession {
     WorkSession {
+        estimate_success_percentage: None,
         buffer_credit_start_epoch_ms: None,
         start_time_epoch_ms: None,
         pending_until_epoch_ms: None,

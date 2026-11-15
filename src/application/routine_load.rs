@@ -1,11 +1,11 @@
 //! 今日から27日後までの繰返負荷をCLIとWebへ共通提供する。
 
-use super::daily_capacity::try_logical_date;
+use super::daily_capacity::{try_logical_date, try_next_logical_date_start};
 use super::interface::TaskRepositoryTrait;
-use super::schedule_use_case::ScheduledTaskView;
+use super::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use super::task_use_case::ApplicationError;
 use crate::entity::task::{Status, TaskHandle};
-use chrono::{Days, NaiveDate};
+use chrono::{Days, NaiveDate, TimeDelta};
 use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
@@ -32,7 +32,8 @@ pub struct RoutineLoadRow {
     pub peak_date: NaiveDate,
     pub peak_work_seconds: i64,
     pub work_seconds_by_date: BTreeMap<NaiveDate, i64>,
-    pub estimate_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
+    pub duration_stddev_seconds: Option<i64>,
+    pub historical_mean_difference_seconds_by_date: BTreeMap<NaiveDate, i64>,
 }
 
 impl RoutineLoadRow {
@@ -48,13 +49,14 @@ struct RoutineMetadata {
     routine_task_id: Uuid,
     routine_name: String,
     repetition_interval_days: i64,
-    occurrence_estimate_difference: Option<(Uuid, i64)>,
+    duration_stddev_seconds: Option<i64>,
+    occurrence_mean_difference: Option<(Uuid, i64)>,
 }
 
 struct RoutineAccumulator {
     metadata: RoutineMetadata,
     work_seconds_by_date: BTreeMap<NaiveDate, i64>,
-    occurrence_estimate_difference_by_date: BTreeMap<NaiveDate, Option<(Uuid, i64)>>,
+    occurrence_mean_difference_by_date: BTreeMap<NaiveDate, Option<(Uuid, i64)>>,
 }
 
 pub fn build_routine_load_report(
@@ -98,24 +100,24 @@ pub fn build_routine_load_report(
             continue;
         };
         let routine_task_id = metadata.routine_task_id;
-        let occurrence_estimate_difference = metadata.occurrence_estimate_difference;
+        let occurrence_mean_difference = metadata.occurrence_mean_difference;
         let accumulator =
             accumulators
                 .entry(routine_task_id)
                 .or_insert_with(|| RoutineAccumulator {
                     metadata,
                     work_seconds_by_date: BTreeMap::new(),
-                    occurrence_estimate_difference_by_date: BTreeMap::new(),
+                    occurrence_mean_difference_by_date: BTreeMap::new(),
                 });
         accumulator
-            .occurrence_estimate_difference_by_date
+            .occurrence_mean_difference_by_date
             .entry(logical_date)
             .and_modify(|comparison| {
-                if *comparison != occurrence_estimate_difference {
+                if *comparison != occurrence_mean_difference {
                     *comparison = None;
                 }
             })
-            .or_insert(occurrence_estimate_difference);
+            .or_insert(occurrence_mean_difference);
         let daily_seconds = accumulator
             .work_seconds_by_date
             .entry(logical_date)
@@ -150,39 +152,64 @@ fn nearest_routine_metadata(
     task: &TaskHandle,
     comparison_work_by_occurrence_id: &mut HashMap<Uuid, i64>,
 ) -> Result<Option<RoutineMetadata>, ApplicationError> {
+    let Some((parent, occurrence, repetition_interval_days)) = nearest_routine(task)? else {
+        return Ok(None);
+    };
+    let project = parent.root().map_err(ApplicationError::TaskTree)?;
+    let routine_task_id = parent.get_id().map_err(ApplicationError::TaskTree)?;
+    let occurrence_id = occurrence.get_id().map_err(ApplicationError::TaskTree)?;
+    let statistics = parent
+        .duration_statistics()
+        .map_err(ApplicationError::TaskTree)?;
+    let (count, mean, _) = statistics.values();
+    let occurrence_mean_difference = if count == 0 {
+        None
+    } else {
+        let occurrence_work_seconds =
+            if let Some(seconds) = comparison_work_by_occurrence_id.get(&occurrence_id) {
+                *seconds
+            } else {
+                let seconds = occurrence_comparison_work_seconds(&occurrence, routine_task_id)?;
+                comparison_work_by_occurrence_id.insert(occurrence_id, seconds);
+                seconds
+            };
+        // Truncate the signed difference toward zero, keeping integer precision in the work total.
+        let baseline = if occurrence_work_seconds > mean as i64 {
+            mean.ceil()
+        } else {
+            mean.floor()
+        };
+        let overflow = || ApplicationError::RoutineLoadCalculationOverflow { routine_task_id };
+        let difference = i128::from(occurrence_work_seconds)
+            .checked_sub(baseline as i128)
+            .and_then(|seconds| i64::try_from(seconds).ok())
+            .ok_or_else(overflow)?;
+        Some((occurrence_id, difference))
+    };
+    Ok(Some(RoutineMetadata {
+        project_task_id: project.get_id().map_err(ApplicationError::TaskTree)?,
+        project_name: project.get_name().map_err(ApplicationError::TaskTree)?,
+        routine_task_id,
+        routine_name: parent.get_name().map_err(ApplicationError::TaskTree)?,
+        repetition_interval_days,
+        duration_stddev_seconds: statistics
+            .sample_standard_deviation()
+            .map(|seconds| seconds as i64),
+        occurrence_mean_difference,
+    }))
+}
+
+fn nearest_routine(
+    task: &TaskHandle,
+) -> Result<Option<(TaskHandle, TaskHandle, i64)>, ApplicationError> {
     let mut occurrence = task.clone();
     let mut current = task.parent().map_err(ApplicationError::TaskTree)?;
     while let Some(parent) = current {
-        if let Some(repetition_interval_days) = parent
+        if let Some(interval) = parent
             .get_repetition_interval_days_opt()
             .map_err(ApplicationError::TaskTree)?
         {
-            let project = parent.root().map_err(ApplicationError::TaskTree)?;
-            let routine_task_id = parent.get_id().map_err(ApplicationError::TaskTree)?;
-            let occurrence_id = occurrence.get_id().map_err(ApplicationError::TaskTree)?;
-            let occurrence_work_seconds =
-                if let Some(seconds) = comparison_work_by_occurrence_id.get(&occurrence_id) {
-                    *seconds
-                } else {
-                    let seconds = occurrence_comparison_work_seconds(&occurrence, routine_task_id)?;
-                    comparison_work_by_occurrence_id.insert(occurrence_id, seconds);
-                    seconds
-                };
-            let estimate_difference = occurrence_work_seconds
-                .checked_sub(
-                    parent
-                        .get_estimated_work_seconds()
-                        .map_err(ApplicationError::TaskTree)?,
-                )
-                .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
-            return Ok(Some(RoutineMetadata {
-                project_task_id: project.get_id().map_err(ApplicationError::TaskTree)?,
-                project_name: project.get_name().map_err(ApplicationError::TaskTree)?,
-                routine_task_id,
-                routine_name: parent.get_name().map_err(ApplicationError::TaskTree)?,
-                repetition_interval_days,
-                occurrence_estimate_difference: Some((occurrence_id, estimate_difference)),
-            }));
+            return Ok(Some((parent, occurrence, interval)));
         }
         occurrence = parent.clone();
         current = parent.parent().map_err(ApplicationError::TaskTree)?;
@@ -238,7 +265,12 @@ fn projected_routine_metadata(
         routine_task_id: task.get_id().map_err(ApplicationError::TaskTree)?,
         routine_name: task.get_name().map_err(ApplicationError::TaskTree)?,
         repetition_interval_days,
-        occurrence_estimate_difference: None,
+        duration_stddev_seconds: task
+            .duration_statistics()
+            .map_err(ApplicationError::TaskTree)?
+            .sample_standard_deviation()
+            .map(|seconds| seconds as i64),
+        occurrence_mean_difference: None,
     }))
 }
 
@@ -278,10 +310,203 @@ fn into_report_row(accumulator: RoutineAccumulator) -> Result<RoutineLoadRow, Ap
         peak_date,
         peak_work_seconds,
         work_seconds_by_date: accumulator.work_seconds_by_date,
-        estimate_difference_seconds_by_date: accumulator
-            .occurrence_estimate_difference_by_date
+        duration_stddev_seconds: accumulator.metadata.duration_stddev_seconds,
+        historical_mean_difference_seconds_by_date: accumulator
+            .occurrence_mean_difference_by_date
             .into_iter()
             .filter_map(|(date, comparison)| comparison.map(|(_, difference)| (date, difference)))
             .collect(),
     })
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct RoutineLoadForecast {
+    pub mean_remaining_seconds: f64,
+    pub variance_seconds_squared: f64,
+    pub estimated_occurrence_count: usize,
+}
+
+struct OccurrenceForecast {
+    routine_id: Uuid,
+    distribution: Option<(f64, f64)>,
+    seconds_by_date: BTreeMap<NaiveDate, i64>,
+}
+
+pub(crate) fn build_routine_load_forecasts(
+    repository: &dyn TaskRepositoryTrait,
+    schedule: &[ScheduledTaskView],
+    report: &RoutineLoadReport,
+) -> Result<BTreeMap<NaiveDate, RoutineLoadForecast>, ApplicationError> {
+    let mut occurrences = BTreeMap::new();
+    let mut occurrence_keys = HashMap::new();
+    for segment in schedule {
+        if segment.scheduled_work_seconds <= 0
+            || (!segment.is_projected() && segment.task.status == Status::Done)
+        {
+            continue;
+        }
+        let key = if let Some(&key) = occurrence_keys.get(&segment.occurrence) {
+            key
+        } else {
+            let key = resolve_forecast_occurrence(repository, segment, &mut occurrences)?;
+            occurrence_keys.insert(segment.occurrence, key);
+            key
+        };
+        let Some(key) = key else { continue };
+        let entry = occurrences
+            .get_mut(&key)
+            .expect("forecast occurrence was resolved");
+        let overflow = || ApplicationError::RoutineLoadCalculationOverflow {
+            routine_task_id: entry.routine_id,
+        };
+        let mut start = segment.scheduled_start;
+        let end = start
+            .checked_add_signed(
+                TimeDelta::try_seconds(segment.scheduled_work_seconds).ok_or_else(overflow)?,
+            )
+            .ok_or_else(overflow)?;
+        while start < end {
+            let date = try_logical_date(start)?;
+            let boundary = try_next_logical_date_start(start)?.min(end);
+            // Preserve the segment's total whole seconds even if it starts between seconds.
+            let seconds = (boundary - segment.scheduled_start).num_seconds()
+                - (start - segment.scheduled_start).num_seconds();
+            add_forecast_work(&mut entry.seconds_by_date, date, seconds, entry.routine_id)?;
+            start = boundary;
+        }
+    }
+
+    let mut by_date: BTreeMap<_, RoutineLoadForecast> = (0..report.horizon_day_count)
+        .filter_map(|offset| report.start_date.checked_add_days(Days::new(offset)))
+        .map(|date| (date, RoutineLoadForecast::default()))
+        .collect();
+    for occurrence in occurrences.into_values() {
+        let total: f64 = occurrence
+            .seconds_by_date
+            .values()
+            .map(|&seconds| seconds as f64)
+            .sum();
+        for (date, seconds) in occurrence.seconds_by_date {
+            let Some(day) = by_date.get_mut(&date) else {
+                continue;
+            };
+            match occurrence.distribution {
+                Some((mean, variance)) => {
+                    let fraction = seconds as f64 / total;
+                    day.mean_remaining_seconds += mean * fraction;
+                    day.variance_seconds_squared += variance * fraction.powi(2);
+                }
+                None => {
+                    day.mean_remaining_seconds += seconds as f64;
+                    day.estimated_occurrence_count += 1;
+                }
+            }
+            if !day.mean_remaining_seconds.is_finite() || !day.variance_seconds_squared.is_finite()
+            {
+                return Err(ApplicationError::RoutineLoadCalculationOverflow {
+                    routine_task_id: occurrence.routine_id,
+                });
+            }
+        }
+    }
+    Ok(by_date)
+}
+
+fn resolve_forecast_occurrence(
+    repository: &dyn TaskRepositoryTrait,
+    segment: &ScheduledTaskView,
+    occurrences: &mut BTreeMap<ScheduleOccurrenceKey, OccurrenceForecast>,
+) -> Result<Option<ScheduleOccurrenceKey>, ApplicationError> {
+    let source_id = segment.source_task_id();
+    let key = segment.occurrence;
+    let task = repository
+        .get_by_id(source_id)
+        .map_err(ApplicationError::TaskTree)?
+        .ok_or(ApplicationError::TaskNotFound(source_id))?;
+    let (routine, actual, key) = match key {
+        ScheduleOccurrenceKey::Actual { .. } => {
+            let Some((routine, occurrence, _)) = nearest_routine(&task)? else {
+                return Ok(None);
+            };
+            if occurrence
+                .get_status()
+                .map_err(ApplicationError::TaskTree)?
+                == Status::Done
+            {
+                return Ok(None);
+            }
+            let task_id = occurrence.get_id().map_err(ApplicationError::TaskTree)?;
+            (
+                routine,
+                Some(occurrence),
+                ScheduleOccurrenceKey::Actual { task_id },
+            )
+        }
+        ScheduleOccurrenceKey::Projected { .. } => (task, None, key),
+    };
+    let routine_id = routine.get_id().map_err(ApplicationError::TaskTree)?;
+    if let std::collections::btree_map::Entry::Vacant(entry) = occurrences.entry(key) {
+        let (count, mean, m2) = routine
+            .duration_statistics()
+            .map_err(ApplicationError::TaskTree)?
+            .values();
+        let distribution = if count >= 2 {
+            let recorded = actual
+                .as_ref()
+                .map(recorded_occurrence_seconds)
+                .transpose()?
+                .unwrap_or_default();
+            Some(((mean - recorded).max(0.0), m2 / (count - 1) as f64))
+        } else {
+            None
+        };
+        entry.insert(OccurrenceForecast {
+            routine_id,
+            distribution,
+            seconds_by_date: BTreeMap::new(),
+        });
+    }
+    Ok(Some(key))
+}
+
+fn add_forecast_work(
+    dates: &mut BTreeMap<NaiveDate, i64>,
+    date: NaiveDate,
+    seconds: i64,
+    routine_task_id: Uuid,
+) -> Result<(), ApplicationError> {
+    if seconds > 0 {
+        let total = dates.entry(date).or_default();
+        *total = total
+            .checked_add(seconds)
+            .ok_or(ApplicationError::RoutineLoadCalculationOverflow { routine_task_id })?;
+    }
+    Ok(())
+}
+
+fn recorded_occurrence_seconds(occurrence: &TaskHandle) -> Result<f64, ApplicationError> {
+    let mut total = 0.0;
+    let mut pending = vec![occurrence.clone()];
+    while let Some(task) = pending.pop() {
+        if task
+            .is_repeating_task()
+            .map_err(ApplicationError::TaskTree)?
+        {
+            continue;
+        }
+        let actual = task
+            .get_actual_work_seconds()
+            .map_err(ApplicationError::TaskTree)?;
+        let seconds = if actual == 0
+            && task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done
+        {
+            task.get_estimated_work_seconds()
+                .map_err(ApplicationError::TaskTree)?
+        } else {
+            actual
+        };
+        total += seconds as f64;
+        pending.extend(task.get_children().map_err(ApplicationError::TaskTree)?);
+    }
+    Ok(total)
 }

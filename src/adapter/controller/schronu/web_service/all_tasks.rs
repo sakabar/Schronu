@@ -110,6 +110,8 @@ mod tests {
     fn row(segment_index: usize) -> AllTaskRowDto {
         AllTaskRowDto {
             task: super::super::model::ScheduledTaskDto {
+                duration_stddev_seconds: None,
+                estimate_success_percentage: None,
                 pending_until_epoch_ms: None,
                 start_time_epoch_ms: None,
                 task_id: Some("task".to_owned()),

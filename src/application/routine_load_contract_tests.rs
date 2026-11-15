@@ -1,7 +1,7 @@
 use super::routine_load::{build_routine_load_report, ROUTINE_LOAD_HORIZON_DAYS};
 use super::schedule_use_case::{ScheduleOccurrenceKey, ScheduledTaskView};
 use super::task_view::TaskView;
-use crate::entity::task::{Status, TaskAttr, TaskHandle};
+use crate::entity::task::{DurationStatistics, Status, TaskAttr, TaskHandle};
 use crate::test_support::TestTaskRepository;
 use chrono::{DateTime, Duration, Local, NaiveDate, TimeZone};
 use std::collections::BTreeMap;
@@ -58,7 +58,10 @@ fn routine_load_estimate_difference_uses_occurrence_total_not_progress_or_segmen
     let project = TaskHandle::with_identity("project", Uuid::from_u128(10_001), at(3)).unwrap();
     let routine = child(&project, "routine", 10_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
-    routine.set_estimated_work_seconds(1_800).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 1_800.5, 0.0).unwrap())
+        .unwrap();
+    routine.set_estimated_work_seconds(2_400).unwrap();
     let shorter = child(&routine, "shorter occurrence", 10_003, at(3));
     shorter.set_estimated_work_seconds(900).unwrap();
     shorter.set_actual_work_seconds(600).unwrap();
@@ -80,12 +83,12 @@ fn routine_load_estimate_difference_uses_occurrence_total_not_progress_or_segmen
     ];
     let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
     assert_eq!(
-        report.rows[0].estimate_difference_seconds_by_date,
+        report.rows[0].historical_mean_difference_seconds_by_date,
         BTreeMap::from([
             (at(3).date_naive(), -780),
             (at(4).date_naive(), -780),
             (at(5).date_naive(), 0),
-            (at(6).date_naive(), 900),
+            (at(6).date_naive(), 899),
         ])
     );
     shorter.set_actual_work_seconds(800).unwrap();
@@ -98,6 +101,9 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
     let project = TaskHandle::with_identity("project", Uuid::from_u128(13_001), at(3)).unwrap();
     let routine = child(&project, "routine", 13_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 36_000.0, 0.0).unwrap())
+        .unwrap();
     routine.set_estimated_work_seconds(10 * 3_600).unwrap();
     let occurrence = child(&routine, "occurrence", 13_003, at(3));
     occurrence.set_estimated_work_seconds(0).unwrap();
@@ -121,7 +127,7 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
         middle.set_estimated_work_seconds(hours * 3_600).unwrap();
         let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
         assert_eq!(
-            report.rows[0].estimate_difference_seconds_by_date,
+            report.rows[0].historical_mean_difference_seconds_by_date,
             BTreeMap::from([
                 (at(3).date_naive(), difference),
                 (at(4).date_naive(), difference)
@@ -135,7 +141,7 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
         let report =
             build_routine_load_report(&repository, &schedule[1..], at(3).date_naive()).unwrap();
         assert_eq!(
-            report.rows[0].estimate_difference_seconds_by_date,
+            report.rows[0].historical_mean_difference_seconds_by_date,
             BTreeMap::from([
                 (at(3).date_naive(), difference),
                 (at(4).date_naive(), difference)
@@ -147,7 +153,7 @@ fn routine_load_estimate_difference_sums_split_occurrence_including_completed_de
     let report =
         build_routine_load_report(&repository, &schedule[1..3], at(3).date_naive()).unwrap();
     assert_eq!(
-        report.rows[0].estimate_difference_seconds_by_date,
+        report.rows[0].historical_mean_difference_seconds_by_date,
         BTreeMap::from([(at(3).date_naive(), -5_400)])
     );
 }
@@ -157,12 +163,18 @@ fn routine_load_estimate_difference_excludes_nested_routine_subtree() {
     let project = TaskHandle::with_identity("project", Uuid::from_u128(14_001), at(3)).unwrap();
     let routine = child(&project, "routine", 14_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 600.0, 0.0).unwrap())
+        .unwrap();
     routine.set_estimated_work_seconds(600).unwrap();
     let occurrence = child(&routine, "occurrence", 14_003, at(3));
     occurrence.set_estimated_work_seconds(600).unwrap();
     let nested = child(&occurrence, "nested routine", 14_004, at(3));
     nested.set_repetition_interval_days_opt(Some(1)).unwrap();
     nested.set_estimated_work_seconds(300).unwrap();
+    nested
+        .set_duration_statistics(DurationStatistics::new(1, 300.0, 0.0).unwrap())
+        .unwrap();
     let nested_occurrence = child(&nested, "nested occurrence", 14_005, at(3));
     nested_occurrence.set_estimated_work_seconds(420).unwrap();
     let repository = TestTaskRepository::new(vec![project], at(3));
@@ -186,7 +198,7 @@ fn routine_load_estimate_difference_excludes_nested_routine_subtree() {
             .find(|row| row.routine_task_id == id)
             .unwrap();
         assert_eq!(
-            row.estimate_difference_seconds_by_date,
+            row.historical_mean_difference_seconds_by_date,
             BTreeMap::from([(at(3).date_naive(), difference)])
         );
     }
@@ -197,6 +209,9 @@ fn routine_load_estimate_difference_reports_addition_overflow() {
     let project = TaskHandle::with_identity("project", Uuid::from_u128(15_001), at(3)).unwrap();
     let routine = child(&project, "routine", 15_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 1.0, 0.0).unwrap())
+        .unwrap();
     let occurrence = child(&routine, "occurrence", 15_003, at(3));
     occurrence.set_estimated_work_seconds(i64::MAX).unwrap();
     let part = child(&occurrence, "part", 15_004, at(3));
@@ -221,6 +236,9 @@ fn routine_load_estimate_difference_omits_ambiguous_and_projected_dates_in_any_o
     let project = TaskHandle::with_identity("project", Uuid::from_u128(11_001), at(3)).unwrap();
     let routine = child(&project, "routine", 11_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 1.0, 0.0).unwrap())
+        .unwrap();
     let first = child(&routine, "first occurrence", 11_003, at(3));
     let second = child(&routine, "second occurrence", 11_004, at(3));
     let repository = TestTaskRepository::new(vec![project], at(3));
@@ -234,7 +252,7 @@ fn routine_load_estimate_difference_omits_ambiguous_and_projected_dates_in_any_o
     for _ in 0..2 {
         let report = build_routine_load_report(&repository, &schedule, at(3).date_naive()).unwrap();
         assert!(report.rows[0]
-            .estimate_difference_seconds_by_date
+            .historical_mean_difference_seconds_by_date
             .is_empty());
         schedule.reverse();
     }
@@ -245,9 +263,11 @@ fn routine_load_estimate_difference_reports_subtraction_overflow() {
     let project = TaskHandle::with_identity("project", Uuid::from_u128(12_001), at(3)).unwrap();
     let routine = child(&project, "routine", 12_002, at(3));
     routine.set_repetition_interval_days_opt(Some(1)).unwrap();
-    routine.set_estimated_work_seconds(i64::MIN).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(1, 1.0, 0.0).unwrap())
+        .unwrap();
     let occurrence = child(&routine, "occurrence", 12_003, at(3));
-    occurrence.set_estimated_work_seconds(i64::MAX).unwrap();
+    occurrence.set_estimated_work_seconds(i64::MIN).unwrap();
     let repository = TestTaskRepository::new(vec![project], at(3));
     let error = build_routine_load_report(
         &repository,
@@ -490,4 +510,67 @@ fn routine_loadは同じuuidのactualとprojectedを別の規則で解決する(
         .unwrap();
     assert_eq!(projected_row.repetition_interval_days, 3);
     assert_eq!(projected_row.total_work_seconds, 20 * 60);
+}
+
+#[test]
+fn daily_forecast_combines_remaining_work_across_occurrences_and_dates() {
+    use super::routine_load::{build_routine_load_forecasts, RoutineLoadForecast};
+    use crate::entity::task::DurationStatistics;
+
+    let start = at(3).date_naive();
+    let project = TaskHandle::with_identity("project", Uuid::from_u128(32_001), at(3)).unwrap();
+    let routine = child(&project, "routine", 32_002, at(3));
+    routine.set_repetition_interval_days_opt(Some(1)).unwrap();
+    routine
+        .set_duration_statistics(DurationStatistics::new(3, 1_000.0, 80_000.0).unwrap())
+        .unwrap();
+    let occurrence = child(&routine, "occurrence", 32_003, at(3));
+    occurrence.set_actual_work_seconds(100).unwrap();
+    let finished_part = child(&occurrence, "completed part", 32_004, at(3));
+    finished_part.set_estimated_work_seconds(100).unwrap();
+    finished_part.set_orig_status(Status::Done).unwrap();
+    let part = child(&occurrence, "pending part", 32_005, at(3));
+    let other_routine = child(&project, "sparse history", 32_006, at(3));
+    other_routine
+        .set_repetition_interval_days_opt(Some(1))
+        .unwrap();
+    other_routine
+        .set_duration_statistics(DurationStatistics::new(1, 8_000.0, 0.0).unwrap())
+        .unwrap();
+    let estimated = child(&other_routine, "estimated occurrence", 32_007, at(3));
+    let standalone = child(&project, "standalone", 32_008, at(3));
+    let finished = child(&routine, "completed occurrence", 32_009, at(3));
+    finished.set_orig_status(Status::Done).unwrap();
+    let repository = TestTaskRepository::new(vec![project], at(3));
+    let crossing = Local.with_ymd_and_hms(2026, 10, 4, 5, 57, 30).unwrap();
+    let schedule = vec![
+        segment(&occurrence, at(3), 100),
+        segment(&part, crossing, 400),
+        projected_segment(&routine, at(6), at(3), 900),
+        projected_segment(&routine, at(7), at(3), 50),
+        segment(&estimated, at(3), 120),
+        segment(&estimated, at(3) + Duration::hours(1), 80),
+        segment(&standalone, at(3), 400),
+        segment(&finished, at(3), 100),
+    ];
+    let report = build_routine_load_report(&repository, &schedule, start).unwrap();
+    let forecast = build_routine_load_forecasts(&repository, &schedule, &report).unwrap();
+    assert_eq!(forecast.len(), 28);
+    assert_eq!(
+        forecast[&start],
+        RoutineLoadForecast {
+            mean_remaining_seconds: 2_600.0,
+            variance_seconds_squared: 90_000.0,
+            estimated_occurrence_count: 1,
+        }
+    );
+    assert_eq!(
+        forecast[&at(4).date_naive()],
+        RoutineLoadForecast {
+            mean_remaining_seconds: 400.0,
+            variance_seconds_squared: 10_000.0,
+            estimated_occurrence_count: 0,
+        }
+    );
+    assert_eq!(forecast[&report.end_date], RoutineLoadForecast::default());
 }

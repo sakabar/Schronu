@@ -254,6 +254,7 @@ impl From<SessionTaskDto> for SessionTask {
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }
@@ -261,12 +262,14 @@ impl From<SessionTaskDto> for SessionTask {
 impl From<ScheduledTaskDto> for ScheduledTask {
     fn from(task: ScheduledTaskDto) -> Self {
         Self {
+            duration_stddev_seconds: task.duration_stddev_seconds,
             pending_until_epoch_ms: task.pending_until_epoch_ms,
             start_time_epoch_ms: task.start_time_epoch_ms,
             task_id: task.task_id,
             task_name: task.task_name,
             estimated_work_seconds: task.estimated_work_seconds,
             actual_work_seconds: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
         }
     }
 }
@@ -412,8 +415,9 @@ impl From<RoutineLoadRowDto> for RoutineLoadRow {
             average_work_seconds: Some(row.average_work_seconds),
             peak_date: row.peak_date.format("%Y-%m-%d").to_string(),
             peak_work_seconds: row.peak_work_seconds,
-            estimate_difference_seconds_by_date: row
-                .estimate_difference_seconds_by_date
+            duration_stddev_seconds: row.duration_stddev_seconds,
+            historical_mean_difference_seconds_by_date: row
+                .historical_mean_difference_seconds_by_date
                 .into_iter()
                 .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
                 .collect(),
@@ -436,6 +440,20 @@ impl From<RoutineLoadReportDto> for RoutineLoadReport {
                 .full_day_available_seconds_by_date
                 .into_iter()
                 .map(|(date, seconds)| (date.format("%Y-%m-%d").to_string(), seconds))
+                .collect(),
+            forecast_by_date: report
+                .forecast_by_date
+                .into_iter()
+                .map(|(date, forecast)| {
+                    (
+                        date.to_string(),
+                        crate::wire::RoutineLoadForecast {
+                            mean_remaining_seconds: forecast.mean_remaining_seconds,
+                            variance_seconds_squared: forecast.variance_seconds_squared,
+                            estimated_occurrence_count: forecast.estimated_occurrence_count,
+                        },
+                    )
+                })
                 .collect(),
             rows: report.rows.into_iter().map(Into::into).collect(),
         }
@@ -822,6 +840,7 @@ mod tests {
             start_date: NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(),
             end_date: NaiveDate::from_ymd_opt(2026, 10, 30).unwrap(),
             horizon_day_count: 28,
+            forecast_by_date: Default::default(),
             full_day_available_seconds_by_date: BTreeMap::from([
                 (NaiveDate::from_ymd_opt(2026, 10, 3).unwrap(), 36_000),
                 (NaiveDate::from_ymd_opt(2026, 10, 4).unwrap(), 40_000),
@@ -837,7 +856,8 @@ mod tests {
                 average_work_seconds: 7_199,
                 peak_date: NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(),
                 peak_work_seconds: 7_201,
-                estimate_difference_seconds_by_date: BTreeMap::from([
+                duration_stddev_seconds: None,
+                historical_mean_difference_seconds_by_date: BTreeMap::from([
                     (NaiveDate::from_ymd_opt(2026, 10, 5).unwrap(), -900),
                     (NaiveDate::from_ymd_opt(2026, 10, 6).unwrap(), 0),
                     (NaiveDate::from_ymd_opt(2026, 10, 7).unwrap(), 900),
@@ -860,7 +880,7 @@ mod tests {
         let row = &report.rows[0];
         assert_eq!(row.average_work_seconds, Some(7_199));
         assert_eq!(
-            row.estimate_difference_seconds_by_date,
+            row.historical_mean_difference_seconds_by_date,
             BTreeMap::from([
                 ("2026-10-05".to_owned(), -900),
                 ("2026-10-06".to_owned(), 0),

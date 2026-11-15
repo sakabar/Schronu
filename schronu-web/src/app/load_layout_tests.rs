@@ -61,7 +61,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
         .split("load-days")
         .next()
         .unwrap();
-    let labels = ["日付", "余差累", "空差累", "超過", "時間内訳"];
+    let labels = ["日付", "余差累", "超過", "時間内訳", "失敗"];
     let positions = labels.map(|label| heading.find(label).unwrap());
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(
@@ -78,7 +78,7 @@ fn 日別負荷は共通見出しと日付数値帯の順に表示する() {
         let first_value = row.find("class=\"load-metric-value").unwrap();
         let bands = row.find("class=\"load-bands\"").unwrap();
         assert!(date < first_value && first_value < bands, "{row}");
-        assert_eq!(row.matches("class=\"load-metric-value").count(), 3);
+        assert_eq!(row.matches("class=\"load-metric-value").count(), 2);
     }
 }
 
@@ -90,26 +90,14 @@ fn 日別負荷は余差累と超過のゼロを灰色にし丸め前の正負�
         .skip(1)
         .collect::<Vec<_>>();
     let expected = [
-        [
-            ("is-over", "+00:00"),
-            ("is-within", "-00:00"),
-            ("is-over", "00:00"),
-        ],
-        [
-            ("is-zero", "+00:00"),
-            ("is-within", "+00:00"),
-            ("is-zero", "0:00"),
-        ],
-        [
-            ("is-within", "-00:00"),
-            ("is-over", "+99:59"),
-            ("is-within", "-00:00"),
-        ],
+        [("is-over", "+00:00"), ("is-over", "00:00")],
+        [("is-zero", "+00:00"), ("is-zero", "0:00")],
+        [("is-within", "-00:00"), ("is-within", "-00:00")],
     ];
     let aria_values = ["超過0時間0分1秒", "超過0時間0分", "超過マイナス0時間0分1秒"];
     assert_eq!(rows.len(), expected.len());
     for ((row, values), aria_value) in rows.iter().zip(expected).zip(aria_values) {
-        assert!(row.contains(&format!("{aria_value}。")), "{row}");
+        assert!(row.contains(&format!("{aria_value}、")), "{row}");
         let rendered = row
             .split("</button>")
             .next()
@@ -117,7 +105,7 @@ fn 日別負荷は余差累と超過のゼロを灰色にし丸め前の正負�
             .split("<strong class=\"load-metric-value ")
             .skip(1)
             .collect::<Vec<_>>();
-        assert_eq!(rendered.len(), 3);
+        assert_eq!(rendered.len(), 2);
         for (actual, (class, value)) in rendered.iter().zip(values) {
             assert!(
                 actual.starts_with(&format!("{class}\">{value}</strong>")),
@@ -197,7 +185,16 @@ fn 日別負荷の超過は余差を除き帯の余差と空きを維持する()
         .unwrap()
         .0;
     assert!(today.contains("load-metric-value is-within\">-01:30</strong>"));
-    assert!(today.contains("超過マイナス1時間30分。"));
+    assert!(today.contains("超過マイナス1時間30分、繰返作業の失敗確率未算出。"));
+    let failure_value = today
+        .split_once("class=\"load-failure-value\"")
+        .unwrap()
+        .1
+        .split_once("</strong>")
+        .unwrap()
+        .0;
+    assert!(failure_value.ends_with(">—"));
+    assert!(!failure_value.contains("color:var("));
     assert!(today.contains("余差1時間0分、空き0時間30分"));
     assert_eq!(
         today
@@ -339,7 +336,7 @@ fn 日別負荷は更新時刻を表示せず括弧を含む週末曜日を色�
         html.contains("<span class=\"load-weekday\">(月)</span>"),
         "{html}"
     );
-    assert!(html.contains("空差累+123時間45分") || html.contains("空差累+123:45"));
+    assert!(!html.contains("空差累"));
 }
 
 fn bounded_values_root() -> Element {
@@ -367,8 +364,180 @@ fn 日別負荷の2桁表示は上限を超える実値をariaへ保持する() 
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains(">-99:59</strong>"));
-    assert!(html.contains(">+99:59</strong>"));
     assert!(html.contains(">99:59</strong>"));
-    assert!(html.contains("余差累-100:00、空差累+100:00、超過123時間0分"));
+    assert!(html.contains("余差累-100:00、超過123時間0分"));
     assert!(html.contains("<span>12/31</span><span class=\"load-weekday\">(木)</span>"));
+}
+
+#[test]
+fn single_task_buffer_restores_the_saved_choice_and_defaults_to_on() {
+    use super::super::load_view::{load_single_task_buffer, store_single_task_buffer};
+    use crate::client::work_sessions::{KeyValueStorage, StorageError};
+    use std::cell::RefCell;
+
+    #[derive(Default)]
+    struct Storage {
+        value: RefCell<Option<String>>,
+        fails: bool,
+    }
+
+    impl KeyValueStorage for Storage {
+        fn get(&self, key: &str) -> Result<Option<String>, StorageError> {
+            assert_eq!(key, "schronu_web.single_task_buffer.v1");
+            if self.fails {
+                return Err(StorageError::ReadFailed);
+            }
+            Ok(self.value.borrow().clone())
+        }
+
+        fn set(&self, key: &str, value: &str) -> Result<(), StorageError> {
+            assert_eq!(key, "schronu_web.single_task_buffer.v1");
+            if self.fails {
+                return Err(StorageError::WriteFailed);
+            }
+            self.value.replace(Some(value.to_owned()));
+            Ok(())
+        }
+    }
+
+    let storage = Storage::default();
+    assert!(load_single_task_buffer(&storage));
+    store_single_task_buffer(&storage, false).unwrap();
+    assert!(!load_single_task_buffer(&storage));
+    store_single_task_buffer(&storage, true).unwrap();
+    assert_eq!(storage.value.borrow().as_deref(), Some("true"));
+    assert!(load_single_task_buffer(&storage));
+    storage.value.replace(Some("invalid".to_owned()));
+    assert!(load_single_task_buffer(&storage));
+
+    let unavailable = Storage {
+        fails: true,
+        ..Storage::default()
+    };
+    assert!(load_single_task_buffer(&unavailable));
+    assert_eq!(
+        store_single_task_buffer(&unavailable, false),
+        Err(StorageError::WriteFailed)
+    );
+}
+
+#[test]
+fn failure_probability_uses_unclipped_single_work_and_the_selected_buffer() {
+    use super::super::load_view::failure_percentage;
+    use crate::RoutineLoadForecast;
+
+    let mut durations = BandDurations {
+        unavailable_seconds: 50_400,
+        elapsed_seconds: 18_000,
+        repetitive_seconds: 30_000,
+        non_repetitive_seconds: 10_000,
+        rho_leeway_seconds: 0,
+    };
+    let forecast = RoutineLoadForecast {
+        mean_remaining_seconds: 5_000.0,
+        variance_seconds_squared: 1_000_000.0,
+        estimated_occurrence_count: 0,
+    };
+    assert_eq!(
+        failure_percentage(durations, Some(forecast), false),
+        Some(0)
+    );
+    assert_eq!(
+        failure_percentage(durations, Some(forecast), true),
+        Some(50)
+    );
+    assert_eq!(failure_percentage(durations, None, true), None);
+    durations.non_repetitive_seconds = 0;
+    assert_eq!(
+        failure_percentage(durations, Some(forecast), false),
+        failure_percentage(durations, Some(forecast), true)
+    );
+
+    let empty_forecast = RoutineLoadForecast {
+        mean_remaining_seconds: 0.0,
+        variance_seconds_squared: 0.0,
+        estimated_occurrence_count: 0,
+    };
+    durations.non_repetitive_seconds = 18_000;
+    assert_eq!(
+        failure_percentage(durations, Some(empty_forecast), false),
+        Some(0)
+    );
+    assert_eq!(
+        failure_percentage(durations, Some(empty_forecast), true),
+        Some(100)
+    );
+}
+
+#[test]
+fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
+    use super::super::view_test_support::{dispatch_platform_event, rebuild_with_event_listeners};
+    use chrono::{Duration, NaiveDate};
+
+    fn root() -> Element {
+        let start = NaiveDate::from_ymd_opt(2026, 11, 14).unwrap();
+        let rows: Vec<_> = (0..14)
+            .map(|offset| BandDay {
+                logical_date: (start + Duration::days(offset)).to_string(),
+                accumulated_rho_diff_seconds: 0,
+                accumulated_free_diff_seconds: 0,
+                durations: BandDurations {
+                    unavailable_seconds: 50_400,
+                    elapsed_seconds: 18_000,
+                    repetitive_seconds: 5_000,
+                    non_repetitive_seconds: 10_000,
+                    rho_leeway_seconds: 0,
+                },
+            })
+            .collect();
+        let report = crate::RoutineLoadReport {
+            start_date: start.to_string(),
+            end_date: (start + Duration::days(27)).to_string(),
+            horizon_day_count: 28,
+            full_day_available_seconds_by_date: Default::default(),
+            forecast_by_date: rows
+                .iter()
+                .map(|row| {
+                    (
+                        row.logical_date.clone(),
+                        crate::RoutineLoadForecast {
+                            mean_remaining_seconds: 5_000.0,
+                            variance_seconds_squared: 1_000_000.0,
+                            estimated_occurrence_count: 0,
+                        },
+                    )
+                })
+                .collect(),
+            rows: Vec::new(),
+        };
+        rsx! {
+            LoadView {
+                rows, routine_load_report: Some(report), observed_at_epoch_ms: None,
+                loading: false, error: None,
+                on_refresh: move |_| -> () { panic!("buffer changes must stay local") },
+                on_select_date: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let ids = rebuild_with_event_listeners(&mut dom, "change");
+    let initial = dioxus::ssr::render(&dom);
+    assert_eq!(initial.matches("繰返作業の失敗確率50%").count(), 14);
+    assert!(initial.contains("color:var(--red);\">50%"));
+    let off = ids[0];
+    dispatch_platform_event(
+        &dom,
+        "change",
+        off,
+        Box::new(dioxus::html::SerializedFormData::new(
+            "off".to_owned(),
+            Vec::new(),
+        )),
+    );
+    dom.render_immediate_to_vec();
+    let changed = dioxus::ssr::render(&dom);
+    assert_eq!(changed.matches("繰返作業の失敗確率0%").count(), 14);
+    assert!(changed.contains("color:var(--green-dark);\">0%"));
+    let bands = |html: &str| html.matches("class=\"load-band-segment").count();
+    assert_eq!(bands(&initial), bands(&changed));
 }

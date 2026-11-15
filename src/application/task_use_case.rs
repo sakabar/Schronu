@@ -1189,6 +1189,55 @@ fn prepare_next_repetition_task(
     }))
 }
 
+pub(crate) fn recurring_occurrence_source(
+    task: &TaskHandle,
+) -> Result<Option<TaskHandle>, ApplicationError> {
+    let Some(parent) = task.parent().map_err(ApplicationError::TaskTree)? else {
+        return Ok(None);
+    };
+    let is_occurrence = parent
+        .is_repeating_task()
+        .map_err(ApplicationError::TaskTree)?
+        && !task
+            .is_repeating_task()
+            .map_err(ApplicationError::TaskTree)?;
+    Ok(is_occurrence.then_some(parent))
+}
+
+/// Compare a recurring occurrence's projected completion sample with its history.
+pub(crate) fn estimate_success_percentage(
+    task: &TaskHandle,
+) -> Result<Option<u8>, ApplicationError> {
+    let Some(parent) = recurring_occurrence_source(task)? else {
+        return Ok(None);
+    };
+    let (count, mean, m2) = parent
+        .duration_statistics()
+        .map_err(ApplicationError::TaskTree)?
+        .values();
+    if count < 2 {
+        return Ok(None);
+    }
+    let estimate = task
+        .get_estimated_work_seconds()
+        .map_err(ApplicationError::TaskTree)?;
+    if task
+        .get_actual_work_seconds()
+        .map_err(ApplicationError::TaskTree)?
+        > estimate
+    {
+        return Ok(Some(0));
+    }
+    let threshold = accounted_subtree_work_seconds(task, Some(estimate))? as f64;
+    if m2 == 0.0 {
+        return Ok(Some(if mean <= threshold { 100 } else { 0 }));
+    }
+    let scale = (m2 / (count - 1) as f64).sqrt() * std::f64::consts::SQRT_2;
+    Ok(Some(
+        (50.0 * libm::erfc((mean - threshold) / scale)).round() as u8,
+    ))
+}
+
 fn accounted_subtree_work_seconds(
     task: &TaskHandle,
     actual_work_seconds_override: Option<i64>,

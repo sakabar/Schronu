@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use super::load_view_format::probability_color;
 use crate::client::time_model::{format_hh_mm_ss, format_mm_ss};
 pub(crate) use crate::client::view_projection::SessionCardViewModel;
 
@@ -343,6 +344,12 @@ fn SessionCard(
                         class: "session-start-actual",
                         aria_label: actual_at_start_label,
                         "開始時実績 {actual_at_start}"
+                    }
+                }
+                if let Some(overrun_percent) = session.estimate_success_percentage.map(|percent| 100_u8.saturating_sub(percent)) {
+                    div { class: "session-estimate-probability",
+                        span { "見積もりを超過してしまう確率" }
+                        strong { color: probability_color(Some(overrun_percent)), "{overrun_percent}%" }
                     }
                 }
                 if obsidian_supported {
