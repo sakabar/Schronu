@@ -582,14 +582,15 @@ fn 完了modeの予実比はi64範囲を超えても上限なしで表示する(
 
 #[test]
 fn 完了modeの検索はtask名だけを対象にする() {
-    fn filtered_root() -> Element {
+    #[component]
+    fn FilteredRoot(filter_text: String) -> Element {
         rsx! {
             CompletedListView {
                 dates: Vec::new(),
                 report: Some(CompletedTaskReport {
                     rows: vec![CompletedTaskRow {
                         task_id: "00000000-0000-4000-8000-000000000001".to_owned(),
-                        task_name: "対象外".to_owned(),
+                        task_name: "資料レビュー2 メガネ".to_owned(),
                         project_name: "SCHRONU".to_owned(),
                         completed_at_epoch_ms: 1_789_551_723_000,
                         actual_work_seconds: 1,
@@ -604,7 +605,7 @@ fn 完了modeの検索はtask名だけを対象にする() {
                 selected_logical_date: Some("2026-09-16".to_owned()),
                 date_input_text: String::new(),
                 date_input_error: None,
-                filter_text: " schronu ".to_owned(),
+                filter_text,
                 on_select_date: move |_| {},
                 on_date_input_change: move |_| {},
                 on_submit_date_input: move |_| {},
@@ -613,13 +614,31 @@ fn 完了modeの検索はtask名だけを対象にする() {
         }
     }
 
-    let mut dom = VirtualDom::new(filtered_root);
+    let mut dom = VirtualDom::new_with_props(
+        FilteredRoot,
+        FilteredRootProps {
+            filter_text: " schronu ".to_owned(),
+        },
+    );
     dom.rebuild_in_place();
     let html = dioxus::ssr::render(&dom);
     assert!(html.contains("一致するタスクがありません。"), "{html}");
     assert!(html.contains("9月16日の完了"), "{html}");
     assert!(html.contains("0件"), "{html}");
     assert!(!html.contains(">SCHRONU<"), "{html}");
+
+    for query in ["れびゅー", "レビュー", "ﾚﾋﾞｭｰ", "れひゅー", "めか"] {
+        let mut dom = VirtualDom::new_with_props(
+            FilteredRoot,
+            FilteredRootProps {
+                filter_text: query.to_owned(),
+            },
+        );
+        dom.rebuild_in_place();
+        let html = dioxus::ssr::render(&dom);
+        assert!(html.contains("1件"), "{query}: {html}");
+        assert!(html.contains("資料レビュー2 メガネ"), "{query}: {html}");
+    }
 }
 
 #[test]

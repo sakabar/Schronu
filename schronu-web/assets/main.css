@@ -718,8 +718,21 @@ button:disabled {
 }
 
 .session-progress-label {
+    display: grid;
     flex: 0 0 auto;
     font-variant-numeric: tabular-nums;
+    text-align: end;
+    white-space: nowrap;
+}
+
+.session-progress-label::before,
+.session-progress-label > span {
+    grid-area: 1 / 1;
+}
+
+.session-progress-label::before {
+    content: "100%";
+    visibility: hidden;
 }
 
 .session-progress-scroll {

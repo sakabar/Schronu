@@ -940,6 +940,7 @@ fn update_task_handlerはtyped_valueを公開field順に適用する() {
         &mut repository,
         json!("typed-update-values"),
         UpdateTaskInput {
+            name: OptionalValue::Missing,
             duration_statistics: OptionalValue::Missing,
             repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
@@ -988,6 +989,7 @@ fn update_task_handlerはtyped_missingのnullable_patchを変更しない() {
         &mut repository,
         json!("typed-update-missing-patches"),
         UpdateTaskInput {
+            name: OptionalValue::Missing,
             duration_statistics: OptionalValue::Missing,
             repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
@@ -1030,6 +1032,7 @@ fn update_task_handlerはtyped_missingを変更せずnullを解除に変換す�
         &mut repository,
         json!("typed-update-clear"),
         UpdateTaskInput {
+            name: OptionalValue::Missing,
             duration_statistics: OptionalValue::Missing,
             repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
@@ -1067,6 +1070,7 @@ fn update_task_handlerは先頭field失敗時に後続fieldを適用しない() 
         &mut repository,
         json!("typed-update-first-field-error"),
         UpdateTaskInput {
+            name: OptionalValue::Missing,
             duration_statistics: OptionalValue::Missing,
             repetition_duration_updates_enabled: OptionalValue::Missing,
             task_id: UuidValue(task_id),
