@@ -13,7 +13,7 @@ const chrome = process.env.SCHRONU_TEST_CHROME;
 const serverBinary = process.env.SCHRONU_TEST_WEB_SERVER;
 const cliBinary = process.env.SCHRONU_TEST_CLI;
 const taskId = "c9a7aa9a-62d2-40f0-a97d-13c91e9f0321";
-const taskName = "保存契約用タスク";
+const taskName = "保存契約用タスク " + "LongOfflineTaskName".repeat(5);
 const minute = 60_000;
 const hour = 60 * minute;
 
@@ -134,6 +134,9 @@ async function withBrowser(profile, url, timezoneId, visit) {
         }
         const page = {
             evaluate,
+            setViewport: width => command("Emulation.setDeviceMetricsOverride", {
+                width, height: 760, deviceScaleFactor: 1, mobile: width < 768,
+            }),
             show: label => until(label, async () => (await evaluate("document.body?.innerText || ''")).includes(label)),
             clock: epoch => evaluate(`Date.now = () => ${epoch}; true`),
             click(label) {
@@ -169,9 +172,7 @@ async function withBrowser(profile, url, timezoneId, visit) {
         };
         await command("Page.enable");
         await command("Emulation.setTimezoneOverride", { timezoneId });
-        await command("Emulation.setDeviceMetricsOverride", {
-            width: 412, height: 760, deviceScaleFactor: 1, mobile: true,
-        });
+        await page.setViewport(412);
         await command("Page.navigate", { url });
         await visit(page);
     } finally {
@@ -191,6 +192,39 @@ async function withBrowser(profile, url, timezoneId, visit) {
 
 function jst(epoch) {
     return new Date(epoch + 9 * hour).toISOString().slice(0, 19).replaceAll("-", "/").replace("T", " ");
+}
+
+async function assertScheduleLayout(page, width) {
+    await page.setViewport(width);
+    const layout = await page.evaluate(`(() => {
+        const table = document.querySelector(".offline-schedule");
+        const row = table.querySelector(".session-start").closest("tr");
+        const columns = cells => Array.from(cells, cell => {
+            const rect = cell.getBoundingClientRect();
+            return [rect.left, rect.width];
+        });
+        const details = row.cells[2];
+        const name = details.querySelector("span").getBoundingClientRect();
+        const effort = details.querySelector("small").getBoundingClientRect();
+        return {
+            viewportWidth: document.documentElement.clientWidth,
+            pageWidth: document.documentElement.scrollWidth,
+            headingColumns: columns(table.tHead.rows[0].cells),
+            taskColumns: columns(row.cells),
+            rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+            nameWraps: name.height > parseFloat(getComputedStyle(details).fontSize) * 1.5,
+            effortBelowName: effort.top >= name.bottom - 1,
+            nameFits: details.scrollWidth <= details.clientWidth,
+        };
+    })()`);
+    assert.equal(layout.viewportWidth, width);
+    assert.equal(layout.pageWidth, width, `Page must fit at ${width}px`);
+    assert.deepEqual(layout.taskColumns, layout.headingColumns, `Schedule columns must align at ${width}px`);
+    assert.equal(layout.taskColumns[0][1], 44);
+    assert.equal(layout.taskColumns[1][1], 7 * layout.rem);
+    assert(layout.nameFits, `Task name must fit its cell at ${width}px`);
+    if (width === 320) assert(layout.nameWraps, "Long task name must wrap at 320px");
+    assert(layout.effortBelowName, `Effort must appear under the name at ${width}px`);
 }
 
 test("offline schedule, cold timer restoration and replay of a committed split", {
@@ -214,16 +248,18 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.click("設定");
             await page.click("オフラインで使う");
             await page.show("準備完了");
-            const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill'), b => b.ariaLabel)");
-            assert.equal(dates.length, 7);
             await page.click("負荷");
             await page.show("から14日の負荷");
             assert.equal(await page.evaluate("document.querySelectorAll('.load-day').length"), 14);
             assert.equal(await page.evaluate("document.querySelectorAll('.load-day:disabled').length"), 7);
             await page.click("繰返負荷");
             await page.show("から28日の負荷");
-            await page.click("予定");
-            await server.stop();
+        });
+        await server.stop();
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await page.show("準備完了");
+            const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill'), b => b.ariaLabel)");
+            assert.equal(dates.length, 7);
             for (const date of dates) {
                 await page.click(date);
                 if (await page.evaluate("Boolean(document.querySelector('.session-start'))")) {
@@ -232,6 +268,8 @@ test("offline schedule, cold timer restoration and replay of a committed split",
                 }
             }
             assert(selectedDate, "Fixture task must appear in the saved week");
+            for (const width of [320, 412, 1024]) await assertScheduleLayout(page, width);
+            await page.setViewport(320);
             await page.clock(start);
             await page.click(taskName + "の計測を開始");
             await page.show("記録して分割");
