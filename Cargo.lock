@@ -3155,6 +3155,7 @@ version = "0.1.0"
 name = "schronu-web"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "chrono",
  "dioxus",
  "dioxus-html",
@@ -3166,9 +3167,11 @@ dependencies = [
  "schronu-shared",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "uuid",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
  "web-sys",
 ]
 

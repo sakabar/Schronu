@@ -1,10 +1,30 @@
 #[cfg(feature = "server")]
+mod offline_assets;
+
+#[cfg(feature = "server")]
 #[tokio::main]
 async fn main() {
-    use dioxus::fullstack::axum::Extension;
+    use dioxus::fullstack::axum::{http::header, routing::get, Extension};
     let web_worker = schronu_web::app::web_worker_from_environment();
     let address = loopback_server_address(dioxus::cli_config::server_port().unwrap_or(8080));
-    let router = dioxus::server::router(schronu_web::app::app).layer(Extension(web_worker));
+    let javascript = [
+        (header::CONTENT_TYPE, "text/javascript; charset=utf-8"),
+        (header::CACHE_CONTROL, "no-cache"),
+    ];
+    let router = dioxus::server::router(schronu_web::app::app)
+        .route("/schronu-offline-assets", get(offline_assets::manifest))
+        .route(
+            "/schronu-offline-sw.js",
+            get({
+                let headers = javascript.clone();
+                move || async move { (headers, include_str!("../assets/offline-worker.js")) }
+            }),
+        )
+        .route(
+            "/schronu-offline-db.js",
+            get(move || async move { (javascript, include_str!("../assets/offline-db.js")) }),
+        )
+        .layer(Extension(web_worker));
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .expect("loopback web server must bind");
