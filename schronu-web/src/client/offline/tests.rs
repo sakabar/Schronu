@@ -123,6 +123,57 @@ fn split_restart_and_complete_share_all_segments_and_preserve_capture_times_acro
 }
 
 #[test]
+fn discard_completion_preserves_prior_work_and_removes_only_the_discarded_buffer_credit() {
+    let mut state = sample();
+    let start = state.bundle.snapshot.observed_at_epoch_ms;
+    // Ten seconds were already saved. Record the rest of the first 30 minutes offline.
+    let recorded = start + 1_790_000;
+    state.start(TASK, start).unwrap();
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::Record,
+            recorded,
+            "record".into(),
+        )
+        .unwrap();
+    let confirmed = recorded + 1_200_000;
+    let expected_buffer = state.display_buffer_seconds(confirmed);
+    state.start(TASK, recorded).unwrap();
+    assert_eq!(
+        state.display_buffer_seconds(confirmed),
+        expected_buffer + 1200
+    );
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::CompleteWithoutRecording,
+            confirmed,
+            "discard".into(),
+        )
+        .unwrap();
+    let restored: OfflineState =
+        serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
+    assert!(restored.sessions.is_empty());
+    assert!(restored.completed(TASK));
+    assert_eq!(restored.display_buffer_seconds(confirmed), expected_buffer);
+    assert!(restored
+        .bundle
+        .days
+        .values()
+        .flatten()
+        .all(|row| { row.task.actual_work_seconds == 1800 && !restored.can_start(row) }));
+    assert_eq!(restored.pending.len(), 2);
+    let op = &restored.pending[1];
+    assert_eq!(
+        serde_json::to_value(op.kind).unwrap(),
+        "complete_without_recording"
+    );
+    assert_eq!(op.expected_actual_work_seconds, 1800);
+    assert_eq!(op.ended_at_epoch_ms, confirmed);
+}
+
+#[test]
 fn can_only_start_actual_leaf_and_invalid_end_retains_session() {
     let mut state = sample();
     let start = state.bundle.snapshot.observed_at_epoch_ms;

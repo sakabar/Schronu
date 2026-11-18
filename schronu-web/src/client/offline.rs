@@ -87,15 +87,17 @@ impl OfflineState {
             .position(|session| session.task_id == id)
             .ok_or("対象のセッションが見つかりません。")?;
         let session = &self.sessions[index];
-        let seconds = now
-            .checked_sub(session.started_at_epoch_ms)
-            .filter(|elapsed| *elapsed >= 0)
-            .ok_or("開始時刻より後に操作してください。")?
-            / 1000;
+        let elapsed_seconds = || {
+            now.checked_sub(session.started_at_epoch_ms)
+                .filter(|elapsed| *elapsed >= 0)
+                .map(|elapsed| elapsed / 1000)
+                .ok_or("開始時刻より後に操作してください。")
+        };
         let actual = session.actual_work_seconds_at_start;
         let estimate = session.estimated_work_seconds_at_start;
         let (new_actual, new_estimate) = match kind {
             OfflineOperationKind::Split => {
+                let seconds = elapsed_seconds()?;
                 if !self.bundle.splittable_task_ids.contains(id) || seconds == 0 {
                     return Err("このセッションは分割できません。");
                 }
@@ -103,18 +105,21 @@ impl OfflineState {
             }
             OfflineOperationKind::Record | OfflineOperationKind::Complete => (
                 actual
-                    .checked_add(seconds)
+                    .checked_add(elapsed_seconds()?)
                     .ok_or("実績の上限を超えました。")?,
                 estimate,
             ),
+            OfflineOperationKind::CompleteWithoutRecording => (actual, estimate),
         };
-        let (credit_start, credit_end) = protected_interval(session, now);
-        let credit = buffer_timing_with_sessions(now, 0, now, &[(credit_start, credit_end)])
-            .display_buffer_seconds;
-        self.finished_credits.insert(
-            operation_id.clone(),
-            i64::try_from(credit).map_err(|_| "実績の上限を超えました。")?,
-        );
+        if kind != OfflineOperationKind::CompleteWithoutRecording {
+            let (credit_start, credit_end) = protected_interval(session, now);
+            let credit = buffer_timing_with_sessions(now, 0, now, &[(credit_start, credit_end)])
+                .display_buffer_seconds;
+            self.finished_credits.insert(
+                operation_id.clone(),
+                i64::try_from(credit).map_err(|_| "実績の上限を超えました。")?,
+            );
+        }
         self.recorded_task_names
             .insert(id.to_owned(), session.task_name.clone());
         self.pending.push(OfflineOperation {
@@ -128,7 +133,10 @@ impl OfflineState {
                 .then_some(estimate),
         });
         self.sessions.remove(index);
-        if kind == OfflineOperationKind::Complete {
+        if matches!(
+            kind,
+            OfflineOperationKind::Complete | OfflineOperationKind::CompleteWithoutRecording
+        ) {
             self.completed.insert(id.to_owned());
         }
         for row in

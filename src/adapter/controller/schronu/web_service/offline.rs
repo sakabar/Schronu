@@ -35,6 +35,7 @@ pub enum OfflineOperationKind {
     Record,
     Split,
     Complete,
+    CompleteWithoutRecording,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -76,13 +77,16 @@ impl OfflineOperationDto {
                 prepare_work_slice_input(record, now)
                     .map(|input| SessionWrite::Split(input, estimate))
             }
-            (OfflineOperationKind::Complete, None) => prepare_complete_task_input(
+            (
+                OfflineOperationKind::Complete | OfflineOperationKind::CompleteWithoutRecording,
+                None,
+            ) => prepare_complete_task_input(
                 CompleteSessionRequest {
                     task_id: record.task_id,
                     started_at_epoch_ms: record.started_at_epoch_ms,
                     ended_at_epoch_ms: record.ended_at_epoch_ms,
                     expected_actual_work_seconds: record.expected_actual_work_seconds,
-                    record_elapsed_seconds: true,
+                    record_elapsed_seconds: self.kind == OfflineOperationKind::Complete,
                 },
                 now,
             )
@@ -160,7 +164,10 @@ impl WebService {
                     apply_work_slice(repository, input, now)
                 }
                 SessionWrite::Complete(input) => {
-                    apply_completion(repository, input, false, now).map(|_| ())
+                    let exclude_from_duration_statistics =
+                        request.kind == OfflineOperationKind::CompleteWithoutRecording;
+                    apply_completion(repository, input, exclude_from_duration_statistics, now)
+                        .map(|_| ())
                 }
             }
             .map_err(WebReadCoreError::Application)?;

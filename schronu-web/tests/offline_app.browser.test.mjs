@@ -27,7 +27,7 @@ async function until(description, attempt, timeout = 30_000) {
     throw Error("Timed out waiting for " + description);
 }
 
-async function isolatedServer(work) {
+async function isolatedServer(work, actualSeconds = 0) {
     const storage = join(work, "tasks");
     const project = join(storage, "fixture");
     const yaml = join(project, "project.yaml");
@@ -37,6 +37,7 @@ async function isolatedServer(work) {
   name: ${taskName}
   id: ${taskId}
   estimated_work_seconds: 3600
+  actual_work_seconds: ${actualSeconds}
   create_time: "2025/01/01 07:00:00"
   start_time: "2025/01/01 07:00:00"
 `);
@@ -240,6 +241,13 @@ async function selectSavedTaskDate(page) {
     assert.fail("Fixture task must appear in the saved week");
 }
 
+async function showCompletedTask(page, date) {
+    await page.click(date);
+    await until("saved task marked complete", () => page.evaluate(
+        "Array.from(document.querySelectorAll('.session-cell > span')).some(label => label.textContent === '完了')"
+    ));
+}
+
 async function sessionLayout(page, width) {
     await page.setViewport(width);
     const layout = await page.evaluate(`(() => {
@@ -331,7 +339,7 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.click(taskName + ": セッションに追加");
             await page.show("記録して分割");
             for (const [width, layout] of sessionLayouts) assert.deepEqual(await sessionLayout(page, width), layout);
-            assert.equal(await page.evaluate("document.querySelector('.session-action-complete-without-recording').disabled"), true);
+            assert.equal(await page.evaluate("document.querySelector('.session-action-complete-without-recording').disabled"), false);
             await page.clock(split);
             await page.click("記録して分割");
             await savedSchedule(page);
@@ -390,6 +398,74 @@ test("offline schedule, cold timer restoration and replay of a committed split",
         const dates = new Set([split, finished].map(epoch => jst(epoch - 6 * hour).slice(0, 10)));
         const reports = [...dates].map(date => server.cli("済", date)).join("\n");
         assert(reports.includes(taskId) && reports.includes("00:25:00") && reports.includes("05:00:00"));
+    } finally {
+        try { await server?.stop(); } finally { await rm(work, { recursive: true, force: true, maxRetries: 3 }); }
+    }
+});
+
+test("discarded measurement persists through offline restart and sync replay", {
+    skip: !(chrome && serverBinary && cliBinary), timeout: 120_000,
+}, async () => {
+    const work = await mkdtemp(join(tmpdir(), "schronu-discard-completion-"));
+    const profile = join(work, "profile");
+    let server;
+    try {
+        server = await isolatedServer(work, 1800);
+        const start = Math.floor((Date.now() - hour) / 1000) * 1000;
+        const confirmed = start + 20 * minute;
+        await server.start();
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await page.click("一覧");
+            await page.click("設定");
+            await page.click("オフラインで使う");
+            await savedSchedule(page);
+        });
+        await server.stop();
+        let selectedDate;
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await savedSchedule(page);
+            selectedDate = await selectSavedTaskDate(page);
+            await page.clock(start);
+            await page.click(taskName + ": セッションに追加");
+            await page.show("開始時実績 30:00");
+            await page.click("持ち歩きロック");
+            assert.equal(await page.evaluate("document.querySelector('.session-action-complete-without-recording').disabled"), true);
+            await page.click("通常モードへ戻す");
+            await page.click("確認して解除");
+            assert.equal(await page.evaluate("document.querySelector('.session-action-complete-without-recording').disabled"), false);
+            await page.clock(start + 10 * minute);
+            await page.click("計測を破棄して完了");
+            await page.click("キャンセル");
+            await page.show("未送信0件");
+            await page.clock(confirmed - minute);
+            await page.show("経過 00:19:00");
+            await page.click("計測を破棄して完了");
+            await page.clock(confirmed);
+            await page.click(taskName + ": 計測を破棄して完了を確定");
+            await savedSchedule(page);
+            await showCompletedTask(page, selectedDate);
+            await page.click("セッション");
+            await page.show("未送信1件");
+            assert.doesNotMatch(await server.yaml(), /status: done/);
+        }, { offlineAtStartup: true });
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await savedSchedule(page);
+            await showCompletedTask(page, selectedDate);
+            await page.click("セッション");
+            await page.show("未送信1件");
+            await page.waitForSyncDisabled(false);
+            await server.start();
+            await page.setOffline(false);
+            await page.dropSyncReply();
+            await page.show("サーバーに接続できません");
+            await page.show("未送信1件");
+            await page.click("同期");
+            await page.show("同期しました");
+        }, { offlineAtStartup: true });
+        const persisted = await server.yaml();
+        assert.match(persisted, /status: done/);
+        assert.match(persisted, /actual_work_seconds: 1800\b/);
+        assert(persisted.includes(jst(confirmed)));
     } finally {
         try { await server?.stop(); } finally { await rm(work, { recursive: true, force: true, maxRetries: 3 }); }
     }

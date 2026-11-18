@@ -505,7 +505,7 @@ fn SessionCard(
                     }
                     SessionDiscardCompletionButton {
                         task_name: task_name.clone(),
-                        disabled: mutation_disabled || offline.is_some(),
+                        disabled: mutation_disabled,
                         on_confirm: move |_| confirming_discard_completion.set(true),
                     }
                     SessionActionButton {

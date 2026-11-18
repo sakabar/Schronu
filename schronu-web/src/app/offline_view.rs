@@ -274,7 +274,8 @@ fn Sessions(
                     SessionActionKind::Record => Action::Finish(task_id, OfflineOperationKind::Record),
                     SessionActionKind::WorkSlice => Action::Finish(task_id, OfflineOperationKind::Split),
                     SessionActionKind::Complete => Action::Finish(task_id, OfflineOperationKind::Complete),
-                    SessionActionKind::CompleteWithoutRecording | SessionActionKind::ResumeCompletionConflict | SessionActionKind::ConfirmCompletionConflict => return,
+                    SessionActionKind::CompleteWithoutRecording => Action::Finish(task_id, OfflineOperationKind::CompleteWithoutRecording),
+                    SessionActionKind::ResumeCompletionConflict | SessionActionKind::ConfirmCompletionConflict => return,
                 };
                 on_action.call(action);
             },
@@ -304,7 +305,10 @@ fn ConflictList(
                             for op in state.pending.iter().filter(|op| op.task_id == id) {
                                 {
                                     let action = match op.kind {
-                                        OfflineOperationKind::Record => "記録して解除", OfflineOperationKind::Split => "記録して分割", OfflineOperationKind::Complete => "記録して完了",
+                                        OfflineOperationKind::Record => "記録して解除",
+                                        OfflineOperationKind::Split => "記録して分割",
+                                        OfflineOperationKind::Complete => "記録して完了",
+                                        OfflineOperationKind::CompleteWithoutRecording => "計測を破棄して完了",
                                     };
                                     let from = format_jst(op.started_at_epoch_ms, "%m/%d %H:%M:%S");
                                     let until = format_jst(op.ended_at_epoch_ms, "%m/%d %H:%M:%S");

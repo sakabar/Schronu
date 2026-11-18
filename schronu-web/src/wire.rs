@@ -102,6 +102,7 @@ pub enum OfflineOperationKind {
     Record,
     Split,
     Complete,
+    CompleteWithoutRecording,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

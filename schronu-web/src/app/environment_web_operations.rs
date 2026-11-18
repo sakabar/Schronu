@@ -117,6 +117,9 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
                 OfflineOperationKind::Record => CoreOfflineOperationKind::Record,
                 OfflineOperationKind::Split => CoreOfflineOperationKind::Split,
                 OfflineOperationKind::Complete => CoreOfflineOperationKind::Complete,
+                OfflineOperationKind::CompleteWithoutRecording => {
+                    CoreOfflineOperationKind::CompleteWithoutRecording
+                }
             },
             started_at_epoch_ms: request.started_at_epoch_ms,
             ended_at_epoch_ms: request.ended_at_epoch_ms,

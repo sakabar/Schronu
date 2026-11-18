@@ -170,40 +170,46 @@ fn commit後の障害から復旧した直後の再送でも子は一つだけ�
 
 #[test]
 fn 完了の再送で次回の繰返タスクを重複生成しない() {
-    let fixture = WebReadServiceFixture::new();
-    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
-    let (routine, occurrence) = fixture.seed_repetition_task(now);
-    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
-    let complete = operation(
-        OfflineOperationKind::Complete,
-        occurrence,
-        now - Duration::seconds(30),
-        30,
-        300,
-    );
-    service
-        .sync_offline_operation_at(now, complete.clone())
-        .unwrap();
-    let mut restarted = WebService::new(fixture.storage.clone(), fixture.config());
-    restarted.sync_offline_operation_at(now, complete).unwrap();
-    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
-    repository.reload_if_changed(now).unwrap();
-    let children = repository
-        .get_by_id(routine)
-        .unwrap()
-        .unwrap()
-        .get_children()
-        .unwrap();
-    assert_eq!(children.len(), 2);
-    assert_eq!(
-        repository
-            .get_by_id(occurrence)
-            .unwrap()
-            .unwrap()
-            .get_actual_work_seconds()
-            .unwrap(),
-        330
-    );
+    let finished = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let synced = finished + Duration::hours(5);
+    for (kind, expected_actual, expected_samples) in [
+        (OfflineOperationKind::Complete, 330, 1),
+        (OfflineOperationKind::CompleteWithoutRecording, 300, 0),
+    ] {
+        let fixture = WebReadServiceFixture::new();
+        let (routine, occurrence) = fixture.seed_repetition_task(finished - Duration::minutes(1));
+        let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+        let mut complete = operation(kind, occurrence, finished - Duration::seconds(30), 30, 299);
+        let before = fixture.persisted_bytes();
+        assert!(matches!(
+            service.sync_offline_operation_at(synced, complete.clone()),
+            Err(WebReadError::Application(
+                crate::application::task_use_case::ApplicationError::ActualWorkConflict { .. }
+            ))
+        ));
+        assert_eq!(fixture.persisted_bytes(), before);
+
+        complete.expected_actual_work_seconds = 300;
+        service
+            .sync_offline_operation_at(synced, complete.clone())
+            .unwrap();
+        let mut restarted = WebService::new(fixture.storage.clone(), fixture.config());
+        restarted
+            .sync_offline_operation_at(synced, complete)
+            .unwrap();
+        let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+        repository.reload_if_changed(synced).unwrap();
+        let routine = repository.get_by_id(routine).unwrap().unwrap();
+        assert_eq!(routine.get_children().unwrap().len(), 2);
+        assert_eq!(
+            routine.duration_statistics().unwrap().values().0,
+            expected_samples
+        );
+        let done = repository.get_by_id(occurrence).unwrap().unwrap();
+        assert_eq!(done.get_status().unwrap(), Status::Done);
+        assert_eq!(done.get_actual_work_seconds().unwrap(), expected_actual);
+        assert_eq!(done.get_end_time_opt().unwrap(), Some(finished));
+    }
 }
 
 #[test]
