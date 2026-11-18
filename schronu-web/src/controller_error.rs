@@ -5,6 +5,10 @@ use schronu::application::task_use_case::ApplicationError;
 impl From<WebReadError> for WebError {
     fn from(error: WebReadError) -> Self {
         match error {
+            WebReadError::OfflineConflict => manual(
+                web_error_codes::OFFLINE_CONFLICT,
+                "保存時点と同期先の内容が異なります。対象の記録を確認してください。",
+            ),
             WebReadError::InvalidCursor => retry(
                 web_error_codes::INVALID_CURSOR,
                 "一覧の取得状態が失効しました。最初から再試行してください。",

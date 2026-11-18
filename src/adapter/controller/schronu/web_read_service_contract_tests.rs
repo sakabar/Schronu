@@ -2226,3 +2226,6 @@ fn recurring_session_handoff_predicts_the_same_total_that_completion_records() {
     assert_eq!(statistics.values().0, 3);
     assert_eq!(statistics.values().1, 2_300.0);
 }
+
+#[path = "web_offline_contract_tests.rs"]
+mod offline;

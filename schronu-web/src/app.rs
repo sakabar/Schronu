@@ -67,8 +67,8 @@ pub use component::app;
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
     auto_session, bootstrap, complete_session, complete_work_slice, create_task, defer_task,
-    list_all_tasks, list_completed_tasks, list_tasks, load_band, record_session,
-    resolve_obsidian_search_uri, resolve_task_link, WebOperationResult,
+    list_all_tasks, list_completed_tasks, list_tasks, load_band, prepare_offline, record_session,
+    resolve_obsidian_search_uri, resolve_task_link, sync_offline_operation, WebOperationResult,
 };
 
 #[cfg(test)]
