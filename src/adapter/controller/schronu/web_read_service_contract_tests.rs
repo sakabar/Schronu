@@ -1818,31 +1818,42 @@ fn complete_sessionは期待実績競合時にtaskと永続dataを変更しな�
 }
 
 #[test]
-fn complete_sessionは記録方針にかかわらず反復task生成と元task完了を同じ保存で反映する() {
+fn duration_statistics_exclusion_web_retry_preserves_record_or_discard_choice() {
     let operation_now = Local.with_ymd_and_hms(2026, 9, 5, 19, 1, 0).unwrap();
-    for (record_elapsed_seconds, expected_actual_work_seconds) in [(true, 360), (false, 300)] {
+    for (record_elapsed_seconds, expected_actual_work_seconds, expected_statistics) in
+        [(true, 301, (1, 301.0, 0.0)), (false, 300, (0, 0.0, 0.0))]
+    {
         let fixture = WebReadServiceFixture::new();
         let (parent_id, child_id) =
             fixture.seed_repetition_task(operation_now - Duration::hours(1));
         let mut service = WebService::new(fixture.storage.clone(), fixture.config());
 
-        let response = service
-            .complete_session_at(
-                operation_now,
-                CompleteSessionRequest {
-                    task_id: child_id.to_string(),
-                    started_at_epoch_ms: operation_now.timestamp_millis() - 60_000,
-                    ended_at_epoch_ms: None,
-                    expected_actual_work_seconds: 300,
-                    record_elapsed_seconds,
-                },
-            )
-            .unwrap();
+        let mut request = CompleteSessionRequest {
+            task_id: child_id.to_string(),
+            started_at_epoch_ms: operation_now.timestamp_millis() - 1_000,
+            ended_at_epoch_ms: Some(operation_now.timestamp_millis()),
+            expected_actual_work_seconds: 299,
+            record_elapsed_seconds,
+        };
+        let before = fixture.persisted_bytes();
+        assert!(matches!(
+            service.complete_session_at(operation_now, request.clone()),
+            Err(WebReadError::Application(
+                crate::application::task_use_case::ApplicationError::ActualWorkConflict { .. }
+            ))
+        ));
+        assert_eq!(fixture.persisted_bytes(), before);
+        request.expected_actual_work_seconds = 300;
+        let response = service.complete_session_at(operation_now, request).unwrap();
 
         assert_eq!(response.data, None);
         let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
         repository.reload_if_changed(operation_now).unwrap();
         let parent = repository.get_by_id(parent_id).unwrap().unwrap();
+        assert_eq!(
+            parent.duration_statistics().unwrap().values(),
+            expected_statistics
+        );
         let children = parent.get_children().unwrap();
         assert_eq!(children.len(), 2);
         let completed = repository.get_by_id(child_id).unwrap().unwrap();
@@ -1855,6 +1866,74 @@ fn complete_sessionは記録方針にかかわらず反復task生成と元task�
             .iter()
             .any(|child| child.get_id().unwrap() != child_id));
     }
+}
+
+#[test]
+fn duration_statistics_exclusion_survives_reload_and_only_skips_the_affected_occurrence() {
+    use crate::entity::task::DurationStatistics;
+
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 0).unwrap();
+    let fixture = WebReadServiceFixture::new();
+    let (source_id, body_id) = fixture.seed_repetition_task(now);
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(now).unwrap();
+    let source = repository.get_by_id(source_id).unwrap().unwrap();
+    let history = DurationStatistics::new(2, 500.0, 20_000.0).unwrap();
+    source.set_duration_statistics(history).unwrap();
+    let body = repository.get_by_id(body_id).unwrap().unwrap();
+    let step_id = Uuid::new_v4();
+    let leaf_id = Uuid::new_v4();
+    let step = body
+        .create_child(TaskAttr::with_identity("step", step_id, now))
+        .unwrap();
+    let leaf = step
+        .create_child(TaskAttr::with_identity("leaf", leaf_id, now))
+        .unwrap();
+    leaf.set_actual_work_seconds(120).unwrap();
+    repository.save().unwrap();
+
+    // Open a new service for each operation to exercise the saved YAML.
+    let complete = |id: Uuid, expected: i64, measured: Option<i64>| {
+        WebService::new(fixture.storage.clone(), fixture.config())
+            .complete_session_at(
+                now,
+                CompleteSessionRequest {
+                    task_id: id.to_string(),
+                    started_at_epoch_ms: now.timestamp_millis() - measured.unwrap_or(0) * 1_000,
+                    ended_at_epoch_ms: Some(now.timestamp_millis()),
+                    expected_actual_work_seconds: expected,
+                    record_elapsed_seconds: measured.is_some(),
+                },
+            )
+            .unwrap();
+    };
+    complete(leaf_id, 120, None);
+    complete(step_id, 0, Some(40));
+    complete(body_id, 300, Some(20));
+    repository.reload_if_changed(now).unwrap();
+    let source = repository.get_by_id(source_id).unwrap().unwrap();
+    assert_eq!(source.duration_statistics().unwrap(), history);
+    // The accounted total is 320 + 40 + 120. The estimate moves from 600 to 570.
+    assert_eq!(source.get_estimated_work_seconds().unwrap(), 570);
+    let next = source
+        .get_children()
+        .unwrap()
+        .into_iter()
+        .find(|child| child.get_orig_status().unwrap() != Status::Done)
+        .unwrap();
+    assert_eq!(next.get_estimated_work_seconds().unwrap(), 570);
+    complete(next.get_id().unwrap(), 0, Some(800));
+    repository.reload_if_changed(now).unwrap();
+    assert_eq!(
+        repository
+            .get_by_id(source_id)
+            .unwrap()
+            .unwrap()
+            .duration_statistics()
+            .unwrap()
+            .values(),
+        (3, 600.0, 80_000.0)
+    );
 }
 
 #[test]

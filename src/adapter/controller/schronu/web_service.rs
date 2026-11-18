@@ -44,7 +44,7 @@ use crate::application::repository_transaction::{
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
-    add_actual_work, complete_task, complete_work_slice, create_task,
+    add_actual_work, complete_task_with_sample_exclusion, complete_work_slice, create_task,
     estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, set_estimate,
     validate_task_name, ApplicationError, CreateTaskInput, TaskCreationDay, TaskFactory,
 };
@@ -408,14 +408,20 @@ impl WebService {
         operation_now: DateTime<Local>,
         request: CompleteSessionRequest,
     ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
+        let exclude_from_duration_statistics = !request.record_elapsed_seconds;
         let input = prepare_complete_task_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let mut next_id = uuid::Uuid::new_v4;
             let mut factory = TaskFactory::new(operation_now, &mut next_id);
             let task_id = input.task_id;
-            let completed = complete_task(repository, input, &mut factory)
-                .map_err(WebReadCoreError::Application)?;
+            let completed = complete_task_with_sample_exclusion(
+                repository,
+                input,
+                exclude_from_duration_statistics,
+                &mut factory,
+            )
+            .map_err(WebReadCoreError::Application)?;
             ensure_completed_estimate(repository, task_id)
                 .map_err(WebReadCoreError::Application)?;
             let data = completed
