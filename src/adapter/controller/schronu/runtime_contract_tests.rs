@@ -4498,6 +4498,42 @@ fn repetition_cliは間隔と論理日から実タスクを作る() {
 }
 
 #[test]
+fn duration_statistics_exclusion_cli_uses_exact_focus_duration_only_for_automatic_finish() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for (command, elapsed_ms, actual_seconds, expected_statistics) in [
+        ("終", 59_000, 300, (0, 0.0, 0.0)),
+        ("終", 60_000, 360, (0, 0.0, 0.0)),
+        ("終", 60_001, 360, (1, 360.0, 0.0)),
+        ("終 今", 10_000, 300, (1, 300.0, 0.0)),
+        ("終 11:59", 10_000, 300, (1, 300.0, 0.0)),
+    ] {
+        let parent = new_test_task_handle("繰り返し元").unwrap();
+        parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+        let occurrence = parent.create_as_last_child(new_test_task_attr("今回"));
+        occurrence.set_actual_work_seconds(300).unwrap();
+        let result = execute_command_with_focus_started_for_test(
+            parent,
+            now,
+            now - Duration::milliseconds(elapsed_ms),
+            Some(occurrence.get_id().unwrap()),
+            command,
+        );
+        assert_eq!(
+            occurrence.get_status().unwrap(),
+            Status::Done,
+            "{}",
+            result.output
+        );
+        assert_eq!(occurrence.get_actual_work_seconds().unwrap(), actual_seconds);
+        assert_eq!(
+            result.task.duration_statistics().unwrap().values(),
+            expected_statistics,
+            "{command} at {elapsed_ms} ms"
+        );
+    }
+}
+
+#[test]
 fn repetition_cliは省略した締切を翌暦日に置く() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("作成先").unwrap();
