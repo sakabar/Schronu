@@ -77,8 +77,7 @@ impl Host {
             match persistence::prepare(sessions).await {
                 Ok(saved) => {
                     self.screen.set(Screen::Offline(Rc::new(saved)));
-                    self.message
-                        .set(Some("オフラインの準備が完了しました。".into()));
+                    self.message.set(None);
                     self.busy.set(false);
                 }
                 Err(error) => self.recover(error).await,
@@ -118,11 +117,15 @@ impl Host {
         let mut saved = previous.clone();
         spawn(async move {
             match saved.sync().await {
-                Ok(count) => {
-                    let conflicts = saved.data.state.conflicts.len();
-                    self.message.set(Some(format!(
-                        "同期済み {count}件・要確認 {conflicts}タスク"
-                    )));
+                Ok(_) => {
+                    self.message.set(Some(
+                        if saved.data.state.conflicts.is_empty() {
+                            "同期しました。"
+                        } else {
+                            "同期しました。要確認の記録があります。"
+                        }
+                        .into(),
+                    ));
                     self.screen.set(if saved.data.returning {
                         Screen::Online
                     } else {
@@ -172,6 +175,15 @@ pub(super) fn OfflineHost() -> Element {
     };
     use_hook(move || ModeListener::attach(host).map(Rc::new));
     use_future(move || host.restore());
+    use_resource(move || {
+        let transient = !(host.busy)() && (host.message)().is_some();
+        async move {
+            if transient {
+                gloo_timers::future::TimeoutFuture::new(2500).await;
+                host.message.set(None);
+            }
+        }
+    });
     let screen = host.screen.read().clone();
     // The first browser render must hydrate the same tree AppBody emitted in SSR.
     if matches!(screen, Screen::Restoring) {
@@ -180,7 +192,7 @@ pub(super) fn OfflineHost() -> Element {
     let busy = (host.busy)();
     rsx! {
         if let Some(message) = (host.message)() {
-            p { class: "offline-notice", role: "status", "{message}" }
+            div { class: "offline-notice", role: "status", span { "{message}" } }
         }
         if let Some(error) = (host.error)() {
             p { class: "error", role: "alert", "{error}" }

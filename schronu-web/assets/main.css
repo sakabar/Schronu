@@ -2650,6 +2650,7 @@ button.task-id-copy:focus-visible {
     outline-offset: -1px;
 }
 
+.offline-notice,
 .task-copy-notice {
     position: fixed;
     inset-inline: 1rem;
@@ -2660,6 +2661,7 @@ button.task-id-copy:focus-visible {
     pointer-events: none;
 }
 
+.offline-notice span,
 .task-copy-notice span {
     max-width: 100%;
     border-radius: 0.5rem;

@@ -145,8 +145,6 @@ pub(super) fn OfflineView(
         .unwrap_or_default();
     let saved = format_jst(state.bundle.snapshot.observed_at_epoch_ms, "%m/%d %H:%M");
     let pending = state.pending.len();
-    let day_count = state.bundle.days.len();
-    let count_slots = state.bundle.days.values().map(Vec::len).sum::<usize>();
     let current_date = if state.bundle.days.contains_key(&selected_date()) {
         selected_date()
     } else {
@@ -181,7 +179,6 @@ pub(super) fn OfflineView(
                 }
                 Sessions { state: state.clone(), zone: zone.clone(), offset_at, blocked, on_action }
             } else if tab() == ActiveTab::List {
-                p { class: "offline-period", "準備完了・{first_date} 〜 {last_date} ({day_count}日分・予定{count_slots}行)" }
                 Schedule { state: state.clone(), date: current_date, filter, timezone, today: today(), blocked, on_action,
                     on_select: move |date| selected_date.set(date),
                 }

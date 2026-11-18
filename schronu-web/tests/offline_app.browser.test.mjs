@@ -81,7 +81,7 @@ async function isolatedServer(work) {
 }
 
 // Each call starts a completely new browser process against the same test-owned profile.
-async function withBrowser(profile, url, timezoneId, visit) {
+async function withBrowser(profile, url, timezoneId, visit, { offlineAtStartup = false } = {}) {
     const portFile = join(profile, "DevToolsActivePort");
     await rm(portFile, { force: true });
     const browser = spawn(chrome, [
@@ -134,6 +134,11 @@ async function withBrowser(profile, url, timezoneId, visit) {
         }
         const page = {
             evaluate,
+            setOffline: offline => command("Network.overrideNetworkState", {
+                offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+            }),
+            waitForSyncDisabled: disabled => until("sync disabled = " + disabled, () =>
+                evaluate(`document.querySelector('.offline-status button')?.disabled === ${disabled}`), 3000),
             setViewport: width => command("Emulation.setDeviceMetricsOverride", {
                 width, height: 760, deviceScaleFactor: 1, mobile: width < 768,
             }),
@@ -173,6 +178,7 @@ async function withBrowser(profile, url, timezoneId, visit) {
         await command("Page.enable");
         await command("Emulation.setTimezoneOverride", { timezoneId });
         await page.setViewport(412);
+        if (offlineAtStartup) await page.setOffline(true);
         await command("Page.navigate", { url });
         await visit(page);
     } finally {
@@ -221,7 +227,7 @@ async function scheduleLayout(page, width) {
 
 async function savedSchedule(page) {
     await until("saved date buttons", () => page.evaluate("Boolean(document.querySelector('.offline-shell .date-pill:not(:disabled)'))"));
-    await page.show("準備完了");
+    assert.doesNotMatch(await page.evaluate("document.body.innerText"), /準備完了|準備が完了しました/);
 }
 
 async function selectSavedTaskDate(page) {
@@ -316,14 +322,26 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.click("セッション");
             await page.show("未送信2件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
+            await page.click("持ち歩きロック");
+            await page.waitForSyncDisabled(true);
+            await page.click("通常モードへ戻す");
+            await page.click("確認して解除");
+            await page.waitForSyncDisabled(false);
+            await page.click("同期");
+            await page.show("サーバーに接続できません");
+            await page.show("未送信2件");
             await server.start();
+            await page.setOffline(false);
             await page.dropSyncReply();
             await page.show("サーバーに接続できません");
             await page.show("未送信2件");
             assert.match(await server.yaml(), /actual_work_seconds: 1500\b/);
             await page.click("同期");
-            await page.show("同期済み 2件・要確認 0タスク");
-        });
+            await page.show("同期しました");
+            assert.equal(await page.evaluate("getComputedStyle(document.querySelector('.offline-notice')).position"), "fixed");
+            await page.click("一覧");
+            await until("sync notice dismissed", () => page.evaluate("!document.body.innerText.includes('同期しました')"), 6000);
+        }, { offlineAtStartup: true });
         const persisted = await server.yaml();
         assert.equal((persisted.match(/status: done/g) || []).length, 2);
         assert.match(persisted, /actual_work_seconds: 1500\b/);
