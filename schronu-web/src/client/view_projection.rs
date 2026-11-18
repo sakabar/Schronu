@@ -3,6 +3,7 @@ use super::local_time::JAPAN_UTC_OFFSET_MINUTES;
 use super::local_time::{local_datetime, logical_date_with_offset};
 use super::state::ClientState;
 use super::time_model::{session_plan_dates, session_timing, SessionTiming};
+use super::work_sessions::WorkSession;
 use crate::{
     AllTaskRow, DeadlineDisplayKind, DeferMode, DeferPlan, ScheduleOccurrence, ScheduledTask,
     TaskDisplayKind,
@@ -406,39 +407,8 @@ fn project_session_cards_with(
                 display_now,
             );
             SessionCardViewModel {
-                future_pending_date_label: logical_date_with_offset(
-                    state.tick_now_epoch_ms(),
-                    &logical_offset_at,
-                )
-                .and_then(|today| {
-                    let [start, pending] = session_plan_dates(
-                        session.start_time_epoch_ms,
-                        session.pending_until_epoch_ms,
-                        &logical_offset_at,
-                    );
-                    if let Some(start) = start.filter(|start| *start > today) {
-                        return Some(format!("{} 開始可能", start.format("%Y/%m/%d")));
-                    }
-                    pending
-                        .filter(|pending| *pending > today)
-                        .map(|pending| format!("{} 着手予定", pending.format("%Y/%m/%d")))
-                }),
-                task_id: session.task_id.clone(),
-                task_name: session.task_name.clone(),
-                started_at_hh_mm: format_with_offset_provider(
-                    session.started_at_epoch_ms,
-                    &offset_at,
-                ),
-                completion_hh_mm: completion_label(server_committed, timing, &offset_at),
-                actual_work_seconds_at_start: session.actual_work_seconds_at_start,
-                estimate_success_percentage: session.estimate_success_percentage,
-                progress_percent: timing.progress_percent,
-                normal_bar_percent: timing.normal_bar_percent,
-                overrun_bar_percent: timing.overrun_bar_percent,
-                remaining_seconds: timing.remaining_seconds,
                 in_flight: state.is_session_in_flight(&session.task_id),
                 manual_check_blocked: state.is_session_manual_check_blocked(&session.task_id),
-                server_committed,
                 completion_conflict: state.completion_conflict(&session.task_id).map(|conflict| {
                     let measured_milliseconds = (i128::from(conflict.ended_at_epoch_ms)
                         - i128::from(conflict.original_request.started_at_epoch_ms))
@@ -452,9 +422,58 @@ fn project_session_cards_with(
                         record_elapsed_seconds: conflict.original_request.record_elapsed_seconds,
                     }
                 }),
+                ..project_session_card(
+                    session,
+                    timing,
+                    state.tick_now_epoch_ms(),
+                    server_committed,
+                    &offset_at,
+                    &logical_offset_at,
+                )
             }
         })
         .collect()
+}
+
+pub(crate) fn project_session_card(
+    session: &WorkSession,
+    timing: SessionTiming,
+    now: i64,
+    server_committed: bool,
+    offset_at: &impl Fn(i64) -> Option<i32>,
+    logical_offset_at: &impl Fn(i64) -> Option<i32>,
+) -> SessionCardViewModel {
+    let future_pending_date_label =
+        logical_date_with_offset(now, logical_offset_at).and_then(|today| {
+            let [start, pending] = session_plan_dates(
+                session.start_time_epoch_ms,
+                session.pending_until_epoch_ms,
+                logical_offset_at,
+            );
+            if let Some(start) = start.filter(|start| *start > today) {
+                return Some(format!("{} 開始可能", start.format("%Y/%m/%d")));
+            }
+            pending
+                .filter(|pending| *pending > today)
+                .map(|pending| format!("{} 着手予定", pending.format("%Y/%m/%d")))
+        });
+    SessionCardViewModel {
+        future_pending_date_label,
+        task_id: session.task_id.clone(),
+        task_name: session.task_name.clone(),
+        started_at_hh_mm: format_with_offset_provider(session.started_at_epoch_ms, offset_at),
+        completion_hh_mm: completion_label(server_committed, timing, offset_at),
+        actual_work_seconds_at_start: session.actual_work_seconds_at_start,
+        estimate_success_percentage: session.estimate_success_percentage,
+        progress_percent: timing.progress_percent,
+        normal_bar_percent: timing.normal_bar_percent,
+        overrun_bar_percent: timing.overrun_bar_percent,
+        remaining_seconds: timing.remaining_seconds,
+        in_flight: false,
+        manual_check_blocked: false,
+        server_committed,
+        completion_conflict: None,
+    }
 }
 
 fn completion_label(

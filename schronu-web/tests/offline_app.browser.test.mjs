@@ -240,6 +240,35 @@ async function selectSavedTaskDate(page) {
     assert.fail("Fixture task must appear in the saved week");
 }
 
+async function sessionLayout(page, width) {
+    await page.setViewport(width);
+    const layout = await page.evaluate(`(() => {
+        const card = document.querySelector(".session-card");
+        const rect = selector => card.querySelector(selector)?.getBoundingClientRect();
+        const heading = rect(".session-card-heading");
+        const timing = rect(".session-timing");
+        const progress = rect("[role=progressbar]");
+        const actions = rect(".session-actions");
+        if (!heading || !timing || !progress || !actions) return null;
+        const buttons = [...card.querySelectorAll(".session-actions button")];
+        return {
+            width: document.documentElement.scrollWidth,
+            columns: [heading, timing, progress, actions].map(box => [box.left, box.width]),
+            stacked: heading.bottom <= timing.top && timing.bottom <= progress.top && progress.bottom <= actions.top,
+            sideBySide: heading.right <= progress.left && timing.right <= progress.left && progress.right <= actions.left,
+            buttons: buttons.map(button => {
+                const box = button.getBoundingClientRect();
+                return [button.textContent.trim(), box.left - actions.left, box.top - actions.top, box.width];
+            }),
+        };
+    })()`);
+    assert(layout, "Session card has a heading, timer, progress bar and actions");
+    assert.equal(layout.width, width);
+    assert(width <= 832 ? layout.stacked : layout.sideBySide);
+    assert.equal(layout.buttons.length, 6);
+    return layout;
+}
+
 test("offline schedule, cold timer restoration and replay of a committed split", {
     skip: !(chrome && serverBinary && cliBinary), timeout: 120_000,
 }, async () => {
@@ -257,6 +286,7 @@ test("offline schedule, cold timer restoration and replay of a committed split",
         const finished = resumed + 5 * hour;
         let selectedDate;
         const onlineLayouts = new Map();
+        const sessionLayouts = new Map();
         await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
             await page.click("一覧");
             await until("online dates ready", () => page.evaluate("Boolean(document.querySelector('.date-pill:nth-child(2):not(:disabled)'))"));
@@ -267,6 +297,10 @@ test("offline schedule, cold timer restoration and replay of a committed split",
                 if (await page.evaluate("Boolean(document.querySelector('.task-list-view .session-start'))")) break;
             }
             for (const width of [320, 412, 1024]) onlineLayouts.set(width, await scheduleLayout(page, width));
+            await page.click(taskName + ": セッションに追加");
+            await page.show("記録して完了");
+            for (const width of [320, 412, 834, 1024]) sessionLayouts.set(width, await sessionLayout(page, width));
+            await page.click("計測を破棄して解除");
             await page.setViewport(412);
             await page.click("設定");
             await page.click("オフラインで使う");
@@ -296,11 +330,14 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.clock(start);
             await page.click(taskName + ": セッションに追加");
             await page.show("記録して分割");
+            for (const [width, layout] of sessionLayouts) assert.deepEqual(await sessionLayout(page, width), layout);
+            assert.equal(await page.evaluate("document.querySelector('.session-action-complete-without-recording').disabled"), true);
             await page.clock(split);
             await page.click("記録して分割");
             await savedSchedule(page);
             await page.click("セッション");
             await page.show("未送信1件");
+            assert(await page.evaluate("document.querySelector('.session-empty input')?.disabled && document.querySelector('.session-empty button')?.disabled"));
         });
         await withBrowser(profile, server.url, "America/Los_Angeles", async page => {
             await page.click("セッション");
@@ -311,12 +348,14 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.clock(resumed);
             await page.click(taskName + ": セッションに追加");
             await page.show("記録して完了");
-            await page.show("00:35:00");
+            await until("restored remaining time", () => page.evaluate("document.querySelector('.session-remaining')?.textContent === '35:00'"));
         });
         await withBrowser(profile, server.url, "Asia/Taipei", async page => {
             await page.show("記録して完了");
             await page.clock(finished);
             await page.show("経過 05:00:00");
+            await sessionLayout(page, 320);
+            assert(await page.evaluate("document.querySelector('.session-remaining.is-overrun') !== null"));
             await page.click("記録して完了");
             await savedSchedule(page);
             await page.click("セッション");

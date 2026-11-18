@@ -6,14 +6,18 @@ use super::component_models::{browser_monotonic_now_ms, browser_now_epoch_ms};
 use super::load_view::LoadView;
 use super::long_press_browser::BrowserLongPressScheduler;
 use super::long_press_controller::LongPressSchedulerHandle;
+use super::session_view::{OfflineSessionDetails, SessionAction, SessionActionKind, SessionView};
 use super::task_name::display_task_name;
 use crate::client::carry_lock::{load_carry_lock, CarryLockMode};
+use crate::client::local_time::JAPAN_UTC_OFFSET_MINUTES;
 use crate::client::offline::{format_at_offset, format_jst, OfflineState};
 use crate::client::state::ActiveTab;
-use crate::client::time_model::{format_hh_mm_ss, session_timing};
-use crate::client::work_sessions::{BrowserLocalStorage, WorkSession};
+use crate::client::time_model::session_timing;
+use crate::client::view_projection::project_session_card;
+use crate::client::work_sessions::BrowserLocalStorage;
 use crate::OfflineOperationKind;
 use dioxus::prelude::*;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 mod schedule;
@@ -216,72 +220,64 @@ fn Sessions(
     });
     let epoch = now();
     let date = &state.bundle.snapshot.logical_date;
+    let mut details = HashMap::new();
+    let cards = state
+        .sessions
+        .iter()
+        .map(|session| {
+            let id = &session.task_id;
+            let timing = session_timing(
+                session.started_at_epoch_ms,
+                session.estimated_work_seconds_at_start,
+                session.actual_work_seconds_at_start,
+                epoch,
+            );
+            let start_date = format_at_offset(
+                session.started_at_epoch_ms,
+                offset_at.call(session.started_at_epoch_ms),
+                "%m/%d",
+            );
+            details.insert(
+                id.clone(),
+                OfflineSessionDetails {
+                    start_date_and_zone: format!("{start_date} {zone}"),
+                    elapsed_seconds: timing.elapsed_seconds,
+                    can_split: state.bundle.splittable_task_ids.contains(id)
+                        && timing.elapsed_seconds > 0,
+                },
+            );
+            let mut card = project_session_card(
+                session,
+                timing,
+                epoch,
+                false,
+                &|ms| offset_at.call(ms),
+                &|_| Some(JAPAN_UTC_OFFSET_MINUTES),
+            );
+            card.manual_check_blocked =
+                state.conflicts.contains_key(id) || state.awaiting_refresh(id);
+            card
+        })
+        .collect();
     rsx! {
         if TIME_DISPLAY_MODE != TimeDisplayMode::Hidden {
             p { class: "offline-period", if state.prior_day_estimate(epoch) { "前日以前の推定 ({date})" } else { "{date}の推定" } }
             BufferPanel { value: Some(state.display_buffer_seconds(epoch)) }
         }
-        if state.sessions.is_empty() {
-            p { class: "load-status", "予定から作業するタスクを選択してください。" }
-        }
-        section { class: "session-list",
-            for session in &state.sessions {
-                OfflineSessionCard { key: "{session.task_id}", session: session.clone(), now: epoch, zone: zone.clone(), offset_at,
-                    split: state.bundle.splittable_task_ids.contains(&session.task_id),
-                    waiting: state.conflicts.contains_key(&session.task_id) || state.awaiting_refresh(&session.task_id),
-                    blocked, on_action,
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn OfflineSessionCard(
-    session: WorkSession,
-    now: i64,
-    zone: String,
-    offset_at: Callback<i64, Option<i32>>,
-    split: bool,
-    waiting: bool,
-    blocked: bool,
-    on_action: EventHandler<Action>,
-) -> Element {
-    let t = session_timing(
-        session.started_at_epoch_ms,
-        session.estimated_work_seconds_at_start,
-        session.actual_work_seconds_at_start,
-        now,
-    );
-    let elapsed = format_hh_mm_ss(i128::from(t.elapsed_seconds));
-    let remaining = format_hh_mm_ss(t.remaining_seconds.abs());
-    let name = display_task_name(&session.task_name);
-    let started = format_at_offset(
-        session.started_at_epoch_ms,
-        offset_at.call(session.started_at_epoch_ms),
-        "%m/%d %H:%M",
-    );
-    let finished = |kind| {
-        let id = session.task_id.clone();
-        move |_| on_action.call(Action::Finish(id.clone(), kind))
-    };
-    let release = session.task_id.clone();
-    let restart = session.task_id.clone();
-    rsx! {
-        article { class: "session-card",
-            h3 { "{name}" }
-            p { "開始 {started} {zone}・経過 {elapsed}" }
-            p { class: "session-countdown",
-                if t.remaining_seconds < 0 { "超過 " } else { "残り " }
-                strong { "{remaining}" }
-            }
-            div { class: "session-actions offline-session-actions",
-                button { class: "session-action-record", r#type: "button", disabled: blocked || waiting, onclick: finished(OfflineOperationKind::Record), "記録して解除" }
-                button { class: "session-action-work-slice", r#type: "button", disabled: blocked || waiting || !split || t.elapsed_seconds == 0, onclick: finished(OfflineOperationKind::Split), "記録して分割" }
-                button { class: "session-action-complete", r#type: "button", disabled: blocked || waiting, onclick: finished(OfflineOperationKind::Complete), "記録して完了" }
-                button { class: "session-action-restart", r#type: "button", disabled: blocked || waiting, onclick: move |_| on_action.call(Action::Restart(restart.clone())), "計測を破棄して再開" }
-                button { class: "session-action-discard", r#type: "button", disabled: blocked, onclick: move |_| on_action.call(Action::Release(release.clone())), "計測を破棄して解除" }
-            }
+        SessionView {
+            sessions: cards, offline_sessions: details, global_blocked: blocked, mutations_locked: blocked,
+            on_auto_session: move |_| {},
+            on_action: move |SessionAction { task_id, kind }| {
+                let action = match kind {
+                    SessionActionKind::RestartWithoutRecording => Action::Restart(task_id),
+                    SessionActionKind::Discard => Action::Release(task_id),
+                    SessionActionKind::Record => Action::Finish(task_id, OfflineOperationKind::Record),
+                    SessionActionKind::WorkSlice => Action::Finish(task_id, OfflineOperationKind::Split),
+                    SessionActionKind::Complete => Action::Finish(task_id, OfflineOperationKind::Complete),
+                    SessionActionKind::CompleteWithoutRecording | SessionActionKind::ResumeCompletionConflict | SessionActionKind::ConfirmCompletionConflict => return,
+                };
+                on_action.call(action);
+            },
         }
     }
 }
