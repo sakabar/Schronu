@@ -1713,6 +1713,7 @@ impl FinishPlacementCommandContext for TraceFinishPlacementContext {
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
+        _exclude_from_duration_statistics: bool,
     ) -> Result<Option<Uuid>, ApplicationError> {
         self.calls.push("complete".to_string());
         self.completion_inputs.push(input);
@@ -2352,8 +2353,10 @@ impl FinishPlacementCommandContext for CompositeTraceContext {
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
+        exclude_from_duration_statistics: bool,
     ) -> Result<Option<Uuid>, ApplicationError> {
-        self.finish_placement.complete_focused_task(input)
+        self.finish_placement
+            .complete_focused_task(input, exclude_from_duration_statistics)
     }
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {

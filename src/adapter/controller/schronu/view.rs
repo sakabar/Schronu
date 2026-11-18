@@ -682,7 +682,7 @@ pub(super) fn build_focus_header_display(
         project_priority: focused_task
             .get_priority()
             .map_err(ApplicationError::TaskTree)?,
-        task_attr: focused_task.get_attr(),
+        task_attr: focused_task.get_attr().map(Box::new),
     })
 }
 

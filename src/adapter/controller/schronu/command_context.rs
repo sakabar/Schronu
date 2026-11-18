@@ -25,11 +25,11 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::pack_use_case::{pack_tasks_with_end_of_day_offset_minutes, PackResult};
 use crate::application::schedule_use_case::get_schedule;
 use crate::application::task_use_case::{
-    add_actual_work, breakdown_task, complete_task, complete_work_slice, create_repetition,
-    create_task, defer_routine_task, defer_task, estimated_work_seconds_from_minutes, rename_task,
-    set_category, set_deadline, set_estimate, validate_task_name, AddActualWorkInput,
-    ApplicationError, BreakdownTaskInput, CompleteTaskInput, CompleteWorkSliceInput,
-    CreateRepetitionInput, CreateTaskInput, TaskFactory,
+    add_actual_work, breakdown_task, complete_task_with_sample_exclusion, complete_work_slice,
+    create_repetition, create_task, defer_routine_task, defer_task,
+    estimated_work_seconds_from_minutes, rename_task, set_category, set_deadline, set_estimate,
+    validate_task_name, AddActualWorkInput, ApplicationError, BreakdownTaskInput,
+    CompleteTaskInput, CompleteWorkSliceInput, CreateRepetitionInput, CreateTaskInput, TaskFactory,
 };
 use crate::entity::task::{
     extract_leaf_tasks_from_project, extract_leaf_tasks_from_project_with_pending, Status,
@@ -1802,9 +1802,15 @@ impl FinishPlacementCommandContext for CliCommandContext<'_, '_, '_> {
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
+        exclude_from_duration_statistics: bool,
     ) -> Result<Option<Uuid>, ApplicationError> {
-        complete_task(self.task_repository, input, self.task_factory)
-            .map(|output| output.next_focus_task_id)
+        complete_task_with_sample_exclusion(
+            self.task_repository,
+            input,
+            exclude_from_duration_statistics,
+            self.task_factory,
+        )
+        .map(|output| output.next_focus_task_id)
     }
 
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>) {

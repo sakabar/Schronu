@@ -886,6 +886,15 @@ pub fn complete_task(
     input: CompleteTaskInput,
     factory: &mut TaskFactory<'_>,
 ) -> Result<CompleteTaskOutput, ApplicationError> {
+    complete_task_with_sample_exclusion(repository, input, false, factory)
+}
+
+pub(crate) fn complete_task_with_sample_exclusion(
+    repository: &mut dyn TaskRepositoryTrait,
+    input: CompleteTaskInput,
+    exclude_from_duration_statistics: bool,
+    factory: &mut TaskFactory<'_>,
+) -> Result<CompleteTaskOutput, ApplicationError> {
     let task = find_task(repository, input.task_id)?;
     if input.expected_actual_work_seconds.is_some()
         && task.get_status().map_err(ApplicationError::TaskTree)? == Status::Done
@@ -911,8 +920,13 @@ pub fn complete_task(
     )?;
 
     let prospective_next_focus_task_id = prospective_next_focus_task_id(&task)?;
-    let next_repetition_task =
-        prepare_next_repetition_task(&task, actual_work_seconds, input.finished_at, factory)?;
+    let next_repetition_task = prepare_next_repetition_task(
+        &task,
+        actual_work_seconds,
+        input.finished_at,
+        exclude_from_duration_statistics,
+        factory,
+    )?;
     if let Some(prepared) = &next_repetition_task {
         ensure_task_ids_available(repository, [prepared.task_id])?;
     }
@@ -930,6 +944,7 @@ pub fn complete_task(
                 prepared.adjusted_parent_estimated_work_seconds,
                 prepared.task_attr,
                 prepared.duration_statistics,
+                exclude_from_duration_statistics,
             )
             .map_err(ApplicationError::TaskTree)?;
             Some(prepared.task_id)
@@ -941,6 +956,10 @@ pub fn complete_task(
                 .map_err(ApplicationError::TaskTree)?;
             task.set_end_time_opt(Some(input.finished_at))
                 .map_err(ApplicationError::TaskTree)?;
+            if exclude_from_duration_statistics {
+                task.exclude_from_duration_statistics()
+                    .map_err(ApplicationError::TaskTree)?;
+            }
             None
         }
     };
@@ -1123,7 +1142,8 @@ fn create_next_repetition_task(
     let actual_work_seconds = task
         .get_actual_work_seconds()
         .map_err(ApplicationError::TaskTree)?;
-    let prepared = prepare_next_repetition_task(task, actual_work_seconds, finished_at, factory)?;
+    let prepared =
+        prepare_next_repetition_task(task, actual_work_seconds, finished_at, false, factory)?;
     let Some(prepared) = prepared else {
         return Ok(None);
     };
@@ -1134,6 +1154,7 @@ fn create_next_repetition_task(
         prepared.adjusted_parent_estimated_work_seconds,
         prepared.task_attr,
         prepared.duration_statistics,
+        false,
     )
     .map_err(ApplicationError::TaskTree)?;
     Ok(Some(task_id))
@@ -1150,6 +1171,7 @@ fn prepare_next_repetition_task(
     task: &TaskHandle,
     actual_work_seconds: i64,
     finished_at: DateTime<Local>,
+    exclude_from_duration_statistics: bool,
     factory: &mut TaskFactory<'_>,
 ) -> Result<Option<PreparedRepetitionTask>, ApplicationError> {
     let Some(parent_task) = task.parent().map_err(ApplicationError::TaskTree)? else {
@@ -1169,16 +1191,17 @@ fn prepare_next_repetition_task(
         .repetition_duration_updates_enabled()
         .map_err(ApplicationError::TaskTree)?
     {
-        let accounted_work_seconds =
-            accounted_subtree_work_seconds(task, Some(actual_work_seconds))?;
-        let duration_statistics = if accounted_work_seconds > 0
+        let subtree = accounted_subtree_work(task, Some(actual_work_seconds))?;
+        let duration_statistics = if !exclude_from_duration_statistics
+            && !subtree.duration_statistics_excluded
+            && subtree.work_seconds > 0
             && task.get_status().map_err(ApplicationError::TaskTree)? != Status::Done
         {
             Some(
                 parent_task
                     .duration_statistics()
                     .map_err(ApplicationError::TaskTree)?
-                    .with_sample(accounted_work_seconds)
+                    .with_sample(subtree.work_seconds)
                     .map_err(|reason| ApplicationError::InvalidInput {
                         field: "duration_statistics",
                         reason,
@@ -1190,7 +1213,7 @@ fn prepare_next_repetition_task(
         (
             adjusted_repetition_estimate(
                 original_parent_estimated_work_seconds,
-                accounted_work_seconds,
+                subtree.work_seconds,
             )?,
             duration_statistics,
         )
@@ -1253,7 +1276,7 @@ pub(crate) fn estimate_success_percentage(
     {
         return Ok(Some(0));
     }
-    let threshold = accounted_subtree_work_seconds(task, Some(estimate))? as f64;
+    let threshold = accounted_subtree_work(task, Some(estimate))?.work_seconds as f64;
     if m2 == 0.0 {
         return Ok(Some(if mean <= threshold { 100 } else { 0 }));
     }
@@ -1263,10 +1286,15 @@ pub(crate) fn estimate_success_percentage(
     ))
 }
 
-fn accounted_subtree_work_seconds(
+struct AccountedSubtreeWork {
+    work_seconds: i64,
+    duration_statistics_excluded: bool,
+}
+
+fn accounted_subtree_work(
     task: &TaskHandle,
     actual_work_seconds_override: Option<i64>,
-) -> Result<i64, ApplicationError> {
+) -> Result<AccountedSubtreeWork, ApplicationError> {
     let actual_work_seconds = match actual_work_seconds_override {
         Some(actual_work_seconds) => actual_work_seconds,
         None => task
@@ -1280,18 +1308,23 @@ fn accounted_subtree_work_seconds(
             .map_err(ApplicationError::TaskTree)?
     };
 
-    task.get_children()
-        .map_err(ApplicationError::TaskTree)?
-        .into_iter()
-        .try_fold(own_accounted_work_seconds, |total, child| {
-            let child_accounted_work_seconds = accounted_subtree_work_seconds(&child, None)?;
-            total
-                .checked_add(child_accounted_work_seconds)
-                .ok_or(ApplicationError::InvalidInput {
-                    field: "actual_work_seconds",
-                    reason: "subtree accounted work overflow",
-                })
-        })
+    let mut total = AccountedSubtreeWork {
+        work_seconds: own_accounted_work_seconds,
+        duration_statistics_excluded: task
+            .duration_statistics_excluded()
+            .map_err(ApplicationError::TaskTree)?,
+    };
+    for child in task.get_children().map_err(ApplicationError::TaskTree)? {
+        let child = accounted_subtree_work(&child, None)?;
+        total.work_seconds = total.work_seconds.checked_add(child.work_seconds).ok_or(
+            ApplicationError::InvalidInput {
+                field: "actual_work_seconds",
+                reason: "subtree accounted work overflow",
+            },
+        )?;
+        total.duration_statistics_excluded |= child.duration_statistics_excluded;
+    }
+    Ok(total)
 }
 
 fn adjusted_repetition_estimate(
