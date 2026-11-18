@@ -150,14 +150,16 @@ pub(super) fn OfflineView(
     };
     rsx! {
         main { class: "shell offline-shell", id: "schronu-web-ready",
-            header { class: "offline-status",
-                div {
-                    strong { "オフライン利用" }
-                    span { "保存時点 {saved} JST・未送信{pending}件" }
-                }
-                button { class: "primary-action", r#type: "button", disabled: blocked,
-                    onclick: move |_| if authorize.call(()) { on_sync.call(()) },
-                    if busy { "処理中…" } else { "同期" }
+            if tab() == Tab::Sessions {
+                header { class: "offline-status",
+                    div {
+                        strong { "オフライン利用" }
+                        span { "保存時点 {saved} JST・未送信{pending}件" }
+                    }
+                    button { class: "primary-action", r#type: "button", disabled: blocked,
+                        onclick: move |_| if authorize.call(()) { on_sync.call(()) },
+                        if busy { "処理中…" } else { "同期" }
+                    }
                 }
             }
             if let Some(error) = local_error() { p { class: "error", role: "alert", "{error}" } }

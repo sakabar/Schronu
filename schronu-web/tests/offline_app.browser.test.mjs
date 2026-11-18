@@ -248,8 +248,10 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.click("設定");
             await page.click("オフラインで使う");
             await page.show("準備完了");
+            assert.equal(await page.evaluate("document.querySelector('.offline-status') !== null"), false, "Schedule has no status header");
             await page.click("負荷");
             await page.show("から14日の負荷");
+            assert.equal(await page.evaluate("document.querySelector('.offline-status') !== null"), false, "Load has no status header");
             assert.equal(await page.evaluate("document.querySelectorAll('.load-day').length"), 14);
             assert.equal(await page.evaluate("document.querySelectorAll('.load-day:disabled').length"), 7);
             await page.click("繰返負荷");
@@ -275,10 +277,14 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.show("記録して分割");
             await page.clock(split);
             await page.click("記録して分割");
+            await page.show("準備完了");
+            await page.click("セッション");
             await page.show("未送信1件");
         });
         await withBrowser(profile, server.url, "America/Los_Angeles", async page => {
+            await page.click("セッション");
             await page.show("未送信1件");
+            await page.click("予定");
             await page.click(selectedDate);
             await page.show("00:35:00");
             await page.show("ロサンゼルス");
@@ -291,6 +297,8 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.clock(finished);
             await page.show("経過 05:00:00");
             await page.click("記録して完了");
+            await page.show("準備完了");
+            await page.click("セッション");
             await page.show("未送信2件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
             await server.start();

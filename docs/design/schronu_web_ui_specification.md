@@ -877,6 +877,8 @@ SSR初期HTMLとbrowser側のhydration前表示は、同じ非blockingな復元s
 
 ### オフライン利用
 
+セッションタブを選んだときだけ、画面上部に「オフライン利用」、保存時点、未送信件数、「同期」ボタンを描画する。進行中のセッションが0件でも同期できる。
+
 オフラインの予定表は見出しと各行に `44px 7rem minmax(0, 1fr)` の3列を適用する。タスク列では名前をセル内で折り返し、その下に実績と見積を表示する。
 
 `prepare_offline` は1回のrepository lockと同一scheduleから、日本時間06:00区切りの連続7日の予定、日別14日・繰返28日の負荷、分割可能なタスクIDを返す。通常画面の「一覧」の設定から準備する。Service Workerは同一ビルドのHTMLとJS・WASM・CSSをCache Storageへ格納する。IndexedDBで準備済みcacheと作業状態を確定してから準備完了を表示する。
