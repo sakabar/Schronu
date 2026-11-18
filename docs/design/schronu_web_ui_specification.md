@@ -519,6 +519,7 @@ expected_actual_work_seconds: Option<i64>
 - CLIとMCP adapterは常に`None`を設定する。
 - Webだけが`Some(開始時実績)`を設定する。
 - Webの`complete_session`は、`record_elapsed_seconds`が`true`なら経過秒、`false`なら0を追加実績秒として渡す。
+- 除外対象のtaskには完了と同じtransactionで`duration_statistics_excluded: true`を保存する。省略時は`false`とする。繰り返しの実体回を完了する際、本体または子孫に除外対象があればその回の統計更新を省く。次回見積もりの補正には全体の実績合計(実績0なら見積もり)を使う。次回の実体は通常の集計対象として生成する。
 - Webは完了処理の成功後、同じrepository transactionで完了taskの見積を最低1秒に補正してからsnapshotを生成する。反復の次回task生成には既存の見積計算を適用する。
 - MCPの入力structおよび生成JSON schemaへこのfieldを追加しない。
 

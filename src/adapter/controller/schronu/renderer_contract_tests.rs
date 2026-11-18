@@ -1561,7 +1561,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
         DisplayModel::Focus(FocusDisplay::Header {
             project_category: Some(ProjectCategory::Investment),
             project_priority: 13,
-            task_attr: Ok(task_attr),
+            task_attr: Ok(Box::new(task_attr)),
         }),
         DisplayModel::Focus(FocusDisplay::Timing {
             estimated_work_seconds: 60 * 60,
@@ -1639,7 +1639,7 @@ fn focus_displayはtyped属性からancestorと残り時間とprogress境界を�
                 DisplayModel::Focus(FocusDisplay::Header {
                     project_category: None,
                     project_priority: 0,
-                    task_attr: Ok(task_attr),
+                    task_attr: Ok(Box::new(task_attr)),
                 }),
                 DisplayModel::Focus(FocusDisplay::Timing {
                     estimated_work_seconds,

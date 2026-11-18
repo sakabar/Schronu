@@ -213,6 +213,7 @@ pub struct TaskAttr {
 
     estimated_work_seconds: i64, // 見積もられた作業時間 (秒)
     actual_work_seconds: i64,    // 実際の作業時間 (秒)
+    duration_statistics_excluded: bool,
 
     repetition_interval_days_opt: Option<i64>,
     duration_statistics: Option<Box<DurationStatistics>>,
@@ -300,6 +301,7 @@ impl PartialEq for TaskAttr {
             && self.deadline_time_opt == other.deadline_time_opt
             && self.estimated_work_seconds == other.estimated_work_seconds
             && self.actual_work_seconds == other.actual_work_seconds
+            && self.duration_statistics_excluded == other.duration_statistics_excluded
             && self.duration_statistics == other.duration_statistics
             && self.repetition_duration_updates_enabled == other.repetition_duration_updates_enabled
             && self.repetition_interval_days_opt == other.repetition_interval_days_opt
@@ -366,6 +368,7 @@ impl TaskAttr {
             deadline_time_opt: None,
             estimated_work_seconds: 900,
             actual_work_seconds: 0,
+            duration_statistics_excluded: false,
             repetition_interval_days_opt: None,
             duration_statistics: None,
             repetition_duration_updates_enabled: true,
@@ -590,6 +593,10 @@ impl TaskAttr {
 
     pub fn get_actual_work_seconds(&self) -> i64 {
         self.actual_work_seconds
+    }
+
+    pub(crate) fn duration_statistics_excluded(&self) -> bool {
+        self.duration_statistics_excluded
     }
 
     pub fn set_repetition_interval_days_opt(
@@ -940,6 +947,7 @@ impl TaskHandle {
         adjusted_parent_estimated_work_seconds: i64,
         next_task_attr: TaskAttr,
         duration_statistics: Option<DurationStatistics>,
+        exclude_from_duration_statistics: bool,
     ) -> Result<Self, TaskTreeError> {
         let parent = self.parent()?.ok_or(TaskTreeError::RootOperation)?;
         let root = self.root()?;
@@ -973,6 +981,7 @@ impl TaskHandle {
         attr.set_actual_work_seconds(actual_work_seconds);
         attr.set_orig_status(Status::Done);
         attr.set_end_time_opt(Some(finished_at));
+        attr.duration_statistics_excluded |= exclude_from_duration_statistics;
         parent_attr.set_estimated_work_seconds(adjusted_parent_estimated_work_seconds);
         if let Some(statistics) = duration_statistics {
             parent_attr.duration_statistics = Some(Box::new(statistics));
@@ -1581,6 +1590,21 @@ impl TaskHandle {
             .try_borrow_data()
             .map(|attr| attr.repetition_duration_updates_enabled())
             .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn duration_statistics_excluded(&self) -> Result<bool, TaskTreeError> {
+        self.node
+            .try_borrow_data()
+            .map(|attr| attr.duration_statistics_excluded())
+            .map_err(|_| TaskTreeError::Borrow)
+    }
+
+    pub(crate) fn exclude_from_duration_statistics(&self) -> Result<(), TaskTreeError> {
+        self.update(|attr| {
+            let changed = !attr.duration_statistics_excluded;
+            attr.duration_statistics_excluded = true;
+            changed
+        })
     }
 
     pub(crate) fn set_repetition_duration_updates_enabled(

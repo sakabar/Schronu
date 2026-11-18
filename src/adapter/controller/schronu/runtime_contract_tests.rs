@@ -11114,11 +11114,11 @@ impl FocusDisplaySource for CharacterizationFocusDisplaySource {
                     task_attr: if self.failure == FocusStageFailure::Attr {
                         Err(TaskTreeError::Borrow)
                     } else {
-                        Ok(TaskAttr::with_identity(
+                        Ok(Box::new(TaskAttr::with_identity(
                             "部分表示対象",
                             Uuid::from_u128(42),
                             self.focus_started_at,
-                        ))
+                        )))
                     },
                 })
             }

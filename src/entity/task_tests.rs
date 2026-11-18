@@ -742,12 +742,14 @@ fn test_反復完了は完了値と親見積もりと次回childを一括反映�
     let before_revision = parent.get_persistent_mutation_revision().unwrap();
 
     let next = child
-        .complete_with_next_repetition(300, finished_at, 450, next_attr, None)
+        .complete_with_next_repetition(300, finished_at, 450, next_attr, None, true)
         .unwrap();
 
     assert_eq!(child.get_actual_work_seconds().unwrap(), 300);
     assert_eq!(child.get_status().unwrap(), Status::Done);
     assert_eq!(child.get_end_time_opt().unwrap(), Some(finished_at));
+    assert!(child.duration_statistics_excluded().unwrap());
+    assert!(!next.duration_statistics_excluded().unwrap());
     assert_eq!(parent.get_estimated_work_seconds().unwrap(), 450);
     assert_eq!(next.get_id().unwrap(), Uuid::from_u128(0x2901));
     assert_eq!(parent.get_children().unwrap().len(), 2);
@@ -775,6 +777,7 @@ fn test_反復完了は親がrootでなくてもroot_revisionだけを1進める
             450,
             TaskAttr::with_identity("次回", next_id, finished_at),
             None,
+            false,
         )
         .unwrap();
 
@@ -832,6 +835,7 @@ fn test_反復完了はhierarchy_grant取得失敗時に何も変更しない() 
         450,
         new_test_task_attr("次回"),
         None,
+        true,
     );
 
     assert!(matches!(actual, Err(TaskTreeError::HierarchyGrant)));
@@ -859,6 +863,7 @@ fn test_反復完了はborrow競合時に何も変更しない() {
             450,
             new_test_task_attr("次回"),
             None,
+            true,
         )
     });
 
@@ -885,6 +890,7 @@ fn test_反復完了はroot_borrow競合時に何も変更しない() {
             450,
             new_test_task_attr("次回"),
             None,
+            true,
         )
     });
 
@@ -911,6 +917,7 @@ fn test_反復完了は対象task_borrow競合時に何も変更しない() {
             450,
             new_test_task_attr("次回"),
             None,
+            true,
         )
     });
 

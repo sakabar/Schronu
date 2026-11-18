@@ -370,7 +370,9 @@ clientごとの設定形式に合わせて、commandと環境変数を次のよ�
 
 `update_task`へ複数の更新fieldを渡した場合は、見積もり、実作業秒数、deadline、category、所要時間統計、自動更新設定、名前の順に適用します。`name`だけでも指定でき、対象taskのUUIDを維持したまま名前を更新します。前後の空白やUnicode表記は入力どおり保存し、空白だけの名前、符号付きまたは符号なしのASCII整数だけの名前、Unicode control characterを含む名前、`null`は拒否します。`actual_work_seconds`は完了状態にかかわらず対象taskの実作業秒数を非負の絶対値で上書きし、`0`でリセットできます。非`null`の`deadline_time`は、未完了の対象taskと未完了の子孫に上限として適用し、既存のより早いdeadlineは維持します。対象taskが完了済みなら、対象と子孫のdeadlineを変更しません。`deadline_time: null`は対象taskだけのdeadlineを解除します。`category`は対象taskが属するroot projectへ設定され、`category: null`で解除できます。各fieldの省略時はその値を変更しません。
 
-`duration_statistics`は、`repetition_interval_days`を持つtask自身に設定します。`sample_size`、`mean_duration_seconds`、`m2_duration_seconds_squared`をまとめて指定し、全て0で初期化できます。繰り返しの実体回を初めて完了すると、実体回と各子孫の正の実績(0なら見積もり)の合計が正の場合に1件を加えます。統計は繰り返し親のYAMLへ保存します。統計のない既存データは0件から蓄積し、過去履歴や完了後の実績変更は再集計しません。
+`duration_statistics`は、`repetition_interval_days`を持つtask自身に設定します。`sample_size`、`mean_duration_seconds`、`m2_duration_seconds_squared`をまとめて指定し、全て0で初期化できます。繰り返しの実体回を初めて完了すると、実体回と各子孫の正の実績(0なら見積もり)の合計が正で、全件が集計対象の場合に1件を加えます。統計は繰り返し親のYAMLへ保存します。統計のない既存データは0件から蓄積し、過去履歴や完了後の実績変更は再集計しません。
+
+除外対象のtaskには `duration_statistics_excluded: true` を保存します。実体回の本体・子孫のどこかにこの記録があれば、その回全体を統計から除外します。除外した回も通常どおり次回見積もりの補正に使います。項目を省略した既存のYAMLは集計対象として扱います。
 
 繰り返し親のYAMLまたはMCPの `update_task` で `repetition_duration_updates_enabled: false` を指定すると、完了時の所要時間統計の蓄積と次回見積もりの自動補正を止めます。次回分は親の現在の見積もりで生成します。YAMLでの省略時は有効です。無効中も保存済みの統計を保持し、`duration_statistics` で手動更新できます。`true` に戻すと保存済みの統計から蓄積を再開します。無効期間の完了分は集計対象外です。
 

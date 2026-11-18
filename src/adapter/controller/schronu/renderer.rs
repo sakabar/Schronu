@@ -344,7 +344,7 @@ pub(super) enum FocusDisplay {
     Header {
         project_category: Option<ProjectCategory>,
         project_priority: i64,
-        task_attr: Result<TaskAttr, TaskTreeError>,
+        task_attr: Result<Box<TaskAttr>, TaskTreeError>,
     },
     Timing {
         estimated_work_seconds: i64,
