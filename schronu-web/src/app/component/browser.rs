@@ -22,8 +22,7 @@ use super::{
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
 use crate::client::work_sessions::{BrowserLocalStorage, WorkSession};
 use dioxus::prelude::*;
-pub(in crate::app) use display_timezone::DisplayTimezone;
-use display_timezone::DisplayTimezoneSettings;
+pub(in crate::app) use display_timezone::{DisplayTimezone, DisplayTimezoneSettings};
 use std::rc::Rc;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{Element as DomElement, HtmlElement, KeyboardEvent as DomKeyboardEvent, Window};

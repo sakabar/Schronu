@@ -1,5 +1,7 @@
 use super::carry_lock_view::{CarryLockBar, CarryLockViewModel};
-use super::component::{BufferPanel, DisplayTimezone, TimeDisplayMode, TIME_DISPLAY_MODE};
+use super::component::{
+    BufferPanel, DisplayTimezone, NavigationTabs, TimeDisplayMode, TIME_DISPLAY_MODE,
+};
 use super::component_models::{browser_monotonic_now_ms, browser_now_epoch_ms};
 use super::load_view::LoadView;
 use super::long_press_browser::BrowserLongPressScheduler;
@@ -7,25 +9,21 @@ use super::long_press_controller::LongPressSchedulerHandle;
 use super::task_name::display_task_name;
 use crate::client::carry_lock::{load_carry_lock, CarryLockMode};
 use crate::client::offline::{format_at_offset, format_jst, OfflineState};
+use crate::client::state::ActiveTab;
 use crate::client::time_model::{format_hh_mm_ss, session_timing};
-use crate::client::view_projection::task_name_matches;
 use crate::client::work_sessions::{BrowserLocalStorage, WorkSession};
-use crate::{OfflineOperationKind, TaskDisplayKind};
+use crate::OfflineOperationKind;
 use dioxus::prelude::*;
 use std::rc::Rc;
+
+mod schedule;
+use schedule::Schedule;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 extern "C" {
     #[wasm_bindgen(catch, js_namespace = crypto, js_name = randomUUID)]
     fn random_operation_id() -> Result<String, JsValue>;
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Tab {
-    Sessions,
-    Schedule,
-    Load,
 }
 
 enum Action {
@@ -63,18 +61,19 @@ pub(super) fn OfflineView(
     on_change: EventHandler<OfflineState>,
     on_sync: EventHandler<()>,
 ) -> Element {
-    let timezone = use_hook(|| Rc::new(DisplayTimezone::restore()));
-    let zone = timezone.zone_label().to_owned();
-    let offset_at = use_callback(move |epoch: i64| timezone.offset_at(epoch));
+    let timezone = use_signal(DisplayTimezone::restore);
+    let zone = timezone.read().zone_label().to_owned();
+    let offset_at = use_callback(move |epoch: i64| timezone.read().offset_at(epoch));
     let mut tab = use_signal(|| {
         if state.sessions.is_empty() {
-            Tab::Schedule
+            ActiveTab::List
         } else {
-            Tab::Sessions
+            ActiveTab::Session
         }
     });
     let mut selected_date = use_signal(|| state.bundle.snapshot.logical_date.clone());
     let mut filter = use_signal(String::new);
+    let mut today = use_signal(|| OfflineState::current_logical_date(browser_now_epoch_ms()));
     let mut local_error = use_signal(|| None::<&'static str>);
     let mut lock = use_signal(|| load_carry_lock(&BrowserLocalStorage));
     let scheduler = use_hook(|| LongPressSchedulerHandle::new(BrowserLongPressScheduler));
@@ -82,6 +81,10 @@ pub(super) fn OfflineView(
     use_future(move || async move {
         loop {
             gloo_timers::future::TimeoutFuture::new(1_000).await;
+            let day = OfflineState::current_logical_date(browser_now_epoch_ms());
+            if day != *today.peek() {
+                today.set(day);
+            }
             if matches!(lock.peek().mode(), CarryLockMode::ArmedUntil(_)) {
                 let now = browser_monotonic_now_ms();
                 lock.write().observe_monotonic_time(now);
@@ -94,12 +97,13 @@ pub(super) fn OfflineView(
     use_effect(use_reactive((&count,), move |(count,)| {
         let previous = *previous_count.peek();
         if count > previous {
+            filter.set(String::new());
             if previous == 0 {
                 lock.write().relock();
             }
-            tab.set(Tab::Sessions);
-        } else if previous > 0 && count == 0 && *tab.peek() == Tab::Sessions {
-            tab.set(Tab::Schedule);
+            tab.set(ActiveTab::Session);
+        } else if previous > 0 && count == 0 && *tab.peek() == ActiveTab::Session {
+            tab.set(ActiveTab::List);
         }
         previous_count.set(count);
     }));
@@ -150,7 +154,7 @@ pub(super) fn OfflineView(
     };
     rsx! {
         main { class: "shell offline-shell", id: "schronu-web-ready",
-            if tab() == Tab::Sessions {
+            if tab() == ActiveTab::Session {
                 header { class: "offline-status",
                     div {
                         strong { "オフライン利用" }
@@ -167,7 +171,7 @@ pub(super) fn OfflineView(
             if !state.conflicts.is_empty() {
                 ConflictList { state: state.clone(), blocked, on_action }
             }
-            if tab() == Tab::Sessions {
+            if tab() == ActiveTab::Session {
                 CarryLockBar {
                     model: lock_model, scheduler: scheduler.clone(),
                     on_enable: move |_| lock.write().enable(&BrowserLocalStorage),
@@ -176,26 +180,10 @@ pub(super) fn OfflineView(
                     on_disable: move |_| lock.write().disable(&BrowserLocalStorage),
                 }
                 Sessions { state: state.clone(), zone: zone.clone(), offset_at, blocked, on_action }
-            } else if tab() == Tab::Schedule {
-                section { class: "task-list-view",
-                    p { class: "offline-period", "準備完了・{first_date} 〜 {last_date} ({day_count}日分・予定{count_slots}行)" }
-                    nav { class: "date-pills", aria_label: "保存した予定日",
-                        for date in state.bundle.days.keys() {
-                            {
-                                let date = date.clone();
-                                let selected = date == current_date;
-                                let label = date.get(5..).unwrap_or(&date).replace('-', "/");
-                                rsx! { button { key: "{date}", r#type: "button", aria_label: date.clone(),
-                                    class: if selected { "date-pill is-selected" } else { "date-pill" },
-                                    aria_pressed: selected, onclick: move |_| selected_date.set(date.clone()), "{label}" } }
-                            }
-                        }
-                    }
-                    label { class: "task-name-filter",
-                        input { class: "task-name-filter-input", r#type: "search", aria_label: "タスク名で検索",
-                            placeholder: "タスク名で検索", value: filter(), oninput: move |event| filter.set(event.value()) }
-                    }
-                    Schedule { state: state.clone(), date: current_date, filter: filter(), zone: zone.clone(), offset_at, blocked, on_action }
+            } else if tab() == ActiveTab::List {
+                p { class: "offline-period", "準備完了・{first_date} 〜 {last_date} ({day_count}日分・予定{count_slots}行)" }
+                Schedule { state: state.clone(), date: current_date, filter, timezone, today: today(), blocked, on_action,
+                    on_select: move |date| selected_date.set(date),
                 }
             } else {
                 LoadView {
@@ -204,76 +192,11 @@ pub(super) fn OfflineView(
                     observed_at_epoch_ms: Some(state.bundle.snapshot.observed_at_epoch_ms),
                     loading: false, error: None, offline_last_schedule_date: last_date.clone(),
                     on_refresh: move |_| {},
-                    on_select_date: move |date| { selected_date.set(date); tab.set(Tab::Schedule); },
+                    on_select_date: move |date| { selected_date.set(date); tab.set(ActiveTab::List); },
                 }
             }
-            nav { class: "tabs offline-tabs", aria_label: "表示切替",
-                for (kind, label) in [(Tab::Sessions, "セッション"), (Tab::Schedule, "予定"), (Tab::Load, "負荷")] {
-                    button { key: "{label}", r#type: "button", class: if tab() == kind { "tab-button is-selected" } else { "tab-button" },
-                        aria_pressed: tab() == kind, onclick: move |_| tab.set(kind), "{label}" }
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn Schedule(
-    state: Rc<OfflineState>,
-    date: String,
-    filter: String,
-    zone: String,
-    offset_at: Callback<i64, Option<i32>>,
-    blocked: bool,
-    on_action: EventHandler<Action>,
-) -> Element {
-    let rows = state
-        .bundle
-        .days
-        .get(&date)
-        .into_iter()
-        .flatten()
-        .filter(|r| task_name_matches(&filter, &r.task.task_name))
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        return rsx! { p { class: "load-status", if filter.trim().is_empty() { "この日の予定はありません。" } else { "一致するタスクはありません。" } } };
-    }
-    rsx! {
-        div { class: "task-table-scroll",
-            table { class: "task-table offline-schedule",
-                thead { tr { th { "操作" } th { "予定 ({zone})" } th { "タスク / 実績・見積" } } }
-                tbody {
-                    for row in rows {
-                        {
-                            let id = row.task.task_id.clone().unwrap_or_default();
-                            let active = state.sessions.iter().any(|s| s.task_id == id);
-                            let projected = row.occurrence.is_projected();
-                            let complete = !projected && state.completed(&id);
-                            let waiting = !projected && (state.conflicts.contains_key(&id) || state.awaiting_refresh(&id));
-                            let name = display_task_name(row.display_task_name.as_deref().unwrap_or(&row.task.task_name));
-                            let start = format_at_offset(row.schedule_start_epoch_ms, offset_at.call(row.schedule_start_epoch_ms), "%H:%M");
-                            let end = format_at_offset(row.schedule_end_epoch_ms, offset_at.call(row.schedule_end_epoch_ms), "%H:%M");
-                            let actual = format_hh_mm_ss(i128::from(row.task.actual_work_seconds));
-                            let estimate = format_hh_mm_ss(i128::from(row.task.estimated_work_seconds));
-                            let kind = match row.task_display_kind {
-                                TaskDisplayKind::Fixed => "task-kind-fixed",
-                                TaskDisplayKind::Repetitive => "task-kind-repetitive",
-                                TaskDisplayKind::NonRepetitive => "task-kind-non-repetitive",
-                            };
-                            rsx! { tr {
-                                td {
-                                    if active { "計測中" } else if complete { "完了" } else if waiting { "要確認" } else if projected { "見込み" }
-                                    else if state.can_start(row) {
-                                        button { class: "session-start", aria_label: "{name}の計測を開始", disabled: blocked, r#type: "button",
-                                            onclick: move |_| on_action.call(Action::Start(id.clone())), "＋" }
-                                    }
-                                }
-                                td { "{start}–{end}" }
-                                td { span { class: kind, "{name}" } small { "{actual} / {estimate}" } }
-                            } }
-                        }
-                    }
-                }
+            NavigationTabs { active_tab: tab(), create_disabled: true,
+                on_switch: move |next| if next != ActiveTab::Create { tab.set(next); }
             }
         }
     }

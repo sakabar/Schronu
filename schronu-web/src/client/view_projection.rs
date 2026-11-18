@@ -475,18 +475,27 @@ fn project_list_rows_with(
     offset_at: &dyn Fn(i64) -> Option<i32>,
     use_display_timezone: bool,
 ) -> Vec<ListRowViewModel> {
-    let list_date = state
-        .selected_logical_date()
-        .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
-    let mut display_cursor_epoch_ms = match (state.selected_logical_date(), state.snapshot()) {
-        (Some(selected_date), Some(snapshot)) if selected_date == snapshot.logical_date => {
-            Some(snapshot.observed_at_epoch_ms)
-        }
-        _ => None,
-    };
-    state
-        .scheduled_rows()
-        .iter()
+    project_daily_rows(
+        state.scheduled_rows(),
+        state.selected_logical_date(),
+        state.snapshot(),
+        offset_at,
+        use_display_timezone,
+    )
+}
+
+pub(crate) fn project_daily_rows(
+    rows: &[crate::ScheduledTaskRow],
+    selected_date: Option<&str>,
+    snapshot: Option<&crate::ServerSnapshot>,
+    offset_at: &dyn Fn(i64) -> Option<i32>,
+    use_display_timezone: bool,
+) -> Vec<ListRowViewModel> {
+    let list_date = selected_date.and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok());
+    let mut display_cursor_epoch_ms = snapshot
+        .filter(|snapshot| Some(snapshot.logical_date.as_str()) == selected_date)
+        .map(|snapshot| snapshot.observed_at_epoch_ms);
+    rows.iter()
         .map(|row| {
             let gap_before = minute_gap_label(display_cursor_epoch_ms, row.schedule_start_epoch_ms);
             display_cursor_epoch_ms = Some(

@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod browser;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-pub(super) use browser::{BrowserApp, DisplayTimezone};
+pub(super) use browser::{BrowserApp, DisplayTimezone, DisplayTimezoneSettings};
 
 pub fn app() -> Element {
     rsx! {
@@ -215,7 +215,11 @@ fn tab_navigation_shortcuts_wrap_in_display_order() {
 
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 #[component]
-pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<ActiveTab>) -> Element {
+pub(super) fn NavigationTabs(
+    active_tab: ActiveTab,
+    #[props(default)] create_disabled: bool,
+    on_switch: EventHandler<ActiveTab>,
+) -> Element {
     rsx! {
         nav { class: "tabs", aria_label: "表示切替",
             for (tab, label) in NAVIGATION_TABS {
@@ -223,6 +227,7 @@ pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<Acti
                     key: "{label}",
                     label,
                     selected: active_tab == tab,
+                    disabled: create_disabled && tab == ActiveTab::Create,
                     onclick: move |_| on_switch.call(tab),
                 }
             }
@@ -232,13 +237,18 @@ pub(super) fn NavigationTabs(active_tab: ActiveTab, on_switch: EventHandler<Acti
 
 #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
 #[component]
-fn TabButton(label: &'static str, selected: bool, onclick: EventHandler<MouseEvent>) -> Element {
+fn TabButton(
+    #[props(default)] disabled: bool,
+    label: &'static str,
+    selected: bool,
+    onclick: EventHandler<MouseEvent>,
+) -> Element {
     let class = if selected {
         "tab-button is-selected"
     } else {
         "tab-button"
     };
     rsx! {
-        button { class, r#type: "button", aria_pressed: selected, onclick, "{label}" }
+        button { class, r#type: "button", aria_pressed: selected, disabled, onclick, "{label}" }
     }
 }

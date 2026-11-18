@@ -244,8 +244,12 @@ impl OfflineState {
                 .sum::<i128>()
     }
 
-    pub fn prior_day_estimate(&self, now: i64) -> bool {
+    pub fn current_logical_date(now: i64) -> Option<chrono::NaiveDate> {
         logical_date_with_offset(now, &|_| Some(JAPAN_UTC_OFFSET_MINUTES))
+    }
+
+    pub fn prior_day_estimate(&self, now: i64) -> bool {
+        Self::current_logical_date(now)
             .is_some_and(|date| date.to_string() != self.bundle.snapshot.logical_date)
     }
 }

@@ -106,7 +106,7 @@ impl DisplayTimezone {
         self.zone == JAPAN
     }
 
-    pub(super) fn list_date_label(&self) -> Option<String> {
+    pub(in crate::app) fn list_date_label(&self) -> Option<String> {
         (!self.is_japan())
             .then(|| format!("一覧の日付は日本時間 · 時刻は{}", zone_label(&self.zone)))
     }
@@ -162,7 +162,7 @@ fn supported_zones() -> Option<Array> {
 }
 
 #[component]
-pub(super) fn DisplayTimezoneSettings(
+pub(in crate::app) fn DisplayTimezoneSettings(
     mut timezone: Signal<DisplayTimezone>,
     offline_blocked: bool,
     on_prepare: EventHandler<()>,

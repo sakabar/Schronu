@@ -194,37 +194,44 @@ function jst(epoch) {
     return new Date(epoch + 9 * hour).toISOString().slice(0, 19).replaceAll("-", "/").replace("T", " ");
 }
 
-async function assertScheduleLayout(page, width) {
+async function scheduleLayout(page, width) {
     await page.setViewport(width);
     const layout = await page.evaluate(`(() => {
-        const table = document.querySelector(".offline-schedule");
+        const table = document.querySelector(".task-list-view .task-table");
         const row = table.querySelector(".session-start").closest("tr");
         const columns = cells => Array.from(cells, cell => {
             const rect = cell.getBoundingClientRect();
             return [rect.left, rect.width];
         });
-        const details = row.cells[2];
-        const name = details.querySelector("span").getBoundingClientRect();
-        const effort = details.querySelector("small").getBoundingClientRect();
+        const name = row.querySelector(".task-name-scroll");
         return {
-            viewportWidth: document.documentElement.clientWidth,
-            pageWidth: document.documentElement.scrollWidth,
-            headingColumns: columns(table.tHead.rows[0].cells),
-            taskColumns: columns(row.cells),
-            rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
-            nameWraps: name.height > parseFloat(getComputedStyle(details).fontSize) * 1.5,
-            effortBelowName: effort.top >= name.bottom - 1,
-            nameFits: details.scrollWidth <= details.clientWidth,
+            width: document.documentElement.scrollWidth,
+            headings: columns(table.tHead.rows[0].cells),
+            columns: columns(row.cells),
+            rowHeight: row.offsetHeight,
+            nameScrolls: name.scrollWidth > name.clientWidth,
         };
     })()`);
-    assert.equal(layout.viewportWidth, width);
-    assert.equal(layout.pageWidth, width, `Page must fit at ${width}px`);
-    assert.deepEqual(layout.taskColumns, layout.headingColumns, `Schedule columns must align at ${width}px`);
-    assert.equal(layout.taskColumns[0][1], 44);
-    assert.equal(layout.taskColumns[1][1], 7 * layout.rem);
-    assert(layout.nameFits, `Task name must fit its cell at ${width}px`);
-    if (width === 320) assert(layout.nameWraps, "Long task name must wrap at 320px");
-    assert(layout.effortBelowName, `Effort must appear under the name at ${width}px`);
+    assert.equal(layout.width, width);
+    assert.equal(layout.columns.length, 4);
+    assert.deepEqual(layout.columns, layout.headings);
+    if (width === 320) assert(layout.nameScrolls);
+    return layout;
+}
+
+async function savedSchedule(page) {
+    await until("saved date buttons", () => page.evaluate("Boolean(document.querySelector('.offline-shell .date-pill:not(:disabled)'))"));
+    await page.show("準備完了");
+}
+
+async function selectSavedTaskDate(page) {
+    const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill:not(:disabled)'), b => b.textContent.trim())");
+    assert.equal(dates.length, 7);
+    for (const date of dates) {
+        await page.click(date);
+        if (await page.evaluate("Boolean(document.querySelector('.session-start'))")) return date;
+    }
+    assert.fail("Fixture task must appear in the saved week");
 }
 
 test("offline schedule, cold timer restoration and replay of a committed split", {
@@ -243,11 +250,21 @@ test("offline schedule, cold timer restoration and replay of a committed split",
         const resumed = split + 5 * minute;
         const finished = resumed + 5 * hour;
         let selectedDate;
+        const onlineLayouts = new Map();
         await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
             await page.click("一覧");
+            await until("online dates ready", () => page.evaluate("Boolean(document.querySelector('.date-pill:nth-child(2):not(:disabled)'))"));
+            const days = await page.evaluate("Array.from(document.querySelectorAll('.date-pill'), b => b.textContent.trim()).slice(1, 8)");
+            for (const day of days) {
+                await page.click(day);
+                await until("selected online day", () => page.evaluate(`!document.querySelector('main[inert]') && document.querySelector('.date-pill[aria-pressed=true]')?.textContent.trim() === ${JSON.stringify(day)}`));
+                if (await page.evaluate("Boolean(document.querySelector('.task-list-view .session-start'))")) break;
+            }
+            for (const width of [320, 412, 1024]) onlineLayouts.set(width, await scheduleLayout(page, width));
+            await page.setViewport(412);
             await page.click("設定");
             await page.click("オフラインで使う");
-            await page.show("準備完了");
+            await savedSchedule(page);
             assert.equal(await page.evaluate("document.querySelector('.offline-status') !== null"), false, "Schedule has no status header");
             await page.click("負荷");
             await page.show("から14日の負荷");
@@ -259,45 +276,43 @@ test("offline schedule, cold timer restoration and replay of a committed split",
         });
         await server.stop();
         await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
-            await page.show("準備完了");
-            const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill'), b => b.ariaLabel)");
-            assert.equal(dates.length, 7);
-            for (const date of dates) {
-                await page.click(date);
-                if (await page.evaluate("Boolean(document.querySelector('.session-start'))")) {
-                    selectedDate = date;
-                    break;
-                }
-            }
-            assert(selectedDate, "Fixture task must appear in the saved week");
-            for (const width of [320, 412, 1024]) await assertScheduleLayout(page, width);
+            await savedSchedule(page);
+            selectedDate = await selectSavedTaskDate(page);
+            for (const [width, layout] of onlineLayouts) assert.deepEqual(await scheduleLayout(page, width), layout);
+            assert(await page.evaluate("['.task-defer', '.date-pill', '.list-mode-button'].every(s => document.querySelector(s + ':disabled'))"));
+            await page.evaluate("document.querySelector('.deviation-sort input').click()");
+            await until("offline deviation sort", () => page.evaluate("Boolean(document.querySelector('.deviation-heading[aria-sort=descending]'))"));
+            await page.evaluate(`const input = document.querySelector('.task-name-filter-input');
+                input.value = 'unmatched-filter'; input.dispatchEvent(new Event('input', { bubbles: true }));`);
+            await page.show("一致するタスクがありません");
+            await page.click("検索文字列をクリア");
             await page.setViewport(320);
             await page.clock(start);
-            await page.click(taskName + "の計測を開始");
+            await page.click(taskName + ": セッションに追加");
             await page.show("記録して分割");
             await page.clock(split);
             await page.click("記録して分割");
-            await page.show("準備完了");
+            await savedSchedule(page);
             await page.click("セッション");
             await page.show("未送信1件");
         });
         await withBrowser(profile, server.url, "America/Los_Angeles", async page => {
             await page.click("セッション");
             await page.show("未送信1件");
-            await page.click("予定");
+            await page.click("一覧");
             await page.click(selectedDate);
-            await page.show("00:35:00");
             await page.show("ロサンゼルス");
             await page.clock(resumed);
-            await page.click(taskName + "の計測を開始");
+            await page.click(taskName + ": セッションに追加");
             await page.show("記録して完了");
+            await page.show("00:35:00");
         });
         await withBrowser(profile, server.url, "Asia/Taipei", async page => {
             await page.show("記録して完了");
             await page.clock(finished);
             await page.show("経過 05:00:00");
             await page.click("記録して完了");
-            await page.show("準備完了");
+            await savedSchedule(page);
             await page.click("セッション");
             await page.show("未送信2件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
