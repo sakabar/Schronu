@@ -137,6 +137,10 @@ fn 日別負荷の各行は対象日の一覧選択を通知する() {
 }
 
 fn fourteen_day_root(props: Props) -> Element {
+    fourteen_day_view(props, None)
+}
+
+fn fourteen_day_view(props: Props, offline_last_schedule_date: Option<String>) -> Element {
     let start = props
         .start_date
         .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(2026, 11, 25).unwrap());
@@ -157,6 +161,7 @@ fn fourteen_day_root(props: Props) -> Element {
     rsx! {
         LoadView {
             rows,
+            offline_last_schedule_date,
             observed_at_epoch_ms: None,
             loading: false,
             error: None,
@@ -164,6 +169,38 @@ fn fourteen_day_root(props: Props) -> Element {
             on_select_date: move |date| props.selected.lock().unwrap().push(date),
         }
     }
+}
+
+#[test]
+fn オフライン負荷は保存日から十四日を表示し七日分の予定だけを開く() {
+    let selected = Arc::default();
+    let mut dom = VirtualDom::new_with_props(
+        |props| fourteen_day_view(props, Some("2026-12-01".to_owned())),
+        Props {
+            selected: Arc::clone(&selected),
+            start_date: None,
+        },
+    );
+    let listeners = rebuild_with_click_listeners(&mut dom);
+    let html = dioxus::ssr::render(&dom);
+    assert!(html.contains("2026-11-25から14日の負荷"));
+    assert!(html.contains("8日目以降は予定の保存範囲外"));
+    assert_eq!(html.matches("予定の明細は保存範囲外です。").count(), 7);
+    let refresh = html
+        .split_once("class=\"load-refresh\"")
+        .unwrap()
+        .1
+        .split_once("</button>")
+        .unwrap()
+        .0;
+    assert!(refresh.contains("hidden=true") && refresh.contains("disabled=true"));
+    for id in listeners.iter().skip(3) {
+        dispatch_click(&dom, *id);
+    }
+    let dates = selected.lock().unwrap();
+    assert_eq!(dates.len(), 7);
+    assert_eq!(dates.first().unwrap(), "2026-11-25");
+    assert_eq!(dates.last().unwrap(), "2026-12-01");
 }
 
 #[test]

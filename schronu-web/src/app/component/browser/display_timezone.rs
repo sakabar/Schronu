@@ -20,7 +20,7 @@ const FEATURED_ZONES: &[(&str, &str)] = &[
     ("UTC", "UTC"),
 ];
 
-pub(super) struct DisplayTimezone {
+pub(in crate::app) struct DisplayTimezone {
     preference: String,
     zone: String,
     formatter: Option<DateTimeFormat>,
@@ -28,7 +28,7 @@ pub(super) struct DisplayTimezone {
 }
 
 impl DisplayTimezone {
-    pub(super) fn restore() -> Self {
+    pub(in crate::app) fn restore() -> Self {
         BrowserLocalStorage
             .get(STORAGE_KEY)
             .ok()
@@ -69,7 +69,7 @@ impl DisplayTimezone {
         })
     }
 
-    pub(super) fn offset_at(&self, epoch_ms: i64) -> Option<i32> {
+    pub(in crate::app) fn offset_at(&self, epoch_ms: i64) -> Option<i32> {
         if self.is_japan() {
             return Some(JAPAN_UTC_OFFSET_MINUTES);
         }
@@ -109,6 +109,10 @@ impl DisplayTimezone {
     pub(super) fn list_date_label(&self) -> Option<String> {
         (!self.is_japan())
             .then(|| format!("一覧の日付は日本時間 · 時刻は{}", zone_label(&self.zone)))
+    }
+
+    pub(in crate::app) fn zone_label(&self) -> &str {
+        zone_label(&self.zone)
     }
 }
 
@@ -158,7 +162,11 @@ fn supported_zones() -> Option<Array> {
 }
 
 #[component]
-pub(super) fn DisplayTimezoneSettings(mut timezone: Signal<DisplayTimezone>) -> Element {
+pub(super) fn DisplayTimezoneSettings(
+    mut timezone: Signal<DisplayTimezone>,
+    offline_blocked: bool,
+    on_prepare: EventHandler<()>,
+) -> Element {
     let mut choosing_city = use_signal(|| false);
     let mut query = use_signal(String::new);
     let mut error = use_signal(|| None::<&'static str>);
@@ -292,6 +300,15 @@ pub(super) fn DisplayTimezoneSettings(mut timezone: Signal<DisplayTimezone>) -> 
                 }
                 if let Some(error) = error() {
                     p { class: "display-timezone-error", role: "alert", "{error}" }
+                }
+                button {
+                    r#type: "button",
+                    disabled: offline_blocked,
+                    onclick: move |_| {
+                        close_settings();
+                        on_prepare.call(());
+                    },
+                    "オフラインで使う"
                 }
             }
         }

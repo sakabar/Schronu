@@ -41,6 +41,14 @@ mod long_press_controller_tests;
 mod obsidian;
 #[cfg(all(test, feature = "server"))]
 mod obsidian_tests;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_host;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_storage;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod offline_sync;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_view;
 #[cfg(test)]
 mod projection_boundary_tests;
 mod routine_load_view;

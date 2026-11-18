@@ -5,7 +5,7 @@ use dioxus::prelude::*;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
 mod browser;
 #[cfg(all(feature = "web", target_arch = "wasm32"))]
-use browser::BrowserApp;
+pub(super) use browser::{BrowserApp, DisplayTimezone};
 
 pub fn app() -> Element {
     rsx! {
@@ -51,7 +51,7 @@ pub(super) fn SessionChrome(active_tab: ActiveTab, children: Element) -> Element
 fn AppBody() -> Element {
     #[cfg(all(feature = "web", target_arch = "wasm32"))]
     {
-        return rsx! { BrowserApp {} };
+        return rsx! { super::offline_host::OfflineHost {} };
     }
 
     #[cfg(not(all(feature = "web", target_arch = "wasm32")))]

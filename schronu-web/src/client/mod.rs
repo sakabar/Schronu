@@ -4,7 +4,9 @@ pub mod date_input;
 mod effect;
 mod invocation;
 pub(crate) mod local_time;
-mod safety_state;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+pub(crate) mod offline;
+pub(crate) mod safety_state;
 pub mod state;
 pub mod time_model;
 pub mod view_projection;
