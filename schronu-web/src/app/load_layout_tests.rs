@@ -534,12 +534,18 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
             full_day_available_seconds_by_date: Default::default(),
             forecast_by_date: rows
                 .iter()
-                .map(|row| {
+                .enumerate()
+                .map(|(day, row)| {
+                    let (mean, variance) = match day {
+                        0 => (4_940.0, 5_400.0_f64.powi(2)),
+                        1 => (8_000.0, 0.0),
+                        _ => (5_000.0, 1_000_000.0),
+                    };
                     (
                         row.logical_date.clone(),
                         crate::RoutineLoadForecast {
-                            mean_remaining_seconds: 5_000.0,
-                            variance_seconds_squared: 1_000_000.0,
+                            mean_remaining_seconds: mean,
+                            variance_seconds_squared: variance,
                             estimated_occurrence_count: 0,
                         },
                     )
@@ -559,7 +565,10 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     let mut dom = VirtualDom::new(root);
     let ids = rebuild_with_event_listeners(&mut dom, "change");
     let initial = dioxus::ssr::render(&dom);
-    assert_eq!(initial.matches("繰返作業の失敗確率50%").count(), 14);
+    assert_eq!(initial.matches("繰返作業の失敗確率50%").count(), 12);
+    assert_eq!(initial.matches("繰返作業の失敗確率49%").count(), 1);
+    assert_eq!(initial.matches("繰返作業の失敗確率100%").count(), 1);
+    assert!(initial.contains("color:var(--green-dark);\">49%"));
     assert!(initial.contains("color:var(--red);\">50%"));
     let off = ids[0];
     dispatch_platform_event(
@@ -573,7 +582,8 @@ fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     );
     dom.render_immediate_to_vec();
     let changed = dioxus::ssr::render(&dom);
-    assert_eq!(changed.matches("繰返作業の失敗確率0%").count(), 14);
+    assert_eq!(changed.matches("繰返作業の失敗確率0%").count(), 13);
+    assert_eq!(changed.matches("繰返作業の失敗確率28%").count(), 1);
     assert!(changed.contains("color:var(--green-dark);\">0%"));
     let bands = |html: &str| html.matches("class=\"load-band-segment").count();
     assert_eq!(bands(&initial), bands(&changed));

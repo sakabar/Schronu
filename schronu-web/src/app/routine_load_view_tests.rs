@@ -924,8 +924,16 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
             (
                 "2026-10-04".to_owned(),
                 crate::wire::RoutineLoadForecast {
-                    mean_remaining_seconds: 0.0,
+                    mean_remaining_seconds: 14_400.0,
                     variance_seconds_squared: 0.0,
+                    estimated_occurrence_count: 0,
+                },
+            ),
+            (
+                "2026-10-05".to_owned(),
+                crate::wire::RoutineLoadForecast {
+                    mean_remaining_seconds: 14_340.0,
+                    variance_seconds_squared: 5_400.0_f64.powi(2),
                     estimated_occurrence_count: 0,
                 },
             ),
@@ -956,27 +964,28 @@ fn forecast_panel_stays_visible_and_shows_values_only_for_dates_with_data() {
     };
     let first = select_date("<strong>10/3</strong>");
     let second = select_date("<strong>10/4</strong>");
-    let missing = select_date("<strong>10/5</strong>");
+    let third = select_date("<strong>10/5</strong>");
+    let missing = select_date("<strong>10/6</strong>");
     let weekday = select_date("<strong>月曜日</strong>");
     let overall = select_date("<strong>全体</strong>");
     for (index, expected) in [
-        (first, Some(("50%", "--red"))),
-        (second, Some(("0%", "--green-dark"))),
+        (first, Some(("50%", "--red", "00:27"))),
+        (second, Some(("0%", "--green-dark", "00:00"))),
+        (third, Some(("49%", "--green-dark", "01:30"))),
         (missing, None),
         (weekday, None),
-        (first, Some(("50%", "--red"))),
+        (first, Some(("50%", "--red", "00:27"))),
         (overall, None),
     ] {
         dispatch_click(&dom, ids[index]);
         dom.render_immediate_to_vec();
         let html = dioxus::ssr::render(&dom);
         let forecast = html.split_once("統計的平均実績時間").unwrap().1;
-        if let Some((percent, color)) = expected {
+        if let Some((percent, color, deviation)) = expected {
             assert!(
                 forecast.contains(&format!("<dd style=\"color:var({color});\">{percent}</dd>")),
                 "{forecast}"
             );
-            let deviation = if index == first { "00:27" } else { "00:00" };
             assert!(forecast.contains(&format!(
                 "<dt>標準偏差</dt><dd>{deviation}</dd></div><div><dt>超過確率(繰り返しタスク)</dt>"
             )));
@@ -1000,6 +1009,13 @@ fn exceedance_respects_zero_variance_and_strict_capacity_boundaries() {
     assert_eq!(exceedance_percentage(forecast, 0.0), 100);
     forecast.variance_seconds_squared = 100.0;
     assert_eq!(exceedance_percentage(forecast, 60.0), 50);
+    assert_eq!(exceedance_percentage(forecast, 60.1), 49);
+    // The CDF implementation can round to its median or its upper limit.
+    forecast.variance_seconds_squared = 5_400.0_f64.powi(2);
+    assert_eq!(exceedance_percentage(forecast, 60.0_f64.next_up()), 49);
+    assert_eq!(exceedance_percentage(forecast, 60.0_f64.next_down()), 50);
+    forecast.mean_remaining_seconds = 86_400.0;
+    assert_eq!(exceedance_percentage(forecast, 0.0), 99);
 }
 
 #[test]
