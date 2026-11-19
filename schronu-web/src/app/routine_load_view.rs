@@ -293,7 +293,13 @@ pub(super) fn exceedance_percentage(forecast: RoutineLoadForecast, capacity_seco
         return if threshold < 0.0 { 100 } else { 0 };
     }
     let scale = forecast.variance_seconds_squared.sqrt() * std::f64::consts::SQRT_2;
-    (50.0 * libm::erfc(threshold / scale)).round() as u8
+    let percent = (50.0 * libm::erfc(threshold / scale)).floor() as u8;
+    // A finite normal tail can round up to 50% or 100% in floating point.
+    if capacity_seconds > forecast.mean_remaining_seconds {
+        percent.min(49)
+    } else {
+        percent.clamp(50, 99)
+    }
 }
 
 #[component]

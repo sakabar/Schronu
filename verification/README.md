@@ -158,6 +158,59 @@ Rustの探索用データ構造、日時の丸め・オーバーフロー、モ�
   `ProsaSchedule.zero_work_is_complete_at_start`は作業量上の完了と最初の選択を検査します。
   モデルでは時間を消費しない表示行を省略しています。
 
+## 日別負荷の失敗確率と、50%未満にするための分数
+
+`DailyLoadDist.v` はMathComp Analysis 1.15.0の標準正規分布を使います。
+日別予測の平均残作業秒数をμ、標準偏差をσとします。どちらも非負です。
+日別負荷で繰り返し作業に使える枠Cは、24時間から利用不可・経過済み・単発作業を
+引いた秒数です。単発バッファONでは単発作業の30%を追加で引きます。
+繰返負荷の画面では、その日の可処分時間をCに使います。
+
+予測がありCが非負でσが正の場合、失敗確率は正規分布の上側確率
+`P(Z > (C − μ) / σ)` です。正規密度の対称性と、長さが正の区間の確率が正で
+あることから、Cがμに一致するとちょうど50%、上回ると50%未満、下回ると50%超
+になります。両画面は百分率の小数部を切り捨てます。緑の条件は丸め前の
+失敗確率が50%未満であることと一致します。50%表示の範囲は50%以上51%未満、
+0%表示の範囲は0%以上1%未満です。
+
+Rocqでこの関係を調べる入口は `normal_half_iff` (丸め前の50%)、
+`below_half_capacity` (表示が50%未満になる条件)、
+`minimum_minutesP` (必要分数の最小性)です。
+
+| 日別予測 | 50%未満になるための条件 | 今の枠Cに追加する最小の整数分 |
+| --- | --- | --- |
+| σ > 0 | 枠がμを厳密に超える | max(0, ⌊(μ − C) / 60⌋ + 1) |
+| σ = 0 | 枠がμ以上 | max(0, ⌈(μ − C) / 60⌉) |
+
+平均3時間、標準偏差90分、現在の枠3時間なら、今の表示は赤の50%です。
+枠を1分増やすと約49.557%で緑の49%になります。すでに枠が平均を超えていれば
+追加は0分です。分散0なら、平均と枠が一致した時点で0%です。
+日別予測を固定すると、枠を増やしても表示の失敗%は増えません。
+単発バッファONの失敗%はOFF以上で、単発が0秒なら両者は一致します。
+
+### アルゴリズムの前提
+
+- 日別負荷では予測欠落を `—` とします。この場合、必要分数も未算出です。
+  予測があり枠が負なら100%です。平均0秒・分散正の場合は、枠0秒で50%、
+  枠マイナス1秒で100%になります。
+- [日別予測の合成](../src/application/routine_load.rs)では、記録済み時間を
+  差し引いた平均に下限0を設け、過去の分散を保持します。実績2件未満の回は
+  予定秒数の固定値です。別々の発生回は独立と仮定して分散を加算し、同じ回が
+  日をまたぐときは日別配分比の二乗を分散に掛けます。日をまたいで配分された
+  同じ回の作業時間には相関があります。定理は各日の予測を入力に取ります。
+  正規分布の近似は負の所要時間にも確率を割り当てるため、特に平均が0に近いと
+  実際の非負の残作業時間とのずれが大きくなり得ます。
+- 追加1分は、同じ予測のまま繰り返し作業に使える枠が60秒増える意味です。
+  予定変更で発生回や日別配分が変わると、μとσも再計算します。
+- 日別負荷の枠は0.1秒単位の整数で計算してから秒に換算します。たとえば
+  可処分1,000秒・単発573秒・バッファONの場合、枠は255.1秒です。
+  `1.3 * 573` を浮動小数点で先に計算すると、枠がわずかに大きくなり、
+  同じ255.1秒の予測平均でも表示が49%になる場合があります。
+- Rocqは実数上の確率と整数表示規則を検証します。[Webの確率計算](../schronu-web/src/app/routine_load_view.rs)では
+  枠と平均を直接比較して50%の境界を守り、正の分散の有限な正規分布で
+  `erfc` の近似が100%に達した場合も表示を99%に抑えます。
+  Rustの `f64` と `libm::erfc` の全入力に対する誤差は検証範囲外です。
+
 ## 証明の検証
 
 `verification/`で次を実行します。
@@ -167,6 +220,8 @@ opam exec --switch=. -- rocq compile Stability.v
 opam exec --switch=. -- rocqchk -silent Stability
 opam exec --switch=. -- rocq compile Schedule.v
 opam exec --switch=. -- rocqchk -silent Schedule
+opam exec --switch=. -- rocq compile DailyLoadDist.v
+opam exec --switch=. -- rocqchk -silent DailyLoadDist
 ```
 
 各ファイル末尾の`Print Assumptions`が主要定理と反例の依存仮定を表示します。
@@ -174,16 +229,22 @@ opam exec --switch=. -- rocqchk -silent Schedule
 なることを確認します。証明には`Admitted`や独自の`Axiom`を使いません。
 `stable s`などの明示的な定理の前提は、未証明の外部公理とは区別します。
 
+`DailyLoadDist.v` 末尾の10件の `Print Assumptions` が示す外部公理は
+`propositional_extensionality`、`functional_extensionality_dep`、
+`constructive_indefinite_description` です。これらはMathComp Analysisの
+古典的実解析が使う仮定です。独自公理や `Admitted` を追加せず、
+確率の対称性と単調性をライブラリの正規分布から導きます。
+
 ## 日本語Coqdocの生成
 
 上記のコンパイル後、同じ`verification/`でHTMLを生成できます。
 
 ```sh
 mkdir -p _doc
-opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Stability.v Schedule.v
+opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Stability.v Schedule.v DailyLoadDist.v
 ```
 
-`_doc/Stability.html`と`_doc/Schedule.html`に変数・前提・定理・反例の説明と証明を出力します。生成物と`lia`のキャッシュは
+`_doc/Stability.html`、`_doc/Schedule.html`、`_doc/DailyLoadDist.html` に変数・前提・定理・具体例と反例の説明を出力します。生成物と`lia`のキャッシュは
 Git管理から除外します。Coqdocコメントの正本は各`.v`ファイルです。
 コメント内でパーセント記号を表示するには`%%`と記述します。単独の`%`は
 CoqdocのLaTeX用エスケープとして解釈され、HTMLで説明が欠落するためです。
