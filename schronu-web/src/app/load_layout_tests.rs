@@ -507,6 +507,38 @@ fn failure_probability_uses_unclipped_single_work_and_the_selected_buffer() {
 }
 
 #[test]
+fn buffered_fractional_capacity_preserves_the_median_and_negative_capacity() {
+    use super::super::load_view::failure_percentage;
+    let durations = BandDurations {
+        unavailable_seconds: 85_400,
+        elapsed_seconds: 0,
+        repetitive_seconds: 0,
+        non_repetitive_seconds: 573,
+        rho_leeway_seconds: 0,
+    };
+    let forecast = crate::RoutineLoadForecast {
+        mean_remaining_seconds: 255.1,
+        variance_seconds_squared: 100.0,
+        estimated_occurrence_count: 0,
+    };
+    // 1,000 - 573 × 1.3 = 255.1 seconds, exactly at the mean.
+    assert_eq!(
+        failure_percentage(durations, Some(forecast), true),
+        Some(50)
+    );
+    let negative_tenth = BandDurations {
+        unavailable_seconds: 86_378,
+        non_repetitive_seconds: 17,
+        ..durations
+    };
+    // 22 - 17 × 1.3 = -0.1 seconds. The negative-capacity rule takes priority.
+    assert_eq!(
+        failure_percentage(negative_tenth, Some(forecast), true),
+        Some(100)
+    );
+}
+
+#[test]
 fn daily_load_radio_changes_all_fourteen_forecasts_without_refreshing() {
     use super::super::view_test_support::{dispatch_platform_event, rebuild_with_event_listeners};
     use chrono::{Duration, NaiveDate};

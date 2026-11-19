@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
 const MAX_VISIBLE_SECONDS: i64 = 99 * 3600 + 59 * 60;
 
-const SINGLE_TASK_BUFFER_FACTOR: f64 = 0.30;
+const SINGLE_TASK_BUFFER_TENTHS: i128 = 3;
 const SINGLE_TASK_BUFFER_KEY: &str = "schronu_web.single_task_buffer.v1";
 
 pub(super) fn load_single_task_buffer(storage: &impl KeyValueStorage) -> bool {
@@ -39,19 +39,21 @@ pub(super) fn failure_percentage(
     buffer_enabled: bool,
 ) -> Option<u8> {
     let forecast = forecast?;
-    let factor = if buffer_enabled {
-        SINGLE_TASK_BUFFER_FACTOR
+    let single_seconds = i128::from(durations.non_repetitive_seconds.max(0));
+    let capacity_seconds = i128::from(SECONDS_PER_DAY)
+        - i128::from(durations.unavailable_seconds.max(0))
+        - i128::from(durations.elapsed_seconds.max(0))
+        - single_seconds;
+    let buffer_tenths = if buffer_enabled {
+        single_seconds * SINGLE_TASK_BUFFER_TENTHS
     } else {
-        0.0
+        0
     };
-    let capacity = SECONDS_PER_DAY as f64
-        - durations.unavailable_seconds.max(0) as f64
-        - durations.elapsed_seconds.max(0) as f64
-        - durations.non_repetitive_seconds.max(0) as f64 * (1.0 + factor);
-    Some(if capacity < 0.0 {
+    let capacity_tenths = 10 * capacity_seconds - buffer_tenths;
+    Some(if capacity_tenths < 0 {
         100
     } else {
-        exceedance_percentage(forecast, capacity)
+        exceedance_percentage(forecast, capacity_tenths as f64 / 10.0)
     })
 }
 
@@ -91,7 +93,7 @@ pub(crate) fn LoadView(
         #[cfg(not(all(feature = "web", target_arch = "wasm32")))]
         buffer_save_failed.set(false);
     };
-    let buffer_percentage = (SINGLE_TASK_BUFFER_FACTOR * 100.0).round();
+    let buffer_percentage = 10 * SINGLE_TASK_BUFFER_TENTHS;
     let today_remaining_available_seconds =
         routine_today_remaining_available_seconds(&rows, routine_load_report.as_ref());
     let view_class = match (mode(), error.is_some()) {
