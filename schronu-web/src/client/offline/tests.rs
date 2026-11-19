@@ -123,6 +123,42 @@ fn split_restart_and_complete_share_all_segments_and_preserve_capture_times_acro
 }
 
 #[test]
+fn completion_hides_all_actual_segments_but_keeps_the_next_occurrence_and_other_tasks() {
+    for kind in [
+        OfflineOperationKind::Complete,
+        OfflineOperationKind::CompleteWithoutRecording,
+    ] {
+        let mut state = sample();
+        let start = state.bundle.snapshot.observed_at_epoch_ms;
+        let mut projected = state.bundle.days.values().next().unwrap()[0].clone();
+        projected.task.task_id = None;
+        projected.occurrence = ScheduleOccurrence::Projected {
+            occurrence_key: "next".into(),
+            source_task_id: TASK.into(),
+        };
+        let mut other = projected.clone();
+        other.task.task_id = Some("other".into());
+        other.occurrence = ScheduleOccurrence::Actual {
+            task_id: "other".into(),
+        };
+        for rows in state.bundle.days.values_mut() {
+            rows.extend([projected.clone(), other.clone()]);
+        }
+        state.start(TASK, start).unwrap();
+        state
+            .finish(TASK, kind, start + 60_000, "finish".into())
+            .unwrap();
+        for date in state.bundle.days.keys() {
+            assert_eq!(
+                state.visible_schedule(date).collect::<Vec<_>>(),
+                [&projected, &other],
+                "{kind:?} on {date}"
+            );
+        }
+    }
+}
+
+#[test]
 fn discard_completion_preserves_prior_work_and_removes_only_the_discarded_buffer_credit() {
     let mut state = sample();
     let start = state.bundle.snapshot.observed_at_epoch_ms;

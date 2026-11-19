@@ -42,32 +42,19 @@ pub(super) fn Schedule(
             })
         })
         .collect();
-    let scheduled = state
-        .bundle
-        .days
-        .get(&date)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
-    let snapshot = &state.bundle.snapshot;
     let rows = project_daily_rows(
-        scheduled,
+        state.visible_schedule(&date),
         Some(&date),
-        Some(snapshot),
+        Some(&state.bundle.snapshot),
         &|epoch| timezone.read().offset_at(epoch),
         true,
     );
-    let statuses: BTreeMap<_, _> = scheduled
+    let statuses: BTreeMap<_, _> = rows
         .iter()
         .filter_map(|row| {
             let id = row.task.task_id.as_ref()?;
-            let status = if state.conflicts.contains_key(id) || state.awaiting_refresh(id) {
-                "要確認"
-            } else if state.completed(id) {
-                "完了"
-            } else {
-                return None;
-            };
-            Some((id.clone(), status))
+            (state.conflicts.contains_key(id) || state.awaiting_refresh(id))
+                .then(|| (id.clone(), "要確認"))
         })
         .collect();
     let active_task_ids = state

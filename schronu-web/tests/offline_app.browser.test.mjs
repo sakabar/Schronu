@@ -150,7 +150,7 @@ async function withBrowser(profile, url, timezoneId, visit, { offlineAtStartup =
                     const label = ${JSON.stringify(label)};
                     const button = [...document.querySelectorAll("button,summary")].find(element =>
                         !element.disabled && element.getClientRects().length &&
-                        (element.textContent.trim() === label || element.getAttribute("aria-label") === label));
+                        (element.textContent.trim() === label || element.getAttribute("aria-label") === label || element.title === label));
                     if (button) button.click();
                     return Boolean(button);
                 })()`));
@@ -231,21 +231,34 @@ async function savedSchedule(page) {
     assert.doesNotMatch(await page.evaluate("document.body.innerText"), /準備完了|準備が完了しました/);
 }
 
+async function selectSavedDate(page, date) {
+    await page.click(date);
+    await until("selected " + date, () => page.evaluate(
+        `document.querySelector('.offline-shell .date-pill[aria-pressed=true]')?.title === ${JSON.stringify(date)}`
+    ));
+}
+
 async function selectSavedTaskDate(page) {
-    const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill:not(:disabled)'), b => b.textContent.trim())");
+    const dates = await page.evaluate("Array.from(document.querySelectorAll('.offline-shell .date-pill:not(:disabled)'), b => b.title)");
     assert.equal(dates.length, 7);
     for (const date of dates) {
-        await page.click(date);
+        await selectSavedDate(page, date);
         if (await page.evaluate("Boolean(document.querySelector('.session-start'))")) return date;
     }
     assert.fail("Fixture task must appear in the saved week");
 }
 
-async function showCompletedTask(page, date) {
-    await page.click(date);
-    await until("saved task marked complete", () => page.evaluate(
-        "Array.from(document.querySelectorAll('.session-cell > span')).some(label => label.textContent === '完了')"
-    ));
+async function assertCompletedTaskHidden(page, date) {
+    await selectSavedDate(page, date);
+    assert.equal(await page.evaluate("document.querySelectorAll('.task-row').length"), 0);
+    assert.equal(await page.evaluate("document.querySelector('.task-heading').getAttribute('aria-label')"), "タスク 0件");
+    await page.evaluate(`{
+        const input = document.querySelector('.task-name-filter-input');
+        input.value = ${JSON.stringify(taskName)};
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    }`);
+    await page.show("一致するタスクがありません");
+    await page.click("検索文字列をクリア");
 }
 
 async function sessionLayout(page, width) {
@@ -366,6 +379,11 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             assert(await page.evaluate("document.querySelector('.session-remaining.is-overrun') !== null"));
             await page.click("記録して完了");
             await savedSchedule(page);
+            await assertCompletedTaskHidden(page, selectedDate);
+        }, { offlineAtStartup: true });
+        await withBrowser(profile, server.url, "Asia/Taipei", async page => {
+            await savedSchedule(page);
+            await assertCompletedTaskHidden(page, selectedDate);
             await page.click("セッション");
             await page.show("未送信2件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
@@ -437,20 +455,25 @@ test("discarded measurement persists through offline restart and sync replay", {
             await page.click("計測を破棄して完了");
             await page.click("キャンセル");
             await page.show("未送信0件");
+            await page.click("一覧");
+            await selectSavedDate(page, selectedDate);
+            await page.show(taskName);
+            assert.equal(await page.evaluate("document.querySelector('.task-heading').getAttribute('aria-label')"), "タスク 1件");
+            await page.click("セッション");
             await page.clock(confirmed - minute);
             await page.show("経過 00:19:00");
             await page.click("計測を破棄して完了");
             await page.clock(confirmed);
             await page.click(taskName + ": 計測を破棄して完了を確定");
             await savedSchedule(page);
-            await showCompletedTask(page, selectedDate);
+            await assertCompletedTaskHidden(page, selectedDate);
             await page.click("セッション");
             await page.show("未送信1件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
         }, { offlineAtStartup: true });
         await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
             await savedSchedule(page);
-            await showCompletedTask(page, selectedDate);
+            await assertCompletedTaskHidden(page, selectedDate);
             await page.click("セッション");
             await page.show("未送信1件");
             await page.waitForSyncDisabled(false);

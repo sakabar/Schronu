@@ -39,6 +39,22 @@ impl OfflineState {
         self.completed.contains(id)
     }
 
+    pub fn visible_schedule(&self, date: &str) -> impl Iterator<Item = &ScheduledTaskRow> {
+        self.bundle
+            .days
+            .get(date)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row.occurrence.is_projected()
+                    || row
+                        .task
+                        .task_id
+                        .as_deref()
+                        .is_none_or(|id| !self.completed(id))
+            })
+    }
+
     pub fn recorded_task_name(&self, id: &str) -> Option<&str> {
         self.recorded_task_names.get(id).map(String::as_str)
     }
