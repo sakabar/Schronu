@@ -17,17 +17,6 @@ opam switch create . ocaml-base-compiler.4.14.2 --no-install \
 opam install --switch=. --deps-only ./schronu-verification.opam
 ```
 
-## 最初の証明
-
-`Smoke.v` では Prosa の離散時間モデルから `duration` を読み込み、長さに
-0 を足しても変わらないことを帰納法で証明します。`verification/` で
-コンパイルし、生成された証明を検査します。
-
-```sh
-opam exec --switch=. -- rocq compile Smoke.v
-opam exec --switch=. -- rocqchk -silent Smoke
-```
-
 ## 単日の安定性
 
 `Stability.v`は、単日の時間収支と操作による安定性の保存を証明します。
@@ -136,9 +125,8 @@ Inductive Action :=
 `verification/`で次を実行します。
 
 ```sh
-opam exec --switch=. -- rocq compile Smoke.v
 opam exec --switch=. -- rocq compile Stability.v
-opam exec --switch=. -- rocqchk -silent Smoke Stability
+opam exec --switch=. -- rocqchk -silent Stability
 ```
 
 `Stability.v`末尾の`Print Assumptions`が主要定理と反例の依存仮定を表示します。
@@ -152,11 +140,10 @@ opam exec --switch=. -- rocqchk -silent Smoke Stability
 
 ```sh
 mkdir -p _doc
-opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Smoke.v Stability.v
+opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Stability.v
 ```
 
-`_doc/Stability.html`に変数・前提・定理・反例の説明と証明を、
-`_doc/Smoke.html`に環境確認の説明と証明を出力します。生成物と`lia`のキャッシュは
+`_doc/Stability.html`に変数・前提・定理・反例の説明と証明を出力します。生成物と`lia`のキャッシュは
 Git管理から除外します。Coqdocコメントの正本は各`.v`ファイルです。
 コメント内でパーセント記号を表示するには`%%`と記述します。単独の`%`は
 CoqdocのLaTeX用エスケープとして解釈され、HTMLで説明が欠落するためです。
