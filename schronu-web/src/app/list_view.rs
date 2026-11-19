@@ -248,6 +248,8 @@ pub fn ListModeControl(
 pub fn CompletedListView(
     dates: Vec<DateButtonViewModel>,
     report: Option<CompletedTaskReport>,
+    #[props(default)] ascending: bool,
+    #[props(default)] on_toggle_order: EventHandler<()>,
     #[props(default)] display_offset: Option<Callback<i64, Option<i32>>>,
     selected_logical_date: Option<String>,
     date_input_text: String,
@@ -267,10 +269,19 @@ pub fn CompletedListView(
         actual_estimate_percentage: actual_estimate_percentage(&report.rows),
     });
     let rows = report.map_or_else(Vec::new, |report| report.rows);
-    let matching_rows = rows
+    let mut matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task_name))
         .collect::<Vec<_>>();
+    matching_rows.sort_by(|left, right| {
+        let time_order = left.completed_at_epoch_ms.cmp(&right.completed_at_epoch_ms);
+        let time_order = if ascending {
+            time_order
+        } else {
+            time_order.reverse()
+        };
+        time_order.then_with(|| left.task_id.cmp(&right.task_id))
+    });
     let no_matches = !filter_text.trim().is_empty() && matching_rows.is_empty();
     rsx! {
         section { class: "task-list-view completed-list-view",
@@ -293,6 +304,8 @@ pub fn CompletedListView(
                 logical_date: selected_logical_date,
                 display_offset,
                 rows: matching_rows,
+                ascending,
+                on_toggle_order,
                 summary,
                 empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
             }
@@ -411,6 +424,8 @@ fn CompletedTaskTable(
     logical_date: Option<String>,
     display_offset: Option<Callback<i64, Option<i32>>>,
     rows: Vec<CompletedTaskRow>,
+    ascending: bool,
+    on_toggle_order: EventHandler<()>,
     summary: Option<CompletedReportSummary>,
     empty_message: Option<String>,
 ) -> Element {
@@ -454,7 +469,16 @@ fn CompletedTaskTable(
                 table { class: "completed-task-table",
                     thead {
                         tr {
-                            th { class: "completed-time", scope: "col", "完了" }
+                            th {
+                                class: "completed-time", scope: "col",
+                                aria_sort: if ascending { "ascending" } else { "descending" },
+                                button {
+                                    class: "completed-time-sort", r#type: "button",
+                                    aria_label: if ascending { "完了時刻を新しい順にする" } else { "完了時刻を古い順にする" },
+                                    onclick: move |_| on_toggle_order.call(()),
+                                    if ascending { "完了 ↑" } else { "完了 ↓" }
+                                }
+                            }
                             th { class: "completed-actual", scope: "col", "実績" }
                             th { class: "completed-difference", scope: "col", "予実差" }
                             th { class: "completed-subject", scope: "col", "タスク / Project" }
