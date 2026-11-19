@@ -1599,6 +1599,26 @@ fn duration_statistics_round_trip_preserves_unsigned_count_and_fractional_values
 }
 
 #[test]
+fn duration_statistics_exclusion_round_trips_as_an_optional_boolean() {
+    let field = "duration_statistics_excluded";
+    for (line, excluded) in [
+        (String::new(), false),
+        (format!("{field}: false"), false),
+        (format!("{field}: true"), true),
+    ] {
+        let yaml = YamlLoader::load_from_str(&format!("name: completed\nstatus: done\n{line}")).unwrap();
+        let task = yaml_to_task(&yaml[0], yaml_test_now()).unwrap();
+        assert_eq!(task.duration_statistics_excluded().unwrap(), excluded);
+        let encoded = task_snapshot_to_yaml(&task.snapshot().unwrap());
+        let expected = if excluded { Yaml::Boolean(true) } else { Yaml::BadValue };
+        assert_eq!(encoded[field], expected);
+    }
+    let yaml = YamlLoader::load_from_str(&format!("name: completed\n{field}: 'true'")).unwrap();
+    let error = yaml_to_task(&yaml[0], yaml_test_now()).unwrap_err();
+    assert!(error.to_string().contains("duration_statistics_excluded: must be a boolean"));
+}
+
+#[test]
 fn repetition_duration_updates_round_trip_and_validate_boolean() {
     let field = "repetition_duration_updates_enabled";
     let routine = "name: routine\nrepetition_interval_days: 7";

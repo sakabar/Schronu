@@ -27,6 +27,8 @@ use yaml_rust::{Yaml, YamlEmitter, YamlLoader};
 
 mod identity;
 mod load;
+mod receipts;
+pub(crate) use receipts::ReceiptStatus;
 
 use identity::task_identity_entries;
 pub use identity::NilTaskIdError;
@@ -41,6 +43,7 @@ pub struct TaskRepository {
     id_to_task_map: RefCell<HashMap<Uuid, TaskHandle>>,
     storage_revision: Cell<Option<Uuid>>,
     has_loaded: bool,
+    pending_offline_receipts: RefCell<Option<Vec<u8>>>,
     storage_transaction_io: Arc<dyn StorageTransactionIo>,
 }
 
@@ -234,6 +237,7 @@ impl TaskRepository {
             id_to_task_map: RefCell::new(HashMap::new()),
             storage_revision: Cell::new(None),
             has_loaded: false,
+            pending_offline_receipts: RefCell::new(None),
             storage_transaction_io: Arc::new(FileSystemStorageTransactionIo),
         }
     }
@@ -338,6 +342,7 @@ impl TaskRepository {
         self.id_to_task_map.replace(loaded.id_to_task_map);
         self.storage_revision.set(loaded.storage_revision);
         self.has_loaded = true;
+        *self.pending_offline_receipts.get_mut() = None;
     }
 
     fn sync_task_and_descendants(
@@ -472,6 +477,9 @@ impl TaskRepositoryTrait for TaskRepository {
     }
 
     fn has_pending_changes(&self) -> Result<bool, TaskTreeError> {
+        if self.pending_offline_receipts.borrow().is_some() {
+            return Ok(true);
+        }
         self.projects
             .iter()
             .map(Project::needs_save)
@@ -500,7 +508,8 @@ impl TaskRepositoryTrait for TaskRepository {
             }
         }
 
-        if prepared_writes.is_empty() {
+        let pending_receipts = self.pending_offline_receipts.borrow();
+        if prepared_writes.is_empty() && pending_receipts.is_none() {
             for project in projects_to_save {
                 project
                     .mark_clean()
@@ -533,13 +542,20 @@ impl TaskRepositoryTrait for TaskRepository {
             ));
         }
         let new_storage_revision = Uuid::new_v4();
-        let write_requests = prepared_writes
+        let mut write_requests = prepared_writes
             .iter()
             .map(|(project, bytes)| WriteRequest {
                 target_path: &project.project_yaml_file_path,
                 bytes,
             })
             .collect::<Vec<_>>();
+        let receipts_path = self.receipts_path();
+        if let Some(bytes) = pending_receipts.as_deref() {
+            write_requests.push(WriteRequest {
+                target_path: &receipts_path,
+                bytes,
+            });
+        }
         let markdown_directories = prepared_writes
             .iter()
             .map(|(project, _)| project.project_dir_path.join("markdown"))
@@ -572,6 +588,8 @@ impl TaskRepositoryTrait for TaskRepository {
                 TaskRepositoryError::new(ApplicationRepositoryOperation::Save, error)
             })?;
         }
+        drop(pending_receipts);
+        *self.pending_offline_receipts.borrow_mut() = None;
         self.storage_revision.set(Some(new_storage_revision));
         Ok(())
     }

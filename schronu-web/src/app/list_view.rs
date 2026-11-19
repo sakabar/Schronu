@@ -59,6 +59,7 @@ pub(super) fn DeviationSortHeading(
 #[component]
 pub fn ListView(
     dates: Vec<DateButtonViewModel>,
+    offline_row_status: Option<std::collections::BTreeMap<String, &'static str>>,
     #[props(default)] deviation_order: bool,
     #[props(default)] on_toggle_deviation_order: EventHandler<()>,
     rows: Vec<ListRowViewModel>,
@@ -84,6 +85,7 @@ pub fn ListView(
     #[props(default)] on_defer_task: EventHandler<(String, DeferPlan)>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
+    let offline = offline_row_status.is_some();
     let search_available = all_tasks_status
         .as_ref()
         .is_none_or(|status| matches!(status, AllTasksViewStatus::Loaded));
@@ -130,7 +132,8 @@ pub fn ListView(
                     class: if all_selected { "date-pill is-selected" } else { "date-pill" },
                     r#type: "button",
                     aria_pressed: all_selected,
-                    onclick: move |_| on_select_all_tasks.call(()),
+                    disabled: offline,
+                    onclick: move |_| if !offline { on_select_all_tasks.call(()) },
                     "全て"
                 }
                 for date in dates {
@@ -193,10 +196,11 @@ pub fn ListView(
                                     active: row.task.task_id.as_ref().is_some_and(|row_task_id| {
                                         active_task_ids.iter().any(|task_id| task_id == row_task_id)
                                     }),
+                                    status: row.task.task_id.as_ref().and_then(|id| offline_row_status.as_ref()?.get(id).copied()),
                                     row,
                                     mutations_locked,
                                     mutation_globally_blocked,
-                                    server_actions_blocked,
+                                    server_actions_blocked: server_actions_blocked || offline,
                                     on_start_session,
                                     on_defer_task,
                                 }
@@ -217,6 +221,7 @@ pub fn ListView(
 
 #[component]
 pub fn ListModeControl(
+    #[props(default)] completed_disabled: bool,
     selected_mode: ListMode,
     on_switch_list_mode: EventHandler<ListMode>,
 ) -> Element {
@@ -231,6 +236,7 @@ pub fn ListModeControl(
             ListModeButton {
                 label: "完了",
                 mode: ListMode::Completed,
+                disabled: completed_disabled,
                 selected: selected_mode == ListMode::Completed,
                 on_switch_list_mode,
             }
@@ -242,6 +248,8 @@ pub fn ListModeControl(
 pub fn CompletedListView(
     dates: Vec<DateButtonViewModel>,
     report: Option<CompletedTaskReport>,
+    #[props(default)] ascending: bool,
+    #[props(default)] on_toggle_order: EventHandler<()>,
     #[props(default)] display_offset: Option<Callback<i64, Option<i32>>>,
     selected_logical_date: Option<String>,
     date_input_text: String,
@@ -261,10 +269,19 @@ pub fn CompletedListView(
         actual_estimate_percentage: actual_estimate_percentage(&report.rows),
     });
     let rows = report.map_or_else(Vec::new, |report| report.rows);
-    let matching_rows = rows
+    let mut matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task_name))
         .collect::<Vec<_>>();
+    matching_rows.sort_by(|left, right| {
+        let time_order = left.completed_at_epoch_ms.cmp(&right.completed_at_epoch_ms);
+        let time_order = if ascending {
+            time_order
+        } else {
+            time_order.reverse()
+        };
+        time_order.then_with(|| left.task_id.cmp(&right.task_id))
+    });
     let no_matches = !filter_text.trim().is_empty() && matching_rows.is_empty();
     rsx! {
         section { class: "task-list-view completed-list-view",
@@ -287,6 +304,8 @@ pub fn CompletedListView(
                 logical_date: selected_logical_date,
                 display_offset,
                 rows: matching_rows,
+                ascending,
+                on_toggle_order,
                 summary,
                 empty_message: no_matches.then_some("一致するタスクがありません。".to_owned()),
             }
@@ -376,6 +395,7 @@ fn ListControls(
 
 #[component]
 fn ListModeButton(
+    #[props(default)] disabled: bool,
     label: &'static str,
     mode: ListMode,
     selected: bool,
@@ -385,11 +405,12 @@ fn ListModeButton(
         button {
             class: if selected { "list-mode-button is-selected" } else { "list-mode-button" },
             role: "tab",
+            disabled,
             r#type: "button",
             aria_selected: selected,
             aria_pressed: selected,
             onclick: move |_| {
-                if !selected {
+                if !disabled && !selected {
                     on_switch_list_mode.call(mode);
                 }
             },
@@ -403,6 +424,8 @@ fn CompletedTaskTable(
     logical_date: Option<String>,
     display_offset: Option<Callback<i64, Option<i32>>>,
     rows: Vec<CompletedTaskRow>,
+    ascending: bool,
+    on_toggle_order: EventHandler<()>,
     summary: Option<CompletedReportSummary>,
     empty_message: Option<String>,
 ) -> Element {
@@ -446,7 +469,16 @@ fn CompletedTaskTable(
                 table { class: "completed-task-table",
                     thead {
                         tr {
-                            th { class: "completed-time", scope: "col", "完了" }
+                            th {
+                                class: "completed-time", scope: "col",
+                                aria_sort: if ascending { "ascending" } else { "descending" },
+                                button {
+                                    class: "completed-time-sort", r#type: "button",
+                                    aria_label: if ascending { "完了時刻を新しい順にする" } else { "完了時刻を古い順にする" },
+                                    onclick: move |_| on_toggle_order.call(()),
+                                    if ascending { "完了 ↑" } else { "完了 ↓" }
+                                }
+                            }
                             th { class: "completed-actual", scope: "col", "実績" }
                             th { class: "completed-difference", scope: "col", "予実差" }
                             th { class: "completed-subject", scope: "col", "タスク / Project" }
@@ -626,6 +658,7 @@ fn DateButton(
             r#type: "button",
             aria_pressed: date.selected,
             disabled,
+            title: date.logical_date.clone(),
             onclick: move |_| {
                 if !disabled {
                     on_select_date.call(date.logical_date.clone());
@@ -638,6 +671,7 @@ fn DateButton(
 
 #[component]
 fn TaskRow(
+    status: Option<&'static str>,
     now_epoch_ms: i64,
     row: ListRowViewModel,
     show_separators: bool,
@@ -753,7 +787,9 @@ fn TaskRow(
         tr { class: row_class,
             td { class: "session-cell",
                 if !is_projected {
-                    if let (true, Some(task)) = (is_leaf, task) {
+                    if let Some(status) = status {
+                        span { "{status}" }
+                    } else if let (true, Some(task)) = (is_leaf, task) {
                     button {
                         class: start_class,
                         r#type: "button",

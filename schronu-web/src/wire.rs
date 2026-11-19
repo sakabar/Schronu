@@ -88,6 +88,34 @@ pub struct LoadData {
     pub routine_load: RoutineLoadReport,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OfflineBundle {
+    pub snapshot: ServerSnapshot,
+    pub days: BTreeMap<String, Vec<ScheduledTaskRow>>,
+    pub load: LoadData,
+    pub splittable_task_ids: std::collections::BTreeSet<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfflineOperationKind {
+    Record,
+    Split,
+    Complete,
+    CompleteWithoutRecording,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct OfflineOperation {
+    pub operation_id: String,
+    pub task_id: String,
+    pub kind: OfflineOperationKind,
+    pub started_at_epoch_ms: i64,
+    pub ended_at_epoch_ms: i64,
+    pub expected_actual_work_seconds: i64,
+    pub expected_estimated_work_seconds: Option<i64>,
+}
+
 pub type CompleteSessionResponse = WebSuccess<Option<SessionTask>>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -507,6 +535,7 @@ pub struct RecordSessionResult {
 }
 
 pub mod web_error_codes {
+    pub const OFFLINE_CONFLICT: &str = "offline_conflict";
     pub const INVALID_CURSOR: &str = "invalid_cursor";
     pub const INVALID_INPUT: &str = "invalid_input";
     pub const TASK_NOT_FOUND: &str = "task_not_found";

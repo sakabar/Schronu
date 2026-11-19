@@ -27,6 +27,22 @@ pub struct WorkSession {
     pub actual_work_seconds_at_start: i64,
 }
 
+impl WorkSession {
+    pub(crate) fn from_task(task: &crate::SessionTask, started_at_epoch_ms: i64) -> Self {
+        Self {
+            buffer_credit_start_epoch_ms: None,
+            start_time_epoch_ms: task.start_time_epoch_ms,
+            pending_until_epoch_ms: task.pending_until_epoch_ms,
+            task_id: task.task_id.clone(),
+            task_name: task.task_name.clone(),
+            started_at_epoch_ms,
+            estimated_work_seconds_at_start: task.estimated_work_seconds,
+            actual_work_seconds_at_start: task.actual_work_seconds,
+            estimate_success_percentage: task.estimate_success_percentage,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkSessionsState {
     sessions: Vec<WorkSession>,

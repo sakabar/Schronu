@@ -46,6 +46,8 @@ impl Error for WebReadOverflowError {}
 
 #[derive(Debug)]
 pub(in crate::adapter::controller) enum WebReadCoreError {
+    ReceiptStorage(TaskRepositoryError),
+    OfflineConflict,
     Application(ApplicationError),
     Overflow(WebReadOverflowError),
 }
@@ -64,6 +66,7 @@ pub(super) enum WebReadOperationError {
 
 #[derive(Debug)]
 pub enum WebReadError {
+    OfflineConflict,
     InvalidCursor,
     BusyTimeSlots(BusyTimeSlotLoadError),
     Lock(StorageLockError),
@@ -82,6 +85,12 @@ impl WebReadError {
         error: RepositoryTransactionError<StorageLockError, WebReadOperationError>,
     ) -> Self {
         match error {
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::ReceiptStorage(error),
+            )) => Self::Repository(error),
+            RepositoryTransactionError::Operation(WebReadOperationError::Core(
+                WebReadCoreError::OfflineConflict,
+            )) => Self::OfflineConflict,
             RepositoryTransactionError::Lock(error) => Self::Lock(error),
             RepositoryTransactionError::Load(error) => Self::Repository(error),
             RepositoryTransactionError::SaveFailed(error) => Self::RepositorySaveFailed(error),
@@ -104,6 +113,9 @@ impl WebReadError {
 impl fmt::Display for WebReadError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::OfflineConflict => {
+                write!(formatter, "offline operation conflicts with stored state")
+            }
             Self::InvalidCursor => write!(formatter, "invalid all-task cursor"),
             Self::BusyTimeSlots(error) => write!(formatter, "busy time slot load failed: {error}"),
             Self::Lock(error) => write!(formatter, "storage lock failed: {error}"),
@@ -142,7 +154,10 @@ impl Error for WebReadError {
             Self::Application(error) => Some(error),
             Self::InvalidInput(error) => Some(error),
             Self::Overflow(error) => Some(error),
-            Self::PathEncoding(_) | Self::RepositoryPoisoned | Self::InvalidCursor => None,
+            Self::PathEncoding(_)
+            | Self::RepositoryPoisoned
+            | Self::InvalidCursor
+            | Self::OfflineConflict => None,
         }
     }
 }

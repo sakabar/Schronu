@@ -4498,6 +4498,42 @@ fn repetition_cliは間隔と論理日から実タスクを作る() {
 }
 
 #[test]
+fn duration_statistics_exclusion_cli_uses_exact_focus_duration_only_for_automatic_finish() {
+    let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
+    for (command, elapsed_ms, actual_seconds, expected_statistics) in [
+        ("終", 59_000, 300, (0, 0.0, 0.0)),
+        ("終", 60_000, 360, (0, 0.0, 0.0)),
+        ("終", 60_001, 360, (1, 360.0, 0.0)),
+        ("終 今", 10_000, 300, (1, 300.0, 0.0)),
+        ("終 11:59", 10_000, 300, (1, 300.0, 0.0)),
+    ] {
+        let parent = new_test_task_handle("繰り返し元").unwrap();
+        parent.set_repetition_interval_days_opt(Some(1)).unwrap();
+        let occurrence = parent.create_as_last_child(new_test_task_attr("今回"));
+        occurrence.set_actual_work_seconds(300).unwrap();
+        let result = execute_command_with_focus_started_for_test(
+            parent,
+            now,
+            now - Duration::milliseconds(elapsed_ms),
+            Some(occurrence.get_id().unwrap()),
+            command,
+        );
+        assert_eq!(
+            occurrence.get_status().unwrap(),
+            Status::Done,
+            "{}",
+            result.output
+        );
+        assert_eq!(occurrence.get_actual_work_seconds().unwrap(), actual_seconds);
+        assert_eq!(
+            result.task.duration_statistics().unwrap().values(),
+            expected_statistics,
+            "{command} at {elapsed_ms} ms"
+        );
+    }
+}
+
+#[test]
 fn repetition_cliは省略した締切を翌暦日に置く() {
     let now = Local.with_ymd_and_hms(2026, 8, 11, 12, 0, 0).unwrap();
     let root = new_test_task_handle("作成先").unwrap();
@@ -9731,51 +9767,43 @@ fn test_明示focus中の手動navigationは明示状態を維持する() {
 }
 
 #[test]
-fn test_明示focus中に終了したらhandlerの次focusではなく元modeから再選択する() {
+fn test_明示focusした子の完了後は兄弟の状態に従って次focusを決める() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
-    let root = new_test_task_handle("root").unwrap();
-    let explicit_task = root.create_as_last_child(new_test_task_attr("明示focus対象"));
-    let automatic_task = root.create_as_last_child(new_test_task_attr("自動focus候補"));
-    let _ = automatic_task.set_orig_status(Status::Done);
-    let explicit_task_id = explicit_task.get_id().unwrap();
-    let automatic_task_id = automatic_task.get_id().unwrap();
-    let root_id = root.get_id().unwrap();
-    let mut repository = TestTaskRepository::new(root, now);
-    repository.highest_priority_leaf_task_id_opt = Some(automatic_task_id);
-    let mut free_time_manager = TestFreeTimeManager::default();
-    let mut stdout = TestWriter::new();
-    let mut focused_task_id_opt = None;
-    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    for sibling_status in [None, Some(Status::Done), Some(Status::Todo)] {
+        let root = new_test_task_handle("project").unwrap();
+        let parent = root.create_as_last_child(new_test_task_attr("親"));
+        let child = parent.create_as_last_child(new_test_task_attr("完了対象"));
+        if let Some(status) = sibling_status {
+            parent.create_as_last_child(new_test_task_attr("兄弟"))
+                .set_orig_status(status).unwrap();
+        }
+        let candidate = root.create_as_last_child(new_test_task_attr("自動選択候補"));
+        let candidate_id = candidate.get_id().unwrap();
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(root, now);
+        repository.highest_priority_leaf_task_id_opt = Some(candidate_id);
+        let mut mode = FocusSelectionMode::highest_priority();
+        mode.tuck_away(Uuid::from_u128(9999));
+        let expected_mode = mode.clone();
+        let mut focus = None;
+        let mut output = TestWriter::new();
+        let mut free_time = TestFreeTimeManager::default();
+        for command in [format!("見 {child_id}"), "終".to_string()] {
+            execute_interactive_command(
+                &mut output, &mut repository, &mut free_time, &mut focus,
+                &now, &mut mode, None, now, &command,
+            ).unwrap();
+        }
 
-    execute_interactive_command(
-        &mut stdout,
-        &mut repository,
-        &mut free_time_manager,
-        &mut focused_task_id_opt,
-        &now,
-        &mut focus_selection_mode,
-        None,
-        now,
-        &format!("見 {explicit_task_id}"),
-    )
-    .unwrap();
-    execute_interactive_command(
-        &mut stdout,
-        &mut repository,
-        &mut free_time_manager,
-        &mut focused_task_id_opt,
-        &now,
-        &mut focus_selection_mode,
-        None,
-        now,
-        "終 今",
-    )
-    .unwrap();
-
-    assert_eq!(explicit_task.get_orig_status().unwrap(), Status::Done);
-    assert_ne!(automatic_task_id, root_id);
-    assert_eq!(focused_task_id_opt, Some(automatic_task_id));
-    assert!(!focus_selection_mode.is_explicit());
+        let expected_focus = if sibling_status == Some(Status::Todo) {
+            candidate_id
+        } else {
+            parent.get_id().unwrap()
+        };
+        assert_eq!(child.get_orig_status().unwrap(), Status::Done);
+        assert_eq!(focus, Some(expected_focus), "sibling_status={sibling_status:?}");
+        assert_eq!(mode, expected_mode);
+    }
 }
 
 #[test]
@@ -11114,11 +11142,11 @@ impl FocusDisplaySource for CharacterizationFocusDisplaySource {
                     task_attr: if self.failure == FocusStageFailure::Attr {
                         Err(TaskTreeError::Borrow)
                     } else {
-                        Ok(TaskAttr::with_identity(
+                        Ok(Box::new(TaskAttr::with_identity(
                             "部分表示対象",
                             Uuid::from_u128(42),
                             self.focus_started_at,
-                        ))
+                        )))
                     },
                 })
             }

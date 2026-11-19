@@ -152,6 +152,13 @@ fn task_snapshot_to_yaml_recursive(snapshot: &TaskSnapshot, is_project_root: boo
         );
     }
 
+    if task.duration_statistics_excluded() {
+        task_hash.insert(
+            Yaml::String("duration_statistics_excluded".into()),
+            Yaml::Boolean(true),
+        );
+    }
+
     let repetition_interval_days_opt = task.get_repetition_interval_days_opt();
     if let Some(repetition_interval_days) = repetition_interval_days_opt {
         task_hash.insert(
@@ -575,6 +582,10 @@ fn yaml_to_task_strict(
         .map_err(map_task_tree_error)?;
     task.set_actual_work_seconds(nonnegative("actual_work_seconds", 0)?)
         .map_err(map_task_tree_error)?;
+    if boolean("duration_statistics_excluded")? {
+        task.exclude_from_duration_statistics()
+            .map_err(map_task_tree_error)?;
+    }
     task.set_repetition_interval_days_opt(interval)
         .map_err(map_task_tree_error)?;
     let field = "repetition_duration_updates_enabled";

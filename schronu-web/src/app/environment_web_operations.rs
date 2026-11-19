@@ -2,10 +2,11 @@ use crate::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, CreateTaskRequest,
     CreateTaskResult, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadReport, RoutineLoadRow,
-    ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot, SessionTask,
-    TaskCreationDay, TaskDisplayKind, WebError, WebOperations, WebSuccess, WebWorkerHandle,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData, OfflineBundle,
+    OfflineOperation, OfflineOperationKind, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    RoutineLoadReport, RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, TaskCreationDay, TaskDisplayKind, WebError, WebOperations,
+    WebSuccess, WebWorkerHandle,
 };
 use chrono::{DateTime, Local, NaiveDate};
 use schronu::adapter::controller::{
@@ -13,8 +14,9 @@ use schronu::adapter::controller::{
     CompleteSessionRequest as CoreCompleteSessionRequest, CompletedTaskReportDto,
     CompletedTaskRowDto, DeadlineDisplayKind as CoreDeadlineDisplayKind, DeferModeDto,
     DeferPlanRequest as CoreDeferPlanRequest, DeferTaskRequest as CoreDeferTaskRequest,
-    LoadDataDto, RecordSessionRequest as CoreRecordSessionRequest, RoutineLoadReportDto,
-    RoutineLoadRowDto, ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto,
+    LoadDataDto, OfflineOperationDto, OfflineOperationKind as CoreOfflineOperationKind,
+    RecordSessionRequest as CoreRecordSessionRequest, RoutineLoadReportDto, RoutineLoadRowDto,
+    ScheduleOccurrenceDto, ScheduledTaskDto, ScheduledTaskRowDto,
     ServerSnapshot as CoreServerSnapshot, SessionTaskDto, TaskDisplayKind as CoreTaskDisplayKind,
     WebService, WebSuccess as CoreWebSuccess,
 };
@@ -86,6 +88,49 @@ impl<C: Clock> EnvironmentWebOperations<C> {
 }
 
 impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
+    fn prepare_offline(&mut self) -> Result<OfflineBundle, WebError> {
+        let now = self.clock.now();
+        let bundle = self.service()?.prepare_offline_at(now)?;
+        Ok(OfflineBundle {
+            snapshot: bundle.snapshot.into(),
+            days: bundle
+                .days
+                .into_iter()
+                .map(|(day, rows)| (day, rows.convert()))
+                .collect(),
+            load: bundle.load.convert(),
+            splittable_task_ids: bundle.splittable_task_ids,
+        })
+    }
+
+    fn sync_offline_operation(&mut self, request: OfflineOperation) -> Result<(), WebError> {
+        let uuid = |value: &str| {
+            Uuid::parse_str(value).map_err(|_| WebError {
+                message: "操作IDとタスクIDはUUID形式で指定してください。".to_owned(),
+                ..invalid_input_error()
+            })
+        };
+        let request = OfflineOperationDto {
+            operation_id: uuid(&request.operation_id)?,
+            task_id: uuid(&request.task_id)?,
+            kind: match request.kind {
+                OfflineOperationKind::Record => CoreOfflineOperationKind::Record,
+                OfflineOperationKind::Split => CoreOfflineOperationKind::Split,
+                OfflineOperationKind::Complete => CoreOfflineOperationKind::Complete,
+                OfflineOperationKind::CompleteWithoutRecording => {
+                    CoreOfflineOperationKind::CompleteWithoutRecording
+                }
+            },
+            started_at_epoch_ms: request.started_at_epoch_ms,
+            ended_at_epoch_ms: request.ended_at_epoch_ms,
+            expected_actual_work_seconds: request.expected_actual_work_seconds,
+            expected_estimated_work_seconds: request.expected_estimated_work_seconds,
+        };
+        let now = self.clock.now();
+        self.service()?
+            .sync_offline_operation_at(now, request)
+            .map_err(Into::into)
+    }
     fn create_task(
         &mut self,
         request: CreateTaskRequest,
@@ -622,6 +667,66 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn offline_endpointは保存範囲と再送結果を同じstorageへ反映する() {
+        use crate::app::web_endpoint::{prepare_offline, sync_offline_operation};
+        use crate::{OfflineOperation, OfflineOperationKind};
+        use dioxus::fullstack::{axum::http::Request, FullstackContext};
+        use futures::executor::block_on;
+
+        let fixture = Fixture::new();
+        let now = Local.with_ymd_and_hms(2026, 9, 5, 19, 0, 59).unwrap();
+        let task_id = fixture.seed_task(now).to_string();
+        let config = fixture.config.clone();
+        let storage = fixture.storage.clone();
+        let worker = crate::WebWorkerHandle::spawn(move || {
+            EnvironmentWebOperations::with_environment_and_clock(
+                Some(config.into_os_string()),
+                Some(storage.into_os_string()),
+                CountingClock {
+                    now,
+                    calls: Arc::new(AtomicUsize::new(0)),
+                },
+            )
+        });
+        let mut http_request = Request::builder().body(()).unwrap();
+        http_request.extensions_mut().insert(worker);
+        let context = FullstackContext::new(http_request.into_parts().0);
+        let saved = block_on(context.clone().scope(prepare_offline()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.days.len(), 7);
+        assert_eq!(saved.load.band_days.len(), 14);
+        assert_eq!(saved.load.routine_load.horizon_day_count, 28);
+        assert!(saved.splittable_task_ids.contains(&task_id));
+        let request = OfflineOperation {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            task_id: task_id.clone(),
+            kind: OfflineOperationKind::Record,
+            started_at_epoch_ms: now.timestamp_millis() - 40_000,
+            ended_at_epoch_ms: now.timestamp_millis() - 10_000,
+            expected_actual_work_seconds: 60,
+            expected_estimated_work_seconds: None,
+        };
+        for _ in 0..2 {
+            block_on(
+                context
+                    .clone()
+                    .scope(sync_offline_operation(request.clone())),
+            )
+            .unwrap()
+            .unwrap();
+        }
+        let updated = block_on(context.scope(prepare_offline())).unwrap().unwrap();
+        let row = updated
+            .days
+            .values()
+            .flatten()
+            .find(|row| row.task.task_id.as_ref() == Some(&task_id))
+            .unwrap();
+        assert_eq!(row.task.actual_work_seconds, 90);
+    }
 
     #[test]
     fn obsidian_endpointは実serviceで設定vaultを解決し不正uuidと不存在を区別する() {

@@ -69,6 +69,7 @@ pub(crate) fn LoadView(
     loading: bool,
     error: Option<String>,
     #[props(default)] server_actions_blocked: bool,
+    #[props(default)] offline_last_schedule_date: Option<String>,
     on_refresh: EventHandler<()>,
     on_select_date: EventHandler<String>,
 ) -> Element {
@@ -111,9 +112,16 @@ pub(crate) fn LoadView(
             )
         })
         .unwrap_or_else(|| "未取得".to_owned());
+    let frozen = offline_last_schedule_date.is_some();
+    let horizon_label = if frozen {
+        rows.first()
+            .map_or_else(|| "保存日".to_owned(), |day| day.logical_date.clone())
+    } else {
+        "今日".to_owned()
+    };
     let routine_heading = routine_load_report.as_ref().map_or_else(
         || "繰返負荷".to_owned(),
-        |report| format!("今日から{}日の負荷", report.horizon_day_count),
+        |report| format!("{horizon_label}から{}日の負荷", report.horizon_day_count),
     );
     let weeks = rows
         .chunk_by(|_, next| {
@@ -133,7 +141,7 @@ pub(crate) fn LoadView(
                         if mode() == LoadMode::Routine {
                             "{routine_heading}"
                         } else {
-                            "今日から14日の負荷"
+                            "{horizon_label}から14日の負荷"
                         }
                     }
                 }
@@ -141,9 +149,10 @@ pub(crate) fn LoadView(
                     class: "load-refresh",
                     aria_label: format!("負荷を更新。{updated}"),
                     r#type: "button",
-                    disabled: loading || server_actions_blocked,
+                    hidden: frozen,
+                    disabled: frozen || loading || server_actions_blocked,
                     onclick: move |_| {
-                        if !loading && !server_actions_blocked {
+                        if !frozen && !loading && !server_actions_blocked {
                             on_refresh.call(())
                         }
                     },
@@ -215,7 +224,9 @@ pub(crate) fn LoadView(
                                 div { class: "load-week",
                                     for (day_index, row) in week.iter().cloned().enumerate() {
                                         if week_start + day_index == 7 {
-                                            div { class: "load-horizon-divider", "8日目以降" }
+                                            div { class: "load-horizon-divider",
+                                                if offline_last_schedule_date.is_some() { "8日目以降は予定の保存範囲外" } else { "8日目以降" }
+                                            }
                                         }
                                         BandDayRow {
                                             failure: failure_percentage(
@@ -225,6 +236,7 @@ pub(crate) fn LoadView(
                                                     .copied(),
                                                 buffer_enabled(),
                                             ),
+                                            schedule_unsaved: offline_last_schedule_date.as_ref().is_some_and(|last| row.logical_date > *last),
                                             row,
                                             today: week_start == 0 && day_index == 0,
                                             disabled: server_actions_blocked,
@@ -281,6 +293,7 @@ fn BandDayRow(
     row: BandDay,
     failure: Option<u8>,
     today: bool,
+    #[props(default)] schedule_unsaved: bool,
     disabled: bool,
     on_select_date: EventHandler<String>,
 ) -> Element {
@@ -318,8 +331,14 @@ fn BandDayRow(
     };
     let failure_text = failure.map_or_else(|| "—".to_owned(), |value| format!("{value}%"));
     let failure_aria = failure.map_or("未算出", |_| failure_text.as_str());
+    let date_hint = if schedule_unsaved {
+        "予定の明細は保存範囲外です。"
+    } else {
+        "押すと一覧を表示します。"
+    };
+    let disabled = disabled || schedule_unsaved;
     let aria_label = format!(
-        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、超過{}、繰返作業の失敗確率{failure_aria}。{remaining_aria}押すと一覧を表示します。",
+        "{date_label}。利用不可{}、経過済み{}、繰返{}、単発{}、余差{}、空き{}、余差累{}、超過{}、繰返作業の失敗確率{failure_aria}。{remaining_aria}{date_hint}",
         format_duration(row.durations.unavailable_seconds),
         format_duration(row.durations.elapsed_seconds),
         format_duration(row.durations.repetitive_seconds),

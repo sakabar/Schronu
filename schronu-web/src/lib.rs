@@ -11,8 +11,9 @@ pub use wire::{
     web_error_codes, AllTaskPage, AllTaskRow, BandDay, BandDurations, CompleteSessionRequest,
     CompleteSessionResponse, CompletedTaskReport, CompletedTaskRow, CreateTaskRequest,
     CreateTaskResult, DeadlineDisplayKind, DeferMode, DeferPlan, DeferTaskRequest,
-    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, RoutineLoadForecast, RoutineLoadReport,
-    RoutineLoadRow, ScheduleOccurrence, ScheduledTask, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, TaskCreationDay, TaskDisplayKind, WebError, WebSuccess,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData, OfflineBundle,
+    OfflineOperation, OfflineOperationKind, RecordSessionRequest, RecordSessionResult, RetryAdvice,
+    RoutineLoadForecast, RoutineLoadReport, RoutineLoadRow, ScheduleOccurrence, ScheduledTask,
+    ScheduledTaskRow, ServerSnapshot, SessionTask, TaskCreationDay, TaskDisplayKind, WebError,
+    WebSuccess,
 };

@@ -41,6 +41,14 @@ mod long_press_controller_tests;
 mod obsidian;
 #[cfg(all(test, feature = "server"))]
 mod obsidian_tests;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_host;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_storage;
+#[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+mod offline_sync;
+#[cfg(all(feature = "web", target_arch = "wasm32"))]
+mod offline_view;
 #[cfg(test)]
 mod projection_boundary_tests;
 mod routine_load_view;
@@ -67,8 +75,8 @@ pub use component::app;
 pub use environment_web_operations::web_worker_from_environment;
 pub use web_endpoint::{
     auto_session, bootstrap, complete_session, complete_work_slice, create_task, defer_task,
-    list_all_tasks, list_completed_tasks, list_tasks, load_band, record_session,
-    resolve_obsidian_search_uri, resolve_task_link, WebOperationResult,
+    list_all_tasks, list_completed_tasks, list_tasks, load_band, prepare_offline, record_session,
+    resolve_obsidian_search_uri, resolve_task_link, sync_offline_operation, WebOperationResult,
 };
 
 #[cfg(test)]

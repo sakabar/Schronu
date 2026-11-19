@@ -845,13 +845,13 @@ fn completed_name_click_copies_the_exact_id() {
     );
     let listeners = super::view_test_support::rebuild_with_click_listeners(&mut dom);
     let html = dioxus::ssr::render(&dom);
-    assert_eq!(listeners.len(), 1);
+    assert_eq!(listeners.len(), 2);
     assert!(
         html.contains("completed contract: タスクIDをコピー"),
         "{html}"
     );
     assert!(!html.contains("https://example.com"), "{html}");
-    dispatch_click(&dom, listeners[0]);
+    dispatch_click(&dom, listeners[1]);
     assert_eq!(*events.borrow(), ["00000000-0000-4000-8000-000000000001"]);
 }
 
@@ -872,4 +872,70 @@ fn 完了時刻は設定したタイムゾーンで表示し一覧日は維持�
         html.contains(&format!("完了時刻 {}", completed.format("%m/%d %H:%M"))),
         "{html}"
     );
+}
+
+#[test]
+fn completion_header_toggles_full_timestamps_and_preserves_filtered_totals() {
+    fn root() -> Element {
+        let mut ascending = use_signal(|| false);
+        let midnight = 1_789_603_200_000_i64;
+        let rows = [
+            ("01", "match before midnight", -1_000),
+            ("02", "match first tie", 1_000),
+            ("03", "match second tie", 1_000),
+            ("04", "match later second", 2_000),
+            ("05", "excluded row", 3_000),
+        ]
+        .into_iter()
+        .map(|(id, name, offset)| CompletedTaskRow {
+            task_id: format!("00000000-0000-4000-8000-0000000000{id}"),
+            task_name: name.into(),
+            project_name: "project".into(),
+            completed_at_epoch_ms: midnight + offset,
+            actual_work_seconds: 60,
+            estimated_work_seconds: 60,
+            task_display_kind: Default::default(),
+        })
+        .collect();
+        rsx! {
+            CompletedListView {
+                dates: Vec::new(),
+                report: Some(CompletedTaskReport {
+                    rows, in_progress_actual_work_seconds: None, total_actual_work_seconds: 300,
+                    available_seconds: 600, recorded_percentage: Some(50),
+                }),
+                display_offset: Callback::new(|_| Some(0)),
+                ascending: ascending(), on_toggle_order: move |_| ascending.toggle(),
+                selected_logical_date: None, date_input_text: String::new(),
+                date_input_error: None, filter_text: "match".to_owned(),
+                on_select_date: move |_| {}, on_date_input_change: move |_| {},
+                on_submit_date_input: move |_| {}, on_filter_change: move |_| {},
+            }
+        }
+    }
+    let mut dom = VirtualDom::new(root);
+    let clicks = super::view_test_support::rebuild_with_click_listeners(&mut dom);
+    let sort = clicks[0];
+    for ascending in [false, true, false] {
+        let html = dioxus::ssr::render(&dom);
+        let (order, names) = if ascending {
+            (
+                "ascending",
+                ["before midnight", "first tie", "second tie", "later second"],
+            )
+        } else {
+            (
+                "descending",
+                ["later second", "first tie", "second tie", "before midnight"],
+            )
+        };
+        assert!(html.contains(&format!("aria-sort=\"{order}\"")), "{html}");
+        let positions = names.map(|name| html.find(name).unwrap());
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            html.contains("4件") && html.contains("00:05:00") && !html.contains("excluded row")
+        );
+        dispatch_click(&dom, sort);
+        dom.render_immediate_to_vec();
+    }
 }

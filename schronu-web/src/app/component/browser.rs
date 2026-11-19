@@ -20,9 +20,9 @@ use super::{
     NavigationTabs, RestoringShell, SessionChrome, TIME_DISPLAY_MODE,
 };
 use crate::client::state::{ActiveTab, AllTasksStatus, ClientState, ListMode, ListSelection};
-use crate::client::work_sessions::BrowserLocalStorage;
+use crate::client::work_sessions::{BrowserLocalStorage, WorkSession};
 use dioxus::prelude::*;
-use display_timezone::{DisplayTimezone, DisplayTimezoneSettings};
+pub(in crate::app) use display_timezone::{DisplayTimezone, DisplayTimezoneSettings};
 use std::rc::Rc;
 use wasm_bindgen::{closure::Closure, JsCast, JsValue};
 use web_sys::{Element as DomElement, HtmlElement, KeyboardEvent as DomKeyboardEvent, Window};
@@ -72,7 +72,8 @@ fn is_editing_target(event: &DomKeyboardEvent) -> bool {
 }
 
 #[component]
-pub(super) fn BrowserApp() -> Element {
+pub(in crate::app) fn BrowserApp(on_prepare: EventHandler<Vec<WorkSession>>) -> Element {
+    let mut completed_time_ascending = use_signal(|| false);
     let mut deviation_order = use_signal(|| false);
     let mut client = use_signal(ComponentOrchestrator::new);
     let display_timezone = use_signal(DisplayTimezone::restore);
@@ -287,6 +288,21 @@ pub(super) fn BrowserApp() -> Element {
             ),
             AllTasksStatus::Invalidated => AllTasksViewStatus::Invalidated,
         });
+    let can_prepare = move || {
+        let client = client.read();
+        !client.server_effect_in_flight()
+            && !client.server_actions_blocked()
+            && client.state().is_some_and(|state| {
+                !state.carry_lock_locked()
+                    && !state.mutation_globally_blocked()
+                    && !state.storage_write_blocked()
+                    && state.sessions().iter().all(|session| {
+                        state
+                            .session_stopped_at_epoch_ms(&session.task_id)
+                            .is_none()
+                    })
+            })
+    };
 
     rsx! {
         InteractiveShell {
@@ -402,7 +418,17 @@ pub(super) fn BrowserApp() -> Element {
                                 dispatch_action(client, ComponentAction::SwitchListMode(mode));
                             },
                         }
-                        DisplayTimezoneSettings { timezone: display_timezone }
+                        DisplayTimezoneSettings {
+                            timezone: display_timezone,
+                            offline_blocked: !can_prepare(),
+                            on_prepare: move |_| {
+                                if can_prepare() {
+                                    if let Some(state) = client.read().state() {
+                                        on_prepare.call(state.sessions().to_vec());
+                                    }
+                                }
+                            },
+                        }
                     }
                     if let Some(date_basis) = date_basis {
                         p { class: "list-date-basis", "{date_basis}" }
@@ -411,6 +437,8 @@ pub(super) fn BrowserApp() -> Element {
                         CompletedListView {
                             dates,
                             report: completed_report,
+                            ascending: completed_time_ascending(),
+                            on_toggle_order: move |_| completed_time_ascending.toggle(),
                             display_offset,
                             selected_logical_date,
                             date_input_text,
@@ -572,6 +600,5 @@ fn open_session_link(
     {
         let _ = new_tab.close();
         open_link_error.set(Some("新しいタブを安全に開けませんでした。".to_owned()));
-        return;
     }
 }

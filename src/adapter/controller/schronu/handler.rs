@@ -174,6 +174,7 @@ pub(super) trait FinishPlacementCommandContext {
     fn complete_focused_task(
         &mut self,
         input: CompleteTaskInput,
+        exclude_from_duration_statistics: bool,
     ) -> Result<Option<Uuid>, ApplicationError>;
     fn set_focused_task_id(&mut self, task_id_opt: Option<Uuid>);
     fn pack(&mut self) -> Result<PackResult, ApplicationError>;
@@ -810,24 +811,22 @@ pub(super) fn handle_finish_placement_command<C: FinishPlacementCommandContext +
                         "終 [今|HH:MM[:SS] [日付]]",
                     ))
                 })?;
-                let additional_actual_work_seconds = if values.is_empty() {
-                    let focus_duration_seconds =
-                        (now - context.focus_started_datetime()).num_seconds();
-                    if focus_duration_seconds >= 60 {
-                        focus_duration_seconds
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                };
+                let measured = values
+                    .is_empty()
+                    .then(|| now - context.focus_started_datetime());
+                let minute = Duration::minutes(1);
+                let additional_actual_work_seconds = measured
+                    .filter(|elapsed| *elapsed >= minute)
+                    .map_or(0, |elapsed| elapsed.num_seconds());
+                let exclude_from_duration_statistics =
+                    measured.is_some_and(|elapsed| elapsed <= minute);
                 let input = CompleteTaskInput {
                     task_id: focused_task.get_id().map_err(ApplicationError::TaskTree)?,
                     finished_at,
                     additional_actual_work_seconds,
                     expected_actual_work_seconds: None,
                 };
-                match context.complete_focused_task(input) {
+                match context.complete_focused_task(input, exclude_from_duration_statistics) {
                     Ok(next_focus_task_id) => {
                         context.set_focused_task_id(next_focus_task_id);
                     }

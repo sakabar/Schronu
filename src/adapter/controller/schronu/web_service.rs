@@ -2,6 +2,9 @@
 mod all_tasks;
 #[path = "web_service/error.rs"]
 mod error;
+#[path = "web_service/offline.rs"]
+mod offline;
+pub use offline::{OfflineBundleDto, OfflineOperationDto, OfflineOperationKind};
 #[path = "web_service/model.rs"]
 mod model;
 #[path = "web_service/read_model.rs"]
@@ -41,12 +44,13 @@ use crate::application::interface::{FreeTimeManagerTrait, TaskRepositoryTrait};
 use crate::application::repository_transaction::{
     run_repository_transaction, RepositoryTransactionError,
 };
-use crate::application::schedule_use_case::get_schedule;
+use crate::application::schedule_use_case::{get_schedule, ScheduledTaskView};
 use crate::application::task_link::resolve_task_link_by_id;
 use crate::application::task_use_case::{
-    add_actual_work, complete_task, complete_work_slice, create_task,
+    add_actual_work, complete_task_with_sample_exclusion, complete_work_slice, create_task,
     estimated_work_seconds_from_minutes, execute_defer_task_plan, get_task, set_estimate,
-    validate_task_name, ApplicationError, CreateTaskInput, TaskCreationDay, TaskFactory,
+    validate_task_name, ApplicationError, CompleteTaskInput, CompleteTaskOutput,
+    CompleteWorkSliceInput, CreateTaskInput, TaskCreationDay, TaskFactory,
 };
 use all_tasks::AllTaskSnapshots;
 use chrono::{DateTime, Local, NaiveDate};
@@ -75,6 +79,61 @@ fn ensure_completed_estimate(
         set_estimate(repository, task_id, 1)?;
     }
     Ok(())
+}
+
+fn load_from_schedule(
+    repository: &TaskRepository,
+    free_time_manager: &mut FreeTimeManager,
+    schedule: &[ScheduledTaskView],
+    operation_now: DateTime<Local>,
+    offset: i64,
+) -> Result<LoadDataDto, WebReadCoreError> {
+    Ok(LoadDataDto {
+        band_days: build_band_days(
+            repository,
+            free_time_manager,
+            schedule,
+            operation_now,
+            offset,
+        )?,
+        routine_load: read_model::build_routine_load_report_dto(
+            repository,
+            free_time_manager,
+            schedule,
+            operation_now,
+            offset,
+        )?,
+    })
+}
+
+fn apply_work_slice(
+    repository: &mut TaskRepository,
+    input: CompleteWorkSliceInput,
+    operation_now: DateTime<Local>,
+) -> Result<(), ApplicationError> {
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(operation_now, &mut next_id);
+    let child = complete_work_slice(repository, input, &mut factory)?;
+    ensure_completed_estimate(repository, child)
+}
+
+fn apply_completion(
+    repository: &mut TaskRepository,
+    input: CompleteTaskInput,
+    exclude_from_duration_statistics: bool,
+    operation_now: DateTime<Local>,
+) -> Result<CompleteTaskOutput, ApplicationError> {
+    let task_id = input.task_id;
+    let mut next_id = Uuid::new_v4;
+    let mut factory = TaskFactory::new(operation_now, &mut next_id);
+    let completed = complete_task_with_sample_exclusion(
+        repository,
+        input,
+        exclude_from_duration_statistics,
+        &mut factory,
+    )?;
+    ensure_completed_estimate(repository, task_id)?;
+    Ok(completed)
 }
 
 impl WebService {
@@ -193,24 +252,13 @@ impl WebService {
     ) -> Result<WebSuccess<LoadDataDto>, WebReadError> {
         self.run_at(operation_now, |repository, free_time_manager, offset| {
             let schedule = get_schedule(repository).map_err(WebReadCoreError::Application)?;
-            let band_days = build_band_days(
+            let data = load_from_schedule(
                 repository,
                 free_time_manager,
                 &schedule,
                 operation_now,
                 offset,
             )?;
-            let routine_load = read_model::build_routine_load_report_dto(
-                repository,
-                free_time_manager,
-                &schedule,
-                operation_now,
-                offset,
-            )?;
-            let data = LoadDataDto {
-                band_days,
-                routine_load,
-            };
             let snapshot = build_server_snapshot_from_schedule(
                 repository,
                 free_time_manager,
@@ -355,11 +403,7 @@ impl WebService {
             prepare_work_slice_input(request, operation_now).map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
             let actual_work_seconds = input.expected_actual_work_seconds.unwrap_or_default();
-            let mut next_id = uuid::Uuid::new_v4;
-            let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            let completed_child_id = complete_work_slice(repository, input, &mut factory)
-                .map_err(WebReadCoreError::Application)?;
-            ensure_completed_estimate(repository, completed_child_id)
+            apply_work_slice(repository, input, operation_now)
                 .map_err(WebReadCoreError::Application)?;
             let snapshot = build_server_snapshot_with_offset(
                 repository,
@@ -408,16 +452,17 @@ impl WebService {
         operation_now: DateTime<Local>,
         request: CompleteSessionRequest,
     ) -> Result<WebSuccess<Option<SessionTaskDto>>, WebReadError> {
+        let exclude_from_duration_statistics = !request.record_elapsed_seconds;
         let input = prepare_complete_task_input(request, operation_now)
             .map_err(WebReadError::InvalidInput)?;
         self.run_mutation_at(operation_now, |repository, free_time_manager, offset| {
-            let mut next_id = uuid::Uuid::new_v4;
-            let mut factory = TaskFactory::new(operation_now, &mut next_id);
-            let task_id = input.task_id;
-            let completed = complete_task(repository, input, &mut factory)
-                .map_err(WebReadCoreError::Application)?;
-            ensure_completed_estimate(repository, task_id)
-                .map_err(WebReadCoreError::Application)?;
+            let completed = apply_completion(
+                repository,
+                input,
+                exclude_from_duration_statistics,
+                operation_now,
+            )
+            .map_err(WebReadCoreError::Application)?;
             let data = completed
                 .next_focus_task_id
                 .map(|task_id| {
