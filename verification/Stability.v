@@ -444,9 +444,47 @@ Proof. vm_compute. intuition discriminate. Qed.
 
 End BoundaryExamples.
 
+(** ** 現行の見積もり超過規則による反例
+
+    通常進捗の仮定を外すと安定性保存は成立しません。
+    現行の残作業再計算は、実績が見積もりを超えると予算を見積もりの2倍に
+    増やします。この不連続な変化を、以下の反例で通常進捗と区別します。 *)
+Module EstimateOverrun.
+
+(** [schronu-shared/src/work_time.rs]の[remaining_work_seconds]を手動転記した
+    関数です。非負の入力について数学的な計算規則を表し、機械整数やRustとの
+    形式的な対応は証明しません。[Z.max]で残作業の下限を0とします。 *)
+Definition remaining_work_seconds (estimated actual : Z) : Z :=
+  let budget := if actual >? estimated then 2 * estimated else estimated in
+  Z.max 0 (budget - actual).
+
+(** 見積もり100秒の単発1件について、経過時間と実績から状態を作ります。 *)
+Definition state_at (elapsed actual : Z) : DayState :=
+  Build_DayState 25200 elapsed 0 (remaining_work_seconds 100 actual).
+
+(** 実績99秒では残り1秒、100秒では0秒、101秒では99秒になります。 *)
+Example estimate_boundary_is_discontinuous :
+  remaining_work_seconds 100 99 = 1 /\
+  remaining_work_seconds 100 100 = 0 /\
+  remaining_work_seconds 100 101 = 99.
+Proof. vm_compute. repeat split; reflexivity. Qed.
+
+(** 睡眠と経過を除いた残り枠が10秒、実績が99秒ならFは8.7秒で安定です。
+    未完了のまま2秒進めると、残り枠8秒に対して残作業が99秒となり、
+    Fは-120.7秒になります。入力は非負のままですが、安定ではありません。
+    この2秒は通常進捗モデルの残作業1秒を超えるため、保存定理と矛盾しません。 *)
+Theorem overrun_can_break_stability :
+  let before := state_at 61190 99 in
+  let after := state_at (61190 + 2) (99 + 2) in
+  stable before /\ free_tenths before = 87 /\
+  nonnegative_state after /\ free_tenths after = -1207 /\ ~ stable after.
+Proof. vm_compute. intuition discriminate. Qed.
+
+End EstimateOverrun.
+
 (** ** 証明の仮定検査
 
-    主要定理について、コンパイル時に依存する仮定を表示します。
+    主要定理と反例について、コンパイル時に依存する仮定を表示します。
     すべて[Closed under the global context]となることを確認します。
     各定理の明示的な前提は引数として量化されており、未証明の公理として
     外部から導入された仮定はありません。 *)
@@ -465,3 +503,4 @@ Print Assumptions work_repetition_split.
 Print Assumptions work_unique_split.
 Print Assumptions work_repetition_split_safe.
 Print Assumptions work_unique_split_safe.
+Print Assumptions EstimateOverrun.overrun_can_break_stability.

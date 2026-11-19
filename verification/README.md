@@ -106,6 +106,7 @@ Inductive Action :=
 | `safe_run_preserves_stability` | 各段階で安全条件を満たす任意の有限操作列は安定性を保つ |
 | `work_repetition_split`、`work_unique_split` | 同じ種類の作業を2回に分けても最終状態は同じ |
 | `work_repetition_split_safe`、`work_unique_split_safe` | `nat`の時間で作業を分割すると、安全条件も同値である。非負性の前提は不要 |
+| `EstimateOverrun.overrun_can_break_stability` | 見積もり超過による残作業増加は安定性を壊し得る |
 
 `safe_actions`は各操作の直前の状態で安全条件を検査します。最初の状態の余裕を
 後の操作でも使い回すことはありません。具体例では、余裕0、全操作の操作量0、
@@ -119,6 +120,17 @@ Inductive Action :=
 睡眠以外の行動不能時間、固定予定、依存関係、日付更新、次回の繰り返し生成は
 含みません。総量が収まることから、これらの制約下での配置可能性は導きません。
 
+`EstimateOverrun.remaining_work_seconds`は
+[`schronu-shared/src/work_time.rs`](../schronu-shared/src/work_time.rs)の計算規則を
+手動転記した関数です。非負入力に対する数学的な振る舞いを表し、Rustとの
+形式的な対応、機械整数、現行の余差累、浮動小数点の丸めは検証しません。
+
+見積もり100秒・実績99秒の単発では残作業が1秒です。睡眠と経過を除いた
+残り枠が10秒ならFは8.7秒で安定ですが、未完了のまま2秒進めると、現行の
+見積もり超過規則では残作業が99秒に増えます。残り枠は8秒になり、Fは
+-120.7秒で不安定です。この2秒は通常進捗モデルの残作業1秒を超えるため、
+安定性保存の定理と矛盾しません。
+
 ## 証明の検証
 
 `verification/`で次を実行します。
@@ -129,8 +141,8 @@ opam exec --switch=. -- rocq compile Stability.v
 opam exec --switch=. -- rocqchk -silent Smoke Stability
 ```
 
-`Stability.v`末尾の`Print Assumptions`が主要定理の依存仮定を表示します。
-全15件が`Closed under the global context`となり、すべてのコマンドが終了コード0に
+`Stability.v`末尾の`Print Assumptions`が主要定理と反例の依存仮定を表示します。
+全16件が`Closed under the global context`となり、すべてのコマンドが終了コード0に
 なることを確認します。証明には`Admitted`や独自の`Axiom`を使いません。
 `stable s`などの明示的な定理の前提は、未証明の外部公理とは区別します。
 
@@ -143,7 +155,7 @@ mkdir -p _doc
 opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Smoke.v Stability.v
 ```
 
-`_doc/Stability.html`に変数・前提・定理の説明と証明を、
+`_doc/Stability.html`に変数・前提・定理・反例の説明と証明を、
 `_doc/Smoke.html`に環境確認の説明と証明を出力します。生成物と`lia`のキャッシュは
 Git管理から除外します。Coqdocコメントの正本は各`.v`ファイルです。
 コメント内でパーセント記号を表示するには`%%`と記述します。単独の`%`は
