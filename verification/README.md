@@ -120,6 +120,44 @@ Inductive Action :=
 -120.7秒で不安定です。この2秒は通常進捗モデルの残作業1秒を超えるため、
 安定性保存の定理と矛盾しません。
 
+## スケジューリングと締切
+
+`Schedule.v`の主定理`ProsaSchedule.all_deadlines_met`は、各締切`D`について
+「締切が`D`以下の全タスクの初期残作業秒数の合計 ≤ D」が成立すれば、生成された予定で
+すべての締切付きタスクが締切までに必要な作業量を受けることを証明します。
+`D`は計画開始からの秒数です。同じ締切を持つタスクも1件ずつ合計します。
+締切なしのタスクは通常の優先度選択に参加し、どの締切の需要にも加えません。
+
+前提は、IDが一意な有限個の独立したタスクがすべて時刻0から着手可能で、固定予定がなく、
+1秒の実行で残作業が1秒減ることです。時刻と残作業は整数秒です。
+atomicタスクも対象で、途中で分割せずに実行します。
+
+| 定理 | 配置について分かること |
+| --- | --- |
+| `candidate_progress` | 残作業があれば候補を選べます。最も早い締切の候補は他の締切のために中断する必要がなく、15分の分割条件とatomicの連続枠条件を満たします。 |
+| `critical_group_protected` | 残作業のある締切群の余裕が0以下なら、選ぶタスクはその締切までに必要な作業に含まれます。 |
+| `frames_safe` | 各時点で、まだ作業が残る各締切までの累積残作業が残り時間に収まります。選んだ区間の途中でも成立します。 |
+| `ProsaSchedule.service_plus_remaining` | Prosaの単一プロセッサ予定で各タスクが受けた作業量と、その時点の残作業量の和は初期作業量です。 |
+| `ProsaSchedule.all_deadlines_met` | タスク`j`の締切が`Some D`なら、Prosaの`completed_by sched j D`が成立します。締切ちょうどの完了を含みます。 |
+
+`Schedule.v`は[Rustの配置規則](../src/application/scheduling_policy.rs)をこの入力範囲に
+特殊化した実行可能モデルです。候補の優先順位とslackを計算して区間を決め、選んだ区間が
+終わるまで同じタスクを実行します。計算例では複数締切の累積需要、通常選択から締切保護への
+切り替え、900秒と901秒の分割境界、atomicの選択、締切の1秒前と締切ちょうどを検査します。
+Rustの探索用データ構造、日時の丸め・オーバーフロー、モデルとバイナリの同値性は証明の対象外です。
+完了の定義には[Prosa 0.6のserviceとcompleted_by](https://prosa.mpi-sws.org/releases/v0.6/spec/with-proofs/prosa.behavior.service.html)を使います。
+
+### 現行の配置規則で保証できないケース
+
+- **固定予定の前後に短い空きがある場合**。09:00から20分の作業が必要で、締切は09:30、
+  固定予定は09:10–09:20とします。前後10分ずつ使えば間に合います。現行規則は前半10分を
+  見送り、作業を09:20–09:40に置きます。`ProsaSchedule.fixed_split_counterexample`は
+  両方の予定で完了を判定し、総空き時間20分だけでは保証できないことを示します。
+- **残作業0秒の表示時刻**。09:05が締切の0秒タスクは、Prosaでは09:00時点で必要量に達しています。
+  `get_schedule`は09:00から始まる高優先度の20分の作業を先に選び、0秒タスクの行を09:20に置きます。
+  `ProsaSchedule.zero_work_is_complete_at_start`は作業量上の完了と最初の選択を検査します。
+  モデルでは時間を消費しない表示行を省略しています。
+
 ## 証明の検証
 
 `verification/`で次を実行します。
@@ -127,10 +165,12 @@ Inductive Action :=
 ```sh
 opam exec --switch=. -- rocq compile Stability.v
 opam exec --switch=. -- rocqchk -silent Stability
+opam exec --switch=. -- rocq compile Schedule.v
+opam exec --switch=. -- rocqchk -silent Schedule
 ```
 
-`Stability.v`末尾の`Print Assumptions`が主要定理と反例の依存仮定を表示します。
-全16件が`Closed under the global context`となり、すべてのコマンドが終了コード0に
+各ファイル末尾の`Print Assumptions`が主要定理と反例の依存仮定を表示します。
+`Stability.v`の16件と`Schedule.v`の8件が`Closed under the global context`となり、すべてのコマンドが終了コード0に
 なることを確認します。証明には`Admitted`や独自の`Axiom`を使いません。
 `stable s`などの明示的な定理の前提は、未証明の外部公理とは区別します。
 
@@ -140,10 +180,10 @@ opam exec --switch=. -- rocqchk -silent Stability
 
 ```sh
 mkdir -p _doc
-opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Stability.v
+opam exec --switch=. -- coqdoc --html --utf8 --toc -d _doc Stability.v Schedule.v
 ```
 
-`_doc/Stability.html`に変数・前提・定理・反例の説明と証明を出力します。生成物と`lia`のキャッシュは
+`_doc/Stability.html`と`_doc/Schedule.html`に変数・前提・定理・反例の説明と証明を出力します。生成物と`lia`のキャッシュは
 Git管理から除外します。Coqdocコメントの正本は各`.v`ファイルです。
 コメント内でパーセント記号を表示するには`%%`と記述します。単独の`%`は
 CoqdocのLaTeX用エスケープとして解釈され、HTMLで説明が欠落するためです。
