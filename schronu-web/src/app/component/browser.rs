@@ -73,6 +73,7 @@ fn is_editing_target(event: &DomKeyboardEvent) -> bool {
 
 #[component]
 pub(in crate::app) fn BrowserApp(on_prepare: EventHandler<Vec<WorkSession>>) -> Element {
+    let mut completed_time_ascending = use_signal(|| false);
     let mut deviation_order = use_signal(|| false);
     let mut client = use_signal(ComponentOrchestrator::new);
     let display_timezone = use_signal(DisplayTimezone::restore);
@@ -436,6 +437,8 @@ pub(in crate::app) fn BrowserApp(on_prepare: EventHandler<Vec<WorkSession>>) -> 
                         CompletedListView {
                             dates,
                             report: completed_report,
+                            ascending: completed_time_ascending(),
+                            on_toggle_order: move |_| completed_time_ascending.toggle(),
                             display_offset,
                             selected_logical_date,
                             date_input_text,

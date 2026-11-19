@@ -1300,6 +1300,15 @@ button:disabled {
     letter-spacing: 0.04em;
 }
 
+.completed-time-sort {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap;
+}
+
 .completed-task-table tbody tr:last-child th,
 .completed-task-table tbody tr:last-child td {
     border-bottom: 0;
