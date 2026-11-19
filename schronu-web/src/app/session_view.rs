@@ -24,6 +24,13 @@ pub struct SessionAction {
     pub kind: SessionActionKind,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct OfflineSessionDetails {
+    pub start_date_and_zone: String,
+    pub elapsed_seconds: i64,
+    pub can_split: bool,
+}
+
 #[cfg_attr(
     not(any(test, all(feature = "web", target_arch = "wasm32"))),
     allow(dead_code)
@@ -44,6 +51,7 @@ fn parse_auto_session_minutes(input: &str) -> Result<Option<i64>, &'static str> 
 #[component]
 pub fn SessionView(
     sessions: Vec<SessionCardViewModel>,
+    offline_sessions: Option<HashMap<String, OfflineSessionDetails>>,
     #[props(default)] linkable_task_ids: HashSet<String>,
     global_blocked: bool,
     #[props(default)] mutations_locked: bool,
@@ -64,6 +72,10 @@ pub fn SessionView(
     let mut minutes_input = use_signal(String::new);
     let mut input_error = use_signal(|| None::<&'static str>);
     if sessions.is_empty() {
+        let disabled = offline_sessions.is_some()
+            || auto_session_in_flight
+            || mutations_locked
+            || server_actions_blocked;
         return rsx! {
             section { class: "session-empty",
                 div { class: "auto-session-controls",
@@ -73,7 +85,7 @@ pub fn SessionView(
                         r#type: "text",
                         inputmode: "numeric",
                         value: minutes_input.read().clone(),
-                        disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
+                        disabled,
                         oninput: move |event| {
                             minutes_input.set(event.value());
                             input_error.set(None);
@@ -83,9 +95,9 @@ pub fn SessionView(
                 button {
                     class: "primary-action",
                     r#type: "button",
-                    disabled: auto_session_in_flight || mutations_locked || server_actions_blocked,
+                    disabled,
                     onclick: move |_| {
-                        if !auto_session_in_flight && !mutations_locked && !server_actions_blocked {
+                        if !disabled {
                             match parse_auto_session_minutes(&minutes_input.read()) {
                                 Ok(max_minutes) => on_auto_session.call(max_minutes),
                                 Err(message) => input_error.set(Some(message)),
@@ -95,9 +107,13 @@ pub fn SessionView(
                     "自動セッション"
                 }
                 p { class: "auto-session-hint",
-                    "指定分数未満の予定区間から選びます。"
-                    br {}
-                    "空欄では通常の自動選定です。"
+                    if offline_sessions.is_some() {
+                        "予定から作業するタスクを選択してください。"
+                    } else {
+                        "指定分数未満の予定区間から選びます。"
+                        br {}
+                        "空欄では通常の自動選定です。"
+                    }
                 }
                 if let Some(message) = *input_error.read() {
                     p { class: "error", role: "alert", "{message}" }
@@ -111,6 +127,7 @@ pub fn SessionView(
             for session in sessions {
                 SessionCard {
                     key: "{session.task_id}",
+                    offline: offline_sessions.as_ref().and_then(|sessions| sessions.get(&session.task_id)).cloned(),
                     linkable: linkable_task_ids.contains(&session.task_id),
                     obsidian_ready: obsidian_ready_task_ids.contains(&session.task_id),
                     obsidian_lookup_error: obsidian_lookup_errors.get(&session.task_id).cloned(),
@@ -135,6 +152,7 @@ pub fn SessionView(
 #[component]
 fn SessionCard(
     session: SessionCardViewModel,
+    offline: Option<OfflineSessionDetails>,
     linkable: bool,
     obsidian_supported: bool,
     obsidian_ready: bool,
@@ -187,6 +205,8 @@ fn SessionCard(
     let discard_disabled =
         session.in_flight || session.server_committed || mutations_locked || server_actions_blocked;
     let mutation_disabled = discard_disabled || global_blocked || session.manual_check_blocked;
+    let split_disabled =
+        mutation_disabled || offline.as_ref().is_some_and(|details| !details.can_split);
     let restart_disabled = session.in_flight
         || session.server_committed
         || mutations_locked
@@ -348,6 +368,12 @@ fn SessionCard(
                         "開始時実績 {actual_at_start}"
                     }
                 }
+                if let Some(details) = &offline {
+                    span { class: "session-timing-meta",
+                        span { "{details.start_date_and_zone}" }
+                        span { "経過 {format_hh_mm_ss(i128::from(details.elapsed_seconds))}" }
+                    }
+                }
                 if let Some(overrun_percent) = session.estimate_success_percentage.map(|percent| 100_u8.saturating_sub(percent)) {
                     div { class: "session-estimate-probability",
                         span { "見積もりを超過してしまう確率" }
@@ -474,7 +500,7 @@ fn SessionCard(
                         task_name: task_name.clone(),
                         task_id: session.task_id.clone(),
                         kind: SessionActionKind::WorkSlice,
-                        disabled: mutation_disabled,
+                        disabled: split_disabled,
                         on_action,
                     }
                     SessionDiscardCompletionButton {

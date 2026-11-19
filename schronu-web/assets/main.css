@@ -547,7 +547,7 @@ button:disabled {
 
 .session-card {
     display: grid;
-    grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;
+    grid-template-columns: minmax(11rem, 1.1fr) minmax(0, 2fr) auto;
     grid-template-areas:
         "heading progress actions"
         "timing progress actions";
@@ -2650,6 +2650,7 @@ button.task-id-copy:focus-visible {
     outline-offset: -1px;
 }
 
+.offline-notice,
 .task-copy-notice {
     position: fixed;
     inset-inline: 1rem;
@@ -2660,6 +2661,7 @@ button.task-id-copy:focus-visible {
     pointer-events: none;
 }
 
+.offline-notice span,
 .task-copy-notice span {
     max-width: 100%;
     border-radius: 0.5rem;
@@ -2667,4 +2669,36 @@ button.task-id-copy:focus-visible {
     background: var(--ink);
     color: var(--surface);
     box-shadow: 0 3px 12px rgb(0 0 0 / 20%);
+}
+
+.offline-shell .load-refresh[hidden] {
+    display: none;
+}
+
+.offline-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+}
+
+.offline-status span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.8rem;
+}
+
+.offline-period {
+    margin: 0.5rem 0;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.offline-conflicts {
+    overflow-wrap: anywhere;
+}
+
+.offline-status button {
+    flex-shrink: 0;
 }

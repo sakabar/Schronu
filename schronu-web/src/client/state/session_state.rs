@@ -274,7 +274,7 @@ impl ClientState {
             return;
         }
         let mut candidate = self.sessions().to_vec();
-        candidate.push(session_from_task(task, self.tick_now_epoch_ms));
+        candidate.push(WorkSession::from_task(task, self.tick_now_epoch_ms));
         let result = self
             .sessions
             .work_sessions
@@ -747,7 +747,7 @@ impl ClientState {
                 .iter()
                 .any(|session| session.task_id == task.task_id)
             {
-                candidate.push(session_from_task(task, self.tick_now_epoch_ms));
+                candidate.push(WorkSession::from_task(task, self.tick_now_epoch_ms));
             }
         }
         match self
@@ -781,20 +781,6 @@ impl ClientState {
             committed_on_server: true,
             task_id: Some(task_id.to_owned()),
         });
-    }
-}
-
-fn session_from_task(task: &SessionTask, started_at_epoch_ms: i64) -> WorkSession {
-    WorkSession {
-        buffer_credit_start_epoch_ms: None,
-        start_time_epoch_ms: task.start_time_epoch_ms,
-        pending_until_epoch_ms: task.pending_until_epoch_ms,
-        task_id: task.task_id.clone(),
-        task_name: task.task_name.clone(),
-        started_at_epoch_ms,
-        estimated_work_seconds_at_start: task.estimated_work_seconds,
-        actual_work_seconds_at_start: task.actual_work_seconds,
-        estimate_success_percentage: task.estimate_success_percentage,
     }
 }
 

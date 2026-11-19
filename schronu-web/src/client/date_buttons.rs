@@ -27,17 +27,21 @@ pub fn logical_date_buttons(
                 .checked_add_days(Days::new(index))
                 .filter(|date| (0..=9_999).contains(&date.year()))
                 .ok_or(DateButtonsError::DateOverflow)?;
-            let suffix = match index {
-                0 => " 今日",
-                1 => " 明日",
-                _ => "",
-            };
-            Ok(LogicalDateButton {
-                logical_date: date.format("%Y-%m-%d").to_string(),
-                label: format!("{}{suffix}", japanese_weekday(date.weekday())),
-            })
+            Ok(scheduled_date_button(date, start))
         })
         .collect()
+}
+
+pub(crate) fn scheduled_date_button(date: NaiveDate, today: NaiveDate) -> LogicalDateButton {
+    let suffix = match (date - today).num_days() {
+        0 => " 今日",
+        1 => " 明日",
+        _ => "",
+    };
+    LogicalDateButton {
+        logical_date: date.to_string(),
+        label: format!("{}{suffix}", japanese_weekday(date.weekday())),
+    }
 }
 
 pub fn logical_date_buttons_for_mode(

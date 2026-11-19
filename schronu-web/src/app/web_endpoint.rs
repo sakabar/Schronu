@@ -1,8 +1,9 @@
 use crate::{
     AllTaskPage, CompleteSessionRequest, CompleteSessionResponse, CompletedTaskReport,
     CreateTaskRequest, CreateTaskResult, DeferTaskRequest, ListAllTasksRequest,
-    ListCompletedTasksRequest, ListTasksRequest, LoadData, RecordSessionRequest,
-    RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask, WebError, WebSuccess,
+    ListCompletedTasksRequest, ListTasksRequest, LoadData, OfflineBundle, OfflineOperation,
+    RecordSessionRequest, RecordSessionResult, ScheduledTaskRow, ServerSnapshot, SessionTask,
+    WebError, WebSuccess,
 };
 use dioxus::prelude::*;
 
@@ -12,6 +13,31 @@ use crate::WebWorkerHandle;
 use dioxus::fullstack::axum::Extension;
 
 pub type WebOperationResult<T> = Result<T, WebError>;
+
+#[server(endpoint = "web_prepare_offline")]
+pub async fn prepare_offline() -> Result<WebOperationResult<OfflineBundle>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker().await?.prepare_offline().await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
+
+#[server(endpoint = "web_sync_offline_operation")]
+pub async fn sync_offline_operation(
+    request: OfflineOperation,
+) -> Result<WebOperationResult<()>, ServerFnError> {
+    #[cfg(feature = "server")]
+    {
+        Ok(extract_worker()
+            .await?
+            .sync_offline_operation(request)
+            .await)
+    }
+    #[cfg(not(feature = "server"))]
+    unreachable!("server function body only runs on the server")
+}
 
 #[server(endpoint = "web_create_task")]
 pub async fn create_task(

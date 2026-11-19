@@ -1,9 +1,9 @@
 use crate::{
     web_error_codes, AllTaskPage, CompleteSessionRequest, CompleteSessionResponse,
     CompletedTaskReport, CreateTaskRequest, CreateTaskResult, DeferTaskRequest,
-    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData,
-    RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow, ServerSnapshot,
-    SessionTask, WebError, WebSuccess,
+    ListAllTasksRequest, ListCompletedTasksRequest, ListTasksRequest, LoadData, OfflineBundle,
+    OfflineOperation, RecordSessionRequest, RecordSessionResult, RetryAdvice, ScheduledTaskRow,
+    ServerSnapshot, SessionTask, WebError, WebSuccess,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -12,6 +12,12 @@ use tokio::sync::oneshot;
 const WEB_WORKER_STACK_SIZE_BYTES: usize = 32 * 1024 * 1024;
 
 pub trait WebOperations: 'static {
+    fn prepare_offline(&mut self) -> Result<OfflineBundle, WebError> {
+        Err(unavailable_error())
+    }
+    fn sync_offline_operation(&mut self, _request: OfflineOperation) -> Result<(), WebError> {
+        Err(unavailable_error())
+    }
     fn create_task(
         &mut self,
         _request: CreateTaskRequest,
@@ -67,6 +73,13 @@ pub struct WebWorkerHandle {
 }
 
 enum WebWorkerCommand {
+    PrepareOffline {
+        response: oneshot::Sender<Result<OfflineBundle, WebError>>,
+    },
+    SyncOffline {
+        request: OfflineOperation,
+        response: oneshot::Sender<Result<(), WebError>>,
+    },
     CreateTask {
         request: CreateTaskRequest,
         response: oneshot::Sender<Result<WebSuccess<CreateTaskResult>, WebError>>,
@@ -120,6 +133,22 @@ enum WebWorkerCommand {
 }
 
 impl WebWorkerHandle {
+    pub async fn prepare_offline(&self) -> Result<OfflineBundle, WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::PrepareOffline { response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
+    pub async fn sync_offline_operation(&self, request: OfflineOperation) -> Result<(), WebError> {
+        let (response, receiver) = oneshot::channel();
+        self.commands
+            .send(WebWorkerCommand::SyncOffline { request, response })
+            .map_err(|_| unavailable_error())?;
+        receiver.await.map_err(|_| unavailable_error())?
+    }
+
     pub async fn create_task(
         &self,
         request: CreateTaskRequest,
@@ -269,6 +298,12 @@ impl WebWorkerHandle {
 fn run_worker<O: WebOperations>(mut operations: O, receiver: mpsc::Receiver<WebWorkerCommand>) {
     while let Ok(command) = receiver.recv() {
         match command {
+            WebWorkerCommand::PrepareOffline { response } => {
+                let _ = response.send(operations.prepare_offline());
+            }
+            WebWorkerCommand::SyncOffline { request, response } => {
+                let _ = response.send(operations.sync_offline_operation(request));
+            }
             WebWorkerCommand::CreateTask { request, response } => {
                 let _ = response.send(operations.create_task(request));
             }

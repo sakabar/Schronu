@@ -311,8 +311,9 @@ fn background_refresh_status_floats_above_navigation_without_affecting_layout() 
 #[test]
 fn session_countdown_is_prominent_and_metadata_wraps_at_mobile_widths() {
     let desktop_card = block_body(MAIN_CSS, ".session-card");
-    assert!(desktop_card
-        .contains("grid-template-columns: minmax(11rem, 1.1fr) minmax(18rem, 2fr) auto;"));
+    assert!(
+        desktop_card.contains("grid-template-columns: minmax(11rem, 1.1fr) minmax(0, 2fr) auto;")
+    );
     for area in [
         "\"heading progress actions\"",
         "\"timing progress actions\"",
