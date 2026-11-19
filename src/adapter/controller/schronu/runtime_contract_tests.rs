@@ -9767,51 +9767,43 @@ fn test_明示focus中の手動navigationは明示状態を維持する() {
 }
 
 #[test]
-fn test_明示focus中に終了したらhandlerの次focusではなく元modeから再選択する() {
+fn test_明示focusした子の完了後は兄弟の状態に従って次focusを決める() {
     let now = Local.with_ymd_and_hms(2026, 8, 16, 12, 0, 0).unwrap();
-    let root = new_test_task_handle("root").unwrap();
-    let explicit_task = root.create_as_last_child(new_test_task_attr("明示focus対象"));
-    let automatic_task = root.create_as_last_child(new_test_task_attr("自動focus候補"));
-    let _ = automatic_task.set_orig_status(Status::Done);
-    let explicit_task_id = explicit_task.get_id().unwrap();
-    let automatic_task_id = automatic_task.get_id().unwrap();
-    let root_id = root.get_id().unwrap();
-    let mut repository = TestTaskRepository::new(root, now);
-    repository.highest_priority_leaf_task_id_opt = Some(automatic_task_id);
-    let mut free_time_manager = TestFreeTimeManager::default();
-    let mut stdout = TestWriter::new();
-    let mut focused_task_id_opt = None;
-    let mut focus_selection_mode = FocusSelectionMode::highest_priority();
+    for sibling_status in [None, Some(Status::Done), Some(Status::Todo)] {
+        let root = new_test_task_handle("project").unwrap();
+        let parent = root.create_as_last_child(new_test_task_attr("親"));
+        let child = parent.create_as_last_child(new_test_task_attr("完了対象"));
+        if let Some(status) = sibling_status {
+            parent.create_as_last_child(new_test_task_attr("兄弟"))
+                .set_orig_status(status).unwrap();
+        }
+        let candidate = root.create_as_last_child(new_test_task_attr("自動選択候補"));
+        let candidate_id = candidate.get_id().unwrap();
+        let child_id = child.get_id().unwrap();
+        let mut repository = TestTaskRepository::new(root, now);
+        repository.highest_priority_leaf_task_id_opt = Some(candidate_id);
+        let mut mode = FocusSelectionMode::highest_priority();
+        mode.tuck_away(Uuid::from_u128(9999));
+        let expected_mode = mode.clone();
+        let mut focus = None;
+        let mut output = TestWriter::new();
+        let mut free_time = TestFreeTimeManager::default();
+        for command in [format!("見 {child_id}"), "終".to_string()] {
+            execute_interactive_command(
+                &mut output, &mut repository, &mut free_time, &mut focus,
+                &now, &mut mode, None, now, &command,
+            ).unwrap();
+        }
 
-    execute_interactive_command(
-        &mut stdout,
-        &mut repository,
-        &mut free_time_manager,
-        &mut focused_task_id_opt,
-        &now,
-        &mut focus_selection_mode,
-        None,
-        now,
-        &format!("見 {explicit_task_id}"),
-    )
-    .unwrap();
-    execute_interactive_command(
-        &mut stdout,
-        &mut repository,
-        &mut free_time_manager,
-        &mut focused_task_id_opt,
-        &now,
-        &mut focus_selection_mode,
-        None,
-        now,
-        "終 今",
-    )
-    .unwrap();
-
-    assert_eq!(explicit_task.get_orig_status().unwrap(), Status::Done);
-    assert_ne!(automatic_task_id, root_id);
-    assert_eq!(focused_task_id_opt, Some(automatic_task_id));
-    assert!(!focus_selection_mode.is_explicit());
+        let expected_focus = if sibling_status == Some(Status::Todo) {
+            candidate_id
+        } else {
+            parent.get_id().unwrap()
+        };
+        assert_eq!(child.get_orig_status().unwrap(), Status::Done);
+        assert_eq!(focus, Some(expected_focus), "sibling_status={sibling_status:?}");
+        assert_eq!(mode, expected_mode);
+    }
 }
 
 #[test]

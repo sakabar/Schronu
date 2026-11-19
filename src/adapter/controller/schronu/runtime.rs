@@ -543,9 +543,6 @@ fn execute_parsed(
 ) -> Result<(), CommandError> {
     let operation_now = task_repository.get_last_synced_time();
     let previous_focused_task_id_opt = *focused_task_id_opt;
-    let was_explicit = application_mode
-        .focus_selection_mode_mut()
-        .is_some_and(|mode| mode.is_explicit());
     let mut next_id = Uuid::new_v4;
     let mut task_factory = TaskFactory::new(operation_now, &mut next_id);
     let outcome = {
@@ -573,9 +570,6 @@ fn execute_parsed(
                 if *focused_task_id_opt != previous_focused_task_id_opt =>
             {
                 focus_selection_mode.set_explicit(false);
-                if was_explicit {
-                    *focused_task_id_opt = None;
-                }
             }
             FocusSessionEffect::Keep | FocusSessionEffect::RestoreSelectionIfFocusChanged => {}
         }
