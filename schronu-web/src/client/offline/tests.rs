@@ -4,7 +4,189 @@ use crate::{
     ServerSnapshot, TaskDisplayKind,
 };
 
-const TASK: &str = "00112233-4455-4677-8899-aabbccddeeff";
+pub(crate) const TASK: &str = "00112233-4455-4677-8899-aabbccddeeff";
+pub(crate) const PARENT: &str = "cbd0b1f8-4cf3-49d9-9222-1a1b96098f6e";
+
+pub(crate) fn family() -> OfflineState {
+    let mut state = sample();
+    let mut parent = state.bundle.days["2026-11-17"][0].clone();
+    parent.task.task_id = Some(PARENT.into());
+    parent.task.task_name = "親".into();
+    parent.task.pending_until_epoch_ms = Some(parent.schedule_start_epoch_ms + 86_400_000);
+    parent.occurrence = ScheduleOccurrence::Actual {
+        task_id: PARENT.into(),
+    };
+    parent.is_leaf = false;
+    for (_, rows) in state.bundle.days.iter_mut().skip(1) {
+        *rows = vec![parent.clone()];
+    }
+    state
+        .bundle
+        .handoff_children
+        .insert(PARENT.into(), BTreeSet::from([TASK.into()]));
+    state
+}
+
+#[test]
+fn 最後の子の完了で別日の親に同時刻で移り解除後も再開できる() {
+    for kind in [
+        OfflineOperationKind::Complete,
+        OfflineOperationKind::CompleteWithoutRecording,
+    ] {
+        let mut state = family();
+        let start = state.bundle.snapshot.observed_at_epoch_ms;
+        assert!(state.start(PARENT, start).is_err());
+        state.start(TASK, start).unwrap();
+        state
+            .finish(TASK, kind, start + 60_000, "child".into())
+            .unwrap();
+        assert_eq!(state.sessions.len(), 1);
+        assert_eq!(state.sessions[0].task_id, PARENT);
+        assert_eq!(state.sessions[0].started_at_epoch_ms, start + 60_000);
+        assert_eq!(
+            state.sessions[0].pending_until_epoch_ms,
+            state.bundle.days["2026-11-18"][0]
+                .task
+                .pending_until_epoch_ms
+        );
+        let mut restored: OfflineState =
+            serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
+        restored.release(PARENT);
+        for (_, rows) in restored.bundle.days.iter().skip(1) {
+            assert!(restored.can_start(&rows[0]));
+        }
+        restored.start(PARENT, start + 120_000).unwrap();
+        assert_eq!(restored.sessions[0].started_at_epoch_ms, start + 120_000);
+    }
+}
+
+#[test]
+fn 期間外の親や未完了の兄弟がいる親には移行しない() {
+    let mut absent = family();
+    absent.bundle.days.retain(|date, _| date == "2026-11-17");
+    let mut sibling = family();
+    sibling
+        .bundle
+        .handoff_children
+        .get_mut(PARENT)
+        .unwrap()
+        .insert("offscreen-child".into());
+    for mut state in [absent, sibling] {
+        state.start(TASK, 0).unwrap();
+        state
+            .finish(
+                TASK,
+                OfflineOperationKind::Complete,
+                60_000,
+                "finish".into(),
+            )
+            .unwrap();
+        assert!(state.sessions.is_empty());
+        assert!(state.start(PARENT, 60_000).is_err());
+    }
+}
+
+#[test]
+fn 複数の子の完了で開始した親は各子の同期結果に従う() {
+    let mut state = family();
+    let sibling = "d6d94f35-67bb-4fb4-b412-0b3c402ce68d";
+    let mut second = state.bundle.days["2026-11-17"][0].clone();
+    second.task.task_id = Some(sibling.into());
+    second.occurrence = ScheduleOccurrence::Actual {
+        task_id: sibling.into(),
+    };
+    state
+        .bundle
+        .days
+        .get_mut("2026-11-17")
+        .unwrap()
+        .push(second);
+    state
+        .bundle
+        .handoff_children
+        .get_mut(PARENT)
+        .unwrap()
+        .insert(sibling.into());
+
+    state.start(TASK, 0).unwrap();
+    state
+        .finish(TASK, OfflineOperationKind::Complete, 1000, "first".into())
+        .unwrap();
+    assert!(state.sessions.is_empty());
+    assert!(state.start(PARENT, 1000).is_err());
+    state.start(sibling, 1000).unwrap();
+    state
+        .finish(
+            sibling,
+            OfflineOperationKind::Complete,
+            2000,
+            "second".into(),
+        )
+        .unwrap();
+    assert_eq!(state.sessions[0].task_id, PARENT);
+    state.mark_sync_conflict(TASK.into(), "実績競合".into());
+    assert!(state.needs_review(PARENT));
+    assert_eq!(state.review_task_name(PARENT), Some("親"));
+    assert!(state
+        .finish(PARENT, OfflineOperationKind::Record, 3000, "parent".into())
+        .is_err());
+}
+
+#[test]
+fn 非完了操作は親に移らず完了時も既存の親セッションを維持する() {
+    let mut state = family();
+    for kind in [OfflineOperationKind::Split, OfflineOperationKind::Record] {
+        state.start(TASK, 0).unwrap();
+        state
+            .finish(TASK, kind, 60_000, format!("{kind:?}"))
+            .unwrap();
+        assert!(state.sessions.is_empty());
+        assert!(state.start(PARENT, 60_000).is_err());
+    }
+    let parent = state.bundle.days["2026-11-18"][0]
+        .task
+        .actionable_task()
+        .unwrap();
+    let active = WorkSession::from_task(&parent, 3000);
+    state.sessions.push(active.clone());
+    state.start(TASK, 0).unwrap();
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::Complete,
+            60_000,
+            "finish".into(),
+        )
+        .unwrap();
+    assert_eq!(state.sessions, [active]);
+}
+
+#[test]
+fn 親子情報のない旧形式から未送信記録を復元しても親を開始しない() {
+    let mut state = family();
+    state.start(TASK, 0).unwrap();
+    state
+        .finish(TASK, OfflineOperationKind::Record, 60_000, "record".into())
+        .unwrap();
+    let mut json = serde_json::to_value(state).unwrap();
+    json["bundle"]
+        .as_object_mut()
+        .unwrap()
+        .remove("handoff_children");
+    let mut restored: OfflineState = serde_json::from_value(json).unwrap();
+    restored.start(TASK, 100_000).unwrap();
+    restored
+        .finish(
+            TASK,
+            OfflineOperationKind::Complete,
+            200_000,
+            "child".into(),
+        )
+        .unwrap();
+    assert!(restored.sessions.is_empty());
+    assert_eq!(restored.pending.len(), 2);
+    assert!(restored.start(PARENT, 200_000).is_err());
+}
 
 fn sample() -> OfflineState {
     let first_ms = chrono::DateTime::parse_from_rfc3339("2026-11-18T04:00:00+09:00")
@@ -61,6 +243,8 @@ fn sample() -> OfflineState {
             days,
             load,
             splittable_task_ids: BTreeSet::from([TASK.into()]),
+            project_names: BTreeMap::new(),
+            handoff_children: BTreeMap::new(),
         },
         vec![],
     )
@@ -111,7 +295,7 @@ fn split_restart_and_complete_share_all_segments_and_preserve_capture_times_acro
     assert!(result.start(TASK, start + 5_000_000).is_err());
     assert!(result.completed(TASK));
     assert_eq!(result.pending.len(), 3);
-    assert_eq!(result.recorded_task_name(TASK), Some("対象タスク"));
+    assert_eq!(result.review_task_name(TASK), Some("対象タスク"));
     assert_eq!(
         result.pending[0].expected_estimated_work_seconds,
         Some(3_600)
@@ -120,6 +304,42 @@ fn split_restart_and_complete_share_all_segments_and_preserve_capture_times_acro
     assert_eq!(result.pending[2].expected_actual_work_seconds, 130);
     assert_eq!(result.pending[2].ended_at_epoch_ms, start + 4_010_555);
     assert_eq!(result.bundle.load, original_load);
+}
+
+#[test]
+fn completion_hides_all_actual_segments_but_keeps_the_next_occurrence_and_other_tasks() {
+    for kind in [
+        OfflineOperationKind::Complete,
+        OfflineOperationKind::CompleteWithoutRecording,
+    ] {
+        let mut state = sample();
+        let start = state.bundle.snapshot.observed_at_epoch_ms;
+        let mut projected = state.bundle.days.values().next().unwrap()[0].clone();
+        projected.task.task_id = None;
+        projected.occurrence = ScheduleOccurrence::Projected {
+            occurrence_key: "next".into(),
+            source_task_id: TASK.into(),
+        };
+        let mut other = projected.clone();
+        other.task.task_id = Some("other".into());
+        other.occurrence = ScheduleOccurrence::Actual {
+            task_id: "other".into(),
+        };
+        for rows in state.bundle.days.values_mut() {
+            rows.extend([projected.clone(), other.clone()]);
+        }
+        state.start(TASK, start).unwrap();
+        state
+            .finish(TASK, kind, start + 60_000, "finish".into())
+            .unwrap();
+        for date in state.bundle.days.keys() {
+            assert_eq!(
+                state.visible_schedule(date).collect::<Vec<_>>(),
+                [&projected, &other],
+                "{kind:?} on {date}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -302,4 +522,85 @@ fn preexisting_timer_gets_credit_once_until_receipt_and_fresh_snapshot() {
     refreshed.snapshot.buffer_seconds = 10_060;
     state.rebase(refreshed);
     assert_eq!(state.display_buffer_seconds(observed + 30_000), 10_060);
+}
+
+#[test]
+fn 同じ分の分割を別々に数え完了時刻の朝六時で日を分ける() {
+    let mut state = sample();
+    let start = chrono::DateTime::parse_from_rfc3339("2026-11-18T05:59:00+09:00")
+        .unwrap()
+        .timestamp_millis();
+    let project = "集計対象プロジェクト";
+    state
+        .bundle
+        .project_names
+        .insert(TASK.into(), project.into());
+    for (second, id) in [(5, "split-1"), (10, "split-2")] {
+        let end = start + second * 1000;
+        state.start(TASK, end - 2000).unwrap();
+        state
+            .finish(TASK, OfflineOperationKind::Split, end, id.into())
+            .unwrap();
+    }
+    let splits = state.completions_on("2026-11-17");
+    assert_eq!(splits.len(), 2);
+    assert_ne!(splits[0].id, splits[1].id);
+    for row in splits {
+        assert_eq!(row.task_name, "対象タスク-20261118-0559");
+        assert_eq!(row.actual_work_seconds, Some(2));
+        assert_eq!(row.estimated_work_seconds, Some(2));
+        assert_eq!(row.project_name.as_deref(), Some(project));
+    }
+    assert_eq!(state.visible_schedule("2026-11-18").count(), 1);
+    state.start(TASK, start + 50_000).unwrap();
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::Complete,
+            start + 60_000,
+            "complete".into(),
+        )
+        .unwrap();
+    let completed = state.completions_on("2026-11-18");
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].actual_work_seconds, Some(20));
+    assert_eq!(completed[0].estimated_work_seconds, Some(3596));
+    assert_eq!(state.visible_schedule("2026-11-18").count(), 0);
+}
+
+#[test]
+fn 旧形式の未送信操作を復元し見積のない実績ゼロを区別する() {
+    let mut state = sample();
+    let start = state.bundle.snapshot.observed_at_epoch_ms;
+    state.start(TASK, start).unwrap();
+    state.sessions[0].actual_work_seconds_at_start = 0;
+    state.sessions[0].estimated_work_seconds_at_start = 0;
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::CompleteWithoutRecording,
+            start + 1000,
+            "completion".into(),
+        )
+        .unwrap();
+    assert_eq!(
+        state.completions_on("2026-11-17")[0].actual_work_seconds,
+        Some(1)
+    );
+    let mut json = serde_json::to_value(state).unwrap();
+    json.as_object_mut().unwrap().remove("completion_history");
+    json["bundle"]
+        .as_object_mut()
+        .unwrap()
+        .remove("project_names");
+    let mut legacy: OfflineState = serde_json::from_value(json).unwrap();
+    legacy.bundle.days.clear();
+    legacy.restore_completion_history();
+    legacy.restore_completion_history();
+    let rows = legacy.completions_on("2026-11-17");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].task_name, "対象タスク");
+    assert_eq!(rows[0].project_name, None);
+    assert_eq!(rows[0].actual_work_seconds, None);
+    assert_eq!(rows[0].estimated_work_seconds, None);
 }

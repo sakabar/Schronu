@@ -34,9 +34,12 @@ pub(super) async fn read() -> Result<Option<Saved>, String> {
     let Some((token, raw)) = offline_storage::load().await? else {
         return Ok(None);
     };
-    let Versioned::V1(data) = serde_json::from_str(&raw).map_err(|_| {
-        "保存したオフラインデータを読み取れません。対応するバージョンで開いてください。".to_owned()
-    })?;
+    let Versioned::V1(mut data): Versioned<Document> =
+        serde_json::from_str(&raw).map_err(|_| {
+            "保存したオフラインデータを読み取れません。対応するバージョンで開いてください。"
+                .to_owned()
+        })?;
+    data.state.restore_completion_history();
     Ok(Some(Saved { token, data }))
 }
 
@@ -116,7 +119,7 @@ impl Saved {
         let bundle = fetch_bundle().await?;
         state.rebase(bundle);
         self.data.state = state;
-        if self.data.state.pending.is_empty() {
+        if self.data.state.pending.is_empty() && self.data.state.conflicts.is_empty() {
             self.merged_sessions()?;
             self.data.returning = true;
         }

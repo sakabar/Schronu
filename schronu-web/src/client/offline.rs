@@ -7,6 +7,10 @@ use crate::{OfflineBundle, OfflineOperation, OfflineOperationKind, ScheduledTask
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod completions;
+mod handoff;
+use super::completed::CompletionRow;
+
 /// A single IndexedDB value. Queue, projections and timer changes are committed together.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct OfflineState {
@@ -16,7 +20,12 @@ pub(crate) struct OfflineState {
     pub conflicts: BTreeMap<String, String>,
     recorded_task_names: BTreeMap<String, String>,
     completed: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    completion_history: BTreeMap<String, CompletionRow>,
     awaiting_refresh: BTreeSet<String>,
+    /// Locally unlocked parents and the child completions that still need a receipt.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    unconfirmed_handoffs: BTreeMap<String, BTreeSet<String>>,
     /// The frozen server snapshot does not yet include these locally finished intervals.
     finished_credits: BTreeMap<String, i64>,
 }
@@ -30,7 +39,9 @@ impl OfflineState {
             conflicts: BTreeMap::new(),
             recorded_task_names: BTreeMap::new(),
             completed: BTreeSet::new(),
+            completion_history: BTreeMap::new(),
             awaiting_refresh: BTreeSet::new(),
+            unconfirmed_handoffs: BTreeMap::new(),
             finished_credits: BTreeMap::new(),
         }
     }
@@ -39,36 +50,71 @@ impl OfflineState {
         self.completed.contains(id)
     }
 
-    pub fn recorded_task_name(&self, id: &str) -> Option<&str> {
-        self.recorded_task_names.get(id).map(String::as_str)
+    pub fn visible_schedule(&self, date: &str) -> impl Iterator<Item = &ScheduledTaskRow> {
+        self.bundle
+            .days
+            .get(date)
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                row.occurrence.is_projected()
+                    || row
+                        .task
+                        .task_id
+                        .as_deref()
+                        .is_none_or(|id| !self.completed(id))
+            })
     }
 
-    pub fn awaiting_refresh(&self, id: &str) -> bool {
-        self.awaiting_refresh.contains(id)
+    pub fn review_task_name(&self, id: &str) -> Option<&str> {
+        self.recorded_task_names
+            .get(id)
+            .map(String::as_str)
+            .or_else(|| {
+                self.sessions
+                    .iter()
+                    .find(|session| session.task_id == id)
+                    .map(|session| session.task_name.as_str())
+            })
+    }
+
+    pub fn needs_review(&self, id: &str) -> bool {
+        self.conflicts.contains_key(id)
+            || self.awaiting_refresh.contains(id)
+            || self.unconfirmed_handoffs.get(id).is_some_and(|children| {
+                children
+                    .iter()
+                    .any(|child| self.conflicts.contains_key(child))
+            })
     }
 
     pub fn can_start(&self, row: &ScheduledTaskRow) -> bool {
-        row.is_leaf
-            && !row.occurrence.is_projected()
+        !row.occurrence.is_projected()
             && row.task.task_id.as_deref().is_some_and(|id| {
-                !self.completed(id)
-                    && !self.awaiting_refresh(id)
-                    && !self.conflicts.contains_key(id)
+                self.effective_leaf(id, row.is_leaf)
+                    && !self.completed(id)
+                    && !self.needs_review(id)
                     && !self.sessions.iter().any(|active| active.task_id == id)
             })
     }
 
     pub fn start(&mut self, id: &str, now: i64) -> Result<(), &'static str> {
+        self.start_if_ready(id, now)
+            .then_some(())
+            .ok_or("このタスクを開始できません。")
+    }
+
+    fn start_if_ready(&mut self, id: &str, now: i64) -> bool {
         let task = self
             .bundle
             .days
             .values()
             .flatten()
             .find(|row| row.task.task_id.as_deref() == Some(id) && self.can_start(row))
-            .and_then(|row| row.task.actionable_task())
-            .ok_or("このタスクを開始できません。")?;
+            .and_then(|row| row.task.actionable_task());
+        let Some(task) = task else { return false };
         self.sessions.push(WorkSession::from_task(&task, now));
-        Ok(())
+        true
     }
 
     pub fn finish(
@@ -78,7 +124,7 @@ impl OfflineState {
         now: i64,
         operation_id: String,
     ) -> Result<(), &'static str> {
-        if self.conflicts.contains_key(id) || self.awaiting_refresh(id) {
+        if self.needs_review(id) {
             return Err("同期結果を確認してください。");
         }
         let index = self
@@ -122,7 +168,7 @@ impl OfflineState {
         }
         self.recorded_task_names
             .insert(id.to_owned(), session.task_name.clone());
-        self.pending.push(OfflineOperation {
+        let operation = OfflineOperation {
             operation_id,
             task_id: id.to_owned(),
             kind,
@@ -131,13 +177,16 @@ impl OfflineState {
             expected_actual_work_seconds: actual,
             expected_estimated_work_seconds: (kind == OfflineOperationKind::Split)
                 .then_some(estimate),
-        });
+        };
+        if let Some(row) = self.completion_row(&operation, Some(estimate)) {
+            self.completion_history
+                .insert(operation.operation_id.clone(), row);
+        }
+        self.pending.push(operation);
         self.sessions.remove(index);
-        if matches!(
-            kind,
-            OfflineOperationKind::Complete | OfflineOperationKind::CompleteWithoutRecording
-        ) {
+        if kind.is_completion() {
             self.completed.insert(id.to_owned());
+            self.start_parent_after_completion(id, now);
         }
         for row in
             self.bundle.days.values_mut().flatten().filter(|row| {
@@ -172,6 +221,7 @@ impl OfflineState {
         self.pending.retain(|op| {
             if op.task_id == id {
                 self.finished_credits.remove(&op.operation_id);
+                self.completion_history.remove(&op.operation_id);
                 false
             } else {
                 true
@@ -181,6 +231,7 @@ impl OfflineState {
         self.completed.remove(id);
         self.recorded_task_names.remove(id);
         self.awaiting_refresh.insert(id.to_owned());
+        self.confirm_handoff_child(id);
     }
 
     /// Rebase unrelated tasks to the fresh read, keeping each unsent task at its local projection.
@@ -296,4 +347,4 @@ pub fn format_at_offset(epoch: i64, offset: Option<i32>, format: &str) -> String
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

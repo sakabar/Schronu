@@ -503,8 +503,8 @@ fn project_list_rows_with(
     )
 }
 
-pub(crate) fn project_daily_rows(
-    rows: &[crate::ScheduledTaskRow],
+pub(crate) fn project_daily_rows<'a>(
+    rows: impl IntoIterator<Item = &'a crate::ScheduledTaskRow>,
     selected_date: Option<&str>,
     snapshot: Option<&crate::ServerSnapshot>,
     offset_at: &dyn Fn(i64) -> Option<i32>,
@@ -514,7 +514,7 @@ pub(crate) fn project_daily_rows(
     let mut display_cursor_epoch_ms = snapshot
         .filter(|snapshot| Some(snapshot.logical_date.as_str()) == selected_date)
         .map(|snapshot| snapshot.observed_at_epoch_ms);
-    rows.iter()
+    rows.into_iter()
         .map(|row| {
             let gap_before = minute_gap_label(display_cursor_epoch_ms, row.schedule_start_epoch_ms);
             display_cursor_epoch_ms = Some(

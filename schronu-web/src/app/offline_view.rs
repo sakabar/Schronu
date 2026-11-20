@@ -76,6 +76,7 @@ pub(super) fn OfflineView(
         }
     });
     let mut selected_date = use_signal(|| state.bundle.snapshot.logical_date.clone());
+    let completed_ascending = use_signal(|| false);
     let mut filter = use_signal(String::new);
     let mut today = use_signal(|| OfflineState::current_logical_date(browser_now_epoch_ms()));
     let mut local_error = use_signal(|| None::<&'static str>);
@@ -139,7 +140,6 @@ pub(super) fn OfflineView(
             Err(message) => local_error.set(Some(message)),
         }
     });
-    let first_date = state.bundle.snapshot.logical_date.clone();
     let last_date = state
         .bundle
         .days
@@ -149,11 +149,6 @@ pub(super) fn OfflineView(
         .unwrap_or_default();
     let saved = format_jst(state.bundle.snapshot.observed_at_epoch_ms, "%m/%d %H:%M");
     let pending = state.pending.len();
-    let current_date = if state.bundle.days.contains_key(&selected_date()) {
-        selected_date()
-    } else {
-        first_date.clone()
-    };
     rsx! {
         main { class: "shell offline-shell", id: "schronu-web-ready",
             if tab() == ActiveTab::Session {
@@ -183,7 +178,7 @@ pub(super) fn OfflineView(
                 }
                 Sessions { state: state.clone(), zone: zone.clone(), offset_at, blocked, on_action }
             } else if tab() == ActiveTab::List {
-                Schedule { state: state.clone(), date: current_date, filter, timezone, today: today(), blocked, on_action,
+                Schedule { state: state.clone(), date: selected_date(), filter, completed_ascending, timezone, today: today(), blocked, on_action,
                     on_select: move |date| selected_date.set(date),
                 }
             } else {
@@ -254,8 +249,7 @@ fn Sessions(
                 &|ms| offset_at.call(ms),
                 &|_| Some(JAPAN_UTC_OFFSET_MINUTES),
             );
-            card.manual_check_blocked =
-                state.conflicts.contains_key(id) || state.awaiting_refresh(id);
+            card.manual_check_blocked = state.needs_review(id);
             card
         })
         .collect();
@@ -295,7 +289,7 @@ fn ConflictList(
             for (id, reason) in &state.conflicts {
                 {
                     let id = id.clone();
-                    let name = display_task_name(state.recorded_task_name(&id).unwrap_or(&id));
+                    let name = display_task_name(state.review_task_name(&id).unwrap_or(&id));
                     let choose = id.clone();
                     let discard = id.clone();
                     rsx! { article { key: "{id}",

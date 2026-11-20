@@ -2,6 +2,7 @@ use super::task_id_copy::TaskIdCopyButton;
 use dioxus::prelude::*;
 use std::rc::Rc;
 
+use crate::client::completed::{CompletionId, CompletionRow};
 use crate::client::state::ListMode;
 use crate::client::time_model::format_hh_mm_ss;
 #[cfg(test)]
@@ -248,6 +249,7 @@ pub fn ListModeControl(
 pub fn CompletedListView(
     dates: Vec<DateButtonViewModel>,
     report: Option<CompletedTaskReport>,
+    offline_rows: Option<Vec<CompletionRow>>,
     #[props(default)] ascending: bool,
     #[props(default)] on_toggle_order: EventHandler<()>,
     #[props(default)] display_offset: Option<Callback<i64, Option<i32>>>,
@@ -261,14 +263,29 @@ pub fn CompletedListView(
     on_submit_date_input: EventHandler<()>,
     on_filter_change: EventHandler<String>,
 ) -> Element {
-    let summary = report.as_ref().map(|report| CompletedReportSummary {
-        in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
-        total_actual_work_seconds: report.total_actual_work_seconds,
-        available_seconds: report.available_seconds,
-        recorded_percentage: report.recorded_percentage,
-        actual_estimate_percentage: actual_estimate_percentage(&report.rows),
-    });
-    let rows = report.map_or_else(Vec::new, |report| report.rows);
+    let (rows, summary) = if let Some(rows) = offline_rows {
+        let total = rows
+            .iter()
+            .map(|row| row.actual_work_seconds.map(i128::from))
+            .sum::<Option<i128>>();
+        (rows, Some(CompletionSummary::Offline(total)))
+    } else {
+        let summary = report.as_ref().map(|report| {
+            CompletionSummary::Online(CompletedReportSummary {
+                in_progress_actual_work_seconds: report.in_progress_actual_work_seconds,
+                total_actual_work_seconds: report.total_actual_work_seconds,
+                available_seconds: report.available_seconds,
+                recorded_percentage: report.recorded_percentage,
+                actual_estimate_percentage: actual_estimate_percentage(&report.rows),
+            })
+        });
+        let rows = report
+            .into_iter()
+            .flat_map(|report| report.rows)
+            .map(CompletionRow::from)
+            .collect();
+        (rows, summary)
+    };
     let mut matching_rows = rows
         .into_iter()
         .filter(|row| task_name_matches(&filter_text, &row.task_name))
@@ -280,7 +297,7 @@ pub fn CompletedListView(
         } else {
             time_order.reverse()
         };
-        time_order.then_with(|| left.task_id.cmp(&right.task_id))
+        time_order.then_with(|| left.id.as_str().cmp(right.id.as_str()))
     });
     let no_matches = !filter_text.trim().is_empty() && matching_rows.is_empty();
     rsx! {
@@ -423,10 +440,10 @@ fn ListModeButton(
 fn CompletedTaskTable(
     logical_date: Option<String>,
     display_offset: Option<Callback<i64, Option<i32>>>,
-    rows: Vec<CompletedTaskRow>,
+    rows: Vec<CompletionRow>,
     ascending: bool,
     on_toggle_order: EventHandler<()>,
-    summary: Option<CompletedReportSummary>,
+    summary: Option<CompletionSummary>,
     empty_message: Option<String>,
 ) -> Element {
     let list_date = logical_date
@@ -446,7 +463,7 @@ fn CompletedTaskTable(
                     span { class: "completed-report-count", "0件" }
                 }
                 if let Some(summary) = summary {
-                    CompletedReportSummaryView { summary }
+                    CompletionSummaryView { summary }
                 }
                 p {
                     class: "completed-report-empty",
@@ -463,7 +480,7 @@ fn CompletedTaskTable(
                 span { class: "completed-report-count", "{count}件" }
             }
             if let Some(summary) = summary {
-                CompletedReportSummaryView { summary }
+                CompletionSummaryView { summary }
             }
             div { class: "completed-task-table-scroll",
                 table { class: "completed-task-table",
@@ -486,7 +503,7 @@ fn CompletedTaskTable(
                     }
                     tbody {
                         for row in rows {
-                            CompletedTaskTableRow { row, list_date, display_offset }
+                            CompletedTaskTableRow { key: "{row.id.as_str()}", row, list_date, display_offset }
                         }
                     }
                 }
@@ -521,6 +538,31 @@ fn actual_estimate_percentage(rows: &[CompletedTaskRow]) -> Option<i128> {
         .checked_mul(100)?
         .checked_add(total_estimated / 2)?
         .checked_div(total_estimated)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(all(feature = "web", target_arch = "wasm32")), allow(dead_code))]
+enum CompletionSummary {
+    Online(CompletedReportSummary),
+    Offline(Option<i128>),
+}
+
+#[component]
+fn CompletionSummaryView(summary: CompletionSummary) -> Element {
+    match summary {
+        CompletionSummary::Online(summary) => rsx! { CompletedReportSummaryView { summary } },
+        CompletionSummary::Offline(total) => {
+            let value = total.map(format_hh_mm_ss).unwrap_or_else(|| "—".into());
+            rsx! {
+                dl { class: "completed-report-summary", aria_label: "オフラインの完了日の集計",
+                    div { class: "completed-report-summary-item",
+                        dt { "オフラインで完了した実績合計" }
+                        dd { "{value}" }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[component]
@@ -578,12 +620,13 @@ fn ClockLabel(label: String) -> Element {
 
 #[component]
 fn CompletedTaskTableRow(
-    row: CompletedTaskRow,
+    row: CompletionRow,
     list_date: Option<NaiveDate>,
     display_offset: Option<Callback<i64, Option<i32>>>,
 ) -> Element {
     let task_name = super::task_name::display_task_name(&row.task_name);
-    let project_name = super::task_name::display_task_name(&row.project_name);
+    let project_name =
+        super::task_name::display_task_name(row.project_name.as_deref().unwrap_or("—"));
     let completed_at = Local
         .timestamp_millis_opt(row.completed_at_epoch_ms)
         .single();
@@ -598,24 +641,33 @@ fn CompletedTaskTableRow(
     }
     .unwrap_or_else(|| "--:--".to_owned());
     let completed_datetime = completed_at.map(|date| date.to_rfc3339());
-    let actual = format_hh_mm_ss(i128::from(row.actual_work_seconds));
-    let difference = i128::from(row.actual_work_seconds) - i128::from(row.estimated_work_seconds);
-    let difference_label = if difference >= 0 {
-        format!("+{}", format_hh_mm_ss(difference))
-    } else {
-        format_hh_mm_ss(difference)
+    let actual = row
+        .actual_work_seconds
+        .map(|n| format_hh_mm_ss(i128::from(n)))
+        .unwrap_or_else(|| "—".into());
+    let difference = row
+        .actual_work_seconds
+        .zip(row.estimated_work_seconds)
+        .map(|(actual, estimate)| i128::from(actual) - i128::from(estimate));
+    let difference_label = match difference {
+        Some(n) if n >= 0 => format!("+{}", format_hh_mm_ss(n)),
+        Some(n) => format_hh_mm_ss(n),
+        None => "—".into(),
     };
-    let difference_class = if difference > 0 {
+    let difference_class = if difference.is_some_and(|n| n > 0) {
         "completed-number completed-difference is-overrun"
-    } else if difference < 0 {
+    } else if difference.is_some_and(|n| n < 0) {
         "completed-number completed-difference is-underrun"
     } else {
         "completed-number completed-difference is-zero"
     };
-    let (task_kind_class, task_kind_label) = task_display_metadata(row.task_display_kind);
+    let (task_kind_class, task_kind_label) = row
+        .task_display_kind
+        .map(task_display_metadata)
+        .unwrap_or(("", "タスク"));
     let task_class = format!("completed-task-name {task_kind_class}");
     rsx! {
-        tr { key: "{row.task_id}",
+        tr {
             td { class: "completed-time completed-number",
                 time {
                     datetime: completed_datetime,
@@ -632,7 +684,11 @@ fn CompletedTaskTableRow(
                 div { class: "completed-subject-scroll", tabindex: 0,
                     strong {
                         class: task_class,
-                        TaskIdCopyButton { task_id: row.task_id.clone(), name: task_name.clone() }
+                        if let CompletionId::Task(id) = &row.id {
+                            TaskIdCopyButton { task_id: id.clone(), name: task_name.clone() }
+                        } else {
+                            "{task_name}"
+                        }
                     }
                     span { class: "completed-project", "{project_name}" }
                 }

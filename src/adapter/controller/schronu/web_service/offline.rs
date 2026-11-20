@@ -27,6 +27,9 @@ pub struct OfflineBundleDto {
     pub days: BTreeMap<String, Vec<ScheduledTaskRowDto>>,
     pub load: LoadDataDto,
     pub splittable_task_ids: BTreeSet<String>,
+    pub project_names: BTreeMap<String, String>,
+    /// Saved parents that can receive a handoff, including their off-screen unfinished children.
+    pub handoff_children: BTreeMap<String, BTreeSet<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -123,15 +126,18 @@ impl WebService {
                 let rows = build_scheduled_task_rows(repository, &schedule, day.logical_date, now)?;
                 days.insert(day.logical_date.to_string(), rows);
             }
-            let splittable_task_ids = splittable_tasks(repository).map_err(|error| {
-                WebReadCoreError::Application(ApplicationError::TaskTree(error))
-            })?;
-            Ok(OfflineBundleDto {
+            let mut bundle = OfflineBundleDto {
                 snapshot,
                 days,
                 load,
-                splittable_task_ids,
-            })
+                splittable_task_ids: BTreeSet::new(),
+                project_names: BTreeMap::new(),
+                handoff_children: BTreeMap::new(),
+            };
+            bundle.collect_task_metadata(repository).map_err(|error| {
+                WebReadCoreError::Application(ApplicationError::TaskTree(error))
+            })?;
+            Ok(bundle)
         })
     }
 
@@ -176,15 +182,40 @@ impl WebService {
     }
 }
 
-fn splittable_tasks(repository: &TaskRepository) -> Result<BTreeSet<String>, TaskTreeError> {
-    // Already running browser sessions may be outside the downloaded dates.
-    let mut pending: Vec<_> = repository.get_all_projects().into_iter().cloned().collect();
-    let mut ids = BTreeSet::new();
-    while let Some(task) = pending.pop() {
-        if task.get_status()? != Status::Done && !task.is_repeating_task()? {
-            ids.insert(task.get_id()?.to_string());
+impl OfflineBundleDto {
+    fn collect_task_metadata(&mut self, repository: &TaskRepository) -> Result<(), TaskTreeError> {
+        let saved_ids: BTreeSet<_> = self
+            .days
+            .values()
+            .flatten()
+            .filter_map(|row| row.task.task_id.as_deref())
+            .collect();
+        // Already running browser sessions may be outside the downloaded dates.
+        let mut pending: Vec<_> = repository.get_all_projects().into_iter().cloned().collect();
+        while let Some(task) = pending.pop() {
+            let children = task.get_children()?;
+            let id = task.get_id()?.to_string();
+            if saved_ids.contains(id.as_str()) {
+                self.project_names
+                    .insert(id.clone(), task.root()?.get_name()?);
+            }
+            // Completing a child of a repetition template creates its next occurrence.
+            if task.get_status()? != Status::Done && !task.is_repeating_task()? {
+                if saved_ids.contains(id.as_str()) {
+                    let mut unfinished = BTreeSet::new();
+                    for child in &children {
+                        if child.get_status()? != Status::Done {
+                            unfinished.insert(child.get_id()?.to_string());
+                        }
+                    }
+                    if !unfinished.is_empty() {
+                        self.handoff_children.insert(id.clone(), unfinished);
+                    }
+                }
+                self.splittable_task_ids.insert(id);
+            }
+            pending.extend(children);
         }
-        pending.extend(task.get_children()?);
+        Ok(())
     }
-    Ok(ids)
 }
