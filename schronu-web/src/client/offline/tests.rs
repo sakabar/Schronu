@@ -243,6 +243,7 @@ fn sample() -> OfflineState {
             days,
             load,
             splittable_task_ids: BTreeSet::from([TASK.into()]),
+            project_names: BTreeMap::new(),
             handoff_children: BTreeMap::new(),
         },
         vec![],
@@ -521,4 +522,85 @@ fn preexisting_timer_gets_credit_once_until_receipt_and_fresh_snapshot() {
     refreshed.snapshot.buffer_seconds = 10_060;
     state.rebase(refreshed);
     assert_eq!(state.display_buffer_seconds(observed + 30_000), 10_060);
+}
+
+#[test]
+fn 同じ分の分割を別々に数え完了時刻の朝六時で日を分ける() {
+    let mut state = sample();
+    let start = chrono::DateTime::parse_from_rfc3339("2026-11-18T05:59:00+09:00")
+        .unwrap()
+        .timestamp_millis();
+    let project = "集計対象プロジェクト";
+    state
+        .bundle
+        .project_names
+        .insert(TASK.into(), project.into());
+    for (second, id) in [(5, "split-1"), (10, "split-2")] {
+        let end = start + second * 1000;
+        state.start(TASK, end - 2000).unwrap();
+        state
+            .finish(TASK, OfflineOperationKind::Split, end, id.into())
+            .unwrap();
+    }
+    let splits = state.completions_on("2026-11-17");
+    assert_eq!(splits.len(), 2);
+    assert_ne!(splits[0].id, splits[1].id);
+    for row in splits {
+        assert_eq!(row.task_name, "対象タスク-20261118-0559");
+        assert_eq!(row.actual_work_seconds, Some(2));
+        assert_eq!(row.estimated_work_seconds, Some(2));
+        assert_eq!(row.project_name.as_deref(), Some(project));
+    }
+    assert_eq!(state.visible_schedule("2026-11-18").count(), 1);
+    state.start(TASK, start + 50_000).unwrap();
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::Complete,
+            start + 60_000,
+            "complete".into(),
+        )
+        .unwrap();
+    let completed = state.completions_on("2026-11-18");
+    assert_eq!(completed.len(), 1);
+    assert_eq!(completed[0].actual_work_seconds, Some(20));
+    assert_eq!(completed[0].estimated_work_seconds, Some(3596));
+    assert_eq!(state.visible_schedule("2026-11-18").count(), 0);
+}
+
+#[test]
+fn 旧形式の未送信操作を復元し見積のない実績ゼロを区別する() {
+    let mut state = sample();
+    let start = state.bundle.snapshot.observed_at_epoch_ms;
+    state.start(TASK, start).unwrap();
+    state.sessions[0].actual_work_seconds_at_start = 0;
+    state.sessions[0].estimated_work_seconds_at_start = 0;
+    state
+        .finish(
+            TASK,
+            OfflineOperationKind::CompleteWithoutRecording,
+            start + 1000,
+            "completion".into(),
+        )
+        .unwrap();
+    assert_eq!(
+        state.completions_on("2026-11-17")[0].actual_work_seconds,
+        Some(1)
+    );
+    let mut json = serde_json::to_value(state).unwrap();
+    json.as_object_mut().unwrap().remove("completion_history");
+    json["bundle"]
+        .as_object_mut()
+        .unwrap()
+        .remove("project_names");
+    let mut legacy: OfflineState = serde_json::from_value(json).unwrap();
+    legacy.bundle.days.clear();
+    legacy.restore_completion_history();
+    legacy.restore_completion_history();
+    let rows = legacy.completions_on("2026-11-17");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].task_name, "対象タスク");
+    assert_eq!(rows[0].project_name, None);
+    assert_eq!(rows[0].actual_work_seconds, None);
+    assert_eq!(rows[0].estimated_work_seconds, None);
 }

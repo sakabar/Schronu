@@ -63,6 +63,13 @@ fn 引き継ぎ候補には保存した親と未完了の直接の子だけが�
     let mut service = WebService::new(fixture.storage.clone(), fixture.config());
     let bundle = service.prepare_offline_at(now).unwrap();
     assert_eq!(
+        bundle.project_names[&child.to_string()],
+        root.get_name().unwrap()
+    );
+    assert!(!bundle
+        .project_names
+        .contains_key(&done.get_id().unwrap().to_string()));
+    assert_eq!(
         bundle.handoff_children,
         std::collections::BTreeMap::from([(
             parent.to_string(),

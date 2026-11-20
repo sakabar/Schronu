@@ -261,6 +261,53 @@ async function assertCompletedTaskHidden(page, date) {
     await page.click("検索文字列をクリア");
 }
 
+async function assertCompletedRows(page, epoch, expected, offline = true) {
+    const date = jst(epoch - 6 * hour).slice(0, 10);
+    if (!offline) {
+        await until("online list ready", () => page.evaluate(`!document.querySelector('.offline-shell, main[inert]') &&
+            Boolean(document.querySelector('.list-screen .date-pill[title]:not(:disabled)'))`));
+    }
+    await page.click("完了");
+    await until("completion controls", () => page.evaluate("Boolean(document.querySelector('.completed-list-view .date-jump-input')) && !document.querySelector('main[inert]')"));
+    await page.evaluate(`{
+        const field = document.querySelector('.date-jump-input');
+        field.value = ${JSON.stringify(date)};
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+    }`);
+    await page.click("入力した日付を表示");
+    await until("completed rows on " + date, async () => {
+        const rows = await page.evaluate(`Array.from(document.querySelectorAll('.completed-task-table tbody tr'),
+            row => [row.querySelector('strong').textContent.trim(), row.querySelector('.completed-actual').textContent])`);
+        const count = await page.evaluate("document.querySelector('.completed-report-count')?.textContent");
+        return count === expected.length + "件" && JSON.stringify(rows) === JSON.stringify(expected);
+    });
+    if (offline) {
+        await page.show("オフラインで完了した実績合計");
+        assert.deepEqual(await page.evaluate("Array.from(document.querySelectorAll('.completed-project'), e => e.textContent)"), expected.map(() => taskName));
+        if (expected.length > 1) {
+            await page.click("完了時刻を古い順にする");
+            await until("oldest first", () => page.evaluate("Boolean(document.querySelector('.completed-time[aria-sort=ascending]'))"));
+            assert.deepEqual(await page.evaluate("Array.from(document.querySelectorAll('td.completed-actual'), e => e.textContent)"),
+                expected.map(([, time]) => time).reverse());
+            await page.click("完了時刻を新しい順にする");
+        }
+        const summary = await page.evaluate("document.querySelector('.completed-report-summary dd').textContent");
+        const seconds = expected.reduce((sum, [, time]) => sum + time.split(":").reduce((n, part) => 60 * n + Number(part), 0), 0);
+        assert.equal(summary, new Date(seconds * 1000).toISOString().slice(11, 19));
+        await page.evaluate(`{
+            const field = document.querySelector('.task-name-filter-input');
+            field.value = 'unmatched-filter';
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        }`);
+        await page.show("一致するタスクがありません");
+        assert.equal(await page.evaluate("document.querySelector('.completed-report-count').textContent"), "0件");
+        assert.equal(await page.evaluate("document.querySelector('.completed-report-summary dd').textContent"), summary);
+        await page.click("検索文字列をクリア");
+    }
+    await page.click("予定");
+    await until("scheduled table", () => page.evaluate("Boolean(document.querySelector('.task-heading'))"));
+}
+
 async function sessionLayout(page, width) {
     await page.setViewport(width);
     const layout = await page.evaluate(`(() => {
@@ -344,6 +391,9 @@ for (const completion of ["記録して完了", "計測を破棄して完了"]) 
                 await page.show("handoff write interrupted");
                 await page.show("未送信0件");
                 assert.match(await page.evaluate("document.querySelector('.session-card-heading').textContent"), new RegExp(childName));
+                await page.click("一覧");
+                await assertCompletedRows(page, finished, []);
+                await page.click("セッション");
                 await complete();
                 await until("last child starts parent", () => page.evaluate(
                     `document.querySelector('.session-card-heading')?.textContent.includes(${JSON.stringify(taskName)})`
@@ -394,6 +444,10 @@ test("offline schedule, cold timer restoration and replay of a committed split",
         const split = start + 25 * minute;
         const resumed = split + 5 * minute;
         const finished = resumed + 5 * hour;
+        const splitName = taskName + "-" + jst(split).slice(0, 16).replaceAll("/", "").replace(" ", "-").replace(":", "");
+        const sameDay = jst(split - 6 * hour).slice(0, 10) === jst(finished - 6 * hour).slice(0, 10);
+        const finalRows = [[taskName, "05:00:00"]];
+        if (sameDay) finalRows.push([splitName, "00:25:00"]);
         let selectedDate;
         const onlineLayouts = new Map();
         const sessionLayouts = new Map();
@@ -429,7 +483,7 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await savedSchedule(page);
             selectedDate = await selectSavedTaskDate(page);
             for (const [width, layout] of onlineLayouts) assert.deepEqual(await scheduleLayout(page, width), layout);
-            assert(await page.evaluate("['.task-defer', '.date-pill', '.list-mode-button'].every(s => document.querySelector(s + ':disabled'))"));
+            assert(await page.evaluate("['.task-defer', '.date-pill'].every(s => document.querySelector(s + ':disabled'))"));
             await page.evaluate("document.querySelector('.deviation-sort input').click()");
             await until("offline deviation sort", () => page.evaluate("Boolean(document.querySelector('.deviation-heading[aria-sort=descending]'))"));
             await page.evaluate(`const input = document.querySelector('.task-name-filter-input');
@@ -445,6 +499,7 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.clock(split);
             await page.click("記録して分割");
             await savedSchedule(page);
+            await assertCompletedRows(page, split, [[splitName, "00:25:00"]]);
             await page.click("セッション");
             await page.show("未送信1件");
             assert(await page.evaluate("document.querySelector('.session-empty input')?.disabled && document.querySelector('.session-empty button')?.disabled"));
@@ -469,10 +524,12 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.click("記録して完了");
             await savedSchedule(page);
             await assertCompletedTaskHidden(page, selectedDate);
+            await assertCompletedRows(page, finished, finalRows);
         }, { offlineAtStartup: true });
         await withBrowser(profile, server.url, "Asia/Taipei", async page => {
             await savedSchedule(page);
             await assertCompletedTaskHidden(page, selectedDate);
+            await assertCompletedRows(page, finished, finalRows);
             await page.click("セッション");
             await page.show("未送信2件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
@@ -494,6 +551,8 @@ test("offline schedule, cold timer restoration and replay of a committed split",
             await page.show("同期しました");
             assert.equal(await page.evaluate("getComputedStyle(document.querySelector('.offline-notice')).position"), "fixed");
             await page.click("一覧");
+            await assertCompletedRows(page, finished, finalRows, false);
+            if (!sameDay) await assertCompletedRows(page, split, [[splitName, "00:25:00"]], false);
             await until("sync notice dismissed", () => page.evaluate("!document.body.innerText.includes('同期しました')"), 6000);
         }, { offlineAtStartup: true });
         const persisted = await server.yaml();
@@ -545,6 +604,7 @@ test("discarded measurement persists through offline restart and sync replay", {
             await page.click("キャンセル");
             await page.show("未送信0件");
             await page.click("一覧");
+            await assertCompletedRows(page, confirmed, []);
             await selectSavedDate(page, selectedDate);
             await page.show(taskName);
             assert.equal(await page.evaluate("document.querySelector('.task-heading').getAttribute('aria-label')"), "タスク 1件");
@@ -556,6 +616,7 @@ test("discarded measurement persists through offline restart and sync replay", {
             await page.click(taskName + ": 計測を破棄して完了を確定");
             await savedSchedule(page);
             await assertCompletedTaskHidden(page, selectedDate);
+            await assertCompletedRows(page, confirmed, [[taskName, "00:30:00"]]);
             await page.click("セッション");
             await page.show("未送信1件");
             assert.doesNotMatch(await server.yaml(), /status: done/);
@@ -563,6 +624,7 @@ test("discarded measurement persists through offline restart and sync replay", {
         await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
             await savedSchedule(page);
             await assertCompletedTaskHidden(page, selectedDate);
+            await assertCompletedRows(page, confirmed, [[taskName, "00:30:00"]]);
             await page.click("セッション");
             await page.show("未送信1件");
             await page.waitForSyncDisabled(false);
@@ -578,6 +640,58 @@ test("discarded measurement persists through offline restart and sync replay", {
         assert.match(persisted, /status: done/);
         assert.match(persisted, /actual_work_seconds: 1800\b/);
         assert(persisted.includes(jst(confirmed)));
+    } finally {
+        try { await server?.stop(); } finally { await rm(work, { recursive: true, force: true, maxRetries: 3 }); }
+    }
+});
+
+test("two splits in the same minute remain distinct across the logical day boundary", {
+    skip: !(chrome && serverBinary && cliBinary), timeout: 120_000,
+}, async () => {
+    const work = await mkdtemp(join(tmpdir(), "schronu-offline-completion-days-"));
+    const profile = join(work, "profile");
+    let server;
+    try {
+        server = await isolatedServer(work);
+        await server.start();
+        const date = jst(Date.now() - 24 * hour).slice(0, 10).replaceAll("/", "-");
+        const boundary = Date.parse(date + "T06:00:00+09:00");
+        const name = taskName + "-" + date.replaceAll("-", "") + "-0559";
+        const splitRows = [[name, "00:00:03"], [name, "00:00:02"]];
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await page.click("一覧");
+            await page.click("設定");
+            await page.click("オフラインで使う");
+            await savedSchedule(page);
+            await page.setOffline(true);
+            await server.stop();
+            for (const [start, end, action] of [
+                [-40, -38, "記録して分割"], [-25, -22, "記録して分割"], [-10, 0, "記録して完了"],
+            ]) {
+                await selectSavedTaskDate(page);
+                await page.clock(boundary + start * 1000);
+                await page.click(taskName + ": セッションに追加");
+                await page.show(action);
+                await page.clock(boundary + end * 1000);
+                await page.click(action);
+                await savedSchedule(page);
+            }
+            await page.clock(boundary + 10 * 24 * hour);
+            await assertCompletedRows(page, boundary - 1000, splitRows);
+            await assertCompletedRows(page, boundary, [[taskName, "00:00:10"]]);
+        });
+        await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+            await savedSchedule(page);
+            await assertCompletedRows(page, boundary - 1000, splitRows);
+            await page.click("セッション");
+            await server.start();
+            await page.setOffline(false);
+            await page.click("同期");
+            await page.show("同期しました");
+            await page.click("一覧");
+            await assertCompletedRows(page, boundary - 1000, splitRows, false);
+            await assertCompletedRows(page, boundary, [[taskName, "00:00:10"]], false);
+        }, { offlineAtStartup: true });
     } finally {
         try { await server?.stop(); } finally { await rm(work, { recursive: true, force: true, maxRetries: 3 }); }
     }

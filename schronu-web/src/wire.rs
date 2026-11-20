@@ -95,6 +95,8 @@ pub struct OfflineBundle {
     pub load: LoadData,
     pub splittable_task_ids: std::collections::BTreeSet<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub project_names: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub handoff_children: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 

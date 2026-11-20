@@ -34,9 +34,12 @@ pub(super) async fn read() -> Result<Option<Saved>, String> {
     let Some((token, raw)) = offline_storage::load().await? else {
         return Ok(None);
     };
-    let Versioned::V1(data) = serde_json::from_str(&raw).map_err(|_| {
-        "保存したオフラインデータを読み取れません。対応するバージョンで開いてください。".to_owned()
-    })?;
+    let Versioned::V1(mut data): Versioned<Document> =
+        serde_json::from_str(&raw).map_err(|_| {
+            "保存したオフラインデータを読み取れません。対応するバージョンで開いてください。"
+                .to_owned()
+        })?;
+    data.state.restore_completion_history();
     Ok(Some(Saved { token, data }))
 }
 

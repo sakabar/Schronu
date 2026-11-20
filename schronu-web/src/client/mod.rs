@@ -1,4 +1,6 @@
 pub mod carry_lock;
+#[cfg(any(test, feature = "web", feature = "server"))]
+pub(crate) mod completed;
 pub mod date_buttons;
 pub mod date_input;
 mod effect;

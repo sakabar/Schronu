@@ -27,6 +27,7 @@ pub struct OfflineBundleDto {
     pub days: BTreeMap<String, Vec<ScheduledTaskRowDto>>,
     pub load: LoadDataDto,
     pub splittable_task_ids: BTreeSet<String>,
+    pub project_names: BTreeMap<String, String>,
     /// Saved parents that can receive a handoff, including their off-screen unfinished children.
     pub handoff_children: BTreeMap<String, BTreeSet<String>>,
 }
@@ -130,6 +131,7 @@ impl WebService {
                 days,
                 load,
                 splittable_task_ids: BTreeSet::new(),
+                project_names: BTreeMap::new(),
                 handoff_children: BTreeMap::new(),
             };
             bundle.collect_task_metadata(repository).map_err(|error| {
@@ -192,9 +194,13 @@ impl OfflineBundleDto {
         let mut pending: Vec<_> = repository.get_all_projects().into_iter().cloned().collect();
         while let Some(task) = pending.pop() {
             let children = task.get_children()?;
+            let id = task.get_id()?.to_string();
+            if saved_ids.contains(id.as_str()) {
+                self.project_names
+                    .insert(id.clone(), task.root()?.get_name()?);
+            }
             // Completing a child of a repetition template creates its next occurrence.
             if task.get_status()? != Status::Done && !task.is_repeating_task()? {
-                let id = task.get_id()?.to_string();
                 if saved_ids.contains(id.as_str()) {
                     let mut unfinished = BTreeSet::new();
                     for child in &children {

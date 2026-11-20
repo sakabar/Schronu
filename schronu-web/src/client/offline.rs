@@ -7,7 +7,9 @@ use crate::{OfflineBundle, OfflineOperation, OfflineOperationKind, ScheduledTask
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod completions;
 mod handoff;
+use super::completed::CompletionRow;
 
 /// A single IndexedDB value. Queue, projections and timer changes are committed together.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18,6 +20,8 @@ pub(crate) struct OfflineState {
     pub conflicts: BTreeMap<String, String>,
     recorded_task_names: BTreeMap<String, String>,
     completed: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    completion_history: BTreeMap<String, CompletionRow>,
     awaiting_refresh: BTreeSet<String>,
     /// Locally unlocked parents and the child completions that still need a receipt.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -35,6 +39,7 @@ impl OfflineState {
             conflicts: BTreeMap::new(),
             recorded_task_names: BTreeMap::new(),
             completed: BTreeSet::new(),
+            completion_history: BTreeMap::new(),
             awaiting_refresh: BTreeSet::new(),
             unconfirmed_handoffs: BTreeMap::new(),
             finished_credits: BTreeMap::new(),
@@ -163,7 +168,7 @@ impl OfflineState {
         }
         self.recorded_task_names
             .insert(id.to_owned(), session.task_name.clone());
-        self.pending.push(OfflineOperation {
+        let operation = OfflineOperation {
             operation_id,
             task_id: id.to_owned(),
             kind,
@@ -172,7 +177,12 @@ impl OfflineState {
             expected_actual_work_seconds: actual,
             expected_estimated_work_seconds: (kind == OfflineOperationKind::Split)
                 .then_some(estimate),
-        });
+        };
+        if let Some(row) = self.completion_row(&operation, Some(estimate)) {
+            self.completion_history
+                .insert(operation.operation_id.clone(), row);
+        }
+        self.pending.push(operation);
         self.sessions.remove(index);
         if kind.is_completion() {
             self.completed.insert(id.to_owned());
@@ -211,6 +221,7 @@ impl OfflineState {
         self.pending.retain(|op| {
             if op.task_id == id {
                 self.finished_credits.remove(&op.operation_id);
+                self.completion_history.remove(&op.operation_id);
                 false
             } else {
                 true
