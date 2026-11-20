@@ -270,15 +270,41 @@ Qed.
     持つ各締切群に対して同じ容量条件を保ちます。空になった群は棄却できます。 *)
 Definition initially_fits p cost :=
   forall k d, In k (jobs p) -> deadline p k = Some d -> demand p cost d <= d.
-Definition safe p t r :=
+
+(** 各締切の累積需要から締切までの秒数を引き、その最大値を取ります。
+    自然数の差なので不足のない締切は0です。締切なしの入力も0を返します。 *)
+Definition max_overload p cost :=
+  list_max (map (fun j => match deadline p j with
+    | Some d => demand p cost d - d | None => 0 end) (jobs p)).
+
+Lemma max_overload_le_iff p cost b : max_overload p cost <= b <->
+  forall j d, In j (jobs p) -> deadline p j = Some d -> demand p cost d <= d + b.
+Proof.
+  unfold max_overload. rewrite list_max_le, Forall_map, Forall_forall. split.
+  - intros Bound j d M D. specialize (Bound j M). rewrite D in Bound. lia.
+  - intros Bound j M. destruct (deadline p j) as [d|] eqn:D; [|lia].
+    specialize (Bound j d M D). lia.
+Qed.
+
+Lemma max_overload_zero_iff p cost : max_overload p cost = 0 <-> initially_fits p cost.
+Proof.
+  rewrite <- Nat.le_0_r, max_overload_le_iff.
+  unfold initially_fits. now setoid_rewrite Nat.add_0_r.
+Qed.
+
+(** 許容超過[b]は証明の上限にのみ加えます。[permitted]のslackと候補選択は
+    常に元の締切を使うため、過負荷の群の外に作業時間を割くことはできません。 *)
+Definition safe_within p t r b :=
   forall k d, In k (jobs p) -> deadline p k = Some d -> 0 < r k ->
-    t + demand p r d <= d.
-Definition sound_frame p t s :=
-  safe p t (remaining s) /\ (0 < left_in_segment s ->
+    t + demand p r d <= b + d.
+Definition sound_frame_within p t s b :=
+  safe_within p t (remaining s) b /\ (0 < left_in_segment s ->
     In (running s) (jobs p) /\
     permitted p t (remaining s) (running s) (left_in_segment s)).
+Definition safe p t r := safe_within p t r 0.
+Definition sound_frame p t s := sound_frame_within p t s 0.
 
-Lemma dispatch_valid p t s j n : sound_frame p t s -> dispatch p t s = Some (j,n) ->
+Lemma dispatch_valid p t s {b} j n : sound_frame_within p t s b -> dispatch p t s = Some (j,n) ->
   In j (jobs p) /\ 0 < n /\ permitted p t (remaining s) j n.
 Proof.
   intros [_ Carry]. unfold dispatch. destruct (left_in_segment s) as [|m] eqn:L.
@@ -297,9 +323,9 @@ Proof.
   destruct (candidate_progress p t _ P) as [i E]. congruence.
 Qed.
 
-Lemma work_preserves p t r j n : NoDup (jobs p) -> safe p t r ->
+Lemma work_preserves p t r {b} j n : NoDup (jobs p) -> safe_within p t r b ->
   In j (jobs p) -> 0 < n -> permitted p t r j n ->
-  safe p (S t) (spend r j) /\ permitted p (S t) (spend r j) j (pred n).
+  safe_within p (S t) (spend r j) b /\ permitted p (S t) (spend r j) j (pred n).
 Proof.
   intros ND Safe M Pos [Cap Guard].
   assert (Delta : forall d, demand p r d = demand p (spend r j) d +
@@ -315,12 +341,12 @@ Proof.
       specialize (Guard k d Mk D R0 B). specialize (Delta d). rewrite B in Delta. lia.
 Qed.
 
-Lemma advance_sound p t s : NoDup (jobs p) -> sound_frame p t s ->
-  sound_frame p (S t) (advance p t s).
+Lemma advance_sound p t s {b} : NoDup (jobs p) -> sound_frame_within p t s b ->
+  sound_frame_within p (S t) (advance p t s) b.
 Proof.
   intros ND H. unfold advance. destruct (dispatch p t s) as [[j n]|] eqn:E.
-  - destruct (dispatch_valid _ _ _ _ _ H E) as [M [Pos P]].
-    destruct (work_preserves _ _ _ _ _ ND (proj1 H) M Pos P) as [Safe Carry].
+  - destruct (dispatch_valid p t s j n H E) as [M [Pos P]].
+    destruct (work_preserves p t (remaining s) j n ND (proj1 H) M Pos P) as [Safe Carry].
     split; simpl; auto.
   - assert (Empty := dispatch_idle _ _ _ E).
     assert (L : left_in_segment s = 0).
@@ -328,23 +354,40 @@ Proof.
     split; [intros k d M D R; specialize (Empty k M); lia|rewrite L; lia].
 Qed.
 
-Theorem frames_safe p cost : NoDup (jobs p) -> initially_fits p cost ->
-  forall t, sound_frame p t (frame_at p cost t).
+Theorem frames_within_overload p cost : NoDup (jobs p) ->
+  forall t, sound_frame_within p t (frame_at p cost t) (max_overload p cost).
 Proof.
-  intros ND Init t. induction t as [|t IH]; [|apply advance_sound; assumption].
-  split; simpl; [intros k d M D _; now apply (Init k d)|lia].
+  intros ND t. induction t as [|t IH]; [|apply advance_sound; assumption].
+  split; [|simpl; lia]. intros k d M D _. simpl.
+  pose proof (proj1 (max_overload_le_iff p cost _) (Nat.le_refl _) k d M D). lia.
 Qed.
 
-Theorem no_work_left_at_deadline p cost j d : NoDup (jobs p) -> initially_fits p cost ->
-  In j (jobs p) -> deadline p j = Some d -> remaining (frame_at p cost d) j = 0.
+Corollary frames_safe p cost : NoDup (jobs p) -> initially_fits p cost ->
+  forall t, sound_frame p t (frame_at p cost t).
 Proof.
-  intros ND Init M D. destruct (frames_safe p cost ND Init d) as [Safe _].
-  destruct (Nat.eq_dec (remaining (frame_at p cost d) j) 0); auto.
-  assert (Pos : 0 < remaining (frame_at p cost d) j) by lia.
+  intros ND Init t. pose proof (frames_within_overload p cost ND t) as Frame.
+  now rewrite (proj2 (max_overload_zero_iff p cost) Init) in Frame.
+Qed.
+
+Lemma no_work_left_within_overload p cost j d : NoDup (jobs p) ->
+  In j (jobs p) -> deadline p j = Some d ->
+  remaining (frame_at p cost (d + max_overload p cost)) j = 0.
+Proof.
+  intros ND M D. set (t := d + max_overload p cost).
+  destruct (frames_within_overload p cost ND t) as [Safe _].
+  destruct (Nat.eq_dec (remaining (frame_at p cost t) j) 0); auto.
+  assert (Pos : 0 < remaining (frame_at p cost t) j) by lia.
   specialize (Safe j d M D Pos).
   assert (B : due_by p j d = true) by (unfold due_by; rewrite D; apply Nat.leb_refl).
-  pose proof (member_demand p (remaining (frame_at p cost d)) j d _ M B).
-  unfold demand in Safe. lia.
+  pose proof (member_demand p (remaining (frame_at p cost t)) j d _ M B).
+  unfold demand in Safe. unfold t in *. lia.
+Qed.
+
+Corollary no_work_left_at_deadline p cost j d : NoDup (jobs p) -> initially_fits p cost ->
+  In j (jobs p) -> deadline p j = Some d -> remaining (frame_at p cost d) j = 0.
+Proof.
+  intros ND Init M D. pose proof (no_work_left_within_overload p cost j d ND M D) as Empty.
+  now rewrite (proj2 (max_overload_zero_iff p cost) Init), Nat.add_0_r in Empty.
 Qed.
 
 (** ** 計算例
@@ -405,9 +448,9 @@ End Examples.
     展開した[scheduled_job]をそのまま[schedule]に使い、Prosaの[service]と
     モデルの残作業の和が各タスクの初期作業量になることを証明します。 *)
 Local Set Warnings "-notation-overridden,-hiding-delimiting-key".
-From mathcomp Require Import ssreflect ssrbool eqtype ssrnat.
+From mathcomp Require Import ssreflect ssrbool eqtype ssrnat seq bigop.
 Require Import prosa.model.processor.ideal prosa.analysis.facts.behavior.service
-               prosa.analysis.facts.model.ideal.schedule.
+               prosa.analysis.facts.model.ideal.schedule prosa.analysis.facts.model.service_of_jobs.
 
 Module ProsaSchedule.
 Local Notation Jobs := (Equality.clone nat _).
@@ -427,10 +470,10 @@ Proof.
     reflexivity.
 Qed.
 
-Lemma service_plus_remaining p cost : NoDup (jobs p) -> initially_fits p cost ->
+Lemma service_plus_remaining_any_load p cost : NoDup (jobs p) ->
   forall t j, Nat.add (service (generated p cost) j t) (remaining (frame_at p cost t) j) = cost j.
 Proof.
-  intros ND Init t. induction t as [|t IH]; intros j.
+  intros ND t. induction t as [|t IH]; intros j.
   - by rewrite service0.
   - rewrite -service_last_plus_before unit_service addnE. specialize (IH j).
     change (Nat.add (Nat.add (service (generated p cost) j t)
@@ -438,22 +481,82 @@ Proof.
                  (remaining (advance p t (frame_at p cost t)) j) = cost j).
     unfold scheduled_job, advance. destruct (dispatch p t (frame_at p cost t))
       as [[k n]|] eqn:E; last by simpl; lia.
-    destruct (dispatch_valid _ _ _ _ _ (frames_safe p cost ND Init t) E)
+    destruct (dispatch_valid p t _ k n (frames_within_overload p cost ND t) E)
       as [_ [Pos [Cap _]]].
     simpl. unfold spend. destruct (Nat.eqb_spec j k); subst; lia.
 Qed.
 
-(** 主定理。数学的な仮定は有限リストのIDの一意性と、初期の累積需要条件です。
-    [Some d]を持つすべての入力タスクにProsaの[completed_by]を直接適用します。 *)
-Theorem all_deadlines_met p (cost : JobCost Jobs) :
+Corollary service_plus_remaining p cost : NoDup (jobs p) -> initially_fits p cost ->
+  forall t j, Nat.add (service (generated p cost) j t) (remaining (frame_at p cost t) j) = cost j.
+Proof. intros ND _. exact (service_plus_remaining_any_load p cost ND). Qed.
+
+(** すべての締切付きタスクが元の締切から[b]秒以内に必要な作業量を受けます。 *)
+Definition within_tardiness p (cost : JobCost Jobs) (sched : timeline) b :=
+  forall j d, In j (jobs p) -> deadline p j = Some d ->
+    @completed_by Jobs _ sched cost j (Nat.add d b).
+
+(** Prosaの単一プロセッサ容量定理はMathCompの[uniq]でIDの一意性を受け取ります。 *)
+Lemma nodup_uniq (ids : list Jobs) : NoDup ids -> uniq ids.
+Proof.
+  have mem_In (j : Jobs) (xs : list Jobs) : j \in xs -> In j xs.
+  { induction xs as [|x xs IH]; first by [].
+    rewrite in_cons. move/orP => [/eqP ->|Here]; simpl; auto. }
+  induction 1 as [|j xs Absent ND IH]; first by [].
+  rewrite cons_uniq IH andbT. apply/negP => Here. exact (Absent (mem_In j xs Here)).
+Qed.
+
+(** 締切[d]以下の各タスクは、共通の時刻[d + b]までに初期作業量を受けています。
+    同じ時刻で合計することで、Prosaの区間容量の上限を使えます。 *)
+Lemma demand_le_service p (cost : JobCost Jobs) sched b d :
+  within_tardiness p cost sched b ->
+  demand p cost d <= service_of_jobs sched (fun j => due_by p j d) (jobs p) 0 (Nat.add d b).
+Proof.
+  intros Meets.
+  have Done j : In j (jobs p) -> due_by p j d -> cost j <= service sched j (Nat.add d b).
+  { intros M. unfold due_by. destruct (deadline p j) as [e|] eqn:D; last by [].
+    move/Nat.leb_le => Early. apply: leq_trans (Meets j e M D) _.
+    apply service_monotonic. apply/leP. lia. }
+  unfold demand, service_of_jobs.
+  have Sum xs : incl xs (jobs p) -> demand_on p cost d xs <=
+    \sum_(j <- xs | due_by p j d) service_during sched j 0 (Nat.add d b).
+  { induction xs as [|j xs IH]; intros Sub; first by rewrite big_nil.
+    have Tail : incl xs (jobs p) by intros x M; apply Sub; right.
+    rewrite big_cons. change (demand_on p cost d (j :: xs))
+      with (contribution p cost d j + demand_on p cost d xs).
+    unfold contribution. case Due: (due_by p j d).
+    - apply leq_add; last exact (IH Tail).
+      apply Done; [apply Sub; left; reflexivity | exact Due].
+    - exact (IH Tail). }
+  exact (Sum _ (incl_refl _)).
+Qed.
+
+(** 主定理。生成予定では全締切の超過が最大不足秒数に収まります。
+    任意の単一プロセッサ予定で全締切の超過を[b]秒以内に抑えられれば、
+    [b]は最大不足秒数以上です。締切のない入力も含みます。 *)
+Theorem max_tardiness_optimal p (cost : JobCost Jobs) : NoDup (jobs p) ->
+  within_tardiness p cost (generated p cost) (max_overload p cost) /\
+  forall (sched : timeline) b, within_tardiness p cost sched b -> Nat.le (max_overload p cost) b.
+Proof.
+  intros ND. split.
+  - intros j d M D. set (t := Nat.add d (max_overload p cost)).
+    pose proof (service_plus_remaining_any_load p cost ND t j) as Total.
+    rewrite (no_work_left_within_overload p cost j d ND M D) in Total.
+    apply/leP. change (Nat.le (cost j) (service (generated p cost) j t)). lia.
+  - intros sched b Meets. apply max_overload_le_iff. intros j d _ _.
+    apply/leP. apply: leq_trans (demand_le_service p cost sched b d Meets) _.
+    exact (service_of_jobs_le_length_of_interval ideal_proc_model_provides_unit_service
+      ideal_proc_model_is_a_uniprocessor_model sched _ _ (nodup_uniq _ ND) 0 (Nat.add d b)).
+Qed.
+
+(** 全締切を守れる場合は最適な超過が0秒です。 *)
+Corollary all_deadlines_met p (cost : JobCost Jobs) :
   NoDup (jobs p) -> initially_fits p cost ->
   forall j d, In j (jobs p) -> deadline p j = Some d ->
     @completed_by Jobs _ (generated p cost) cost j d.
 Proof.
   intros ND Init j d M D.
-  pose proof (service_plus_remaining p cost ND Init d j) as Total.
-  rewrite (no_work_left_at_deadline p cost j d ND Init M D) in Total.
-  apply/leP. change (Nat.le (cost j) (service (generated p cost) j d)). lia.
+  pose proof (proj1 (max_tardiness_optimal p cost ND) j d M D) as Meets.
+  by rewrite (proj2 (max_overload_zero_iff p cost) Init) Nat.add_0_r in Meets.
 Qed.
 
 (** 有限の具体例を計算するときは、各秒に得た作業量を加算します。 *)
@@ -469,6 +572,39 @@ Proof.
 Qed.
 
 Import Examples.
+(** 09:00に開始し、09:30締切の20分作業と10:00締切の50分作業を置きます。 *)
+Definition morning_workload := workload 1800 3600 false.
+Definition morning_cost j := match j with 1 => 1200 | 2 => 3000 | _ => 0 end.
+Example ten_minutes_is_optimal :
+  max_overload morning_workload morning_cost = 600 /\
+  within_tardiness morning_workload morning_cost (generated morning_workload morning_cost) 600 /\
+  forall sched, ~ within_tardiness morning_workload morning_cost sched 599.
+Proof.
+  have Bound : max_overload morning_workload morning_cost = 600 by vm_compute.
+  have ND : NoDup (jobs morning_workload) by repeat constructor; simpl; intuition discriminate.
+  destruct (max_tardiness_optimal morning_workload morning_cost ND) as [Meets Lower].
+  rewrite Bound in Meets, Lower. split; [exact Bound|split; first exact Meets].
+  intros sched Faster. exact (Nat.nle_succ_diag_l 599 (Lower sched 599 Faster)).
+Qed.
+
+Example earlier_deadline_has_largest_overload :
+  max_overload (workload 300 1800 false) costs = 300.
+Proof. by vm_compute. Qed.
+
+Example equal_deadlines_count_both_jobs :
+  max_overload (workload 1000 1000 false) costs = 500.
+Proof. by vm_compute. Qed.
+
+Example no_deadlines_have_zero_overload p cost :
+  (forall j, In j (jobs p) -> deadline p j = None) -> max_overload p cost = 0.
+Proof.
+  intros NoDeadline. apply max_overload_zero_iff. intros j d M D.
+  by rewrite (NoDeadline j M) in D.
+Qed.
+
+Example zero_work_has_zero_overload : max_overload zero_scenario zero_cost = 0.
+Proof. by vm_compute. Qed.
+
 Example finishes_exactly_at_deadline :
   @completed_by Jobs _ (generated scenario costs) costs 2 2460 /\
   ~~ @completed_by Jobs _ (generated scenario costs) costs 2 2459.
@@ -507,6 +643,7 @@ Print Assumptions candidate_progress.
 Print Assumptions critical_group_protected.
 Print Assumptions frames_safe.
 Print Assumptions ProsaSchedule.service_plus_remaining.
+Print Assumptions ProsaSchedule.max_tardiness_optimal.
 Print Assumptions ProsaSchedule.all_deadlines_met.
 Print Assumptions ProsaSchedule.finishes_exactly_at_deadline.
 Print Assumptions ProsaSchedule.fixed_split_counterexample.
