@@ -35,6 +35,7 @@ fn 保存範囲と分割可否は同じ時点のオンライン一覧と負荷�
     assert_eq!(bundle.load, service.load_band_at(now).unwrap().data);
     assert!(bundle.splittable_task_ids.contains(&occurrence.to_string()));
     assert!(!bundle.splittable_task_ids.contains(&routine.to_string()));
+    assert!(!bundle.handoff_children.contains_key(&routine.to_string()));
     for (date, rows) in bundle.days {
         assert_eq!(
             rows,
@@ -44,6 +45,30 @@ fn 保存範囲と分割可否は同じ時点のオンライン一覧と負荷�
                 .data
         );
     }
+}
+
+#[test]
+fn 引き継ぎ候補には保存した親と未完了の直接の子だけが入る() {
+    let fixture = WebReadServiceFixture::new();
+    let now = Local.with_ymd_and_hms(2026, 9, 5, 12, 0, 0).unwrap();
+    let (parent, child, _) = fixture.seed_parent_child_and_pending_leaf(now);
+    let mut repository = TaskRepository::new(fixture.storage.to_str().unwrap());
+    repository.reload_if_changed(now).unwrap();
+    let root = repository.get_by_id(parent).unwrap().unwrap();
+    let done = root
+        .create_child(TaskAttr::with_identity("完了済みの子", Uuid::new_v4(), now))
+        .unwrap();
+    done.set_orig_status(Status::Done).unwrap();
+    repository.save().unwrap();
+    let mut service = WebService::new(fixture.storage.clone(), fixture.config());
+    let bundle = service.prepare_offline_at(now).unwrap();
+    assert_eq!(
+        bundle.handoff_children,
+        std::collections::BTreeMap::from([(
+            parent.to_string(),
+            std::collections::BTreeSet::from([child.to_string()])
+        )])
+    );
 }
 
 #[test]

@@ -254,8 +254,7 @@ fn Sessions(
                 &|ms| offset_at.call(ms),
                 &|_| Some(JAPAN_UTC_OFFSET_MINUTES),
             );
-            card.manual_check_blocked =
-                state.conflicts.contains_key(id) || state.awaiting_refresh(id);
+            card.manual_check_blocked = state.needs_review(id);
             card
         })
         .collect();
@@ -295,7 +294,7 @@ fn ConflictList(
             for (id, reason) in &state.conflicts {
                 {
                     let id = id.clone();
-                    let name = display_task_name(state.recorded_task_name(&id).unwrap_or(&id));
+                    let name = display_task_name(state.review_task_name(&id).unwrap_or(&id));
                     let choose = id.clone();
                     let discard = id.clone();
                     rsx! { article { key: "{id}",

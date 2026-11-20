@@ -100,6 +100,7 @@ impl<C: Clock> WebOperations for EnvironmentWebOperations<C> {
                 .collect(),
             load: bundle.load.convert(),
             splittable_task_ids: bundle.splittable_task_ids,
+            handoff_children: bundle.handoff_children,
         })
     }
 

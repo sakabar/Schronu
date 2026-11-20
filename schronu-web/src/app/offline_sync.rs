@@ -36,18 +36,21 @@ pub(super) async fn send_pending(
 ) -> Result<usize, String> {
     let mut sent = 0;
     for operation in state.pending.clone() {
-        if state.conflicts.contains_key(&operation.task_id) {
+        if state.needs_review(&operation.task_id) {
             continue;
         }
         match io.push(operation.clone()).await {
             Ok(()) => {
+                if operation.kind.is_completion() {
+                    state.confirm_handoff_child(&operation.task_id);
+                }
                 state
                     .pending
                     .retain(|queued| queued.operation_id != operation.operation_id);
                 sent += 1;
             }
             Err(PushError::TaskConflict(reason)) => {
-                state.conflicts.insert(operation.task_id, reason);
+                state.mark_sync_conflict(operation.task_id, reason);
             }
             Err(PushError::Unavailable(reason)) => return Err(reason),
         }
@@ -164,6 +167,62 @@ mod tests {
     }
 
     #[test]
+    fn 子の競合は引き継いだ親の記録を復元後も保留し独立した操作を送る() {
+        use crate::client::offline::tests::{family, PARENT, TASK};
+        let mut state = family();
+        state.start(TASK, 0).unwrap();
+        state
+            .finish(
+                TASK,
+                OfflineOperationKind::Record,
+                10_000,
+                "record-child".into(),
+            )
+            .unwrap();
+        state.start(TASK, 10_000).unwrap();
+        state
+            .finish(
+                TASK,
+                OfflineOperationKind::Complete,
+                20_000,
+                "complete-child".into(),
+            )
+            .unwrap();
+        state
+            .finish(
+                PARENT,
+                OfflineOperationKind::Record,
+                30_000,
+                "record-parent".into(),
+            )
+            .unwrap();
+        state.pending.push(operation("independent", "unrelated"));
+        let mut io = Fake {
+            replies: [Err(PushError::TaskConflict("実績競合".into())), Ok(())].into(),
+            sent: vec![],
+            checkpoints: vec![],
+        };
+        assert_eq!(
+            futures::executor::block_on(send_pending(&mut state, &mut io)),
+            Ok(1)
+        );
+        assert_eq!(io.sent, ["record-child", "unrelated"]);
+        assert!(state.conflicts.contains_key(PARENT));
+        let mut fresh = state.bundle.clone();
+        fresh.handoff_children.clear();
+        state.rebase(fresh);
+        let mut restored: OfflineState =
+            serde_json::from_value(serde_json::to_value(state).unwrap()).unwrap();
+        restored.discard_conflict(TASK);
+        assert_eq!(
+            futures::executor::block_on(send_pending(&mut restored, &mut io)),
+            Ok(0)
+        );
+        assert_eq!(restored.pending.len(), 1);
+        assert_eq!(restored.pending[0].operation_id, "record-parent");
+    }
+
+    #[test]
     fn 競合は同一タスクだけ止め通信断後は未確認の操作から再送する() {
         let bundle = OfflineBundle {
             snapshot: ServerSnapshot {
@@ -173,6 +232,7 @@ mod tests {
             },
             days: BTreeMap::new(),
             splittable_task_ids: BTreeSet::new(),
+            handoff_children: BTreeMap::new(),
             load: LoadData {
                 band_days: vec![],
                 routine_load: RoutineLoadReport {

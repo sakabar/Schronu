@@ -42,19 +42,23 @@ pub(super) fn Schedule(
             })
         })
         .collect();
-    let rows = project_daily_rows(
+    let mut rows = project_daily_rows(
         state.visible_schedule(&date),
         Some(&date),
         Some(&state.bundle.snapshot),
         &|epoch| timezone.read().offset_at(epoch),
         true,
     );
+    for row in &mut rows {
+        if let Some(id) = row.task.task_id.as_deref() {
+            row.is_leaf = state.effective_leaf(id, row.is_leaf);
+        }
+    }
     let statuses: BTreeMap<_, _> = rows
         .iter()
         .filter_map(|row| {
             let id = row.task.task_id.as_ref()?;
-            (state.conflicts.contains_key(id) || state.awaiting_refresh(id))
-                .then(|| (id.clone(), "要確認"))
+            state.needs_review(id).then(|| (id.clone(), "要確認"))
         })
         .collect();
     let active_task_ids = state

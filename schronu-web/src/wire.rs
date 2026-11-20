@@ -94,6 +94,8 @@ pub struct OfflineBundle {
     pub days: BTreeMap<String, Vec<ScheduledTaskRow>>,
     pub load: LoadData,
     pub splittable_task_ids: std::collections::BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub handoff_children: BTreeMap<String, std::collections::BTreeSet<String>>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -103,6 +105,13 @@ pub enum OfflineOperationKind {
     Split,
     Complete,
     CompleteWithoutRecording,
+}
+
+impl OfflineOperationKind {
+    #[cfg(any(test, all(feature = "web", target_arch = "wasm32")))]
+    pub(crate) fn is_completion(self) -> bool {
+        matches!(self, Self::Complete | Self::CompleteWithoutRecording)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

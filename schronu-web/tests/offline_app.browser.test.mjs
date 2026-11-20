@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
@@ -288,6 +288,95 @@ async function sessionLayout(page, width) {
     assert(width <= 832 ? layout.stacked : layout.sideBySide);
     assert.equal(layout.buttons.length, 6);
     return layout;
+}
+
+for (const completion of ["記録して完了", "計測を破棄して完了"]) {
+    test("offline parent handoff, restart and sync: " + completion, {
+        skip: !(chrome && serverBinary && cliBinary), timeout: 120_000,
+    }, async () => {
+        const work = await mkdtemp(join(tmpdir(), "schronu-parent-handoff-"));
+        const profile = join(work, "profile");
+        const childName = "引き継ぎ対象の子";
+        const start = Math.floor((Date.now() - hour) / 1000) * 1000;
+        const finished = start + minute;
+        let server;
+        try {
+            server = await isolatedServer(work, 30);
+            await appendFile(join(work, "tasks/fixture/project.yaml"), `  children:
+    - name: ${childName}
+      id: ab862adf-d779-430c-9119-157af60c7815
+      estimated_work_seconds: 300
+      actual_work_seconds: 10
+      create_time: "2025/01/01 07:00:00"
+      start_time: "2025/01/01 07:00:00"
+`);
+            await server.start();
+            await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+                await page.click("一覧");
+                await page.click("設定");
+                await page.click("オフラインで使う");
+                await savedSchedule(page);
+            });
+            await server.stop();
+            await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+                await savedSchedule(page);
+                await selectSavedTaskDate(page);
+                await page.clock(start);
+                await page.click(childName + ": セッションに追加");
+                await page.clock(finished);
+                const complete = async () => {
+                    await page.click(completion);
+                    if (completion === "計測を破棄して完了") {
+                        await page.click(childName + ": 計測を破棄して完了を確定");
+                    }
+                };
+                await page.evaluate(`{
+                    const put = IDBObjectStore.prototype.put;
+                    IDBObjectStore.prototype.put = function(value, key) {
+                        if (key === 'active' && this.name === 'offline') {
+                            IDBObjectStore.prototype.put = put;
+                            throw Error('handoff write interrupted');
+                        }
+                        return put.call(this, value, key);
+                    };
+                }`);
+                await complete();
+                await page.show("handoff write interrupted");
+                await page.show("未送信0件");
+                assert.match(await page.evaluate("document.querySelector('.session-card-heading').textContent"), new RegExp(childName));
+                await complete();
+                await until("last child starts parent", () => page.evaluate(
+                    `document.querySelector('.session-card-heading')?.textContent.includes(${JSON.stringify(taskName)})`
+                ), 4000);
+                await page.show("未送信1件");
+            }, { offlineAtStartup: true });
+            await withBrowser(profile, server.url, "Asia/Tokyo", async page => {
+                await page.clock(finished + minute);
+                await page.show(taskName);
+                await page.show("経過 00:01:00");
+                await page.click("計測を破棄して解除");
+                await savedSchedule(page);
+                await selectSavedTaskDate(page);
+                await page.click(taskName + ": セッションに追加");
+                await page.show("記録して完了");
+                await page.clock(finished + 3 * minute);
+                await page.click("記録して完了");
+                await savedSchedule(page);
+                await page.click("セッション");
+                await page.show("未送信2件");
+                await server.start();
+                await page.setOffline(false);
+                await page.click("同期");
+                await page.show("同期しました");
+            }, { offlineAtStartup: true });
+            const persisted = await server.yaml();
+            assert.equal((persisted.match(/status: done/g) || []).length, 2);
+            assert.match(persisted, /actual_work_seconds: 150\b/);
+            assert.match(persisted, completion === "記録して完了" ? /actual_work_seconds: 70\b/ : /actual_work_seconds: 10\b/);
+        } finally {
+            try { await server?.stop(); } finally { await rm(work, { recursive: true, force: true, maxRetries: 3 }); }
+        }
+    });
 }
 
 test("offline schedule, cold timer restoration and replay of a committed split", {

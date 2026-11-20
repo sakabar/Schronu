@@ -116,7 +116,7 @@ impl Saved {
         let bundle = fetch_bundle().await?;
         state.rebase(bundle);
         self.data.state = state;
-        if self.data.state.pending.is_empty() {
+        if self.data.state.pending.is_empty() && self.data.state.conflicts.is_empty() {
             self.merged_sessions()?;
             self.data.returning = true;
         }
